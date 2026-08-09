@@ -1,5 +1,12 @@
 import { describe, it, expect } from '@ohos/hypium'
-import { CommandParser, CommandParseResult, KeyCommandKind, KeyCommandResult } from '../main/ets/model/command/CommandParser'
+import {
+  CommandParser,
+  CommandParseResult,
+  KeyCommandKind,
+  KeyCommandResult,
+  TransferCommandResult,
+  TransferDirection
+} from '../main/ets/model/command/CommandParser'
 import { SshConfig } from '../main/ets/model/ssh/SshConfig'
 import { SshClient } from '../main/ets/model/ssh/SshClient'
 import { BridgeMessage, BridgeProtocol } from '../main/ets/model/bridge/BridgeProtocol'
@@ -17,6 +24,7 @@ import { BrowserLauncher } from '../main/ets/model/browser/BrowserLauncher'
 import { CommandBarViewModel } from '../main/ets/viewmodel/CommandBarViewModel'
 import { AppTheme, ColorMode, TransparencyMode, TransparencyPolicy } from '../main/ets/view/theme/ThemeManager'
 import { UserGuideFileDecision, UserGuidePolicy } from '../main/ets/model/guide/UserGuidePolicy'
+import { TransferFileManager } from '../main/ets/model/transfer/TransferFileManager'
 
 function asciiBytes(text: string): Uint8Array {
   let result: Uint8Array = new Uint8Array(text.length)
@@ -37,11 +45,13 @@ export default function interactionFixesTest() {
 
     it('parsesKeySubcommandsFromTheCorrectArgument', 0, () => {
       let config: SshConfig = new SshConfig()
-      let showResult: CommandParseResult | KeyCommandResult | null = CommandParser.parseInput('key show deploy', config)
-      let removeResult: CommandParseResult | KeyCommandResult | null = CommandParser.parseInput('key rm deploy', config)
-      let importResult: CommandParseResult | KeyCommandResult | null =
+      let showResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput('key show deploy', config)
+      let removeResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput('key rm deploy', config)
+      let importResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('key import C:\\keys\\source deploy', config)
-      let exportResult: CommandParseResult | KeyCommandResult | null =
+      let exportResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('key export deploy', config)
       expect(showResult instanceof KeyCommandResult).assertEqual(true)
       expect(removeResult instanceof KeyCommandResult).assertEqual(true)
@@ -61,7 +71,7 @@ export default function interactionFixesTest() {
     })
 
     it('recognizesExitAsALocalCommand', 0, () => {
-      let result: CommandParseResult | KeyCommandResult | null =
+      let result: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('exit', new SshConfig())
       expect(result instanceof KeyCommandResult).assertEqual(true)
       if (result instanceof KeyCommandResult) { expect(result.kind).assertEqual(KeyCommandKind.EXIT) }
@@ -71,9 +81,9 @@ export default function interactionFixesTest() {
     })
 
     it('supportsTopicHelpAndExactCommandNames', 0, () => {
-      let help: CommandParseResult | KeyCommandResult | null =
+      let help: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('help ssh-keygen', new SshConfig())
-      let commandHelp: CommandParseResult | KeyCommandResult | null =
+      let commandHelp: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('host --help', new SshConfig())
       expect(help instanceof KeyCommandResult).assertEqual(true)
       expect(commandHelp instanceof KeyCommandResult).assertEqual(true)
@@ -138,11 +148,11 @@ export default function interactionFixesTest() {
     })
 
     it('keepsUnknownAndInvalidLocalCommandsDistinct', 0, () => {
-      let unknown: CommandParseResult | KeyCommandResult | null =
+      let unknown: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('not-a-command', new SshConfig())
-      let empty: CommandParseResult | KeyCommandResult | null =
+      let empty: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('', new SshConfig())
-      let invalidSsh: CommandParseResult | KeyCommandResult | null =
+      let invalidSsh: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('ssh', new SshConfig())
       expect(unknown).assertEqual(null)
       expect(empty instanceof CommandParseResult).assertEqual(true)
@@ -153,6 +163,142 @@ export default function interactionFixesTest() {
       if (invalidSsh instanceof CommandParseResult) {
         expect(invalidSsh.errorMessage).assertEqual('Username required')
       }
+    })
+
+    it('parsesPutAndGetWithTheSshConnectionModel', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName files.example.com\n  User deploy\n  Port 2200\n' +
+        '  IdentityFile deploy-key\n')
+      let put = CommandParser.parseInput('put "daily report.txt" prod:/srv/reports/daily.txt', config)
+      let get = CommandParser.parseInput('get -p 2222 user@[2001:db8::1]:/var/log/app.log', config)
+      expect(put instanceof TransferCommandResult).assertEqual(true)
+      if (put instanceof TransferCommandResult) {
+        expect(put.direction).assertEqual(TransferDirection.PUT)
+        expect(put.localPath).assertEqual('daily report.txt')
+        expect(put.remotePath).assertEqual('/srv/reports/daily.txt')
+        expect(put.host).assertEqual('files.example.com')
+        expect(put.port).assertEqual(2200)
+        expect(put.username).assertEqual('deploy')
+        expect(put.identityFile).assertEqual('deploy-key')
+      }
+      expect(get instanceof TransferCommandResult).assertEqual(true)
+      if (get instanceof TransferCommandResult) {
+        expect(get.direction).assertEqual(TransferDirection.GET)
+        expect(get.host).assertEqual('2001:db8::1')
+        expect(get.port).assertEqual(2222)
+        expect(get.username).assertEqual('user')
+        expect(get.remotePath).assertEqual('/var/log/app.log')
+        expect(get.automaticLocalName).assertEqual(true)
+      }
+    })
+
+    it('keepsTransferPathsBoundedAndScpAsAHint', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName files.example.com\n  User deploy\n')
+      let escaped = CommandParser.parseInput('put daily\\ report.txt prod:/srv/daily.txt', config)
+      let traversal = CommandParser.parseInput('put ../secret prod:/srv/secret', config)
+      let absolute = CommandParser.parseInput('get prod:/srv/file /tmp/file', config)
+      let directory = CommandParser.parseInput('get prod:/srv/logs/', config)
+      let overwrite = CommandParser.parseInput('get --overwrite prod:/srv/file', config)
+      let unterminated = CommandParser.parseInput('put "daily report.txt prod:/srv/file', config)
+      let scp = CommandParser.parseInput('scp anything anywhere', config)
+      expect(escaped instanceof TransferCommandResult).assertEqual(true)
+      if (escaped instanceof TransferCommandResult) { expect(escaped.isValid).assertEqual(true) }
+      for (let result of [traversal, absolute, directory, overwrite, unterminated]) {
+        expect(result instanceof TransferCommandResult).assertEqual(true)
+        if (result instanceof TransferCommandResult) { expect(result.isValid).assertEqual(false) }
+      }
+      expect(scp instanceof TransferCommandResult).assertEqual(true)
+      if (scp instanceof TransferCommandResult) {
+        expect(scp.direction).assertEqual(TransferDirection.SCP_HINT)
+        expect(scp.isValid).assertEqual(false)
+      }
+    })
+
+    it('parsesExistingSubdirectoryAndExplicitDirectoryTargets', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName files.example.com\n  User deploy\n')
+      let putDirectory = CommandParser.parseInput('put reports/app.log prod:/srv/inbox/', config)
+      let putHome = CommandParser.parseInput('put reports/app.log prod:', config)
+      let getDirectory = CommandParser.parseInput('get prod:/logs/app.log reports/', config)
+      let explicitGet = CommandParser.parseInput('get prod:/logs/app.log reports/today.log', config)
+      for (let parsed of [putDirectory, putHome, getDirectory, explicitGet]) {
+        expect(parsed instanceof TransferCommandResult).assertEqual(true)
+        if (parsed instanceof TransferCommandResult) { expect(parsed.isValid).assertEqual(true) }
+      }
+      if (putDirectory instanceof TransferCommandResult) {
+        expect(putDirectory.remoteTargetDirectory).assertEqual(true)
+        expect(putDirectory.remotePath).assertEqual('/srv/inbox/app.log')
+      }
+      if (putHome instanceof TransferCommandResult) {
+        expect(putHome.remoteTargetDirectory).assertEqual(true)
+        expect(putHome.remotePath).assertEqual('./app.log')
+      }
+      if (getDirectory instanceof TransferCommandResult) {
+        expect(getDirectory.localTargetDirectory).assertEqual(true)
+        expect(getDirectory.automaticLocalName).assertEqual(true)
+        expect(getDirectory.localPath).assertEqual('reports/')
+      }
+      if (explicitGet instanceof TransferCommandResult) {
+        expect(explicitGet.localTargetDirectory).assertEqual(false)
+        expect(explicitGet.automaticLocalName).assertEqual(false)
+      }
+    })
+
+    it('rejectsUnsafePathComponentsAndSupportsOptionTerminator', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName files.example.com\n  User deploy\n')
+      let dashFile = CommandParser.parseInput('put -- -report.txt prod:/srv/', config)
+      let emptyComponent = CommandParser.parseInput('put reports//app.log prod:/srv/app.log', config)
+      let dotComponent = CommandParser.parseInput('get prod:/app.log reports/./app.log', config)
+      let backslash = CommandParser.parseInput("get prod:/app.log 'reports\\app.log'", config)
+      let control = CommandParser.parseInput('get prod:/app\u001b[31m.log', config)
+      expect(dashFile instanceof TransferCommandResult).assertEqual(true)
+      if (dashFile instanceof TransferCommandResult) {
+        expect(dashFile.isValid).assertEqual(true)
+        expect(dashFile.remotePath).assertEqual('/srv/-report.txt')
+      }
+      for (let parsed of [emptyComponent, dotComponent, backslash, control]) {
+        expect(parsed instanceof TransferCommandResult).assertEqual(true)
+        if (parsed instanceof TransferCommandResult) { expect(parsed.isValid).assertEqual(false) }
+      }
+    })
+
+    it('generatesMinimalAutomaticDownloadNames', 0, () => {
+      expect(TransferFileManager.automaticName('app.log', 0)).assertEqual('app.log')
+      expect(TransferFileManager.automaticName('app.log', 1)).assertEqual('app (1).log')
+      expect(TransferFileManager.automaticName('.env', 2)).assertEqual('.env (2)')
+      expect(TransferFileManager.automaticName('报告.txt', 3)).assertEqual('报告 (3).txt')
+      let longName: string = 'a'.repeat(252) + '.log'
+      let numbered: string = TransferFileManager.automaticName(longName, 1)
+      expect(numbered.endsWith(' (1).log')).assertEqual(true)
+      expect(numbered.length).assertEqual(255)
+      let unicodeName: string = '😀'.repeat(62) + 'abc.log'
+      let unicodeNumbered: string = TransferFileManager.automaticName(unicodeName, 1)
+      expect(unicodeNumbered.endsWith(' (1).log')).assertEqual(true)
+      expect(unicodeNumbered.includes('\uFFFD')).assertEqual(false)
+    })
+
+    it('formatsAStableAsciiFileTransferProgressLine', 0, () => {
+      expect(SessionViewModel.formatTransferProgress(32768, 131072, 65536, false))
+        .assertEqual('[━━━━━━━╸──────────────────────]  25% 32.0/128.0 KiB  64.0 KiB/s  ETA 00:02')
+      expect(SessionViewModel.formatTransferProgress(12288, 0, 4096, false))
+        .assertEqual('[──────────────────────────────]  --% 12.0 KiB  4.0 KiB/s  ETA --:--')
+      expect(SessionViewModel.formatTransferProgress(0, 0, 0, true))
+        .assertEqual('[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━] 100% 0 B  --  Finalizing...')
+      expect(SessionViewModel.formatTransferProgress(131072, 131072, 65536, true))
+        .assertEqual('[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━] 100% 128.0/128.0 KiB  64.0 KiB/s  Finalizing...')
+      expect(SessionViewModel.styleTransferProgress(
+        '[━━━━━━━╸──────────────────────]  25% 32.0/128.0 KiB  64.0 KiB/s  ETA 00:02', false))
+        .assertEqual('\u001b[36m[━━━━━━━╸──────────────────────]  25%\u001b[0m 32.0/128.0 KiB  64.0 KiB/s  ETA 00:02')
+      expect(SessionViewModel.styleTransferProgress(
+        '[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━] 100% 128.0/128.0 KiB  64.0 KiB/s  Finalizing...', true))
+        .assertEqual('\u001b[36m[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━] 100%\u001b[0m 128.0/128.0 KiB  64.0 KiB/s  ' +
+          '\u001b[33mFinalizing...\u001b[0m')
+      expect(SessionViewModel.formatTransferClock(3723)).assertEqual('1:02:03')
+      expect(SessionViewModel.formatTransferRate(5 * 1024 * 1024)).assertEqual('5.0 MiB/s')
+      expect(SessionViewModel.formatTransferCompletion(118349760, 22000))
+        .assertEqual('112.9 MiB in 00:22, avg 5.1 MiB/s')
     })
 
     it('rejectsUnsupportedKeyTypesInsteadOfFallingBack', 0, () => {
@@ -227,8 +373,9 @@ export default function interactionFixesTest() {
     it('buildsChangedHostRemovalCommandFromResolvedAliasEndpoint', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName server.example.com\n  Port 2222\n  User deploy\n')
-      let parsed: CommandParseResult | KeyCommandResult | null = CommandParser.parseInput('ssh prod', config)
-      let overridden: CommandParseResult | KeyCommandResult | null =
+      let parsed: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput('ssh prod', config)
+      let overridden: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('ssh -p 2200 prod', config)
       expect(parsed instanceof CommandParseResult).assertEqual(true)
       if (parsed instanceof CommandParseResult) {
@@ -271,9 +418,9 @@ export default function interactionFixesTest() {
     })
 
     it('parsesHostCommandsAndMarksLegacyAliasSyntax', 0, () => {
-      let host: CommandParseResult | KeyCommandResult | null =
+      let host: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('host add prod root@example.com', new SshConfig())
-      let alias: CommandParseResult | KeyCommandResult | null =
+      let alias: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('alias add prod root@example.com', new SshConfig())
       expect(host instanceof KeyCommandResult).assertEqual(true)
       expect(alias instanceof KeyCommandResult).assertEqual(true)
@@ -316,10 +463,25 @@ export default function interactionFixesTest() {
       expect(vm.tryTabComplete()[0]).assertEqual('host set prod')
       vm.setInputText('host rm pr')
       expect(vm.tryTabComplete()[0]).assertEqual('host rm prod')
+      vm.setInputText('put report.txt pr')
+      expect(vm.tryTabComplete()[0]).assertEqual('put report.txt prod:')
+      vm.setInputText('get pr')
+      expect(vm.tryTabComplete()[0]).assertEqual('get prod:')
+    })
+
+    it('usesCommonPrefixBeforeListingAmbiguousCompletions', 0, () => {
+      let vm: CommandBarViewModel = new CommandBarViewModel()
+      vm.getSshConfig().loadFromText('Host prod production\n  HostName prod.example.com\n  User deploy\n')
+      vm.setInputText('get p')
+      expect(vm.tryTabComplete()[0]).assertEqual('get prod')
+      expect(vm.applyCompletion('get prod')).assertEqual('get prod')
+      vm.setInputText('get prod')
+      expect(vm.tryTabComplete().length).assertEqual(0)
+      expect(vm.tryTabComplete().length).assertEqual(2)
     })
 
     it('parsesEffectiveConfigInspection', 0, () => {
-      let result: CommandParseResult | KeyCommandResult | null =
+      let result: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('ssh -G prod', new SshConfig())
       expect(result instanceof KeyCommandResult).assertEqual(true)
       if (result instanceof KeyCommandResult) {
@@ -346,7 +508,8 @@ export default function interactionFixesTest() {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName prod.example.com\n  IdentityFile ~/.ssh/deploy\n\n' +
         'Host *\n  User deploy\n  Port 2200\n')
-      let result: CommandParseResult | KeyCommandResult | null = CommandParser.parseInput('ssh prod', config)
+      let result: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput('ssh prod', config)
       expect(result instanceof CommandParseResult).assertEqual(true)
       if (result instanceof CommandParseResult) {
         expect(result.host).assertEqual('prod.example.com')
@@ -360,7 +523,8 @@ export default function interactionFixesTest() {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName prod.example.com\nMatch user root\n  Port 9999\n' +
         'Host *\n  Port 2222\n  User deploy\n')
-      let result: CommandParseResult | KeyCommandResult | null = CommandParser.parseInput('ssh prod', config)
+      let result: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput('ssh prod', config)
       expect(result instanceof CommandParseResult).assertEqual(true)
       if (result instanceof CommandParseResult) {
         expect(result.isValid).assertEqual(false)

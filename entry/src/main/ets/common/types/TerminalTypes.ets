@@ -6,7 +6,8 @@ export enum TerminalMode {
   HOST_KEY_INPUT = 4,
   KEY_PASSPHRASE_INPUT = 5,
   KEY_PASSPHRASE_CHANGE_INPUT = 6,
-  AUTH_CHALLENGE_INPUT = 7
+  AUTH_CHALLENGE_INPUT = 7,
+  TRANSFERRING = 8
 }
 
 export enum SshSessionState {

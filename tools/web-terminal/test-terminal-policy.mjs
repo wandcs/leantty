@@ -701,14 +701,20 @@ assert.match(acceptanceSource, /Invoke-WithLeanTTYAcceptanceSource/,
 assert.match(acceptanceSource, /Acceptance: Rebuild Renderer/,
   'debug build transformation must own the renderer acceptance menu');
 assert.match(acceptanceSource,
-  /ACCEPTANCE_TESTS \? 7 : 6/,
-  'debug builds must add only the renderer trigger to keyboard menu traversal');
+  /includeNativeFileDescriptorProbe\) \{ '9' \} else \{ '8' \}/,
+  'debug builds must include the bounded Downloads actions in keyboard menu traversal');
 assert.doesNotMatch(acceptanceSource, /Debug Material|Acceptance: Open Search|BACKGROUND_ULTRA_THICK/,
   'debug builds must reuse production material and Search controls');
 assert.match(acceptanceSource, /terminateRendererForAcceptance/,
   'debug build transformation must own the renderer termination trigger');
 assert.match(acceptanceSource, /pasteClipboardForAcceptance/,
   'debug build transformation must own the clipboard paste trigger');
+assert.match(acceptanceSource, /ACCEPTANCE_DOWNLOADS_NOREPLACE/,
+  'debug build transformation must own the Downloads no-replace probe');
+assert.match(acceptanceSource, /Acceptance: Downloads No-Replace/,
+  'debug build transformation must expose the Downloads no-replace probe');
+assert.match(acceptanceSource, /Acceptance: Downloads FD Boundary/,
+  'native verification builds must expose the Downloads FD boundary probe');
 assert.match(acceptanceSource, /finally[\s\S]*WriteAllBytes/,
   'debug build transformation must restore production ArkTS source in finally');
 assert.match(indexPage, /for \(let i = 0; i < MENU_ACTION_COUNT; i\+\+\)/,
@@ -777,8 +783,8 @@ assert.match(indexPage,
   /@Watch\('onWindowTransparencyAvailabilityChanged'\)[\s\S]*onWindowTransparencyAvailabilityChanged\(\)[\s\S]*this\.applyTheme\(\)/,
   'the initially opaque surface must refresh only after post-load window transparency succeeds');
 assert.match(acceptanceSource,
-  /if \(ACCEPTANCE_TESTS\) \{[\s\S]*menuRow\(6, '↻', 'Acceptance: Rebuild Renderer'/,
-  'the debug source transformation must add only the acceptance renderer entry');
+  /if \(ACCEPTANCE_TESTS\) \{[\s\S]*menuRow\(6, '↻', 'Acceptance: Rebuild Renderer'[\s\S]*menuRow\(7, '✓', 'Acceptance: Downloads No-Replace'/,
+  'the debug source transformation must add the two bounded acceptance entries');
 assert.match(acceptanceSource,
   /private rebuildRendererForAcceptance[\s\S]*?if \(!ACCEPTANCE_TESTS\)[\s\S]*?captureSnapshot\(\(captured: boolean\)[\s\S]*?terminateRendererForAcceptance/,
   'the injected acceptance action must wait for a confirmed production snapshot before terminating the renderer');

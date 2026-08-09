@@ -15,6 +15,11 @@ const HELP_TEXT: string =
   '  ssh [-p <port>] [-i <identity>] <user>@<host>  Connect to a server\r\n' +
   '  ssh [-p <port>] [-i <identity>] <host-name>    Connect using ~/.ssh/config\r\n' +
   '\r\n' +
+  'File transfer\r\n' +
+  '  put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
+  '  get [-p <port>] [-i <identity>] [--] <host>:<remote-file> [local-path]\r\n' +
+  '  Local paths stay in Downloads. End a directory target with /. Existing files are never overwritten.\r\n' +
+  '\r\n' +
   'OpenSSH keys\r\n' +
   '  ssh-keygen [-t <ed25519|rsa>] [-f <key-name>]  Generate a key pair\r\n' +
   '  ssh-keygen -y -f <identity>                    Show a public key\r\n' +
@@ -57,6 +62,13 @@ const KEY_HELP: string =
   'it defaults to <key-name>. The private key and .pub file are never overwritten.\r\nltty> '
 const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>]\r\n' +
   '       host rm <host-name>\r\n       host list\r\n\r\nLegacy alias commands remain temporarily supported.\r\nltty> '
+const TRANSFER_HELP: string =
+  '\r\nUsage: put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
+  '       get [-p <port>] [-i <identity>] [--] <host>:<remote-file> [local-path]\r\n\r\n' +
+  'Local paths stay in Downloads; existing subdirectories are allowed but never created.\r\n' +
+  'End a target directory with /. GET chooses the remote basename when local-path is omitted or a directory.\r\n' +
+  'Existing local and remote files are never overwritten. Tab completes local paths and Host names, not remote paths.\r\n' +
+  'Use put/get instead of scp.\r\nltty> '
 
 export interface KeyCommandContext {
   context: common.Context
@@ -113,6 +125,7 @@ export class KeyCommandService {
     if (topic === 'ssh-copy-id') { ctx.writeOutput(COPY_ID_HELP); return }
     if (topic === 'key' || topic === 'keys') { ctx.writeOutput(KEY_HELP); return }
     if (topic === 'host' || topic === 'alias') { ctx.writeOutput(HOST_HELP); return }
+    if (topic === 'put' || topic === 'get' || topic === 'scp') { ctx.writeOutput(TRANSFER_HELP); return }
     ctx.writeError('Unknown help topic: ' + result.keyName)
   }
 

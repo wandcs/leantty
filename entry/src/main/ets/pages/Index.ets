@@ -413,6 +413,7 @@ struct Index {
 
   private addPaneRuntime(pane: PaneInfo): void {
     let vm: SessionViewModel = new SessionViewModel()
+    vm.setPaneIdentity(pane.id)
     vm.setOnStateChange((state: SshSessionState) => {
       this.updatePaneState(pane.id, state)
     })

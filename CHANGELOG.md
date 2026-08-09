@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added bounded foreground `put` and `get` commands for one file at a time
+  between the authorized Downloads tree and an SFTP remote path. Existing
+  Downloads subdirectories and explicit trailing-`/` directory targets retain
+  the source basename without adding recursive transfer or directory creation.
+  Explicit file-name conflicts fail; downloads whose final basename is selected
+  by LeanTTY keep both files with a numbered name. Bounded Tab completion covers
+  local files/directories, Host aliases and LeanTTY key names without prompting
+  for Downloads access or enumerating remote directories. The
+  commands reuse existing Host, Identity, authentication and known-host rules,
+  support an optional per-command port or identity, and keep file bytes in the
+  Rust/native stream instead of ArkTS, ArkWeb or terminal output. A fixed-width
+  30-cell line progress meter updates in place with percentage, transferred/total
+  size, smoothed live speed and ETA, then exposes the finalizing stage without
+  animation or a separate GUI. Its selected line-drawing glyphs are locked to
+  the bundled font and covered by Regular/Bold one-cell advance regression tests. Completion
+  output includes elapsed time and average speed. Restrained ANSI status colors
+  keep text as the source of meaning; a single verified one-cell green dot marks
+  successful final commit without resembling an expandable control.
+
+### Security
+
+- Added no-follow local source opening, native descriptor revalidation,
+  exclusive local and remote temporary files, and no-overwrite final commits.
+  Existing destination files are never replaced; task-owned partial files are
+  cleaned on observed failure or cancellation, and transfer events are scoped
+  by transfer, Pane and generation identifiers.
+
+### Development
+
+- Added repository-only SFTP interoperability and physical-PC acceptance
+  fixtures. The production GET-to-Downloads-to-PUT event chain has completed a
+  131,089-byte SHA-256-exact ARM64 device round trip; broader conflict,
+  cancellation, authentication and lifecycle matrices remain in development.
+
 ## [1.2.0] - 2026-08-08
 
 ### Added

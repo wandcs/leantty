@@ -20,6 +20,7 @@ export default function connectionControlTest() {
       expect(ConnectionControl.shouldInterrupt(TerminalMode.HOST_KEY_INPUT, '\u0003')).assertEqual(true)
       expect(ConnectionControl.shouldInterrupt(TerminalMode.KEY_PASSPHRASE_INPUT, '\u0003')).assertEqual(true)
       expect(ConnectionControl.shouldInterrupt(TerminalMode.AUTH_CHALLENGE_INPUT, '\u0003')).assertEqual(true)
+      expect(ConnectionControl.shouldInterrupt(TerminalMode.TRANSFERRING, '\u0003')).assertEqual(true)
     })
 
     it('describesCleanAndUnexpectedConnectionClose', 0, () => {
