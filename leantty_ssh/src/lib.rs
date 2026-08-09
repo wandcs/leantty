@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::os::fd::BorrowedFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,6 +11,8 @@ use napi_ohos::bindgen_prelude::{spawn, Function, Uint8Array};
 use napi_ohos::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_ohos::{Error, Result, Status};
 use zeroize::Zeroize;
+
+mod transfer;
 
 use leantty_ssh_core::authentication::{
     sanitize_server_text, AuthAction, AuthChallenge, AuthFailure, AuthMethodKind, AuthPrompt,
@@ -30,6 +33,8 @@ type JsCallback = Arc<ThreadsafeFunction<String, (), String, Status, false, fals
 type JsTransportCallback =
     Arc<ThreadsafeFunction<TransportEvent, (), TransportEvent, Status, false, false, 64>>;
 type JsAuthCallback = Arc<ThreadsafeFunction<AuthEvent, (), AuthEvent, Status, false, false, 64>>;
+type JsFileTransferCallback =
+    Arc<ThreadsafeFunction<FileTransferEvent, (), FileTransferEvent, Status, false, false, 64>>;
 
 #[napi(object)]
 pub struct TransportEvent {
@@ -72,6 +77,79 @@ pub struct AuthEvent {
     pub name: String,
     pub instructions: String,
     pub prompts: Vec<AuthPromptEvent>,
+}
+
+#[napi(object)]
+pub struct FileTransferEvent {
+    pub kind: String,
+    pub transfer_id: String,
+    pub pane_id: String,
+    pub generation: u32,
+    pub transferred_bytes: String,
+    pub total_bytes: String,
+    pub code: String,
+    pub detail: String,
+}
+
+impl FileTransferEvent {
+    fn stage(transfer_id: u32, pane_id: &str, generation: u32, kind: &str) -> Self {
+        Self {
+            kind: kind.to_string(),
+            transfer_id: transfer_id.to_string(),
+            pane_id: pane_id.to_string(),
+            generation,
+            transferred_bytes: "0".to_string(),
+            total_bytes: "0".to_string(),
+            code: String::new(),
+            detail: String::new(),
+        }
+    }
+
+    fn progress(
+        transfer_id: u32,
+        pane_id: &str,
+        generation: u32,
+        bytes: u64,
+        total_bytes: u64,
+    ) -> Self {
+        let mut event = Self::stage(transfer_id, pane_id, generation, "progress");
+        event.transferred_bytes = bytes.to_string();
+        event.total_bytes = total_bytes.to_string();
+        event
+    }
+
+    fn finalizing(
+        transfer_id: u32,
+        pane_id: &str,
+        generation: u32,
+        bytes: u64,
+        total_bytes: u64,
+    ) -> Self {
+        let mut event = Self::stage(transfer_id, pane_id, generation, "finalizing");
+        event.transferred_bytes = bytes.to_string();
+        event.total_bytes = total_bytes.to_string();
+        event
+    }
+
+    fn completed(
+        transfer_id: u32,
+        pane_id: &str,
+        generation: u32,
+        bytes: u64,
+        total_bytes: u64,
+    ) -> Self {
+        let mut event = Self::stage(transfer_id, pane_id, generation, "completed");
+        event.transferred_bytes = bytes.to_string();
+        event.total_bytes = total_bytes.to_string();
+        event
+    }
+
+    fn failed(transfer_id: u32, pane_id: &str, generation: u32, code: &str, detail: &str) -> Self {
+        let mut event = Self::stage(transfer_id, pane_id, generation, "failed");
+        event.code = code.to_string();
+        event.detail = sanitize_server_text(detail);
+        event
+    }
 }
 
 impl AuthEvent {
@@ -189,11 +267,27 @@ struct ShellSession {
     output_pause_tx: OutputPauseSender,
 }
 
+struct FileTransferSession {
+    generation: u32,
+    disconnect_tx: DisconnectSender,
+    auth_tx: AuthSender,
+    host_key_tx: tokio::sync::mpsc::Sender<bool>,
+}
+
 type SessionMap = Arc<Mutex<HashMap<u32, ShellSession>>>;
 
 fn get_sessions() -> &'static SessionMap {
     use once_cell::sync::Lazy;
     static SESSIONS: Lazy<SessionMap> = Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+    &SESSIONS
+}
+
+type FileTransferSessionMap = Arc<Mutex<HashMap<u32, FileTransferSession>>>;
+
+fn get_file_transfer_sessions() -> &'static FileTransferSessionMap {
+    use once_cell::sync::Lazy;
+    static SESSIONS: Lazy<FileTransferSessionMap> =
+        Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
     &SESSIONS
 }
 
@@ -212,6 +306,32 @@ struct SessionCleanupGuard(u32);
 impl Drop for SessionCleanupGuard {
     fn drop(&mut self) {
         remove_session(self.0);
+    }
+}
+
+struct FileTransferCleanupGuard(u32);
+
+impl Drop for FileTransferCleanupGuard {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = get_file_transfer_sessions().lock() {
+            sessions.remove(&self.0);
+        }
+    }
+}
+
+struct LocalTempCleanup(Option<PathBuf>);
+
+impl LocalTempCleanup {
+    fn keep(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for LocalTempCleanup {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 
@@ -255,6 +375,24 @@ fn send_auth_event(callback: &JsAuthCallback, event: AuthEvent) -> bool {
     let status = callback.call(event, ThreadsafeFunctionCallMode::Blocking);
     if status != Status::Ok {
         eprintln!("[LTTY_SSH] callback=auth status={}", status);
+        return false;
+    }
+    true
+}
+
+fn send_file_transfer_event(
+    callback: &JsFileTransferCallback,
+    event: FileTransferEvent,
+    final_event: bool,
+) -> bool {
+    let mode = if final_event {
+        ThreadsafeFunctionCallMode::Blocking
+    } else {
+        ThreadsafeFunctionCallMode::NonBlocking
+    };
+    let status = callback.call(event, mode);
+    if status != Status::Ok {
+        eprintln!("[LTTY_SSH] callback=file_transfer status={}", status);
         return false;
     }
     true
@@ -1166,6 +1304,253 @@ async fn run_session(
     eprintln!("[LTTY_SSH] session={} stage=closed", session_id);
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn run_file_transfer(
+    transfer_id: u32,
+    generation: u32,
+    pane_id: String,
+    direction: transfer::Direction,
+    host: String,
+    port: u16,
+    user: String,
+    private_key_path: String,
+    private_key_requires_passphrase: bool,
+    known_hosts_path: String,
+    remote_path: String,
+    local_file: std::fs::File,
+    local_temp_path: String,
+    connect_timeout: Duration,
+    control_callback: JsCallback,
+    auth_callback: JsAuthCallback,
+    transfer_callback: JsFileTransferCallback,
+    mut disconnect_rx: tokio::sync::mpsc::Receiver<()>,
+    mut auth_rx: tokio::sync::mpsc::Receiver<AuthMethod>,
+    host_key_rx: tokio::sync::mpsc::Receiver<bool>,
+) {
+    let _cleanup_guard = FileTransferCleanupGuard(transfer_id);
+    let mut local_temp_cleanup = LocalTempCleanup(if direction == transfer::Direction::Get {
+        Some(PathBuf::from(local_temp_path))
+    } else {
+        None
+    });
+    let _ = send_file_transfer_event(
+        &transfer_callback,
+        FileTransferEvent::stage(transfer_id, &pane_id, generation, "preparing"),
+        false,
+    );
+    let config = Arc::new(build_client_config());
+    let (connect_progress_tx, mut connect_progress_rx) = tokio::sync::mpsc::channel(2);
+    let handler = ClientHandler {
+        session_id: transfer_id,
+        generation,
+        host: host.clone(),
+        port,
+        known_hosts_path: PathBuf::from(known_hosts_path),
+        host_key_rx,
+        connect_progress_tx,
+        control_callback: control_callback.clone(),
+        auth_callback: auth_callback.clone(),
+    };
+    let connect = russh::client::connect(config, (host.as_str(), port), handler);
+    let mut ssh = match wait_for_connect(
+        connect,
+        connect_timeout,
+        &mut disconnect_rx,
+        &mut connect_progress_rx,
+    )
+    .await
+    {
+        ConnectWaitResult::Connected(handle) => handle,
+        ConnectWaitResult::Failed(error) => {
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::failed(
+                    transfer_id,
+                    &pane_id,
+                    generation,
+                    "NETWORK",
+                    &format!("connection failed: {error}"),
+                ),
+                true,
+            );
+            return;
+        }
+        ConnectWaitResult::TimedOut => {
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::failed(
+                    transfer_id,
+                    &pane_id,
+                    generation,
+                    "NETWORK_TIMEOUT",
+                    "connection timed out",
+                ),
+                true,
+            );
+            return;
+        }
+        ConnectWaitResult::Cancelled => {
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::stage(transfer_id, &pane_id, generation, "cancelled"),
+                true,
+            );
+            return;
+        }
+    };
+
+    match run_authentication(
+        transfer_id,
+        generation,
+        &user,
+        &private_key_path,
+        private_key_requires_passphrase,
+        &mut ssh,
+        &auth_callback,
+        &mut auth_rx,
+        &mut disconnect_rx,
+    )
+    .await
+    {
+        AuthenticationOutcome::Authenticated => {}
+        AuthenticationOutcome::Cancelled => {
+            let _ = ssh
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::stage(transfer_id, &pane_id, generation, "cancelled"),
+                true,
+            );
+            return;
+        }
+        AuthenticationOutcome::Failed(error) => {
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::failed(transfer_id, &pane_id, generation, "AUTH", &error),
+                true,
+            );
+            return;
+        }
+    }
+
+    let channel = match ssh.channel_open_session().await {
+        Ok(channel) => channel,
+        Err(error) => {
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::failed(
+                    transfer_id,
+                    &pane_id,
+                    generation,
+                    "SFTP_UNAVAILABLE",
+                    &format!("SFTP channel open failed: {error}"),
+                ),
+                true,
+            );
+            return;
+        }
+    };
+    if let Err(error) = channel.request_subsystem(true, "sftp").await {
+        let _ = send_file_transfer_event(
+            &transfer_callback,
+            FileTransferEvent::failed(
+                transfer_id,
+                &pane_id,
+                generation,
+                "SFTP_UNAVAILABLE",
+                &format!("server rejected the SFTP subsystem: {error}"),
+            ),
+            true,
+        );
+        return;
+    }
+    let sftp = match russh_sftp::client::SftpSession::new(channel.into_stream()).await {
+        Ok(sftp) => sftp,
+        Err(error) => {
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::failed(
+                    transfer_id,
+                    &pane_id,
+                    generation,
+                    "SFTP_UNAVAILABLE",
+                    &format!("SFTP initialization failed: {error}"),
+                ),
+                true,
+            );
+            return;
+        }
+    };
+    let _ = send_file_transfer_event(
+        &transfer_callback,
+        FileTransferEvent::stage(transfer_id, &pane_id, generation, "transferring"),
+        false,
+    );
+    let result = transfer::execute(
+        &sftp,
+        direction,
+        &remote_path,
+        local_file,
+        transfer_id,
+        &mut disconnect_rx,
+        |update| {
+            let event = match update {
+                transfer::TransferUpdate::Progress { transferred, total } => {
+                    FileTransferEvent::progress(
+                        transfer_id,
+                        &pane_id,
+                        generation,
+                        transferred,
+                        total,
+                    )
+                }
+                transfer::TransferUpdate::Finalizing { transferred, total } => {
+                    FileTransferEvent::finalizing(
+                        transfer_id,
+                        &pane_id,
+                        generation,
+                        transferred,
+                        total,
+                    )
+                }
+            };
+            let _ = send_file_transfer_event(&transfer_callback, event, false);
+        },
+    )
+    .await;
+    let _ = sftp.close().await;
+    let _ = ssh
+        .disconnect(russh::Disconnect::ByApplication, "", "")
+        .await;
+    match result {
+        Ok((bytes, total_bytes)) => {
+            let delivered = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::completed(transfer_id, &pane_id, generation, bytes, total_bytes),
+                true,
+            );
+            if delivered {
+                local_temp_cleanup.keep();
+            }
+        }
+        Err(transfer::TransferFailure::Cancelled) => {
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::stage(transfer_id, &pane_id, generation, "cancelled"),
+                true,
+            );
+        }
+        Err(transfer::TransferFailure::Failed { code, detail }) => {
+            let _ = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::failed(transfer_id, &pane_id, generation, code, &detail),
+                true,
+            );
+        }
+    }
+}
+
 #[napi]
 #[allow(clippy::too_many_arguments)]
 pub fn ssh_connect(
@@ -1271,6 +1656,143 @@ pub fn ssh_connect(
     Ok(session_id.to_string())
 }
 
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn ssh_start_file_transfer(
+    direction: String,
+    host: String,
+    port: u32,
+    user: String,
+    private_key_path: String,
+    private_key_requires_passphrase: bool,
+    known_hosts_path: String,
+    connect_timeout_ms: u32,
+    generation: u32,
+    pane_id: String,
+    remote_path: String,
+    local_path: String,
+    local_descriptor: i32,
+    on_control: Function<'_, String, ()>,
+    on_auth: Function<'_, AuthEvent, ()>,
+    on_transfer: Function<'_, FileTransferEvent, ()>,
+) -> Result<String> {
+    let direction = match direction.as_str() {
+        "put" => transfer::Direction::Put,
+        "get" => transfer::Direction::Get,
+        _ => return Err(napi_error("transfer direction must be put or get")),
+    };
+    if host.trim().is_empty() || user.trim().is_empty() {
+        return Err(napi_error("transfer host and user must not be empty"));
+    }
+    if port == 0 || port > u16::MAX as u32 {
+        return Err(napi_error("transfer port must be between 1 and 65535"));
+    }
+    if known_hosts_path.trim().is_empty() || remote_path.trim().is_empty() {
+        return Err(napi_error(
+            "known_hosts path and remote path must not be empty",
+        ));
+    }
+    if connect_timeout_ms == 0 || generation == 0 || pane_id.trim().is_empty() {
+        return Err(napi_error(
+            "transfer timeout, generation and pane id must be valid",
+        ));
+    }
+    let local_file = match direction {
+        transfer::Direction::Put => {
+            if local_descriptor < 0 || !local_path.is_empty() {
+                return Err(napi_error(
+                    "put requires an open local descriptor and no local temporary path",
+                ));
+            }
+            let borrowed = unsafe { BorrowedFd::borrow_raw(local_descriptor) };
+            let duplicated = borrowed.try_clone_to_owned().map_err(|error| {
+                napi_error(&format!("local file descriptor duplicate failed: {error}"))
+            })?;
+            std::fs::File::from(duplicated)
+        }
+        transfer::Direction::Get => {
+            if local_descriptor >= 0 || local_path.trim().is_empty() {
+                return Err(napi_error(
+                    "get requires a local temporary path and no local descriptor",
+                ));
+            }
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&local_path)
+                .map_err(|error| {
+                    napi_error(&format!(
+                        "exclusive local temporary file creation failed: {error}"
+                    ))
+                })?
+        }
+    };
+    let metadata = local_file
+        .metadata()
+        .map_err(|error| napi_error(&format!("local file descriptor fstat failed: {error}")))?;
+    if !metadata.is_file() {
+        return Err(napi_error("local file descriptor is not a regular file"));
+    }
+
+    let control_callback = Arc::new(
+        on_control
+            .build_threadsafe_function::<String>()
+            .max_queue_size::<64>()
+            .build()?,
+    );
+    let auth_callback = Arc::new(
+        on_auth
+            .build_threadsafe_function::<AuthEvent>()
+            .max_queue_size::<64>()
+            .build()?,
+    );
+    let transfer_callback = Arc::new(
+        on_transfer
+            .build_threadsafe_function::<FileTransferEvent>()
+            .max_queue_size::<64>()
+            .build()?,
+    );
+    let (disconnect_tx, disconnect_rx) = tokio::sync::mpsc::channel(1);
+    let (auth_tx, auth_rx) = tokio::sync::mpsc::channel(1);
+    let (host_key_tx, host_key_rx) = tokio::sync::mpsc::channel(1);
+    let transfer_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+    get_file_transfer_sessions()
+        .lock()
+        .map_err(|_| napi_error("file transfer session map lock poisoned"))?
+        .insert(
+            transfer_id,
+            FileTransferSession {
+                generation,
+                disconnect_tx,
+                auth_tx,
+                host_key_tx,
+            },
+        );
+    spawn(run_file_transfer(
+        transfer_id,
+        generation,
+        pane_id,
+        direction,
+        host,
+        port as u16,
+        user,
+        private_key_path,
+        private_key_requires_passphrase,
+        known_hosts_path,
+        remote_path,
+        local_file,
+        local_path,
+        Duration::from_millis(connect_timeout_ms as u64),
+        control_callback,
+        auth_callback,
+        transfer_callback,
+        disconnect_rx,
+        auth_rx,
+        host_key_rx,
+    ));
+    Ok(transfer_id.to_string())
+}
+
 fn parse_session_id(session_id: &str) -> Result<u32> {
     session_id
         .parse::<u32>()
@@ -1281,15 +1803,44 @@ fn is_current_auth_generation(session_generation: u32, received_generation: u32)
     received_generation != 0 && session_generation == received_generation
 }
 
-#[napi]
-pub fn ssh_auth_password(session_id: String, generation: u32, password: String) -> Result<()> {
-    let id = parse_session_id(&session_id)?;
-    let sessions = get_sessions()
+struct AuthSessionChannels {
+    generation: u32,
+    auth_tx: AuthSender,
+    host_key_tx: tokio::sync::mpsc::Sender<bool>,
+    disconnect_tx: DisconnectSender,
+}
+
+fn find_auth_session_channels(id: u32) -> Result<AuthSessionChannels> {
+    if let Some(session) = get_sessions()
         .lock()
-        .map_err(|_| napi_error("session map lock poisoned"))?;
+        .map_err(|_| napi_error("session map lock poisoned"))?
+        .get(&id)
+    {
+        return Ok(AuthSessionChannels {
+            generation: session.generation,
+            auth_tx: session.auth_tx.clone(),
+            host_key_tx: session.host_key_tx.clone(),
+            disconnect_tx: session.disconnect_tx.clone(),
+        });
+    }
+    let sessions = get_file_transfer_sessions()
+        .lock()
+        .map_err(|_| napi_error("file transfer session map lock poisoned"))?;
     let session = sessions
         .get(&id)
         .ok_or_else(|| napi_error("session not found"))?;
+    Ok(AuthSessionChannels {
+        generation: session.generation,
+        auth_tx: session.auth_tx.clone(),
+        host_key_tx: session.host_key_tx.clone(),
+        disconnect_tx: session.disconnect_tx.clone(),
+    })
+}
+
+#[napi]
+pub fn ssh_auth_password(session_id: String, generation: u32, password: String) -> Result<()> {
+    let id = parse_session_id(&session_id)?;
+    let session = find_auth_session_channels(id)?;
     if !is_current_auth_generation(session.generation, generation) {
         return Err(napi_error("stale authentication generation"));
     }
@@ -1306,12 +1857,7 @@ pub fn ssh_auth_private_key_passphrase(
     passphrase: String,
 ) -> Result<()> {
     let id = parse_session_id(&session_id)?;
-    let sessions = get_sessions()
-        .lock()
-        .map_err(|_| napi_error("session map lock poisoned"))?;
-    let session = sessions
-        .get(&id)
-        .ok_or_else(|| napi_error("session not found"))?;
+    let session = find_auth_session_channels(id)?;
     if !is_current_auth_generation(session.generation, generation) {
         return Err(napi_error("stale authentication generation"));
     }
@@ -1329,12 +1875,7 @@ pub fn ssh_auth_keyboard_interactive_responses(
     responses: Vec<String>,
 ) -> Result<()> {
     let id = parse_session_id(&session_id)?;
-    let sessions = get_sessions()
-        .lock()
-        .map_err(|_| napi_error("session map lock poisoned"))?;
-    let session = sessions
-        .get(&id)
-        .ok_or_else(|| napi_error("session not found"))?;
+    let session = find_auth_session_channels(id)?;
     if !is_current_auth_generation(session.generation, generation) {
         return Err(napi_error("stale authentication generation"));
     }
@@ -1350,12 +1891,7 @@ pub fn ssh_auth_keyboard_interactive_responses(
 #[napi]
 pub fn ssh_verify_host_key(session_id: String, accepted: bool) -> Result<()> {
     let id = parse_session_id(&session_id)?;
-    let sessions = get_sessions()
-        .lock()
-        .map_err(|_| napi_error("session map lock poisoned"))?;
-    let session = sessions
-        .get(&id)
-        .ok_or_else(|| napi_error("session not found"))?;
+    let session = find_auth_session_channels(id)?;
     session
         .host_key_tx
         .try_send(accepted)
@@ -1413,12 +1949,7 @@ pub fn ssh_set_output_paused(session_id: String, paused: bool) -> Result<()> {
 #[napi]
 pub fn ssh_disconnect(session_id: String) -> Result<()> {
     let id = parse_session_id(&session_id)?;
-    let sessions = get_sessions()
-        .lock()
-        .map_err(|_| napi_error("session map lock poisoned"))?;
-    let session = sessions
-        .get(&id)
-        .ok_or_else(|| napi_error("session not found"))?;
+    let session = find_auth_session_channels(id)?;
     session
         .disconnect_tx
         .try_send(())
@@ -1544,8 +2075,9 @@ mod tests {
     use super::{
         build_client_config, is_current_auth_generation, should_flush_immediately,
         wait_for_auth_command, wait_for_auth_exchange, wait_for_connect, AuthExchangeResult,
-        AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult, OutputDeliveryMetrics,
-        AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT, SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
+        AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult, FileTransferEvent,
+        OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
+        SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
     };
     use napi_ohos::Status;
     use std::future::pending;
@@ -1558,6 +2090,21 @@ mod tests {
         assert!(!should_flush_immediately(true, 0));
         assert!(!should_flush_immediately(true, 257));
         assert!(!should_flush_immediately(false, 32));
+    }
+
+    #[test]
+    fn file_transfer_events_keep_total_bytes_across_finalization() {
+        let progress = FileTransferEvent::progress(7, "pane-a", 3, 32768, 131072);
+        let finalizing = FileTransferEvent::finalizing(7, "pane-a", 3, 131072, 131072);
+        let completed = FileTransferEvent::completed(7, "pane-a", 3, 131072, 131072);
+
+        assert_eq!(progress.kind, "progress");
+        assert_eq!(progress.transferred_bytes, "32768");
+        assert_eq!(progress.total_bytes, "131072");
+        assert_eq!(finalizing.kind, "finalizing");
+        assert_eq!(finalizing.total_bytes, "131072");
+        assert_eq!(completed.kind, "completed");
+        assert_eq!(completed.transferred_bytes, "131072");
     }
 
     #[test]

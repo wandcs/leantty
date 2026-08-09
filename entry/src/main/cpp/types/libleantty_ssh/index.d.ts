@@ -17,6 +17,16 @@ export interface TransportEvent {
   data: Uint8Array
   result: string
 }
+export interface FileTransferEvent {
+  kind: string
+  transferId: string
+  paneId: string
+  generation: number
+  transferredBytes: string
+  totalBytes: string
+  code: string
+  detail: string
+}
 export declare function sshConnect(
   host: string, port: number, user: string,
   privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
@@ -37,6 +47,15 @@ export declare function sshWrite(sessionId: string, data: string): void
 export declare function sshResize(sessionId: string, cols: number, rows: number): void
 export declare function sshSetOutputPaused(sessionId: string, paused: boolean): void
 export declare function sshDisconnect(sessionId: string): void
+export declare function sshStartFileTransfer(
+  direction: string, host: string, port: number, user: string,
+  privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
+  knownHostsPath: string, connectTimeoutMs: number, generation: number,
+  paneId: string, remotePath: string, localPath: string, localDescriptor: number,
+  onControl: (event: string) => void,
+  onAuth: (event: AuthEvent) => void,
+  onTransfer: (event: FileTransferEvent) => void
+): string
 export declare function sshGenerateKeyPair(algorithm: string, passphrase: string, outputDir: string, fileName: string, comment: string): Promise<string>
 export declare function sshChangePrivateKeyPassphrase(keyPath: string, oldPassphrase: string, newPassphrase: string): void
 export declare function sshExportKeyPair(privatePath: string, publicPath: string, outputDir: string, fileName: string): void

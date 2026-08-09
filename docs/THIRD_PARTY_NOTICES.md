@@ -66,8 +66,8 @@ Font License 1.1. The full OFL text and the Nerd Fonts attribution note are in
 
 ## Rust Dependencies (Cargo)
 
-`leantty_ssh/Cargo.lock` resolves 150 registry packages for
-`aarch64-unknown-linux-ohos`; all 150 report a license expression or license
+`leantty_ssh/Cargo.lock` resolves 164 registry packages for
+`aarch64-unknown-linux-ohos`; all 164 report a license expression or license
 file through Cargo metadata. The complete versioned inventory is in
 `docs/RUST_DEPENDENCIES.md`.
 
