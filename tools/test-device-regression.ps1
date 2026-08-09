@@ -89,6 +89,25 @@ Assert-Throws -Action {
         $script:capturedHdcCalls[0][2] -eq 'shell' -and
         $script:capturedHdcCalls[0][3] -eq $expectedCommand
     ) 'Device text injection did not use one device-paced raw-key command'
+
+    $script:capturedHdcCalls.Clear()
+    $longText = 'a' * 87
+    Invoke-LeanTTYDeviceText `
+        -Hdc 'Invoke-FakeHdc' `
+        -Target 'regression-device' `
+        -Text $longText
+    Assert-True (
+        $script:capturedHdcCalls.Count -eq 3 -and
+        $script:capturedHdcCalls[0][3] -eq (
+            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 40) -IntervalMilliseconds 500
+        ) -and
+        $script:capturedHdcCalls[1][3] -eq (
+            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 40) -IntervalMilliseconds 500
+        ) -and
+        $script:capturedHdcCalls[2][3] -eq (
+            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 7) -IntervalMilliseconds 500
+        )
+    ) 'Long device text injection was not split below the physical uinput boundary'
 }
 
 & {
@@ -157,8 +176,9 @@ Assert-True (
     $deviceRegressionText -notmatch 'terminal-line cleanup|backspaceCount'
 ) 'Device input cleanup still uses inferred backspaces'
 Assert-True (
-    $deviceRegressionText -match '-IntervalMilliseconds 500(?:\s|$)'
-) 'Device raw-key text injection does not use native device pacing for modifier transitions'
+    $deviceRegressionText -match '-IntervalMilliseconds 500(?:\s|$)' -and
+    $deviceRegressionText.Contains('$chunkLength = 40')
+) 'Device raw-key text injection does not preserve pacing and bounded batches'
 Assert-True (
     $deviceRegressionText -notmatch 'shell\s+run-as\s+com\.leantty\.app' -and
     $deviceRegressionText -match 'shell\s+-b\s+com\.leantty\.app'
@@ -580,17 +600,62 @@ $sessionViewModel = Get-Content -LiteralPath (
 $acceptanceSource = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'acceptance-source.ps1'
 ) -Raw
+$fileTransferVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-file-transfer-pc.ps1'
+) -Raw
+$putGetVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-put-get-pc.ps1'
+) -Raw
 Assert-True (
     -not $sessionViewModel.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
     $acceptanceSource.Contains("import { ACCEPTANCE_TESTS } from 'BuildProfile'") -and
     $acceptanceSource.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
     $acceptanceSource.Contains('Acceptance: Rebuild Renderer') -and
+    $acceptanceSource.Contains('Acceptance: Downloads No-Replace') -and
+    $acceptanceSource.Contains('Acceptance: Downloads FD Boundary') -and
+    $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_NOREPLACE') -and
+    $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_FD') -and
     -not $acceptanceSource.Contains('Acceptance: Open Search') -and
     -not $acceptanceSource.Contains('Debug Material') -and
     $acceptanceSource.Contains('pasteClipboardForAcceptance') -and
     $acceptanceSource.Contains('ctrlKey && altKey && !shiftKey && event.keyCode === 2038') -and
-    $acceptanceSource.Contains('Invoke-WithLeanTTYAcceptanceSource')
+    $acceptanceSource.Contains('Invoke-WithLeanTTYAcceptanceSource') -and
+    $acceptanceSource.Contains('Invoke-WithLeanTTYNativeAcceptanceSource')
 ) 'Acceptance-only ArkTS is not isolated from the production source tree'
+Assert-True (
+    $fileTransferVerifier.Contains('Acceptance: Downloads No-Replace') -and
+    $fileTransferVerifier.Contains('Acceptance: Downloads FD Boundary') -and
+    $fileTransferVerifier.Contains('ACCEPTANCE_DOWNLOADS_NOREPLACE passed=true') -and
+    $fileTransferVerifier.Contains('ACCEPTANCE_DOWNLOADS_FD passed=true') -and
+    $fileTransferVerifier.Contains('device-downloads-capability.json') -and
+    $fileTransferVerifier.Contains('Get-LeanTTYDeviceLayout') -and
+    $fileTransferVerifier.Contains('Start-LeanTTYRegressionApp')
+) 'Focused file-transfer physical-PC gate is incomplete'
+Assert-True (
+    $putGetVerifier.Contains('get -p $FixturePort') -and
+    $putGetVerifier.Contains('put -p $FixturePort') -and
+    $putGetVerifier.Contains('completed direction=get,bytes=$expectedCompletionBytes|failed code=\S+') -and
+    $putGetVerifier.Contains('completed direction=put,bytes=$expectedCompletionBytes|failed code=\S+') -and
+    $putGetVerifier.Contains('GET completed without the FINALIZING stage') -and
+    $putGetVerifier.Contains('PUT completed without the FINALIZING stage') -and
+    $putGetVerifier.Contains('GET completed without a visible TTY progress update') -and
+    $putGetVerifier.Contains('PUT completed without a visible TTY progress update') -and
+    $putGetVerifier.Contains('GET large-file progress completed without a visible live speed') -and
+    $putGetVerifier.Contains('PUT large-file progress completed without a visible live speed') -and
+    $putGetVerifier.Contains('FILE_TRANSFER progress=visible') -and
+    $putGetVerifier.Contains('GET then PUT changed the file SHA-256') -and
+    $putGetVerifier.Contains('HarmonyOS application logs exposed the temporary fixture password') -and
+    $putGetVerifier.Contains('-WindowStyle Hidden') -and
+    $putGetVerifier.Contains('device-put-get.json')
+) 'Production PUT/GET physical-PC verifier is incomplete'
+Assert-True (
+    $sessionViewModel.Contains("const width: number = 30") -and
+    $sessionViewModel.Contains("'\r\u001b[2K' + SessionViewModel.styleTransferProgress") -and
+    $sessionViewModel.Contains("\u001b[32m●\u001b[0m") -and
+    $sessionViewModel.Contains('FILE_TRANSFER progress=visible') -and
+    $sessionViewModel.Contains('FILE_TRANSFER speed=visible') -and
+    $sessionViewModel.Contains("FILE_TRANSFER stage=finalizing")
+) 'Production PUT/GET terminal progress is not fixed-width, in-place, and stateful'
 
 foreach ($productionSource in @(
     'entry\src\main\ets\pages\Index.ets',

@@ -104,8 +104,26 @@ try {
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_SUBMIT')) (
             'Debug acceptance source injection omitted input telemetry'
         )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_DOWNLOADS_NOREPLACE')) (
+            'Debug acceptance source injection omitted the Downloads no-replace probe'
+        )
+        Assert-True (-not ($injectedText -join "`n").Contains('ACCEPTANCE_DOWNLOADS_FD')) (
+            'Routine debug acceptance injection included the native-only Downloads FD probe'
+        )
         Assert-True (($injectedText -join "`n").Contains('Acceptance: Rebuild Renderer')) (
             'Debug acceptance source injection omitted renderer trigger'
+        )
+        Assert-True (($injectedText -join "`n").Contains('Acceptance: Downloads No-Replace')) (
+            'Debug acceptance source injection omitted the Downloads probe menu action'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_TRANSFER_FIXTURE')) (
+            'Debug acceptance source injection omitted transfer fixture telemetry'
+        )
+        Assert-True (($injectedText -join "`n").Contains('Acceptance: Transfer Fixture')) (
+            'Debug acceptance source injection omitted the transfer fixture action'
+        )
+        Assert-True (-not ($injectedText -join "`n").Contains('Acceptance: Downloads FD Boundary')) (
+            'Routine debug acceptance injection included the native-only Downloads FD menu action'
         )
         Assert-True (-not ($injectedText -join "`n").Contains('Debug Material')) (
             'Debug acceptance source injection must not restore the retired material comparator'
@@ -121,6 +139,41 @@ try {
         Assert-True (
             (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $acceptanceSourceHashes[$path]
         ) "Acceptance source injection did not restore $path byte-for-byte"
+    }
+    $nativeAcceptancePaths = @(
+        Join-Path $repoRoot 'leantty_ssh\src\lib.rs'
+        Join-Path $repoRoot 'entry\src\main\cpp\types\libleantty_ssh\index.d.ts'
+    )
+    $nativeAcceptanceHashes = @{}
+    foreach ($path in $nativeAcceptancePaths) {
+        $nativeAcceptanceHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+    Invoke-WithLeanTTYNativeAcceptanceSource -RepoRoot $repoRoot -Action {
+        $nativeInjectedText = $nativeAcceptancePaths | ForEach-Object {
+            Get-Content -LiteralPath $_ -Raw
+        }
+        Assert-True (($nativeInjectedText -join "`n").Contains('ssh_acceptance_probe_file_descriptor')) (
+            'Debug native acceptance injection omitted the FD boundary probe'
+        )
+        Assert-True (($nativeInjectedText -join "`n").Contains(
+                "): AcceptanceFileDescriptorProbeResult`nexport interface KnownHostsQueryResult"
+            )) 'Debug native type injection merged adjacent declarations'
+        Invoke-WithLeanTTYAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
+            $fdInjectedText = $acceptanceArkTsPaths | ForEach-Object {
+                Get-Content -LiteralPath $_ -Raw
+            }
+            Assert-True (($fdInjectedText -join "`n").Contains('ACCEPTANCE_DOWNLOADS_FD')) (
+                'Native-backed acceptance injection omitted the Downloads FD boundary probe'
+            )
+            Assert-True (($fdInjectedText -join "`n").Contains('Acceptance: Downloads FD Boundary')) (
+                'Native-backed acceptance injection omitted the Downloads FD menu action'
+            )
+        }
+    }
+    foreach ($path in $nativeAcceptancePaths) {
+        Assert-True (
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $nativeAcceptanceHashes[$path]
+        ) "Native acceptance source injection did not restore $path byte-for-byte"
     }
 
     Assert-LeanTTYHarnessOnlyPaths `

@@ -401,11 +401,18 @@ function Invoke-LeanTTYDeviceText {
         [Parameter(Mandatory = $true)][string]$Text
     )
 
-    $shellCommand = ConvertTo-LeanTTYDeviceTextKeyCommand `
-        -Text $Text `
-        -IntervalMilliseconds 500
-    & $Hdc -t $Target shell $shellCommand 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS raw key text injection failed' }
+    # The physical regression PC has truncated a single raw-key invocation at
+    # 50 characters. Keep every device-side uinput batch below that boundary.
+    $chunkLength = 40
+    for ($offset = 0; $offset -lt $Text.Length; $offset += $chunkLength) {
+        $length = [Math]::Min($chunkLength, $Text.Length - $offset)
+        $chunk = $Text.Substring($offset, $length)
+        $shellCommand = ConvertTo-LeanTTYDeviceTextKeyCommand `
+            -Text $chunk `
+            -IntervalMilliseconds 500
+        & $Hdc -t $Target shell $shellCommand 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS raw key text injection failed' }
+    }
 }
 
 function Invoke-LeanTTYDeviceKey {

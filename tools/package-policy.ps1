@@ -3,9 +3,16 @@ function Assert-LeanTTYReleasePackageExcludesAcceptanceMarkers {
         [Parameter(Mandatory = $true)][string]$PackagePath,
         [string[]]$Markers = @(
             'ACCEPTANCE_INPUT_SUBMIT',
+            'ACCEPTANCE_DOWNLOADS_NOREPLACE',
+            'ACCEPTANCE_DOWNLOADS_FD',
             'Acceptance: Rebuild Renderer',
+            'Acceptance: Downloads No-Replace',
+            'Acceptance: Downloads FD Boundary',
             'Acceptance renderer',
             'terminateRendererForAcceptance',
+            'runDownloadsNoReplaceProbeForAcceptance',
+            'runDownloadsFileDescriptorProbeForAcceptance',
+            'ssh_acceptance_probe_file_descriptor',
             'pasteClipboardForAcceptance',
             'logAcceptanceInputSubmit',
             'acceptanceInputSequence'
