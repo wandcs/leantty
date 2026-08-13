@@ -28,6 +28,9 @@
       height: 100%;
       padding: 4px 2px 4px 10px;
     }
+    .xterm.secure-input .xterm-helper-textarea {
+      -webkit-text-security: disc;
+    }
     .xterm .xterm-scrollable-element > .scrollbar {
       background: transparent !important;
     }
@@ -247,6 +250,8 @@
     var pendingSnapshotRequestIds = [];
     var snapshotCapturePending = false;
     var initialized = false;
+    var secureInput = false;
+    var secureInputClearTimer = 0;
     var requestedRenderer = 'webgl';
     var actualRenderer = 'dom';
     var rendererFallbackReason = 'not-initialized';
@@ -461,7 +466,9 @@
       return kind === 'theme' || kind === 'focus' || kind === 'blur' ||
         kind === 'clearSelection' || kind === 'ping' ||
         kind === 'fit' || kind === 'fontSize' || kind === 'copySelection' ||
-        kind === 'secondaryAction' || kind === 'snapshotRequest' || kind === 'restoreSnapshot' ||
+        kind === 'secondaryAction' || (kind === 'copyOrInterrupt' && payload.length === 0) ||
+        kind === 'snapshotRequest' || kind === 'restoreSnapshot' ||
+        (kind === 'inputSecurity' && (payload === 'plain' || payload === 'masked')) ||
         (kind === 'searchOpen' && payload.length === 0);
     }
 
@@ -995,6 +1002,7 @@
       term.buffer.onBufferChange(function() { closeSearch(true); });
       window.addEventListener('keydown', handleLinkKeyEvent, true);
       window.addEventListener('keyup', handleLinkKeyEvent, true);
+      window.addEventListener('copy', handleTerminalCopy, true);
       window.addEventListener('blur', function() {
         closeSearch(false);
         linkModifierState.ctrlKey = false;
@@ -1017,12 +1025,20 @@
 
       term.onKey(function() {
         acknowledgeBellAttention();
+        scheduleSecureInputClear();
       });
       if (term.textarea) {
-        term.textarea.addEventListener('compositionstart', acknowledgeBellAttention);
-        term.textarea.addEventListener('input', acknowledgeBellAttention, true);
+        term.textarea.setAttribute('autocomplete', 'off');
+        term.textarea.addEventListener('compositionstart', function() {
+          acknowledgeBellAttention();
+        });
+        term.textarea.addEventListener('input', function() {
+          acknowledgeBellAttention();
+          scheduleSecureInputClear();
+        });
         term.textarea.addEventListener('paste', acknowledgeBellAttention);
       }
+      applyInputSecurity();
 
       term.parser.registerOscHandler(52, function(payload) {
         var decoded = LeanTTYTerminalPolicy.decodeOsc52(payload);
@@ -1036,10 +1052,12 @@
         if (event.type !== 'keydown' || (!event.ctrlKey && !event.metaKey) || event.altKey) {
           return true;
         }
-        if (event.key.toLowerCase() === 'v') {
+        var key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+        var code = typeof event.code === 'string' ? event.code : '';
+        if (key === 'v' || code === 'KeyV') {
           return false;
         }
-        if (event.key.toLowerCase() !== 'c') {
+        if (key !== 'c' && code !== 'KeyC') {
           return true;
         }
         if (copyTerminalSelection()) {
@@ -1184,9 +1202,19 @@
                 reportResize(true);
               }
               break;
+            case 'inputSecurity':
+              if (message.channel !== BRIDGE_CONTROL ||
+                  (message.payload !== 'plain' && message.payload !== 'masked')) break;
+              secureInput = message.payload === 'masked';
+              applyInputSecurity();
+              break;
             case 'secondaryAction':
               if (message.channel !== BRIDGE_CONTROL) break;
               handleSecondaryAction();
+              break;
+            case 'copyOrInterrupt':
+              if (message.channel !== BRIDGE_CONTROL) break;
+              handleCopyOrInterrupt();
               break;
             case 'copySelection':
               if (message.channel !== BRIDGE_CONTROL) break;
@@ -1240,6 +1268,51 @@
         return true;
       }
       return false;
+    }
+
+    function handleTerminalCopy(event) {
+      if (isSearchOpen()) return;
+      if (copyTerminalSelection()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    }
+
+    function copySearchInputSelection() {
+      var input = searchElement('search-input');
+      if (!input || document.activeElement !== input ||
+          typeof input.selectionStart !== 'number' || typeof input.selectionEnd !== 'number' ||
+          input.selectionEnd <= input.selectionStart) return false;
+      sendBridgeControl('copySelection', input.value.substring(input.selectionStart, input.selectionEnd));
+      return true;
+    }
+
+    function handleCopyOrInterrupt() {
+      if (isSearchOpen()) {
+        copySearchInputSelection();
+        return;
+      }
+      if (copyTerminalSelection()) return;
+      sendBridgeData('terminal', '\x03');
+    }
+
+    function applyInputSecurity() {
+      if (!term || !term.element || !term.textarea) return;
+      term.element.classList.toggle('secure-input', secureInput);
+      if (!secureInput) {
+        if (secureInputClearTimer) clearTimeout(secureInputClearTimer);
+        secureInputClearTimer = 0;
+        term.textarea.value = '';
+      }
+    }
+
+    function scheduleSecureInputClear() {
+      if (!secureInput) return;
+      if (secureInputClearTimer) clearTimeout(secureInputClearTimer);
+      secureInputClearTimer = setTimeout(function() {
+        secureInputClearTimer = 0;
+        if (secureInput && term && term.textarea) term.textarea.value = '';
+      }, 100);
     }
 
     function handleSecondaryAction() {

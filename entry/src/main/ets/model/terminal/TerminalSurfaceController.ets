@@ -32,6 +32,7 @@ export class TerminalSurfaceController {
   private textEncoder: util.TextEncoder = new util.TextEncoder()
   private nextSnapshotRequestId: number = 1
   private lastCommittedSnapshotRequestId: number = 0
+  private inputMasked: boolean = false
   private snapshotCompletions: SnapshotCompletion[] = []
   private static readonly SNAPSHOT_COMPLETION_TIMEOUT_MS: number = 2000
 
@@ -81,6 +82,7 @@ export class TerminalSurfaceController {
       this.notifyOutputPauseChange(previousPaused)
     })
     this.bridge = bridge
+    bridge.setInputMasked(this.inputMasked)
     let snapshot: string = this.outputBuffer.getSnapshot()
     if (snapshot.length > 0) {
       bridge.restoreSnapshot(snapshot)
@@ -177,9 +179,22 @@ export class TerminalSurfaceController {
     }
   }
 
+  setInputMasked(masked: boolean): void {
+    this.inputMasked = masked
+    if (this.bridge !== null) {
+      this.bridge.setInputMasked(masked)
+    }
+  }
+
   handleSecondaryAction(): void {
     if (this.bridge !== null) {
       this.bridge.handleSecondaryAction()
+    }
+  }
+
+  copyOrInterrupt(): void {
+    if (this.bridge !== null) {
+      this.bridge.copyOrInterrupt()
     }
   }
 

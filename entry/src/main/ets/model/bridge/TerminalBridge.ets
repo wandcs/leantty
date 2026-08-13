@@ -14,6 +14,7 @@ export class TerminalBridge {
   private pendingBytes: number = 0
   private pendingTheme: string = ''
   private pendingFontSize: number = 0
+  private inputMasked: boolean = false
   private pendingFit: boolean = false
   private pendingRestoreSnapshot: string = ''
   private pendingSnapshotRequestIds: number[] = []
@@ -168,9 +169,22 @@ export class TerminalBridge {
     this.send(BridgeProtocol.fontSize(fontSize))
   }
 
+  setInputMasked(masked: boolean): void {
+    this.inputMasked = masked
+    if (this.ready) {
+      this.send(BridgeProtocol.inputSecurity(masked))
+    }
+  }
+
   handleSecondaryAction(): void {
     if (this.ready) {
       this.send(BridgeProtocol.secondaryAction())
+    }
+  }
+
+  copyOrInterrupt(): void {
+    if (this.ready) {
+      this.send(BridgeProtocol.copyOrInterrupt())
     }
   }
 
@@ -297,6 +311,7 @@ export class TerminalBridge {
         this.send(BridgeProtocol.fontSize(this.pendingFontSize))
         this.pendingFontSize = 0
       }
+      this.send(BridgeProtocol.inputSecurity(this.inputMasked))
       if (this.pendingFit) {
         this.send(BridgeProtocol.fit())
         this.pendingFit = false

@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit'
 import { Environment, fileIo as fs } from '@kit.CoreFileKit'
 import { DownloadsAccessManager } from './DownloadsAccessManager'
+import { TerminalTextPolicy } from '../../common/security/TerminalTextPolicy'
 
 export class TransferLocalFile {
   file: fs.File | null = null
@@ -18,9 +19,10 @@ export class TransferFileManager {
   private static readonly MAX_BASENAME_BYTES: number = 255
   private static readonly MAX_RELATIVE_PATH_BYTES: number = 4096
 
-  static async preparePut(context: common.Context, localName: string): Promise<TransferLocalFile> {
+  static async preparePut(context: common.Context, localName: string,
+    cancellation: Promise<void> | null = null): Promise<TransferLocalFile> {
     TransferFileManager.assertRelativePath(localName, false)
-    await DownloadsAccessManager.ensure(context)
+    await DownloadsAccessManager.ensure(context, cancellation)
     let root: string = TransferFileManager.downloadsRoot()
     let directory: string = TransferFileManager.relativeDirectory(localName)
     TransferFileManager.assertDirectoryChain(root, directory)
@@ -45,9 +47,10 @@ export class TransferFileManager {
     context: common.Context,
     remotePath: string,
     requestedLocalName: string,
-    automaticName: boolean
+    automaticName: boolean,
+    cancellation: Promise<void> | null = null
   ): Promise<TransferLocalFile> {
-    await DownloadsAccessManager.ensure(context)
+    await DownloadsAccessManager.ensure(context, cancellation)
     let directoryTarget: boolean = requestedLocalName.endsWith('/')
     let directory: string = directoryTarget ? requestedLocalName.substring(0, requestedLocalName.length - 1) :
       TransferFileManager.relativeDirectory(requestedLocalName)
@@ -226,13 +229,7 @@ export class TransferFileManager {
   }
 
   private static hasUnsafePathCharacter(path: string): boolean {
-    for (let index: number = 0; index < path.length; index++) {
-      let code: number = path.charCodeAt(index)
-      if (code === 0 || code === 0x1B || code < 0x20 || (code >= 0x7F && code <= 0x9F)) {
-        return true
-      }
-    }
-    return false
+    return !TerminalTextPolicy.isSafe(path)
   }
 
   private static utf8Length(value: string): number {

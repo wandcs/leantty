@@ -1,5 +1,6 @@
 import { SshConfig, SshConfigHost } from '../ssh/SshConfig'
 import { KeyAlgorithm } from '../../common/types/SshKeyTypes'
+import { TerminalTextPolicy } from '../../common/security/TerminalTextPolicy'
 
 export class CommandParseResult {
   isValid: boolean
@@ -365,7 +366,7 @@ export class CommandParser {
       return result
     }
     result.localTargetDirectory = direction === TransferDirection.GET && localOperand.endsWith('/')
-    if (localOperand.length > 0 &&
+    if ((direction === TransferDirection.PUT || localOperand.length > 0) &&
       !CommandParser.validDownloadsRelativePath(localOperand, result.localTargetDirectory)) {
       result.errorMessage = command + ': local path must stay within Downloads and use a relative file path'
       return result
@@ -485,13 +486,7 @@ export class CommandParser {
   }
 
   private static hasUnsafePathCharacter(path: string): boolean {
-    for (let index: number = 0; index < path.length; index++) {
-      let code: number = path.charCodeAt(index)
-      if (code === 0 || code === 0x1B || code < 0x20 || (code >= 0x7F && code <= 0x9F)) {
-        return true
-      }
-    }
-    return false
+    return !TerminalTextPolicy.isSafe(path)
   }
 
   private static utf8Length(value: string): number {

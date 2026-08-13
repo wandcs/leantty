@@ -7,18 +7,34 @@ export class DownloadsAccessManager {
   private static activeRequest: Promise<void> | null = null
   private static logger: Logger = new Logger('DownloadsAccessManager')
 
-  static ensure(context: common.Context): Promise<void> {
+  static ensure(context: common.Context, cancellation: Promise<void> | null = null): Promise<void> {
+    let request: Promise<void>
     if (DownloadsAccessManager.activeRequest !== null) {
-      return DownloadsAccessManager.activeRequest
+      request = DownloadsAccessManager.activeRequest
+    } else {
+      request = DownloadsAccessManager.performRequest(context)
+      DownloadsAccessManager.activeRequest = request
+      request.then(() => {
+        DownloadsAccessManager.clear(request)
+      }).catch(() => {
+        DownloadsAccessManager.clear(request)
+      })
     }
-    let request: Promise<void> = DownloadsAccessManager.performRequest(context)
-    DownloadsAccessManager.activeRequest = request
-    request.then(() => {
-      DownloadsAccessManager.clear(request)
-    }).catch(() => {
-      DownloadsAccessManager.clear(request)
-    })
-    return request
+    return DownloadsAccessManager.waitForRequest(request, cancellation)
+  }
+
+  static async waitForRequest(request: Promise<void>, cancellation: Promise<void> | null): Promise<void> {
+    if (cancellation === null) {
+      await request
+      return
+    }
+    let outcome: string = await Promise.race<string>([
+      request.then((): string => 'ready'),
+      cancellation.then((): string => 'cancelled')
+    ])
+    if (outcome === 'cancelled') {
+      throw new Error('TRANSFER_CANCELLED: Downloads preparation was cancelled')
+    }
   }
 
   private static clear(request: Promise<void>): void {

@@ -31,6 +31,9 @@ import {
   FileTransferProgress
 } from '../model/transfer/FileTransferClient'
 import { TransferFileManager, TransferLocalFile } from '../model/transfer/TransferFileManager'
+import { FileTransferLifecycle, FileTransferPhase } from '../model/transfer/FileTransferLifecycle'
+import { FileTransferFailurePresenter } from '../model/transfer/FileTransferFailure'
+import { TerminalTextPolicy } from '../common/security/TerminalTextPolicy'
 
 export { TerminalMode } from '../common/types/TerminalTypes'
 
@@ -103,6 +106,11 @@ export class SessionViewModel {
   private transferSpeedBytesPerSecond: number = 0
   private transferCompletion: Promise<void> | null = null
   private resolveTransferCompletion: (() => void) | null = null
+  private transferPreparationCancellation: Promise<void> | null = null
+  private resolveTransferPreparationCancellation: (() => void) | null = null
+  private transferLifecycle: FileTransferLifecycle = new FileTransferLifecycle()
+  private transferCancellationRequested: boolean = false
+  private transferControlFailureCode: string = ''
 
   getSession(): SshSession {
     return this.session
@@ -121,7 +129,11 @@ export class SessionViewModel {
   }
 
   hasActiveTransfer(): boolean {
-    return this.fileTransferClient !== null && this.fileTransferClient.hasActiveTransfer()
+    return this.transferLifecycle.isActive()
+  }
+
+  getFileTransferPhase(): FileTransferPhase {
+    return this.transferLifecycle.getPhase()
   }
 
   setOnStateChange(callback: (state: SshSessionState) => void): void {
@@ -154,6 +166,7 @@ export class SessionViewModel {
 
   bindTerminalSurface(surface: TerminalSurfaceController): void {
     this.terminalSurface = surface
+    surface.setInputMasked(SessionViewModel.isSecretInputMode(this.mode))
     surface.setOnMessage((msg: BridgeMessage) => {
       this.handleBridgeMessage(msg)
     })
@@ -233,8 +246,8 @@ export class SessionViewModel {
   }
 
   async disconnect(): Promise<void> {
-    if (this.fileTransferClient !== null && this.fileTransferClient.hasActiveTransfer()) {
-      this.fileTransferClient.cancel()
+    if (this.transferLifecycle.isActive()) {
+      this.requestFileTransferCancellation()
       if (this.transferCompletion !== null) {
         await this.transferCompletion
       }
@@ -269,12 +282,12 @@ export class SessionViewModel {
   }
 
   private cancelPendingConnection(): void {
-    if (this.fileTransferClient !== null && this.fileTransferClient.hasActiveTransfer()) {
+    if (this.transferLifecycle.isActive()) {
       this.passwordBuffer = ''
       this.hostKeyBuffer = ''
       this.pendingKeyPassphrase = ''
       this.clearAuthChallenge()
-      this.fileTransferClient.cancel()
+      this.requestFileTransferCancellation()
       this.setMode(TerminalMode.TRANSFERRING)
       this.clearTransferProgress()
       this.writeTerminal('^C\r\nCancelling file transfer...')
@@ -328,9 +341,19 @@ export class SessionViewModel {
 
   private setMode(newMode: TerminalMode): void {
     this.mode = newMode
+    if (this.terminalSurface !== null) {
+      this.terminalSurface.setInputMasked(SessionViewModel.isSecretInputMode(newMode))
+    }
     if (this.onModeChange !== null) {
       this.onModeChange(newMode)
     }
+  }
+
+  private static isSecretInputMode(mode: TerminalMode): boolean {
+    return mode === TerminalMode.PASSWORD_INPUT ||
+      mode === TerminalMode.KEY_PASSPHRASE_INPUT ||
+      mode === TerminalMode.AUTH_CHALLENGE_INPUT ||
+      mode === TerminalMode.KEY_PASSPHRASE_CHANGE_INPUT
   }
 
   private onSshEvent(event: SshClientEvent, data: string): void {
@@ -761,9 +784,13 @@ export class SessionViewModel {
     }
     let accepted: boolean = answer === 'yes'
     let transferClient: FileTransferClient | null = this.activeFileTransferClient()
+    if (transferClient !== null && !accepted) {
+      this.transferControlFailureCode = 'HOST_KEY_REJECTED'
+    }
     if (accepted) {
       if (this.context === null) {
         if (transferClient !== null) {
+          this.transferControlFailureCode = 'HOST_KEY_ERROR'
           transferClient.verifyHostKey(false)
           transferClient.cancel()
         } else {
@@ -777,6 +804,7 @@ export class SessionViewModel {
           transferClient.getPendingKnownHostLine() : this.sshClient.getPendingKnownHostLine())
       } catch (e) {
         if (transferClient !== null) {
+          this.transferControlFailureCode = 'HOST_KEY_ERROR'
           transferClient.verifyHostKey(false)
           transferClient.cancel()
         } else {
@@ -871,6 +899,18 @@ export class SessionViewModel {
       this.writeError('File transfer is unavailable because the Pane context is missing.')
       return
     }
+    if (!this.setFileTransferPhase(FileTransferPhase.PREPARING)) {
+      this.writeError('File transfer is unavailable because this Pane already owns a transfer.')
+      return
+    }
+    this.transferCancellationRequested = false
+    this.transferControlFailureCode = ''
+    this.transferCompletion = new Promise<void>((resolve: () => void) => {
+      this.resolveTransferCompletion = resolve
+    })
+    this.transferPreparationCancellation = new Promise<void>((resolve: () => void) => {
+      this.resolveTransferPreparationCancellation = resolve
+    })
     this.setMode(TerminalMode.TRANSFERRING)
     this.session.setState(SshSessionState.CONNECTING)
     this.notifyStateChange()
@@ -879,9 +919,17 @@ export class SessionViewModel {
     let prepared: TransferLocalFile | null = null
     try {
       prepared = command.direction === TransferDirection.PUT ?
-        await TransferFileManager.preparePut(this.context, command.localPath) :
+        await TransferFileManager.preparePut(
+          this.context, command.localPath, this.transferPreparationCancellation) :
         await TransferFileManager.prepareGet(
-          this.context, command.remotePath, command.localPath, command.automaticLocalName)
+          this.context, command.remotePath, command.localPath, command.automaticLocalName,
+          this.transferPreparationCancellation)
+      if (this.transferCancellationRequested) {
+        TransferFileManager.cleanup(prepared)
+        prepared = null
+        this.finishCancelledFileTransfer()
+        return
+      }
       if (command.direction === TransferDirection.GET && prepared.nameConflictExpected) {
         this.writeTerminal('\u001b[33mDownloads/' +
           SessionViewModel.terminalSafeText(prepared.localName) +
@@ -919,9 +967,6 @@ export class SessionViewModel {
         this.onFileTransferProgress(event)
       })
       this.fileTransferClient = client
-      this.transferCompletion = new Promise<void>((resolve: () => void) => {
-        this.resolveTransferCompletion = resolve
-      })
       client.start(options)
       TransferFileManager.close(prepared)
       this.transferLastProgressMs = 0
@@ -935,13 +980,23 @@ export class SessionViewModel {
       this.transferSpeedSampleBytes = 0
       this.transferSpeedBytesPerSecond = 0
     } catch (e) {
+      let cleanupSucceeded: boolean = true
       try {
         TransferFileManager.cleanup(prepared)
       } catch (cleanupError) {
+        cleanupSucceeded = false
         this.logger.warn('File transfer preparation cleanup failed: ' + cleanupError)
       }
-      this.finishFileTransferState()
-      this.writeError(this.fileTransferError('PREPARING', '' + e))
+      if (this.transferCancellationRequested) {
+        this.finishCancelledFileTransfer()
+      } else {
+        this.finishFileTransferState(FileTransferPhase.FAILED)
+        let message: string = this.fileTransferError('PREPARING', '' + e)
+        if (!cleanupSucceeded) {
+          message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true)
+        }
+        this.writeError(message)
+      }
     }
   }
 
@@ -974,10 +1029,12 @@ export class SessionViewModel {
           'Fingerprint: ' + data + '\r\nTrust this host key? Type yes or no: ')
         break
       case SshClientEvent.HOST_KEY_CHANGED:
+        this.transferControlFailureCode = 'HOST_KEY_CHANGED'
         this.writeTerminal('\r\n' + this.transferHostKeyChangedWarning(data) + '\r\n')
         if (this.fileTransferClient !== null) { this.fileTransferClient.cancel() }
         break
       case SshClientEvent.ERROR:
+        this.transferControlFailureCode = 'HOST_KEY_ERROR'
         this.logger.warn('Transfer authentication control error: ' + data)
         break
       default:
@@ -997,7 +1054,13 @@ export class SessionViewModel {
   }
 
   private onFileTransferProgress(event: FileTransferProgress): void {
-    if (event.kind === 'preparing' || event.kind === 'transferring') {
+    if (event.kind === 'preparing') {
+      this.setFileTransferPhase(FileTransferPhase.PREPARING)
+      this.setMode(TerminalMode.TRANSFERRING)
+      return
+    }
+    if (event.kind === 'transferring') {
+      this.setFileTransferPhase(FileTransferPhase.TRANSFERRING)
       this.setMode(TerminalMode.TRANSFERRING)
       return
     }
@@ -1007,6 +1070,7 @@ export class SessionViewModel {
       return
     }
     if (event.kind === 'finalizing') {
+      this.setFileTransferPhase(FileTransferPhase.FINALIZING)
       this.setMode(TerminalMode.TRANSFERRING)
       this.logger.info('FILE_TRANSFER stage=finalizing')
       this.renderTransferProgress(event.transferredBytes, event.totalBytes, true)
@@ -1017,19 +1081,31 @@ export class SessionViewModel {
       return
     }
     if (event.kind === 'cancelled') {
-      this.logger.info('FILE_TRANSFER result=cancelled')
-      this.cleanupTransferLocalFile()
-      this.clearTransferProgress()
-      this.finishFileTransferState()
-      this.writeTerminal('\r\n\u001b[33mCancelled\u001b[0m.\r\nltty> ')
+      if (this.transferControlFailureCode.length > 0) {
+        let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+        let message: string = this.fileTransferError(this.transferControlFailureCode, '')
+        if (!cleanupSucceeded) {
+          message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true)
+        }
+        this.clearTransferProgress()
+        this.finishFileTransferState(FileTransferPhase.FAILED)
+        this.writeError(message)
+        return
+      }
+      this.finishCancelledFileTransfer()
       return
     }
     if (event.kind === 'failed') {
-      this.logger.warn('FILE_TRANSFER result=failed code=' + event.code)
-      this.cleanupTransferLocalFile()
-      let message: string = this.fileTransferError(event.code, event.detail)
+      let effectiveCode: string = this.transferControlFailureCode.length > 0 ?
+        this.transferControlFailureCode : event.code
+      this.logger.warn('FILE_TRANSFER result=failed code=' + effectiveCode)
+      let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+      let message: string = this.fileTransferError(effectiveCode, event.detail)
+      if (!cleanupSucceeded && effectiveCode !== 'LOCAL_CLEANUP') {
+        message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true)
+      }
       this.clearTransferProgress()
-      this.finishFileTransferState()
+      this.finishFileTransferState(FileTransferPhase.FAILED)
       this.writeError(message)
     }
   }
@@ -1038,9 +1114,11 @@ export class SessionViewModel {
     let command: TransferCommandResult | null = this.transferCommand
     let prepared: TransferLocalFile | null = this.transferLocalFile
     if (command === null || prepared === null) {
-      this.cleanupTransferLocalFile()
-      this.finishFileTransferState()
-      this.writeError('File transfer completed without a current Pane owner; no final file was exposed.')
+      let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+      this.finishFileTransferState(FileTransferPhase.FAILED)
+      let message: string = 'File transfer completed without a current Pane owner; no final file was exposed.'
+      if (!cleanupSucceeded) { message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true) }
+      this.writeError(message)
       return
     }
     try {
@@ -1063,22 +1141,25 @@ export class SessionViewModel {
         ',bytes=' + Math.floor(bytes).toString() +
         ',durationMs=' + Math.floor(elapsedMs).toString())
       let transferStats: string = SessionViewModel.formatTransferCompletion(bytes, elapsedMs)
-      this.finishFileTransferState()
+      this.finishFileTransferState(FileTransferPhase.SUCCEEDED)
       this.writeTerminal('\r\n\u001b[32m●\u001b[0m ' + summary +
         ' (' + transferStats + ').\r\nltty> ')
     } catch (e) {
-      this.cleanupTransferLocalFile()
+      let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
       let message: string = this.fileTransferError('LOCAL_COMMIT', '' + e)
-      this.finishFileTransferState()
+      if (!cleanupSucceeded) { message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true) }
+      this.finishFileTransferState(FileTransferPhase.FAILED)
       this.writeError(message)
     }
   }
 
-  private cleanupTransferLocalFile(): void {
+  private cleanupTransferLocalFile(): boolean {
     try {
       TransferFileManager.cleanup(this.transferLocalFile)
+      return true
     } catch (e) {
       this.logger.warn('Owned transfer temporary file cleanup failed: ' + e)
+      return false
     }
   }
 
@@ -1136,7 +1217,44 @@ export class SessionViewModel {
     this.transferSpeedObserved = false
   }
 
-  private finishFileTransferState(): void {
+  private finishCancelledFileTransfer(): void {
+    this.logger.info('FILE_TRANSFER result=cancelled')
+    let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+    this.clearTransferProgress()
+    this.finishFileTransferState(FileTransferPhase.CANCELLED)
+    let cleanupWarning: string = cleanupSucceeded ? '' :
+      '\r\n\u001b[31m' + FileTransferFailurePresenter.cleanupWarning(true) + '\u001b[0m'
+    this.writeTerminal('\r\n\u001b[33mCancelled\u001b[0m.' + cleanupWarning + '\r\nltty> ')
+  }
+
+  private requestFileTransferCancellation(): void {
+    this.transferCancellationRequested = true
+    if (this.resolveTransferPreparationCancellation !== null) {
+      this.resolveTransferPreparationCancellation()
+      this.resolveTransferPreparationCancellation = null
+    }
+    if (this.fileTransferClient !== null && this.fileTransferClient.hasActiveTransfer()) {
+      this.fileTransferClient.cancel()
+    }
+  }
+
+  private setFileTransferPhase(phase: FileTransferPhase): boolean {
+    let previous: FileTransferPhase = this.transferLifecycle.getPhase()
+    if (!this.transferLifecycle.transition(phase)) {
+      this.logger.warn('Rejected file transfer phase transition ' + previous.toString() +
+        ' -> ' + phase.toString())
+      return false
+    }
+    if (previous !== phase) {
+      this.logger.info('FILE_TRANSFER phase=' + FileTransferPhase[phase])
+    }
+    return true
+  }
+
+  private finishFileTransferState(result: FileTransferPhase): void {
+    if (!FileTransferLifecycle.isTerminalPhase(result) || !this.setFileTransferPhase(result)) {
+      this.logger.warn('File transfer attempted to finish with an invalid lifecycle state')
+    }
     this.pendingKeyPath = ''
     this.pendingKeyPassphrase = ''
     this.passwordBuffer = ''
@@ -1155,6 +1273,8 @@ export class SessionViewModel {
     this.transferSpeedSampleMs = 0
     this.transferSpeedSampleBytes = 0
     this.transferSpeedBytesPerSecond = 0
+    this.transferCancellationRequested = false
+    this.transferControlFailureCode = ''
     this.session.setState(SshSessionState.DISCONNECTED)
     this.setMode(TerminalMode.IDLE)
     this.notifyStateChange()
@@ -1163,27 +1283,15 @@ export class SessionViewModel {
     }
     this.resolveTransferCompletion = null
     this.transferCompletion = null
+    this.resolveTransferPreparationCancellation = null
+    this.transferPreparationCancellation = null
+    this.setFileTransferPhase(FileTransferPhase.IDLE)
   }
 
   private fileTransferError(code: string, detail: string): string {
-    let cleanDetail: string = detail.replace(/[\r\n\u001b]/g, ' ').trim()
-    if (code === 'REMOTE_CONFLICT') {
-      return 'Upload stopped: the remote target already exists. Choose a different remote filename.'
-    }
-    if (code === 'LOCAL_CONFLICT' || cleanDetail.includes('LOCAL_CONFLICT') ||
-      cleanDetail.includes('File exists')) {
-      return 'Download stopped: that Downloads name already exists. Specify a different local filename.'
-    }
-    if (code === 'REMOTE_NOT_FOUND') {
-      return 'Download stopped: the remote source file does not exist.'
-    }
-    if (code === 'SFTP_UNAVAILABLE') {
-      return 'File transfer stopped: this server does not provide SFTP.'
-    }
-    if (cleanDetail.includes('Downloads access was denied')) {
-      return 'File transfer stopped: Downloads access was denied. Run the command again to retry permission.'
-    }
-    return 'File transfer failed [' + code + ']: ' + cleanDetail
+    let direction: string = this.transferCommand !== null &&
+      this.transferCommand.direction === TransferDirection.GET ? 'get' : 'put'
+    return FileTransferFailurePresenter.describe(code, detail, direction).message
   }
 
   static formatTransferBytes(bytes: number): string {
@@ -1322,15 +1430,7 @@ export class SessionViewModel {
   }
 
   private static terminalSafeText(value: string): string {
-    let result: string = ''
-    for (let index: number = 0; index < value.length; index++) {
-      let code: number = value.charCodeAt(index)
-      if (code === 0x1B) { result += '\\e' }
-      else if (code < 0x20 || (code >= 0x7F && code <= 0x9F)) {
-        result += '\\x' + code.toString(16).padStart(2, '0')
-      } else { result += value[index] }
-    }
-    return result
+    return TerminalTextPolicy.escape(value)
   }
 
   private navigateHistory(direction: number): void {

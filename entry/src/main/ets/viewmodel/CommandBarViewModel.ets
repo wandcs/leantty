@@ -4,6 +4,7 @@ import { Environment, fileIo as fs } from '@kit.CoreFileKit'
 import { CommandParser, CommandParseResult, KeyCommandResult, KeyCommandKind } from '../model/command/CommandParser'
 import { SshKeyManager } from '../model/ssh/SshKeyManager'
 import { KeyPairInfo } from '../common/types/SshKeyTypes'
+import { TerminalTextPolicy } from '../common/security/TerminalTextPolicy'
 
 export { CommandParseResult, KeyCommandResult, KeyCommandKind } from '../model/command/CommandParser'
 
@@ -50,7 +51,9 @@ export class CommandBarViewModel {
       let aliases: string[] = this.sshConfig.getHostAliases()
       let hostMatches: string[] = []
       for (let i = 0; i < aliases.length; i++) {
-        if (aliases[i].startsWith(partial)) { hostMatches.push(hostPrefix + aliases[i]) }
+        if (CommandBarViewModel.safeCompletionValue(aliases[i]) && aliases[i].startsWith(partial)) {
+          hostMatches.push(hostPrefix + aliases[i])
+        }
       }
       return this.finishCompletions(hostMatches)
     }
@@ -135,7 +138,7 @@ export class CommandBarViewModel {
     let aliases: string[] = this.sshConfig.getHostAliases()
     let matches: string[] = []
     for (let index: number = 0; index < aliases.length; index++) {
-      if (aliases[index].startsWith(token.value)) {
+      if (CommandBarViewModel.safeCompletionValue(aliases[index]) && aliases[index].startsWith(token.value)) {
         matches.push(this.inputText.substring(0, token.start) + aliases[index] + ':')
       }
     }
@@ -149,7 +152,7 @@ export class CommandBarViewModel {
     for (let index: number = 0; index < keys.length; index++) {
       let slash: number = keys[index].filePath.lastIndexOf('/')
       let name: string = keys[index].filePath.substring(slash + 1)
-      if (name.startsWith(token.value)) {
+      if (CommandBarViewModel.safeCompletionValue(name) && name.startsWith(token.value)) {
         matches.push(this.inputText.substring(0, token.start) + name)
       }
     }
@@ -171,7 +174,8 @@ export class CommandBarViewModel {
       let matches: string[] = []
       for (let index: number = 0; index < entries.length; index++) {
         let name: string = entries[index]
-        if (!name.startsWith(partial) || (name.startsWith('.') && !partial.startsWith('.'))) { continue }
+        if (!CommandBarViewModel.safeCompletionValue(name) || !name.startsWith(partial) ||
+          (name.startsWith('.') && !partial.startsWith('.'))) { continue }
         let child: string = path + '/' + name
         let stat: fs.Stat = fs.lstatSync(child)
         if (stat.isSymbolicLink() || (!stat.isDirectory() && (!includeFiles || !stat.isFile()))) { continue }
@@ -190,23 +194,29 @@ export class CommandBarViewModel {
     let token: CompletionToken | null = null
     let quote: string = ''
     let escaping: boolean = false
+    let endedOnSeparator: boolean = false
     for (let index: number = 0; index < input.length; index++) {
       let character: string = input[index]
       if (token === null && !/\s/.test(character)) {
         token = new CompletionToken()
         token.start = index
+        endedOnSeparator = false
       }
-      if (token === null) { continue }
-      if (escaping) { token.value += character; escaping = false }
+      if (token === null) {
+        endedOnSeparator = true
+        continue
+      }
+      if (escaping) { token.value += character; escaping = false; endedOnSeparator = false }
       else if (character === '\\' && quote !== "'") { escaping = true }
       else if (quote.length > 0) {
         if (character === quote) { quote = '' } else { token.value += character }
+        endedOnSeparator = false
       } else if (character === '"' || character === "'") { quote = character }
-      else if (/\s/.test(character)) { tokens.push(token); token = null }
-      else { token.value += character }
+      else if (/\s/.test(character)) { tokens.push(token); token = null; endedOnSeparator = true }
+      else { token.value += character; endedOnSeparator = false }
     }
     if (token !== null) { tokens.push(token) }
-    if (input.length > 0 && /\s/.test(input[input.length - 1])) {
+    if (endedOnSeparator) {
       let empty: CompletionToken = new CompletionToken()
       empty.start = input.length
       tokens.push(empty)
@@ -216,13 +226,17 @@ export class CommandBarViewModel {
 
   private static safeCompletionDirectory(directory: string): boolean {
     if (directory.startsWith('/') || directory.startsWith('\\') || directory.includes('\\') ||
-      /^[A-Za-z]:/.test(directory)) { return false }
+      /^[A-Za-z]:/.test(directory) || !CommandBarViewModel.safeCompletionValue(directory)) { return false }
     if (directory.length === 0) { return true }
     let parts: string[] = directory.split('/')
     for (let index: number = 0; index < parts.length; index++) {
       if (parts[index].length === 0 || parts[index] === '.' || parts[index] === '..') { return false }
     }
     return true
+  }
+
+  static safeCompletionValue(value: string): boolean {
+    return TerminalTextPolicy.isSafe(value)
   }
 
   private static escapeArgument(value: string): string {

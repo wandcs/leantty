@@ -1434,50 +1434,59 @@ async fn run_file_transfer(
         }
     }
 
-    let channel = match ssh.channel_open_session().await {
+    let channel = match transfer::bounded_operation(
+        ssh.channel_open_session(),
+        &mut disconnect_rx,
+        "SFTP_UNAVAILABLE",
+        "SFTP channel open failed",
+    )
+    .await
+    {
         Ok(channel) => channel,
-        Err(error) => {
-            let _ = send_file_transfer_event(
+        Err(failure) => {
+            send_file_transfer_failure(
                 &transfer_callback,
-                FileTransferEvent::failed(
-                    transfer_id,
-                    &pane_id,
-                    generation,
-                    "SFTP_UNAVAILABLE",
-                    &format!("SFTP channel open failed: {error}"),
-                ),
-                true,
+                transfer_id,
+                &pane_id,
+                generation,
+                failure,
             );
             return;
         }
     };
-    if let Err(error) = channel.request_subsystem(true, "sftp").await {
-        let _ = send_file_transfer_event(
+    if let Err(failure) = transfer::bounded_operation(
+        channel.request_subsystem(true, "sftp"),
+        &mut disconnect_rx,
+        "SFTP_UNAVAILABLE",
+        "SFTP subsystem request failed",
+    )
+    .await
+    {
+        send_file_transfer_failure(
             &transfer_callback,
-            FileTransferEvent::failed(
-                transfer_id,
-                &pane_id,
-                generation,
-                "SFTP_UNAVAILABLE",
-                &format!("server rejected the SFTP subsystem: {error}"),
-            ),
-            true,
+            transfer_id,
+            &pane_id,
+            generation,
+            failure,
         );
         return;
     }
-    let sftp = match russh_sftp::client::SftpSession::new(channel.into_stream()).await {
+    let sftp = match transfer::bounded_operation(
+        russh_sftp::client::SftpSession::new(channel.into_stream()),
+        &mut disconnect_rx,
+        "SFTP_UNAVAILABLE",
+        "SFTP initialization failed",
+    )
+    .await
+    {
         Ok(sftp) => sftp,
-        Err(error) => {
-            let _ = send_file_transfer_event(
+        Err(failure) => {
+            send_file_transfer_failure(
                 &transfer_callback,
-                FileTransferEvent::failed(
-                    transfer_id,
-                    &pane_id,
-                    generation,
-                    "SFTP_UNAVAILABLE",
-                    &format!("SFTP initialization failed: {error}"),
-                ),
-                true,
+                transfer_id,
+                &pane_id,
+                generation,
+                failure,
             );
             return;
         }
@@ -1519,10 +1528,20 @@ async fn run_file_transfer(
         },
     )
     .await;
-    let _ = sftp.close().await;
-    let _ = ssh
-        .disconnect(russh::Disconnect::ByApplication, "", "")
-        .await;
+    let _ = transfer::bounded_operation(
+        sftp.close(),
+        &mut disconnect_rx,
+        "SFTP_CLOSE",
+        "SFTP session close failed",
+    )
+    .await;
+    let _ = transfer::bounded_operation(
+        ssh.disconnect(russh::Disconnect::ByApplication, "", ""),
+        &mut disconnect_rx,
+        "NETWORK",
+        "SSH transfer session disconnect failed",
+    )
+    .await;
     match result {
         Ok((bytes, total_bytes)) => {
             let delivered = send_file_transfer_event(
@@ -1534,21 +1553,32 @@ async fn run_file_transfer(
                 local_temp_cleanup.keep();
             }
         }
-        Err(transfer::TransferFailure::Cancelled) => {
-            let _ = send_file_transfer_event(
-                &transfer_callback,
-                FileTransferEvent::stage(transfer_id, &pane_id, generation, "cancelled"),
-                true,
-            );
-        }
-        Err(transfer::TransferFailure::Failed { code, detail }) => {
-            let _ = send_file_transfer_event(
-                &transfer_callback,
-                FileTransferEvent::failed(transfer_id, &pane_id, generation, code, &detail),
-                true,
-            );
-        }
+        Err(failure) => send_file_transfer_failure(
+            &transfer_callback,
+            transfer_id,
+            &pane_id,
+            generation,
+            failure,
+        ),
     }
+}
+
+fn send_file_transfer_failure(
+    callback: &JsFileTransferCallback,
+    transfer_id: u32,
+    pane_id: &str,
+    generation: u32,
+    failure: transfer::TransferFailure,
+) {
+    let event = match failure {
+        transfer::TransferFailure::Cancelled => {
+            FileTransferEvent::stage(transfer_id, pane_id, generation, "cancelled")
+        }
+        transfer::TransferFailure::Failed { code, detail } => {
+            FileTransferEvent::failed(transfer_id, pane_id, generation, code, &detail)
+        }
+    };
+    let _ = send_file_transfer_event(callback, event, true);
 }
 
 #[napi]
