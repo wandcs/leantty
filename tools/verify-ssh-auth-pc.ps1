@@ -1348,9 +1348,12 @@ try {
         $terminalKeyLog -notmatch [regex]::Escape([string]$_.Value)
     } | ForEach-Object { [string]$_.Key })
 
-    Invoke-ActivePaneCloseButton -LayoutName 'layout-terminal-key-input-close.json'
-    Invoke-ClosePaneDialog -LayoutName 'layout-terminal-key-input-close-dialog.json'
-    Wait-AuthLog -Pattern 'SSH closed, exitCode=-1'
+    Restart-RegressionApp
+    Wait-LeanTTYTerminalInputLayout `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'layout-terminal-key-input-restarted.json') `
+        -TimeoutSeconds 30 | Out-Null
     if ($missingTerminalKeys.Count -gt 0) {
         throw ('[product] Terminal key input was not delivered: ' + ($missingTerminalKeys -join ','))
     }
