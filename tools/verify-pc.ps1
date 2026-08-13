@@ -24,6 +24,46 @@ if ($candidateSourceStatus.Count -gt 0) {
     throw 'verify-pc requires a clean committed formal-release candidate'
 }
 
+$trackedLockfilePaths = @(
+    'oh-package-lock.json5',
+    'entry/oh-package-lock.json5'
+)
+$trackedLockfileBackups = @{}
+foreach ($relativePath in $trackedLockfilePaths) {
+    $fullPath = Join-Path $repoRoot $relativePath
+    if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+        throw "Tracked OHPM lockfile is missing: $relativePath"
+    }
+    $trackedLockfileBackups[$relativePath] = [IO.File]::ReadAllBytes($fullPath)
+}
+
+function Assert-LeanTTYTrackedLockfileContentUnchanged {
+    foreach ($relativePath in $trackedLockfilePaths) {
+        $workingHash = (& git -C $repoRoot hash-object -- $relativePath 2>&1).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to hash generated OHPM lockfile: $relativePath"
+        }
+        $headHash = (& git -C $repoRoot rev-parse "HEAD:$relativePath" 2>&1).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to resolve committed OHPM lockfile: $relativePath"
+        }
+        if ($workingHash -ne $headHash) {
+            throw "Build changed tracked OHPM lockfile content: $relativePath"
+        }
+    }
+}
+
+function Restore-LeanTTYTrackedLockfileBytes {
+    foreach ($relativePath in $trackedLockfilePaths) {
+        [IO.File]::WriteAllBytes(
+            (Join-Path $repoRoot $relativePath),
+            [byte[]]$trackedLockfileBackups[$relativePath]
+        )
+    }
+}
+
+try {
+
 foreach ($scriptName in @(
         'build-native.ps1',
         'build-lock.ps1',
@@ -82,6 +122,8 @@ New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
 $softwareEvidencePath = Join-Path $EvidenceDirectory 'software.json'
 & (Join-Path $PSScriptRoot 'test-regression.ps1') -EvidencePath $softwareEvidencePath
 if ($LASTEXITCODE -ne 0) { throw 'Formal-release software regression gate failed' }
+Assert-LeanTTYTrackedLockfileContentUnchanged
+Restore-LeanTTYTrackedLockfileBytes
 
 . (Join-Path $PSScriptRoot 'build-lock.ps1')
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
@@ -109,6 +151,13 @@ if ($SkipDevice) {
     & (Join-Path $PSScriptRoot 'dev-pc.ps1') @deviceArgs
 }
 if ($LASTEXITCODE -ne 0) { throw 'PC verification build or deployment failed' }
+Assert-LeanTTYTrackedLockfileContentUnchanged
+Restore-LeanTTYTrackedLockfileBytes
+$postBuildSourceStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect post-build candidate source state' }
+if ($postBuildSourceStatus.Count -gt 0) {
+    throw 'verify-pc build changed the committed formal-release candidate'
+}
 
 $verifiedHap = Join-Path $repoRoot (
     'entry\build\default\outputs\default\entry-default-signed.hap'
@@ -129,4 +178,7 @@ Write-Host (
 ) -ForegroundColor Cyan
 
 Write-Host 'VERIFY PC SUCCESS' -ForegroundColor Green
+}
+} finally {
+    Restore-LeanTTYTrackedLockfileBytes
 }

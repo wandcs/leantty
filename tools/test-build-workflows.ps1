@@ -389,6 +389,14 @@ try {
         $verifyPcText.Contains('verify-pc evidence directory must be outside the repository') -and
         $verifyPcText.Contains('$evidenceDirectoryFullPath.StartsWith(')
     ) 'verify-pc evidence would be deleted by its own clean build'
+    Assert-True (
+        $verifyPcText.Contains("'oh-package-lock.json5'") -and
+        $verifyPcText.Contains("'entry/oh-package-lock.json5'") -and
+        $verifyPcText.Contains('[IO.File]::ReadAllBytes($fullPath)') -and
+        $verifyPcText.Contains('git -C $repoRoot hash-object -- $relativePath') -and
+        $verifyPcText.Contains('[IO.File]::WriteAllBytes(') -and
+        $verifyPcText.Contains('verify-pc build changed the committed formal-release candidate')
+    ) 'verify-pc does not preserve generated OHPM lockfiles while rejecting content drift'
 
     $buildAllText = Get-Content -LiteralPath (
         Join-Path $PSScriptRoot 'build-all.ps1'
