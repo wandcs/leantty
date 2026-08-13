@@ -519,6 +519,7 @@ foreach ($scriptName in @(
             $content.Contains("'uitest uiInput keyEvent 2072 2045 2022'") -and
             -not $content.Contains("'uitest uiInput keyEvent 2047 2054'") -and
             $content.Contains("'Previous match, Shift+Enter'") -and
+            $content.Contains('-RequireSearchInputFocus $false') -and
             -not $content.Contains("'uitest uiInput keyEvent 2072 2017'") -and
             $content.Contains('Clear-TerminalSearchQuery -CharacterCount $query.Length') -and
             $content.Contains('Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length') -and

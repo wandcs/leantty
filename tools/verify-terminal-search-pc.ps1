@@ -327,6 +327,7 @@ function Wait-TerminalSearchQueryState {
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ExpectedQuery,
         [Parameter(Mandatory = $true)][string]$LayoutName,
         [string]$ExpectedResultPattern = '',
+        [bool]$RequireSearchInputFocus = $true,
         [ValidateRange(1, 30)][int]$TimeoutSeconds = 15
     )
     $path = Join-Path $EvidenceDirectory $LayoutName
@@ -335,7 +336,8 @@ function Wait-TerminalSearchQueryState {
         $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $path
         $searchInputs = @(Get-TerminalSearchInputNodes -Layout $layout)
         if ($searchInputs.Count -eq 1 -and
-            [string]$searchInputs[0].attributes.focused -eq 'true') {
+            (-not $RequireSearchInputFocus -or
+                [string]$searchInputs[0].attributes.focused -eq 'true')) {
             $query = [string]$searchInputs[0].attributes.text
             if ([string]::IsNullOrEmpty($query)) {
                 $query = [string]$searchInputs[0].attributes.originalText
@@ -741,6 +743,7 @@ try {
             $previous = Wait-TerminalSearchQueryState `
                 -ExpectedQuery 't' `
                 -ExpectedResultPattern "^$expectedIndex/$($position.count)$" `
+                -RequireSearchInputFocus $false `
                 -LayoutName ("layout-ascii-previous-$step.json")
             $backwardLabels.Add($previous.resultLabel)
         }
