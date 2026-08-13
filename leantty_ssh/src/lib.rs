@@ -536,7 +536,7 @@ async fn run_channel_writer(
           data = write_rx.recv() => {
             match data {
               Some(bytes) => {
-                if let Err(error) = channel.data(&bytes[..]).await {
+                if let Err(error) = channel.data_bytes(bytes).await {
                   send_control(&control_callback, &format!("WRITE_ERROR:{}", error));
                 }
               }
