@@ -1317,6 +1317,8 @@ try {
         -GreaterThan $resizeCount `
         -TimeoutSeconds 30 | Out-Null
     Focus-AuthPane -Side 'left' -LayoutName 'layout-transport-left-connected.json'
+    Submit-ConnectedInput -Text 'ltty-input-check afterperf'
+    Wait-FixtureLog -Pattern 'input case=afterperf result=matched' | Out-Null
     Close-FixtureShell
     Focus-AuthPane -Side 'right' -LayoutName 'layout-transport-right-idle.json'
     Invoke-ActivePaneCloseButton -LayoutName 'layout-transport-close-right.json'

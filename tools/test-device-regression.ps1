@@ -483,6 +483,8 @@ foreach ($scriptName in @(
             $content.Contains("Invoke-AuthPerfSample -CaseId 'russhmain'") -and
             $content.Contains('"completenessPercent":100') -and
             $content.Contains("'resize cols=\d+ rows=\d+'") -and
+            $content.Contains("'ltty-input-check afterperf'") -and
+            $content.Contains("'input case=afterperf result=matched'") -and
             $content.Contains('Wait-AuthPaneCount -Count 1')
         ) 'SSH transport main-path coverage is incomplete'
         Assert-True (
