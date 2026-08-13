@@ -406,6 +406,7 @@ foreach ($scriptName in @(
             -not $content.Contains("SessionViewModel: D: 1 chars, mode=") -and
             $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
+            $content.Contains('[regex]::Escape($Command)') -and
             $content.Contains('Assert-AuthCommandLoopbackTarget') -and
             $content.Contains("'[environment] Device key injection changed the SSH command target'") -and
             $content.Contains('Activate-RegressionWindow') -and

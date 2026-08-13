@@ -494,13 +494,15 @@ function Submit-FocusedDeviceCommand {
         [Parameter(Mandatory = $true)][string]$Command,
         [Parameter(Mandatory = $true)][string]$LayoutName
     )
+    $submittedCommandPattern =
+        'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
     for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
         Focus-ActiveCommandInput -LayoutName $LayoutName
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         try {
-            Wait-AuthLog -Pattern 'ACCEPTANCE_INPUT_SUBMIT.*kind=command' -TimeoutSeconds 10
+            Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
             return
         } catch {
             if ($commandAttempt -ge 3) {
