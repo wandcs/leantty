@@ -21,8 +21,8 @@ published on GitHub on 2026-08-06 with the corrected production Profile, then
 passed AppGallery review and was released to users on 2026-08-08.
 [LeanTTY 1.2.0](https://github.com/wandcs/leantty/releases/tag/v1.2.0) was
 published on GitHub on 2026-08-08 after its exact production and review builds
-passed the formal software, signing and physical-PC gates; AppGallery
-submission remains pending.
+passed the formal software, signing and physical-PC gates. The matching
+production APP passed AppGallery review and was released to users on 2026-08-13.
 
 The `main` branch can contain behavior listed under `CHANGELOG.md` →
 `Unreleased` or the selected version's `In development` section. Source-tree
@@ -31,7 +31,8 @@ behavior is present in the AppGallery version.
 
 The immutable `v1.0.0`, `v1.0.1`, `v1.1.0`, `v1.1.1` and `v1.2.0` tags record
 the rejected former identity, first AppGallery release, superseded GitHub
-release, current AppGallery release and current GitHub release respectively.
+release, superseded AppGallery release and current AppGallery/GitHub release
+respectively.
 Exact submitted-source mapping, artifact hashes and signing verification remain
 in the private release evidence archive. No signing credential or generated
 application package is stored in Git.

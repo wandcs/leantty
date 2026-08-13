@@ -19,10 +19,9 @@ milestone 不在这里维护第二份清单。
 `v1.2.0` 已由精确提交 `90c20cacf47ac620ccc89d21e70b6cdbbfeb0a68`、不可变签名标签和
 [GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.2.0) 冻结。2026-08-08，
 用户确认 SHA-256 为 `2a5bf97856c0915325abc4ebe5acd1acd6c6c142141e278a9d34f4c6c3505233`
-的 production signed APP 与已审定商店材料已经提交 AppGallery，当前处于审核中。审核中的
-1.2.0 不阻止 `main` 开始 1.3 开发，但其提交、标签、包体和 Release 不得移动或替换；若审核
-失败，必须从适当的已发布标签准备最小 `1.2.1` PATCH，并把必要修复前向合并到 1.3，不能把
-1.3 功能混入替代包。
+的 production signed APP 与已审定商店材料已提交 AppGallery。2026-08-13，用户确认该精确
+版本审核通过并正式上架；1.2.0 的商店状态记为 `Released`，其提交、标签、包体和 Release
+继续保持不可变。1.3 的前序 AppGallery 状态门禁已经解除。
 
 1.3 已授权推进一个受约束的单文件交付能力。用户只在尚未连接服务器的当前 Pane 的
 `ltty>` 中执行 `put` 或 `get`；本地根固定为系统 Downloads，远端通过同一 Host、Identity、
@@ -325,9 +324,8 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
 - [ ] 准备正式发布包时才运行 `tools/test-regression.ps1`、`tools/verify-pc.ps1` 和
   `release-process.md` 的隔离 production/review 流程；冻结一个精确提交、tree、native 输出、
   签名 APP/HAP、哈希和同候选物理机证据。
-- [ ] 只有 1.2.0 AppGallery 审核已到终态，且 1.3.0 的不可变签名标签和匹配 GitHub Release
-  已发布后，才提交同版本 production APP。1.2.0 若审核失败，先按独立 `1.2.1` PATCH 流程处理，
-  不移动标签、不替换 Release，也不把 1.3 功能混入补丁。
+- [ ] 1.2.0 AppGallery 审核已于 2026-08-13 通过并上架。1.3.0 仍须先发布不可变签名标签和
+  匹配 GitHub Release，才提交同版本 production APP；不移动标签、不替换 Release。
 
 ## 当前非目标与停止条件
 
