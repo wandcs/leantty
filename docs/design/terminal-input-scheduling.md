@@ -1,10 +1,10 @@
 # 终端输入调度与大粘贴连续可用性
 
-> 状态：Implementing
+> 状态：实现已验证；正式候选复验待执行
 >
 > 当前归属：1.3.0 可靠性门禁
 >
-> 最近更新：2026-08-13
+> 最近更新：2026-08-14
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
@@ -45,7 +45,7 @@ IME 和 TUI 输入共享 Session writer。因此产品必须保证的不是某�
 1.3 收尾 smoke 使用受控 SSH fixture 检查了 512 KiB、随后 1 MiB 终端粘贴，以及粘贴后的普通 PERF
 命令、resize、断开和重连。
 
-已经观察到：
+诊断阶段观察到：
 
 - russh 通用 `AsyncRead/copy` 写入路径以约 8 KiB 分块，30 秒内远端只收到 278,528 字节；
 - 改用拥有型、窗口感知的 `data_bytes` 后，fixture 以约 32 KiB 分块收到完整 524,288 字节，
@@ -53,13 +53,29 @@ IME 和 TUI 输入共享 Session writer。因此产品必须保证的不是某�
 - 1 MiB 样本也按 32 KiB 分块逐字节完整到达；仅调度让步和额外 10 ms 固定节奏都没有让随后
   命令到达；
 - 随后的 37 个单字符事件进入 ArkTS，native 同步入队调用未报告拒绝，但 fixture 在粘贴完成后
-  没有收到任何后续字节；一次性 control-callback 探针不足以稳定界定 writer 内部停在哪个 await；
-- 因而 `data_bytes(...).await` 的成功不能单独作为“远端 PTY 已处理、同一会话已经恢复公平
-  调度”的产品证据；继续只追究这个 future 的返回边界不会闭合用户问题。
+  没有收到任何后续字节；一次性 control-callback 探针不足以稳定界定 writer 内部停在哪个 await。
 
-该诊断证明当前 writer actor 的连续调度仍未闭合，且固定延迟不是修复，
-但不证明 russh、xterm 或 SSH 协议本身普遍无法处理大粘贴。512 KiB 是用于稳定暴露问题的压力
-样本，不是 LeanTTY 宣布支持的最大尺寸，也不是要求普通用户经常执行的工作流。
+完整产品 writer actor 回归随后证明 1 MiB、紧随短命令、resize、FIFO 和任务唤醒均正常，继续调整
+块大小、固定睡眠或改写 `select` 不能解释真机差异。根因最终位于仓库专用 russh fixture：shell
+channel 建立后，fixture 只在 `Handler::data` 处理输入，却没有消费同一 `Channel` 的 `wait()` receiver。
+russh server 会先把每个 channel message 发入该 receiver，再调用 `Handler::data`；默认 100 项缓冲区
+被此前 27 个输入检查消息、37 个粘贴准备消息和 32 个数据块占到 96 项，后续命令前 4 个字符填满
+缓冲区，第 5 个字符在进入 handler 前阻塞。这与现场“1 MiB 完整、后续 4 字符后停住”精确一致。
+
+fixture 现在持续排空 shell receiver，同时保留 SFTP channel 的独立所有权；对应回归发送超过默认
+缓冲区的 120 个单字节消息后仍能处理短命令。产品侧保留单 writer/FIFO、32 KiB 有界
+`data_bytes` 推进、完整 writer actor 回归，并监督 writer 任务，防止未来异常退出静默表现为输入
+无响应；没有加入固定延迟、第二输入通道或新的粘贴状态。
+
+2026-08-14，物理 ARM64 HAD-W32 在同一测试签名 HAP（SHA-256
+`d0f9b20fffc2eb3cf0146629c875045908038b7445707a46511fdc136b81941d`）上通过完整
+`transport-main-path`：1 MiB 逐字节匹配、648,000 字节持续输出、分屏 resize、输出后的普通输入、
+显式关闭已连接 Pane、重连、重连后普通输入和远端正常结束全部通过。最终证据位于
+`build/verification/ssh-large-input-main-path-final/`，attempt
+`0fb3bbbbbc8d4d299b52a2612792e038`。该包仍是 diagnostic HAP，不是可发布或保留候选。
+
+512 KiB 和 1 MiB 都只是稳定压力样本，不是 LeanTTY 宣布支持的最大尺寸，也不是要求普通用户
+经常执行的工作流。
 
 ## 三、同类终端调研
 
@@ -78,7 +94,9 @@ IME 和 TUI 输入共享 Session writer。因此产品必须保证的不是某�
 
 - [Ghostty clipboard paste options](https://ghostty.org/docs/config/reference#clipboard-paste-protection)
 - [Ghostty paste implementation](https://github.com/ghostty-org/ghostty/blob/dab1b105b932fecf155d2b6a66c79d8311f826ea/src/Surface.zig)
+- [Ghostty close-surface action](https://ghostty.org/docs/config/keybind/reference#close_surface)
 - [iTerm2 hidden paste settings](https://iterm2.com/documentation-hidden-settings.html)
+- [iTerm2 session closing behavior](https://iterm2.com/documentation-preferences-profiles-session.html)
 - [Windows Terminal paste warnings](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/interaction#paste-warnings)
 - [Kitty paste actions](https://sw.kovidgoyal.net/kitty/conf/#opt-kitty.paste_actions)
 - [WezTerm pasted newline semantics](https://wezterm.org/config/lua/config/canonicalize_pasted_newlines.html)
@@ -89,7 +107,12 @@ IME 和 TUI 输入共享 Session writer。因此产品必须保证的不是某�
 1. 内容语义与安全层决定是否需要确认、过滤，以及是否尊重 bracketed paste；
 2. 输入传输层保证顺序、背压、有界资源和事件循环连续可用。
 
-LeanTTY 当前实机失败发生在第二层，不能用第一层的弹窗绕过。
+本轮实机失败发生在第二层，不能用第一层的弹窗绕过。
+
+Ghostty 和 iTerm2 也都把关闭 surface/session 作为独立产品动作，并按活跃进程决定是否确认。
+`Ctrl+D` 则仍是发给远端 TTY/前台程序的输入，其是否退出取决于远端行规程和程序状态。因此 1.3
+用 LeanTTY 现有 Pane 关闭确认验证本地断开，用受控 fixture 的普通 `ltty-exit` 命令验证远端
+正常结束；不把 HDC 是否能稳定合成 `Ctrl+D` 误写为产品断开合同。
 
 ## 四、1.3.0 已确认方案
 
@@ -110,10 +133,11 @@ LeanTTY 当前实机失败发生在第二层，不能用第一层的弹窗绕过
 具体块大小和使用 `data`/`data_bytes` 的选择是实现细节，必须由自动化背压用例和物理 PC 结果
 决定，不在本文固化为用户合同。
 
-当前下一实现步骤是先在 WSL 回归中覆盖完整的产品 writer actor，而不是只直接调用 russh
-channel：使用与产品一致的 mpsc 输入/resize 接收器，发送 1 MiB 后立即排入短命令，并观察任务
-唤醒、FIFO 和控制分支。只有该回归能复现或明确排除真机现象后，才选择 pending data/resize
-future 的共同调度结构，或评估含相关修复的 russh 版本；不再用物理 PC 反复试块大小和睡眠。
+WSL 回归已覆盖完整产品 writer actor，而不只直接调用 russh channel：使用与产品一致的 mpsc
+输入/resize 接收器，发送超过 1 MiB 后立即排入短命令，验证任务唤醒、FIFO、resize 和后续输入。
+该回归排除了产品 actor 调度假设；结合 russh server 消息顺序和 fixture 红/绿回归，最终只修复
+fixture receiver 消费，并为产品 writer 增加异常退出监督。当前没有升级 russh 或重构 session
+调度的证据，不继续实现这两条备选路线。
 
 ### 4.2 1.3.0 不做
 

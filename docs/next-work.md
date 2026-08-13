@@ -277,8 +277,8 @@ ASCII 查询、正反向导航、Pane/Tab 所有权、warm eviction 和窗口 re
 保留候选闭合。随后在 SSH 主路径 smoke 中发现 512 KiB 终端粘贴使用 russh 通用
 `AsyncRead/copy` 路径时以 8 KiB 分块，30 秒只到 278,528 字节；切换到拥有型、窗口感知的
 `data_bytes` 后，fixture 在时限内按 32 KiB 分块收到完整 524,288 字节且内容匹配，但该次大写入
-之后的 37 字节 PERF 命令只进入 ArkTS/native 队列，没有到达 fixture。因此 1.3 尚不能冻结正式
-候选，也不能把“大粘贴连续可用”记为通过。
+之后的 37 字节 PERF 命令只进入 ArkTS/native 队列，没有到达 fixture。因此在该诊断阶段，1.3
+尚不能冻结正式候选，也不能把“大粘贴连续可用”记为通过。
 
 2026-08-13 又把受控样本提高到 OSC52 安全上界的 1 MiB：32 KiB 有界分块能逐字节完整到达
 fixture；仅 `yield_now` 和额外 10 ms 固定节奏都未让随后命令到达。失败现场连续观察到后续
@@ -287,13 +287,28 @@ fixture；仅 `yield_now` 和额外 10 ms 固定节奏都未让随后命令到�
 writer/resize 边界，因此不能据此宣称 native writer 已完成后续写入，也不能继续靠调整块大小或
 睡眠碰运气。10 ms 节流和一次性探针已从保留实现中删除。
 
-下一步先在 WSL 中建立覆盖“产品 mpsc writer actor + russh channel + 1 MiB + 紧随短命令”的最小
-回归，复现真机的任务唤醒/控制分支行为；再决定是让 pending data/resize future 共同受 select
+当时确定的下一步是在 WSL 中建立覆盖“产品 mpsc writer actor + russh channel + 1 MiB +
+紧随短命令”的最小回归，复现真机的任务唤醒/控制分支行为；再决定是让 pending data/resize future 共同受 select
 调度，还是用已验证的 russh 修复版本替换当前实现。仍保持单 writer/FIFO、字节顺序和 SSH
 window 背压，不引入第二套输入通道。完整上下文、竞品调研、实现边界和版本决定见
 [`design/terminal-input-scheduling.md`](design/terminal-input-scheduling.md)。当前诊断提交和 HAP
 都不是可保留或发布的 1.3 候选；完成后删除一次性探针，或仅在其仍满足有界、无内容、低噪声的
 持续诊断价值时保留。
+
+2026-08-14 已闭合该诊断。完整产品 writer actor 回归没有复现真机停顿；结合 russh server 的
+channel 消息顺序，根因是仓库专用 fixture 在使用 `Handler::data` 时未消费 shell `Channel` 的
+receiver。默认 100 项缓冲区在 27 个输入检查消息、37 个粘贴准备消息和 32 个数据块后剩 4 项，
+恰好解释后续命令第 5 个字符前阻塞。fixture 现已持续排空 shell receiver，并以超过 100 条消息的
+回归锁定；产品保留单 writer/FIFO、32 KiB `data_bytes` 有界推进，并增加完整 actor 回归和 writer
+异常退出监督，没有引入固定睡眠、第二输入通道或 russh 升级。
+
+同一 diagnostic HAP（SHA-256
+`d0f9b20fffc2eb3cf0146629c875045908038b7445707a46511fdc136b81941d`）随后在物理 HAD-W32
+通过 1 MiB 精确匹配、648,000 字节持续输出、分屏 resize、输出后普通输入、Pane 显式断开、重连、
+重连后普通输入和远端正常结束；attempt 为 `0fb3bbbbbc8d4d299b52a2612792e038`，证据位于
+`build/verification/ssh-large-input-main-path-final/`。Ctrl+D 仍按标准作为远端 TTY 输入，不作为
+LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式远端 exit。该 diagnostic HAP
+没有晋升为可发布候选。
 
 完成 1.3 必须满足：实现前门禁均有可复现证据；`put/get` 的解析、所有权、取消、冲突和
 清理通过自动化；干净 ARM64 构建通过；同一个保留候选完成全部适用的物理 HarmonyOS PC
@@ -307,14 +322,14 @@ window 背压，不引入第二套输入通道。完整上下文、竞品调研�
 
 ## 1. 自动化与集成门禁
 
-- [ ] 闭合 SSH 大写入后的连续可用性：在现有单 writer/FIFO 内有界推进较大输入，在块之间恢复
+- [x] 闭合 SSH 大写入后的连续可用性：在现有单 writer/FIFO 内有界推进较大输入，在块之间恢复
   后续输入和控制事件的调度机会；保持写入顺序、SSH window 背压、resize 和取消/断开有界，
   不先引入固定睡眠或第二套输入通道。新增覆盖产品 writer 的回归，并通过 WSL Rust fmt、clippy、
   native/core/fixture tests、fixture E2E、相关 PowerShell helper tests 和 `git diff --check`。
   完成条件是压力样本逐字节匹配后，同一 Session 的 PERF/普通命令获得 fixture 可观察响应，
   分屏 resize、断开和重连均通过；场景超时只防止测试无界等待，不形成 512 KiB/30 秒产品 SLA。
-  当前最近证据：1 MiB 本体完整匹配，但紧随命令未到 fixture；下一动作不是继续调节延迟，而是
-  先让产品 writer actor 的 Rust 回归复现同一失败，再基于该回归修改 pending data/resize 调度。
+  产品 actor、fixture 超过 100 条消息回归和物理 HAD-W32 主路径均已通过；根因、竞品取舍、
+  Ctrl+D/显式断开边界和最终证据见 `design/terminal-input-scheduling.md`。
 - [x] 覆盖 Downloads 边界、no-follow、FD 所有权、目标预存在、提交期并发抢占、自动编号、
   后缀/隐藏文件/Unicode/序号耗尽、既有多级子目录、中间 symlink、目录意图、临时文件同目录
   可见性与精确清理；每个冲突用例验证已有内容哈希不变。
@@ -349,7 +364,7 @@ window 背压，不引入第二套输入通道。完整上下文、竞品调研�
   终端可恢复、错误可执行且已有文件不变；检查 hilog、命令历史和错误快照不含凭据或文件内容。
 - [ ] 在同一个保留候选上完成键盘、IME、Tab/Pane、终端输入输出、搜索、选择/复制、链接、
   tmux/vim/less/Agent TUI、窗口与 SSH 主路径的最小稳定 smoke，证明文件传输没有破坏现有核心
-  终端事件链。先完成上一节的大写入修复，再从干净精确提交重建候选；此前搜索、Pane/Tab、
+  终端事件链。大写入诊断门禁已闭合；下一步从干净精确提交重建候选。此前搜索、Pane/Tab、
   warm eviction 和窗口证据可作为范围依据，但不能替代新候选上的同包 smoke。
 
 ## 3. 文档、版本与发布

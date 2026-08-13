@@ -41,6 +41,11 @@
 
 ### Fixed
 
+- Kept SSH terminal input continuously usable after large writes. The existing
+  single writer now has full actor-level regression coverage and supervised
+  failure reporting; 1 MiB input is delivered without truncation or reordering,
+  and subsequent input, output, resize, explicit disconnect and reconnect remain
+  available without adding paste-size prompts, fixed delays or a second input path.
 - Physical `Escape` now closes an active terminal search and restores the
   terminal focus on HarmonyOS PC. The Web surface reports only its bounded
   open/composing/closed ownership state, so IME composition gets its first
