@@ -60,7 +60,8 @@ $launchResult = Start-LeanTTYRegressionApp `
 $appProcessId = $launchResult.processId
 
 $beforeLayoutPath = Join-Path $EvidenceDirectory 'layout-before.json'
-$beforeLayout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $beforeLayoutPath
+$beforeLayout = Wait-LeanTTYTerminalInputLayout `
+    -Hdc $hdc -Target $Target -LocalPath $beforeLayoutPath -TimeoutSeconds 30
 $moreButton = @(Get-LeanTTYLayoutNodes -Node $beforeLayout | Where-Object {
     [string]$_.attributes.type -eq 'Stack' -and
     [string]$_.attributes.clickable -eq 'true' -and
@@ -135,6 +136,37 @@ do {
 } while ($fdStopwatch.Elapsed.TotalSeconds -lt 10)
 if ($fdMatchingLine.Count -ne 1) { throw 'Timed out waiting for the Downloads FD result' }
 
+& $hdc -t $Target shell "uitest uiInput click $($moreCenter.x) $($moreCenter.y)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'LeanTTY four-dot menu could not be reopened for the manager probe' }
+Start-Sleep -Milliseconds 300
+$managerMenuLayoutPath = Join-Path $EvidenceDirectory 'layout-manager-menu.json'
+$managerMenuLayout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $managerMenuLayoutPath
+$managerProbeLabel = 'Acceptance: Downloads Manager Boundary'
+$managerProbeNode = @(Get-LeanTTYLayoutNodes -Node $managerMenuLayout | Where-Object {
+    [string]$_.attributes.text -eq $managerProbeLabel -or
+    [string]$_.attributes.originalText -eq $managerProbeLabel
+} | Select-Object -First 1)
+if ($managerProbeNode.Count -ne 1) {
+    throw 'The debug package does not expose the production Downloads manager boundary action'
+}
+$managerProbeCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$managerProbeNode[0].attributes.bounds)
+& $hdc -t $Target shell "uitest uiInput click $($managerProbeCenter.x) $($managerProbeCenter.y)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'The Downloads manager boundary action could not be triggered' }
+
+$managerPattern = 'ACCEPTANCE_DOWNLOADS_MANAGER passed=true'
+$managerStopwatch = [Diagnostics.Stopwatch]::StartNew()
+$managerMatchingLine = ''
+do {
+    $logs = (@(& $hdc -t $Target shell "hilog -z 1200 -t app -P $appProcessId" 2>&1) -join "`n")
+    $managerMatchingLine = @($logs -split "`n" | Where-Object { $_ -match $managerPattern } | Select-Object -Last 1)
+    if ($managerMatchingLine.Count -eq 1) { break }
+    if ($logs -match 'ACCEPTANCE_DOWNLOADS_MANAGER passed=false') {
+        throw 'The production Downloads manager boundary probe reported failure'
+    }
+    Start-Sleep -Milliseconds 200
+} while ($managerStopwatch.Elapsed.TotalSeconds -lt 300)
+if ($managerMatchingLine.Count -ne 1) { throw 'Timed out waiting for the Downloads manager boundary result' }
+
 $deviceFacts = [ordered]@{}
 foreach ($paramName in @(
         'const.product.model',
@@ -163,10 +195,12 @@ $evidence = [ordered]@{
     hapSha256 = (Get-FileHash -LiteralPath $hapPath -Algorithm SHA256).Hash.ToLowerInvariant()
     observation = [string]$matchingLine[0]
     fdObservation = [string]$fdMatchingLine[0]
+    managerObservation = [string]$managerMatchingLine[0]
     cleanup = 'verified by the application after deleting every exact probe path and symbolic link'
 }
 $evidencePath = Join-Path $EvidenceDirectory 'device-downloads-capability.json'
 $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $evidencePath -Encoding utf8NoBOM
 
-Write-Host 'FILE TRANSFER PC GATE PASSED: Downloads no-replace + FD/no-follow boundary' -ForegroundColor Green
+Write-Host 'FILE TRANSFER PC GATE PASSED: Downloads no-replace + FD/no-follow + product manager boundary' `
+    -ForegroundColor Green
 Write-Host "Evidence: $evidencePath"

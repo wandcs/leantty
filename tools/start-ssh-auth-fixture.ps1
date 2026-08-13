@@ -11,6 +11,10 @@ param(
     [string]$ListenAddress = '0.0.0.0:22222',
     [ValidateRange(1, 3600)]
     [int]$RunSeconds = 900,
+    [ValidateRange(0, 5000)]
+    [int]$SftpDelayMilliseconds = 0,
+    [ValidateSet('none', 'put-write-remove', 'permission-denied', 'rename-unsupported', 'unavailable')]
+    [string]$SftpFault = 'none',
     [string]$ControlDirectory = '',
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO
 )
@@ -22,7 +26,12 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 function New-FixtureSecret {
     $bytes = [byte[]]::new(16)
     [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    return [Convert]::ToHexString($bytes).ToLowerInvariant()
+    $characters = [char[]]::new($bytes.Length * 2)
+    for ($index = 0; $index -lt $bytes.Length; $index++) {
+        $characters[$index * 2] = [char](97 + ($bytes[$index] -shr 4))
+        $characters[$index * 2 + 1] = [char](97 + ($bytes[$index] -band 15))
+    }
+    return -join $characters
 }
 
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + `
@@ -63,7 +72,9 @@ try {
     Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -Distribution $Distribution -CargoArguments @(
         'run', '--locked', '--offline', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty-ssh-auth-fixture', '--', $ListenAddress, $wslCredentialsPath,
-        $RunSeconds.ToString([Globalization.CultureInfo]::InvariantCulture), $wslReadyPath
+        $RunSeconds.ToString([Globalization.CultureInfo]::InvariantCulture), $wslReadyPath,
+        $SftpDelayMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture),
+        $SftpFault
     )
 } finally {
     if (Test-Path -LiteralPath $fixtureDirectory) {

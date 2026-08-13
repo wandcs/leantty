@@ -35,6 +35,8 @@ function Add-LeanTTYAcceptanceSource {
         bridge = Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
         surface = Join-Path $RepoRoot 'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets'
         session = Join-Path $RepoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
+        transfer = Join-Path $RepoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
+        client = Join-Path $RepoRoot 'entry\src\main\ets\model\transfer\FileTransferClient.ets'
     }
     $text = @{}
     foreach ($name in $files.Keys) {
@@ -42,6 +44,7 @@ function Add-LeanTTYAcceptanceSource {
     }
 
     $indexImports = "import { BrowserLauncher } from '../model/browser/BrowserLauncher'`n" +
+        "import { TransferFileManager, TransferLocalFile } from '../model/transfer/TransferFileManager'`n" +
         "import { Environment, fileIo as fs } from '@kit.CoreFileKit'`n" +
         "import { ACCEPTANCE_TESTS } from 'BuildProfile'"
     if ($includeNativeFileDescriptorProbe) {
@@ -51,11 +54,12 @@ function Add-LeanTTYAcceptanceSource {
     $text.index = Set-LeanTTYAcceptanceSourceText $text.index `
         "import { BrowserLauncher } from '../model/browser/BrowserLauncher'" `
         $indexImports
-    $transferFixtureMenuIndex = if ($includeNativeFileDescriptorProbe) { 9 } else { 8 }
+    $downloadsManagerMenuIndex = if ($includeNativeFileDescriptorProbe) { 9 } else { 8 }
+    $transferFixtureMenuIndex = if ($includeNativeFileDescriptorProbe) { 10 } else { 9 }
     $text.index = Set-LeanTTYAcceptanceSourceText $text.index `
         'const MENU_ACTION_COUNT: number = 6' `
         ('const MENU_ACTION_COUNT: number = ACCEPTANCE_TESTS ? ' +
-            $(if ($includeNativeFileDescriptorProbe) { '10' } else { '9' }) + ' : 6')
+            $(if ($includeNativeFileDescriptorProbe) { '11' } else { '10' }) + ' : 6')
     $selectionAnchor = "    if (selected === 4 || selected === 5) { return }"
     $selectionReplacement = "    if (selected === 6 && ACCEPTANCE_TESTS) {`n" +
         "      this.menuOpen = false`n" +
@@ -74,6 +78,11 @@ function Add-LeanTTYAcceptanceSource {
             "      return`n" +
             "    }`n"
     }
+    $selectionReplacement += "    if (selected === $downloadsManagerMenuIndex && ACCEPTANCE_TESTS) {`n" +
+        "      this.menuOpen = false`n" +
+        "      this.runDownloadsManagerBoundaryProbeForAcceptance()`n" +
+        "      return`n" +
+        "    }`n"
     $selectionReplacement += "    if (selected === $transferFixtureMenuIndex && ACCEPTANCE_TESTS) {`n" +
         "      this.menuOpen = false`n" +
         "      this.toggleDownloadsTransferFixtureForAcceptance()`n" +
@@ -90,7 +99,20 @@ function Add-LeanTTYAcceptanceSource {
       this.pasteClipboardForAcceptance()
       return true
     }
-
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event.keyCode === 2037) {
+      let runtime: PaneRuntime | null = this.activePaneRuntime()
+      if (runtime !== null) {
+        runtime.viewModel.handleTerminalInput('数据')
+      }
+      return true
+    }
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event.keyCode === 2035) {
+      let runtime: PaneRuntime | null = this.activePaneRuntime()
+      if (runtime !== null) {
+        runtime.surface.selectTextForAcceptance()
+      }
+      return true
+    }
     let navigationAction: WorkspaceNavigationAction = InteractionPolicy.workspaceNavigationAction(
 '@
     $text.index = Set-LeanTTYAcceptanceSourceText `
@@ -243,14 +265,28 @@ function Add-LeanTTYAcceptanceSource {
   }
 
   private removeAcceptanceTransferFixture(root: string, directory: string): void {
+    let longName: string = 'l'.repeat(220) + '.bin'
+    let longNumberedName: string = 'l'.repeat(220) + ' (1).bin'
     let names: string[] = fs.listFileSync(directory)
     for (let index: number = 0; index < names.length; index++) {
       let name: string = names[index]
       if (name !== 'source.bin' && name !== 'source (1).bin' &&
+        name !== 'backpressure-result.bin' && name !== 'force-get-result.bin' &&
+        name !== 'force-put-source.bin' && name !== 'late-cancel-result.bin' &&
+        name !== 'late-disconnect-result.bin' && name !== 'report alpha.txt' &&
+        name !== 'report beta.txt' && name !== '报告 β.txt' && name !== '.hidden-file' &&
+        name !== 'space name.bin' && name !== 'space name (1).bin' &&
+        name !== '数据.bin' && name !== '数据 (1).bin' &&
+        name !== longName && name !== longNumberedName &&
+        name !== 'unsafe\u202Ename.txt' && name !== 'nested space' &&
         !(name.startsWith('.leantty-') && name.endsWith('.part'))) {
         throw new Error('unexpected fixture entry: ' + name)
       }
-      this.removeAcceptanceProbeFile(directory + '/' + name)
+      if (name === 'nested space') {
+        fs.rmdirSync(directory + '/' + name)
+      } else {
+        this.removeAcceptanceProbeFile(directory + '/' + name)
+      }
     }
     fs.rmdirSync(directory)
     let staleNames: string[] = fs.listFileSync(root)
@@ -271,23 +307,259 @@ function Add-LeanTTYAcceptanceSource {
       return
     }
     let root: string = Environment.getUserDownloadDir().replace(/\/+$/, '')
-    let directory: string = root + '/.leantty-1-3-transfer-fixture'
+    let directory: string = root + '/.leantty-transfer-fixture'
     try {
       if (fs.accessSync(directory)) {
         let originalPreserved: boolean = this.acceptanceProbeFileEquals(directory + '/source.bin',
           new Uint8Array([101, 120, 105, 115, 116, 105, 110, 103]))
         let numberedPresent: boolean = fs.accessSync(directory + '/source (1).bin')
+        let cleanupFailureFinalPresent: boolean = fs.accessSync(directory + '/local-cleanup-failure.bin')
+        let backpressureFinalPresent: boolean = fs.accessSync(directory + '/backpressure-result.bin')
+        let forceGetFinalPresent: boolean = fs.accessSync(directory + '/force-get-result.bin')
+        let forcePutSourcePresent: boolean = fs.accessSync(directory + '/force-put-source.bin')
+        let forcePutSourceSize: number = forcePutSourcePresent ?
+          fs.lstatSync(directory + '/force-put-source.bin').size : 0
+        let lateCancelFinalPresent: boolean = fs.accessSync(directory + '/late-cancel-result.bin')
+        let lateDisconnectFinalPresent: boolean = fs.accessSync(directory + '/late-disconnect-result.bin')
+        let names: string[] = fs.listFileSync(directory)
+        let temporaryCount: number = 0
+        for (let index: number = 0; index < names.length; index++) {
+          if (names[index].startsWith('.leantty-') && names[index].endsWith('.part')) {
+            temporaryCount++
+          }
+        }
+        let temporaryPresent: boolean = temporaryCount > 0
         this.removeAcceptanceTransferFixture(root, directory)
         logger.info('ACCEPTANCE_TRANSFER_FIXTURE state=cleaned,originalPreserved=' +
-          originalPreserved.toString() + ',numberedPresent=' + numberedPresent.toString())
+          originalPreserved.toString() + ',numberedPresent=' + numberedPresent.toString() +
+          ',temporaryPresent=' + temporaryPresent.toString() +
+          ',cleanupFailureFinalPresent=' + cleanupFailureFinalPresent.toString() +
+          ',temporaryCount=' + temporaryCount.toString() +
+          ',backpressureFinalPresent=' + backpressureFinalPresent.toString() +
+          ',forceGetFinalPresent=' + forceGetFinalPresent.toString() +
+          ',forcePutSourcePresent=' + forcePutSourcePresent.toString() +
+          ',forcePutSourceSize=' + forcePutSourceSize.toString() +
+          ',lateCancelFinalPresent=' + lateCancelFinalPresent.toString() +
+          ',lateDisconnectFinalPresent=' + lateDisconnectFinalPresent.toString())
         return
       }
       fs.mkdirSync(directory)
       this.writeAcceptanceProbeFile(directory + '/source.bin',
         new Uint8Array([101, 120, 105, 115, 116, 105, 110, 103]))
+      let completionBytes: Uint8Array = new Uint8Array([99, 111, 109, 112, 108, 101, 116, 101])
+      this.writeAcceptanceProbeFile(directory + '/report alpha.txt', completionBytes)
+      this.writeAcceptanceProbeFile(directory + '/report beta.txt', completionBytes)
+      this.writeAcceptanceProbeFile(directory + '/报告 β.txt', completionBytes)
+      this.writeAcceptanceProbeFile(directory + '/.hidden-file', completionBytes)
+      this.writeAcceptanceProbeFile(directory + '/unsafe\u202Ename.txt', completionBytes)
+      this.writeAcceptanceProbeFile(directory + '/space name.bin', completionBytes)
+      this.writeAcceptanceProbeFile(directory + '/数据.bin', completionBytes)
+      this.writeAcceptanceProbeFile(directory + '/' + 'l'.repeat(220) + '.bin', completionBytes)
+      fs.mkdirSync(directory + '/nested space')
+      let forcePutFile: fs.File | null = null
+      try {
+        forcePutFile = fs.openSync(directory + '/force-put-source.bin',
+          fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY)
+        let forcePutChunk: Uint8Array = new Uint8Array(65536)
+        for (let index: number = 0; index < forcePutChunk.length; index++) {
+          forcePutChunk[index] = index % 251
+        }
+        for (let index: number = 0; index < 32; index++) {
+          let written: number = fs.writeSync(forcePutFile.fd, forcePutChunk.buffer)
+          if (written !== forcePutChunk.length) {
+            throw new Error('short force-termination fixture write')
+          }
+        }
+        fs.fsyncSync(forcePutFile.fd)
+      } finally {
+        if (forcePutFile !== null) {
+          fs.closeSync(forcePutFile)
+        }
+      }
       logger.info('ACCEPTANCE_TRANSFER_FIXTURE state=prepared')
     } catch (e) {
       logger.error('ACCEPTANCE_TRANSFER_FIXTURE state=failed,error=' + e)
+    }
+  }
+
+  private async runDownloadsManagerBoundaryProbeForAcceptance(): Promise<void> {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    let context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    let root: string = Environment.getUserDownloadDir().replace(/\/+$/, '')
+    let relativeRoot: string = '.leantty-1-3-manager-probe-' + Date.now().toString()
+    let directory: string = root + '/' + relativeRoot
+    let nestedDirectory: string = directory + '/nested'
+    let deepDirectory: string = nestedDirectory + '/deep'
+    let existingPath: string = directory + '/existing.bin'
+    let racePath: string = directory + '/race.bin'
+    let automaticPath: string = directory + '/remote.bin'
+    let automaticOnePath: string = directory + '/remote (1).bin'
+    let automaticTwoPath: string = directory + '/remote (2).bin'
+    let exhaustionBasename: string = 'exhaust.bin'
+    let putPath: string = deepDirectory + '/source.bin'
+    let existing: Uint8Array = new Uint8Array([69, 88, 73, 83, 84, 73, 78, 71])
+    let incoming: Uint8Array = new Uint8Array([73, 78, 67, 79, 77, 73, 78, 71])
+    let race: TransferLocalFile | null = null
+    let automatic: TransferLocalFile | null = null
+    let exhaustion: TransferLocalFile | null = null
+    let put: TransferLocalFile | null = null
+    let raceTempPath: string = ''
+    let automaticTempPath: string = ''
+    let exhaustionTempPath: string = ''
+    let preflightRejected: boolean = false
+    let raceRejected: boolean = false
+    let automaticCommitted: boolean = false
+    let exhaustionRejected: boolean = false
+    let exhaustionPreserved: boolean = false
+    let temporarySameDirectory: boolean = false
+    let nestedPutOpened: boolean = false
+    let productCleanupComplete: boolean = false
+    let probeError: string = ''
+    try {
+      fs.mkdirSync(directory)
+      fs.mkdirSync(nestedDirectory)
+      fs.mkdirSync(deepDirectory)
+      this.writeAcceptanceProbeFile(existingPath, existing)
+      try {
+        await TransferFileManager.prepareGet(
+          context, '/existing.bin', relativeRoot + '/existing.bin', false)
+      } catch (e) {
+        preflightRejected = ('' + e).includes('LOCAL_CONFLICT')
+      }
+      if (!preflightRejected || !this.acceptanceProbeFileEquals(existingPath, existing)) {
+        throw new Error('explicit existing target was not rejected and preserved')
+      }
+
+      race = await TransferFileManager.prepareGet(context, '/race.bin', relativeRoot + '/race.bin', false)
+      raceTempPath = race.tempPath
+      temporarySameDirectory = race.tempPath.startsWith(directory + '/.leantty-') &&
+        race.tempPath.endsWith('.part')
+      this.writeAcceptanceProbeFile(race.tempPath, incoming)
+      this.writeAcceptanceProbeFile(racePath, existing)
+      try {
+        TransferFileManager.commitGet(race)
+      } catch (e) {
+        raceRejected = ('' + e).includes('File exists') || ('' + e).includes('LOCAL_COMMIT')
+      }
+      if (!raceRejected || !this.acceptanceProbeFileEquals(racePath, existing) ||
+        !this.acceptanceProbeFileEquals(race.tempPath, incoming)) {
+        throw new Error('commit-time explicit conflict did not preserve both objects')
+      }
+      TransferFileManager.cleanup(race)
+      if (fs.accessSync(raceTempPath)) {
+        throw new Error('explicit conflict temporary file was not cleaned')
+      }
+
+      this.writeAcceptanceProbeFile(automaticPath, existing)
+      this.writeAcceptanceProbeFile(automaticOnePath, existing)
+      automatic = await TransferFileManager.prepareGet(context, '/remote.bin', relativeRoot + '/', true)
+      automaticTempPath = automatic.tempPath
+      temporarySameDirectory = temporarySameDirectory &&
+        automatic.tempPath.startsWith(directory + '/.leantty-') && automatic.tempPath.endsWith('.part')
+      this.writeAcceptanceProbeFile(automatic.tempPath, incoming)
+      let committedName: string = TransferFileManager.commitGet(automatic)
+      automaticCommitted = committedName === relativeRoot + '/remote (2).bin' &&
+        this.acceptanceProbeFileEquals(automaticPath, existing) &&
+        this.acceptanceProbeFileEquals(automaticOnePath, existing) &&
+        this.acceptanceProbeFileEquals(automaticTwoPath, incoming) && !fs.accessSync(automaticTempPath)
+      if (!automaticCommitted) {
+        throw new Error('automatic commit did not choose the minimal available name')
+      }
+
+      for (let index: number = 0; index < 10000; index++) {
+        let occupiedName: string = TransferFileManager.automaticName(exhaustionBasename, index)
+        this.writeAcceptanceProbeFile(directory + '/' + occupiedName, existing)
+      }
+      exhaustion = await TransferFileManager.prepareGet(
+        context, '/' + exhaustionBasename, relativeRoot + '/', true)
+      exhaustionTempPath = exhaustion.tempPath
+      this.writeAcceptanceProbeFile(exhaustion.tempPath, incoming)
+      try {
+        TransferFileManager.commitGet(exhaustion)
+      } catch (e) {
+        exhaustionRejected = ('' + e).includes('LOCAL_CONFLICT')
+      }
+      exhaustionPreserved = exhaustionRejected &&
+        this.acceptanceProbeFileEquals(exhaustion.tempPath, incoming)
+      for (let index: number = 0; index < 10000 && exhaustionPreserved; index++) {
+        let occupiedName: string = TransferFileManager.automaticName(exhaustionBasename, index)
+        exhaustionPreserved = this.acceptanceProbeFileEquals(directory + '/' + occupiedName, existing)
+      }
+      if (!exhaustionPreserved) {
+        throw new Error('automatic name exhaustion did not preserve every occupied name and temporary file')
+      }
+      TransferFileManager.cleanup(exhaustion)
+      if (fs.accessSync(exhaustionTempPath)) {
+        throw new Error('automatic name exhaustion temporary file was not cleaned')
+      }
+
+      this.writeAcceptanceProbeFile(putPath, incoming)
+      put = await TransferFileManager.preparePut(context, relativeRoot + '/nested/deep/source.bin')
+      if (put.file === null) {
+        throw new Error('nested PUT source did not produce an owned file descriptor')
+      }
+      let actual: Uint8Array = new Uint8Array(incoming.length)
+      let readLength: number = fs.readSync(put.file.fd, actual.buffer)
+      nestedPutOpened = readLength === incoming.length
+      if (nestedPutOpened) {
+        for (let index: number = 0; index < incoming.length; index++) {
+          if (actual[index] !== incoming[index]) {
+            nestedPutOpened = false
+            break
+          }
+        }
+      }
+      if (!nestedPutOpened) {
+        throw new Error('nested PUT source descriptor did not read the expected object')
+      }
+      TransferFileManager.close(put)
+      productCleanupComplete = !fs.accessSync(raceTempPath) && !fs.accessSync(automaticTempPath) &&
+        !fs.accessSync(exhaustionTempPath)
+      if (!temporarySameDirectory || !productCleanupComplete) {
+        throw new Error('temporary-file ownership or cleanup boundary failed')
+      }
+    } catch (e) {
+      probeError = '' + e
+    } finally {
+      try { TransferFileManager.cleanup(race) } catch (e) { productCleanupComplete = false }
+      try { TransferFileManager.cleanup(automatic) } catch (e) { productCleanupComplete = false }
+      try { TransferFileManager.cleanup(exhaustion) } catch (e) { productCleanupComplete = false }
+      TransferFileManager.close(put)
+      this.removeAcceptanceProbeFile(raceTempPath)
+      this.removeAcceptanceProbeFile(automaticTempPath)
+      this.removeAcceptanceProbeFile(exhaustionTempPath)
+      for (let path of [
+        existingPath, racePath, automaticPath, automaticOnePath, automaticTwoPath, putPath
+      ]) {
+        this.removeAcceptanceProbeFile(path)
+      }
+      for (let index: number = 0; index < 10000; index++) {
+        let occupiedName: string = TransferFileManager.automaticName(exhaustionBasename, index)
+        this.removeAcceptanceProbeFile(directory + '/' + occupiedName)
+      }
+      try { if (fs.accessSync(deepDirectory)) { fs.rmdirSync(deepDirectory) } } catch (e) {}
+      try { if (fs.accessSync(nestedDirectory)) { fs.rmdirSync(nestedDirectory) } } catch (e) {}
+      try { if (fs.accessSync(directory)) { fs.rmdirSync(directory) } } catch (e) {}
+    }
+    let cleanupComplete: boolean = !fs.accessSync(directory)
+    if (probeError.length === 0 && preflightRejected && raceRejected && automaticCommitted &&
+      exhaustionRejected && exhaustionPreserved &&
+      temporarySameDirectory && nestedPutOpened && productCleanupComplete && cleanupComplete) {
+      logger.info('ACCEPTANCE_DOWNLOADS_MANAGER passed=true,preflightConflictPreserved=true,' +
+        'commitConflictPreserved=true,automaticMinimalName=true,automaticExhaustion=true,' +
+        'allOccupiedContentsPreserved=true,tempSameDirectory=true,' +
+        'nestedPutFd=true,productCleanup=true,cleanupComplete=true')
+    } else {
+      logger.error('ACCEPTANCE_DOWNLOADS_MANAGER passed=false,preflightRejected=' +
+        preflightRejected.toString() + ',raceRejected=' + raceRejected.toString() +
+        ',automaticCommitted=' + automaticCommitted.toString() +
+        ',exhaustionRejected=' + exhaustionRejected.toString() +
+        ',exhaustionPreserved=' + exhaustionPreserved.toString() + ',tempSameDirectory=' +
+        temporarySameDirectory.toString() + ',nestedPutOpened=' + nestedPutOpened.toString() +
+        ',productCleanup=' + productCleanupComplete.toString() + ',cleanupComplete=' +
+        cleanupComplete.toString() + ',error=' + probeError)
     }
   }
 
@@ -426,6 +698,9 @@ function Add-LeanTTYAcceptanceSource {
         $menuAddition += "        this.menuRow(8, '⊙', 'Acceptance: Downloads FD Boundary', '', true,`n" +
             "          () => { this.runDownloadsFileDescriptorProbeForAcceptance() })`n"
     }
+    $menuAddition += "        this.menuRow($downloadsManagerMenuIndex, '◇', " +
+        "'Acceptance: Downloads Manager Boundary', '', true,`n" +
+        "          () => { this.runDownloadsManagerBoundaryProbeForAcceptance() })`n"
     $menuAddition += "        this.menuRow($transferFixtureMenuIndex, '⇄', " +
         "'Acceptance: Transfer Fixture', '', true,`n" +
         "          () => { this.toggleDownloadsTransferFixtureForAcceptance() })`n"
@@ -448,11 +723,25 @@ function Add-LeanTTYAcceptanceSource {
     }
   }
 
+  selectTextForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    this.webCtrl.runJavaScript(
+      "if (typeof term !== 'undefined' && term) { " +
+      "term.select(0, Math.max(0, term.buffer.active.cursorY - 1), 4); term.focus(); " +
+      "term.hasSelection() ? 'selected:' + term.getSelection().length : 'empty'; } else { 'missing'; }"
+    ).then((result: string) => {
+      this.logger.info('ACCEPTANCE_SELECTION result=' + result)
+    }).catch((error: Error) => {
+      this.logger.error('ACCEPTANCE_SELECTION failed=' + error.message)
+    })
+  }
+
 '@
     $text.bridge = Set-LeanTTYAcceptanceSourceText $text.bridge `
         '  private postTerminalPacket(data: Uint8Array): number {' `
         ($bridgeMethod + '  private postTerminalPacket(data: Uint8Array): number {')
-
     $text.surface = Set-LeanTTYAcceptanceSourceText $text.surface `
         "import util from '@ohos.util'" `
         "import util from '@ohos.util'`nimport { ACCEPTANCE_TESTS } from 'BuildProfile'"
@@ -464,6 +753,12 @@ function Add-LeanTTYAcceptanceSource {
     return this.bridge.terminateRendererForAcceptance()
   }
 
+  selectTextForAcceptance(): void {
+    if (ACCEPTANCE_TESTS && this.bridge !== null) {
+      this.bridge.selectTextForAcceptance()
+    }
+  }
+
 '@
     $text.surface = Set-LeanTTYAcceptanceSourceText $text.surface `
         '  private handleBridgeMessage(sourceBridge: TerminalBridge, msg: BridgeMessage): void {' `
@@ -472,10 +767,92 @@ function Add-LeanTTYAcceptanceSource {
     $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
         "import { KeyCommandService, KeyCommandContext } from '../model/command/KeyCommandService'" `
         ("import { ACCEPTANCE_TESTS } from 'BuildProfile'`n" +
+            "import { DownloadsAccessManager } from '../model/transfer/DownloadsAccessManager'`n" +
             "import { KeyCommandService, KeyCommandContext } from '../model/command/KeyCommandService'")
     $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
         '  private perfPingStartedMs: number = 0' `
-        "  private perfPingStartedMs: number = 0`n  private acceptanceInputSequence: number = 0"
+        ("  private perfPingStartedMs: number = 0`n" +
+            "  private acceptanceInputSequence: number = 0`n" +
+            "  private acceptanceBackpressureStalled: boolean = false`n" +
+            "  private acceptanceBackpressureProgressCallbacks: number = 0")
+    $preparationAnchor = @'
+    let prepared: TransferLocalFile | null = null
+    try {
+'@
+    $preparationReplacement = @'
+    let prepared: TransferLocalFile | null = null
+    try {
+      if (ACCEPTANCE_TESTS &&
+        command.remotePath === '/.leantty-acceptance-preparation-wait/source.bin') {
+        this.logger.info('ACCEPTANCE_FILE_TRANSFER_PREPARATION waiting=true')
+        let stalledPreparation: Promise<void> = new Promise<void>((resolve: () => void) => {})
+        await DownloadsAccessManager.waitForRequest(
+          stalledPreparation, this.transferPreparationCancellation)
+      }
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session $preparationAnchor $preparationReplacement
+    $backpressureAnchor = @'
+  private onFileTransferProgress(event: FileTransferProgress): void {
+'@
+    $backpressureReplacement = @'
+  private onFileTransferProgress(event: FileTransferProgress): void {
+    if (ACCEPTANCE_TESTS && this.transferCommand !== null &&
+      this.transferCommand.remotePath.endsWith('backpressure-source.bin')) {
+      if (event.kind === 'progress') {
+        this.acceptanceBackpressureProgressCallbacks++
+        if (!this.acceptanceBackpressureStalled) {
+          this.acceptanceBackpressureStalled = true
+          this.logger.info('ACCEPTANCE_FILE_TRANSFER_BACKPRESSURE state=stalling')
+          let releaseAt: number = Date.now() + 1500
+          while (Date.now() < releaseAt) {
+          }
+          this.logger.info('ACCEPTANCE_FILE_TRANSFER_BACKPRESSURE state=released')
+        }
+      } else if (event.kind === 'completed') {
+        this.logger.info('ACCEPTANCE_FILE_TRANSFER_BACKPRESSURE state=completed,progressCallbacks=' +
+          this.acceptanceBackpressureProgressCallbacks.toString() + ',' + event.detail)
+      }
+    }
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session $backpressureAnchor $backpressureReplacement
+    $tabCompletionAnchor = @'
+    }
+  }
+
+  private static terminalSafeText(value: string): string {
+'@
+    $tabCompletionReplacement = @'
+    }
+    if (ACCEPTANCE_TESTS) {
+      this.logger.info('ACCEPTANCE_TAB_COMPLETE input=' +
+        SessionViewModel.terminalSafeText(this.commandLine.getText()) +
+        ',matches=' + matches.length.toString())
+    }
+  }
+
+  private static terminalSafeText(value: string): string {
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session $tabCompletionAnchor $tabCompletionReplacement
+    $idleInterruptAnchor = @'
+      } else if (action.kind === TerminalInputActionKind.INTERRUPT) {
+        this.commandLine.clear()
+        this.writeTerminal('^C\r\n')
+        this.writePrompt()
+'@
+    $idleInterruptReplacement = @'
+      } else if (action.kind === TerminalInputActionKind.INTERRUPT) {
+        this.commandLine.clear()
+        this.writeTerminal('^C\r\n')
+        this.writePrompt()
+        if (ACCEPTANCE_TESTS) {
+          this.logger.info('ACCEPTANCE_IDLE_INTERRUPT cleared=true')
+        }
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session $idleInterruptAnchor $idleInterruptReplacement
     foreach ($inputPoint in @(
         @{ anchor = "  private executeCommandBuffer(): void {"; kind = 'command' },
         @{ anchor = "    this.writeTerminal('\r\n')`n    let pw: string = this.passwordBuffer"; kind = 'password' },
@@ -509,8 +886,10 @@ function Add-LeanTTYAcceptanceSource {
   private logAcceptanceInputSubmit(kind: string): void {
     if (ACCEPTANCE_TESTS) {
       this.acceptanceInputSequence++
+      let commandDetail: string = kind === 'command' ? ',input=' +
+        SessionViewModel.terminalSafeText(this.commandLine.getText()) : ''
       this.logger.info('ACCEPTANCE_INPUT_SUBMIT sequence=' + this.acceptanceInputSequence.toString() +
-        ',kind=' + kind)
+        ',kind=' + kind + commandDetail)
     }
   }
 
@@ -518,6 +897,110 @@ function Add-LeanTTYAcceptanceSource {
     $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
         '  private submitKeyPassphrase(): void {' `
         ($sessionMethod + '  private submitKeyPassphrase(): void {')
+
+    $text.transfer = Set-LeanTTYAcceptanceSourceText $text.transfer `
+        "import { DownloadsAccessManager } from './DownloadsAccessManager'" `
+        ("import { ACCEPTANCE_TESTS } from 'BuildProfile'`n" +
+            "import { DownloadsAccessManager } from './DownloadsAccessManager'")
+    $cleanupAnchor = @'
+    TransferFileManager.close(prepared)
+    if (prepared.tempPath.length > 0) {
+      try {
+'@
+    $cleanupReplacement = @'
+    TransferFileManager.close(prepared)
+    if (prepared.tempPath.length > 0) {
+      try {
+        if (ACCEPTANCE_TESTS &&
+          prepared.localName === '.leantty-transfer-fixture/local-cleanup-failure.bin') {
+          throw new Error('ACCEPTANCE_LOCAL_CLEANUP_FAILURE')
+        }
+'@
+    $text.transfer = Set-LeanTTYAcceptanceSourceText `
+        $text.transfer $cleanupAnchor $cleanupReplacement
+
+    $text.client = Set-LeanTTYAcceptanceSourceText $text.client `
+        "import sshNative from 'libleantty_ssh.so'" `
+        ("import { ACCEPTANCE_TESTS } from 'BuildProfile'`n" +
+            "import sshNative from 'libleantty_ssh.so'")
+    $text.client = Set-LeanTTYAcceptanceSourceText $text.client `
+        '  private static nextGeneration: number = 1' `
+        ("  private static nextGeneration: number = 1`n" +
+            "  private static acceptancePendingCancelledLateEvent: NativeFileTransferEvent | null = null`n" +
+            "  private acceptanceLateEventScenario: string = ''")
+    $lateStartAnchor = @'
+    this.paneId = options.paneId
+    this.privateKeyPath = options.privateKeyPath
+'@
+    $lateStartReplacement = @'
+    this.paneId = options.paneId
+    this.privateKeyPath = options.privateKeyPath
+    if (options.remotePath.indexOf('late-cancel-source.bin') >= 0) {
+      this.acceptanceLateEventScenario = 'cancel'
+      this.logger.warn('ACCEPTANCE_FILE_TRANSFER_LATE_EVENT scenario=cancel,state=armed')
+    } else if (options.remotePath.indexOf('late-disconnect-source.bin') >= 0) {
+      this.acceptanceLateEventScenario = 'disconnect'
+      this.logger.warn('ACCEPTANCE_FILE_TRANSFER_LATE_EVENT scenario=disconnect,state=armed')
+    }
+'@
+    $text.client = Set-LeanTTYAcceptanceSourceText `
+        $text.client $lateStartAnchor $lateStartReplacement
+    $lateStartDeliveryAnchor = @'
+    this.logger.info('File transfer initiated, transferId=' + this.transferId)
+'@
+    $lateStartDeliveryReplacement = @'
+    this.logger.info('File transfer initiated, transferId=' + this.transferId)
+    if (FileTransferClient.acceptancePendingCancelledLateEvent !== null) {
+      let staleEvent: NativeFileTransferEvent = FileTransferClient.acceptancePendingCancelledLateEvent
+      FileTransferClient.acceptancePendingCancelledLateEvent = null
+      staleEvent.kind = 'completed'
+      staleEvent.code = ''
+      staleEvent.detail = ''
+      this.logger.warn('ACCEPTANCE_FILE_TRANSFER_LATE_EVENT scenario=cancel,state=injected')
+      this.handleNativeTransferEvent(staleEvent)
+    } else if (this.acceptanceLateEventScenario === 'disconnect') {
+      this.logger.warn('ACCEPTANCE_FILE_TRANSFER_LATE_EVENT scenario=cancel,state=missing')
+    }
+'@
+    $text.client = Set-LeanTTYAcceptanceSourceText `
+        $text.client $lateStartDeliveryAnchor $lateStartDeliveryReplacement
+    $lateCaptureAnchor = @'
+    let event: FileTransferProgress = new FileTransferProgress()
+'@
+    $lateCaptureReplacement = @'
+    if (this.acceptanceLateEventScenario === 'cancel' &&
+      FileTransferClient.acceptancePendingCancelledLateEvent === null) {
+      FileTransferClient.acceptancePendingCancelledLateEvent = nativeEvent
+      this.logger.warn('ACCEPTANCE_FILE_TRANSFER_LATE_EVENT scenario=cancel,state=captured')
+    }
+    let event: FileTransferProgress = new FileTransferProgress()
+'@
+    $text.client = Set-LeanTTYAcceptanceSourceText `
+        $text.client $lateCaptureAnchor $lateCaptureReplacement
+    $lateTerminalAnchor = @'
+    if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
+      this.transferId = ''
+'@
+    $lateTerminalReplacement = @'
+    if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
+      if (this.acceptanceLateEventScenario === 'cancel' &&
+        event.kind === 'cancelled') {
+        FileTransferClient.acceptancePendingCancelledLateEvent = nativeEvent
+      } else if (this.acceptanceLateEventScenario === 'disconnect' &&
+        event.kind === 'failed') {
+        let staleEvent: NativeFileTransferEvent = nativeEvent
+        setTimeout(() => {
+          staleEvent.kind = 'completed'
+          staleEvent.code = ''
+          staleEvent.detail = ''
+          this.logger.warn('ACCEPTANCE_FILE_TRANSFER_LATE_EVENT scenario=disconnect,state=injected')
+          this.handleNativeTransferEvent(staleEvent)
+        }, 10000)
+      }
+      this.transferId = ''
+'@
+    $text.client = Set-LeanTTYAcceptanceSourceText `
+        $text.client $lateTerminalAnchor $lateTerminalReplacement
 
     foreach ($name in $files.Keys) {
         [IO.File]::WriteAllText($files[$name], $text[$name], [Text.UTF8Encoding]::new($false))
@@ -541,6 +1024,8 @@ function Invoke-WithLeanTTYAcceptanceSource {
         Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
+        Join-Path $RepoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
+        Join-Path $RepoRoot 'entry\src\main\ets\model\transfer\FileTransferClient.ets'
     )
     $backups = @{}
     foreach ($path in $paths) { $backups[$path] = [IO.File]::ReadAllBytes($path) }
@@ -548,7 +1033,26 @@ function Invoke-WithLeanTTYAcceptanceSource {
         Add-LeanTTYAcceptanceSource -RepoRoot $RepoRoot | Out-Null
         & $Action
     } finally {
-        foreach ($path in $paths) { [IO.File]::WriteAllBytes($path, $backups[$path]) }
+        foreach ($path in $paths) {
+            Restore-LeanTTYAcceptanceSourceFile -Path $path -Bytes $backups[$path]
+        }
+    }
+}
+
+function Restore-LeanTTYAcceptanceSourceFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][byte[]]$Bytes
+    )
+
+    for ($attempt = 1; $attempt -le 50; $attempt++) {
+        try {
+            [IO.File]::WriteAllBytes($Path, $Bytes)
+            return
+        } catch [IO.IOException] {
+            if ($attempt -eq 50) { throw }
+            Start-Sleep -Milliseconds 200
+        }
     }
 }
 
@@ -560,9 +1064,128 @@ function Add-LeanTTYNativeAcceptanceSource {
     $native = [IO.File]::ReadAllText($nativePath)
     $types = [IO.File]::ReadAllText($typesPath)
 
+    $nativeImports = "use std::future::Future;`nuse std::io::Read;"
+    if (-not $native.Contains('use std::os::fd::BorrowedFd;')) {
+        $nativeImports += "`nuse std::os::fd::BorrowedFd;"
+    }
     $native = Set-LeanTTYAcceptanceSourceText $native `
         'use std::future::Future;' `
-        "use std::future::Future;`nuse std::io::Read;`nuse std::os::fd::BorrowedFd;"
+        $nativeImports
+    $native = Set-LeanTTYAcceptanceSourceText $native `
+        'static NEXT_SESSION_ID: AtomicU32 = AtomicU32::new(1);' `
+        ("static NEXT_SESSION_ID: AtomicU32 = AtomicU32::new(1);`n" +
+            'static ACCEPTANCE_DROPPED_FILE_TRANSFER_EVENTS: AtomicU32 = AtomicU32::new(0);')
+    $native = Set-LeanTTYAcceptanceSourceText $native `
+        'Arc<ThreadsafeFunction<FileTransferEvent, (), FileTransferEvent, Status, false, false, 64>>;' `
+        'Arc<ThreadsafeFunction<FileTransferEvent, (), FileTransferEvent, Status, false, false, 2>>;'
+    $nativeTransferSendAnchor = @'
+    if status != Status::Ok {
+        eprintln!("[LTTY_SSH] callback=file_transfer status={}", status);
+        return false;
+    }
+'@
+    $nativeTransferSendReplacement = @'
+    if status != Status::Ok {
+        if !final_event {
+            ACCEPTANCE_DROPPED_FILE_TRANSFER_EVENTS.fetch_add(1, Ordering::SeqCst);
+        }
+        eprintln!("[LTTY_SSH] callback=file_transfer status={}", status);
+        return false;
+    }
+'@
+    $native = Set-LeanTTYAcceptanceSourceText `
+        $native $nativeTransferSendAnchor $nativeTransferSendReplacement
+    $nativeCompletedAnchor = @'
+            let delivered = send_file_transfer_event(
+                &transfer_callback,
+                FileTransferEvent::completed(transfer_id, &pane_id, generation, bytes, total_bytes),
+                true,
+            );
+'@
+    $nativeCompletedReplacement = @'
+            let mut completed =
+                FileTransferEvent::completed(transfer_id, &pane_id, generation, bytes, total_bytes);
+            let dropped = ACCEPTANCE_DROPPED_FILE_TRANSFER_EVENTS.swap(0, Ordering::SeqCst);
+            completed.detail = format!("ACCEPTANCE_FILE_TRANSFER_DROPPED={dropped}");
+            let delivered = send_file_transfer_event(&transfer_callback, completed, true);
+'@
+    $native = Set-LeanTTYAcceptanceSourceText `
+        $native $nativeCompletedAnchor $nativeCompletedReplacement
+    $nativeTransferBuilderAnchor = @'
+    let transfer_callback = Arc::new(
+        on_transfer
+            .build_threadsafe_function::<FileTransferEvent>()
+            .max_queue_size::<64>()
+            .build()?,
+    );
+'@
+    $nativeTransferBuilderReplacement = @'
+    let transfer_callback = Arc::new(
+        on_transfer
+            .build_threadsafe_function::<FileTransferEvent>()
+            .max_queue_size::<2>()
+            .build()?,
+    );
+'@
+    $native = Set-LeanTTYAcceptanceSourceText `
+        $native $nativeTransferBuilderAnchor $nativeTransferBuilderReplacement
+    $nativeCleanupAnchor = @'
+    let mut local_temp_cleanup = LocalTempCleanup(if direction == transfer::Direction::Get {
+        Some(PathBuf::from(local_temp_path))
+    } else {
+        None
+    });
+'@
+    $nativeCleanupReplacement = @'
+    let acceptance_local_cleanup_failure = direction == transfer::Direction::Get
+        && remote_path.ends_with("missing-local-cleanup-source.bin");
+    if acceptance_local_cleanup_failure {
+        eprintln!("[LTTY_SSH] ACCEPTANCE_LOCAL_TEMP_CLEANUP_FAILURE armed");
+    }
+    let mut local_temp_cleanup = LocalTempCleanup(if direction == transfer::Direction::Get
+        && !acceptance_local_cleanup_failure
+    {
+        Some(PathBuf::from(local_temp_path))
+    } else {
+        None
+    });
+'@
+    $native = Set-LeanTTYAcceptanceSourceText `
+        $native $nativeCleanupAnchor $nativeCleanupReplacement
+    $nativeDiskFullStartAnchor = @'
+    let result = transfer::execute(
+'@
+    $nativeDiskFullStartReplacement = @'
+    let result = if direction == transfer::Direction::Get
+        && remote_path.ends_with("disk-full-source.bin")
+    {
+        eprintln!("[LTTY_SSH] ACCEPTANCE_LOCAL_DISK_FULL armed");
+        Err(transfer::TransferFailure::Failed {
+            code: "WRITE",
+            detail: "file write failed: No space left on device (os error 28)".to_string(),
+        })
+    } else {
+        transfer::execute(
+'@
+    $native = Set-LeanTTYAcceptanceSourceText `
+        $native $nativeDiskFullStartAnchor $nativeDiskFullStartReplacement
+    $nativeDiskFullEndAnchor = @'
+        },
+    )
+    .await;
+    let _ = transfer::bounded_operation(
+        sftp.close(),
+'@
+    $nativeDiskFullEndReplacement = @'
+            },
+        )
+        .await
+    };
+    let _ = transfer::bounded_operation(
+        sftp.close(),
+'@
+    $native = Set-LeanTTYAcceptanceSourceText `
+        $native $nativeDiskFullEndAnchor $nativeDiskFullEndReplacement
     $nativeProbe = @'
 #[napi(object)]
 pub struct AcceptanceFileDescriptorProbeResult {
@@ -643,6 +1266,8 @@ function Invoke-WithLeanTTYNativeAcceptanceSource {
         Add-LeanTTYNativeAcceptanceSource -RepoRoot $RepoRoot | Out-Null
         & $Action
     } finally {
-        foreach ($path in $paths) { [IO.File]::WriteAllBytes($path, $backups[$path]) }
+        foreach ($path in $paths) {
+            Restore-LeanTTYAcceptanceSourceFile -Path $path -Bytes $backups[$path]
+        }
     }
 }

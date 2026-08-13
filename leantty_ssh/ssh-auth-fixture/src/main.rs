@@ -138,6 +138,32 @@ enum InteractiveRound {
     WaitingForSecond,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SftpFault {
+    #[default]
+    None,
+    PutWriteRemove,
+    PermissionDenied,
+    RenameUnsupported,
+    Unavailable,
+}
+
+impl SftpFault {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "none" => Ok(Self::None),
+            "put-write-remove" => Ok(Self::PutWriteRemove),
+            "permission-denied" => Ok(Self::PermissionDenied),
+            "rename-unsupported" => Ok(Self::RenameUnsupported),
+            "unavailable" => Ok(Self::Unavailable),
+            _ => Err(
+                "sftp-fault must be none, put-write-remove, permission-denied, rename-unsupported or unavailable"
+                    .to_string(),
+            ),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct FixtureServer {
     credentials: Arc<Credentials>,
@@ -150,6 +176,8 @@ struct FixtureServer {
     pending_paste: Option<PasteTransfer>,
     channels: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
     sftp_root: Arc<PathBuf>,
+    sftp_delay: Duration,
+    sftp_fault: SftpFault,
 }
 
 impl FixtureServer {
@@ -161,7 +189,22 @@ impl FixtureServer {
         )
     }
 
+    #[cfg(test)]
     fn with_sftp_root(credentials: Arc<Credentials>, sftp_root: Arc<PathBuf>) -> Self {
+        Self::with_sftp_root_delay_and_fault(
+            credentials,
+            sftp_root,
+            Duration::ZERO,
+            SftpFault::None,
+        )
+    }
+
+    fn with_sftp_root_delay_and_fault(
+        credentials: Arc<Credentials>,
+        sftp_root: Arc<PathBuf>,
+        sftp_delay: Duration,
+        sftp_fault: SftpFault,
+    ) -> Self {
         Self {
             credentials,
             public_key_complete: false,
@@ -173,6 +216,8 @@ impl FixtureServer {
             pending_paste: None,
             channels: Arc::new(Mutex::new(HashMap::new())),
             sftp_root,
+            sftp_delay,
+            sftp_fault,
         }
     }
 
@@ -388,7 +433,12 @@ impl Server for FixtureServer {
     type Handler = Self;
 
     fn new_client(&mut self, _: Option<SocketAddr>) -> Self {
-        Self::with_sftp_root(Arc::clone(&self.credentials), Arc::clone(&self.sftp_root))
+        Self::with_sftp_root_delay_and_fault(
+            Arc::clone(&self.credentials),
+            Arc::clone(&self.sftp_root),
+            self.sftp_delay,
+            self.sftp_fault,
+        )
     }
 
     fn handle_session_error(&mut self, error: <Self::Handler as Handler>::Error) {
@@ -464,6 +514,12 @@ impl Handler for FixtureServer {
             session.channel_failure(channel_id)?;
             return Ok(());
         }
+        if self.sftp_fault == SftpFault::Unavailable {
+            self.channels.lock().await.remove(&channel_id);
+            session.channel_failure(channel_id)?;
+            eprintln!("channel subsystem=sftp result=unavailable");
+            return Ok(());
+        }
         let Some(channel) = self.channels.lock().await.remove(&channel_id) else {
             session.channel_failure(channel_id)?;
             return Ok(());
@@ -471,8 +527,14 @@ impl Handler for FixtureServer {
         session.channel_success(channel_id)?;
         eprintln!("channel subsystem=sftp result=accept");
         let sftp_root = Arc::clone(&self.sftp_root);
+        let sftp_delay = self.sftp_delay;
+        let sftp_fault = self.sftp_fault;
         tokio::spawn(async move {
-            russh_sftp::server::run(channel.into_stream(), FixtureSftp::new(sftp_root)).await;
+            russh_sftp::server::run(
+                channel.into_stream(),
+                FixtureSftp::with_behavior(sftp_root, sftp_delay, sftp_fault),
+            )
+            .await;
         });
         Ok(())
     }
@@ -851,14 +913,29 @@ struct FixtureSftp {
     root: Arc<PathBuf>,
     files: HashMap<String, fs::File>,
     next_handle: u64,
+    delay: Duration,
+    fault: SftpFault,
 }
 
 impl FixtureSftp {
+    #[cfg(test)]
     fn new(root: Arc<PathBuf>) -> Self {
+        Self::with_behavior(root, Duration::ZERO, SftpFault::None)
+    }
+
+    fn with_behavior(root: Arc<PathBuf>, delay: Duration, fault: SftpFault) -> Self {
         Self {
             root,
             files: HashMap::new(),
             next_handle: 1,
+            delay,
+            fault,
+        }
+    }
+
+    async fn delay_operation(&self) {
+        if !self.delay.is_zero() {
+            tokio::time::sleep(self.delay).await;
         }
     }
 
@@ -914,6 +991,10 @@ impl russh_sftp::server::Handler for FixtureSftp {
         pflags: OpenFlags,
         _attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
+        if self.fault == SftpFault::PermissionDenied {
+            eprintln!("sftp open id={id} path={filename} result=permission-denied");
+            return Err(StatusCode::PermissionDenied);
+        }
         let path = self.path(&filename)?;
         let options: fs::OpenOptions = pflags.into();
         let file = options
@@ -941,6 +1022,7 @@ impl russh_sftp::server::Handler for FixtureSftp {
         offset: u64,
         len: u32,
     ) -> Result<Data, Self::Error> {
+        self.delay_operation().await;
         let file = self.files.get(&handle).ok_or(StatusCode::Failure)?;
         let mut data = vec![0_u8; len as usize];
         let read = file
@@ -962,6 +1044,11 @@ impl russh_sftp::server::Handler for FixtureSftp {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
+        self.delay_operation().await;
+        if self.fault == SftpFault::PutWriteRemove {
+            eprintln!("sftp write id={id} handle={handle} result=injected-failure");
+            return Err(StatusCode::Failure);
+        }
         let file = self.files.get(&handle).ok_or(StatusCode::Failure)?;
         let mut written = 0_usize;
         while written < data.len() {
@@ -1001,6 +1088,10 @@ impl russh_sftp::server::Handler for FixtureSftp {
     }
 
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
+        if self.fault == SftpFault::PutWriteRemove {
+            eprintln!("sftp remove id={id} path={filename} result=injected-failure");
+            return Err(StatusCode::PermissionDenied);
+        }
         fs::remove_file(self.path(&filename)?).map_err(|error| Self::io_status(&error))?;
         Ok(Self::status(id))
     }
@@ -1011,6 +1102,10 @@ impl russh_sftp::server::Handler for FixtureSftp {
         oldpath: String,
         newpath: String,
     ) -> Result<Status, Self::Error> {
+        if self.fault == SftpFault::RenameUnsupported {
+            eprintln!("sftp rename id={id} old={oldpath} new={newpath} result=unsupported");
+            return Err(StatusCode::OpUnsupported);
+        }
         let old = self.path(&oldpath)?;
         let new = self.path(&newpath)?;
         fs::hard_link(&old, &new).map_err(|error| Self::io_status(&error))?;
@@ -1027,6 +1122,8 @@ struct Arguments {
     credentials_path: PathBuf,
     run_seconds: u64,
     ready_path: Option<PathBuf>,
+    sftp_delay_ms: u64,
+    sftp_fault: SftpFault,
 }
 
 fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Arguments, String> {
@@ -1035,7 +1132,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         .unwrap_or_else(|| "ssh-auth-fixture".to_string());
     let usage = || {
         format!(
-            "usage: {executable} <listen-address> <credentials-file> [run-seconds] [ready-file]"
+            "usage: {executable} <listen-address> <credentials-file> [run-seconds] [ready-file] [sftp-delay-ms] [sftp-fault]"
         )
     };
     let listen = arguments.next().ok_or_else(&usage)?;
@@ -1053,6 +1150,23 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         return Err("run-seconds must be greater than zero".to_string());
     }
     let ready_path = arguments.next().map(PathBuf::from);
+    let sftp_delay_ms = arguments
+        .next()
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| "sftp-delay-ms must be an unsigned integer".to_string())
+        })
+        .transpose()?
+        .unwrap_or(0);
+    if sftp_delay_ms > 5000 {
+        return Err("sftp-delay-ms must be at most 5000".to_string());
+    }
+    let sftp_fault = arguments
+        .next()
+        .map(|value| SftpFault::parse(&value))
+        .transpose()?
+        .unwrap_or_default();
     if arguments.next().is_some() {
         return Err(usage());
     }
@@ -1061,6 +1175,8 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         credentials_path,
         run_seconds,
         ready_path,
+        sftp_delay_ms,
+        sftp_fault,
     })
 }
 
@@ -1085,7 +1201,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)?],
         ..Default::default()
     });
-    let mut fixture = FixtureServer::with_sftp_root(credentials, Arc::new(sftp_root));
+    let mut fixture = FixtureServer::with_sftp_root_delay_and_fault(
+        credentials,
+        Arc::new(sftp_root),
+        Duration::from_millis(arguments.sftp_delay_ms),
+        arguments.sftp_fault,
+    );
     let running = fixture.run_on_socket(config, &socket);
     let handle = running.handle();
     tokio::spawn(async move {
@@ -1154,6 +1275,91 @@ mod tests {
             }
             _ => panic!("expected rejection"),
         }
+    }
+
+    #[test]
+    fn parses_only_bounded_optional_sftp_delay_and_known_fault_mode() {
+        let parsed = parse_arguments(
+            [
+                "fixture",
+                "127.0.0.1:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "125",
+                "put-write-remove",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert_eq!(parsed.sftp_delay_ms, 125);
+        assert_eq!(parsed.sftp_fault, SftpFault::PutWriteRemove);
+
+        for (value, expected) in [
+            ("permission-denied", SftpFault::PermissionDenied),
+            ("rename-unsupported", SftpFault::RenameUnsupported),
+            ("unavailable", SftpFault::Unavailable),
+        ] {
+            let parsed = parse_arguments(
+                [
+                    "fixture",
+                    "127.0.0.1:22222",
+                    "/tmp/credentials",
+                    "900",
+                    "/tmp/ready",
+                    "0",
+                    value,
+                ]
+                .into_iter()
+                .map(str::to_string),
+            )
+            .unwrap();
+            assert_eq!(parsed.sftp_fault, expected);
+        }
+
+        let too_large = parse_arguments(
+            [
+                "fixture",
+                "127.0.0.1:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "5001",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        );
+        assert!(too_large.is_err());
+
+        let unknown_fault = parse_arguments(
+            [
+                "fixture",
+                "127.0.0.1:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "0",
+                "unknown",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        );
+        assert!(unknown_fault.is_err());
+    }
+
+    #[test]
+    fn propagates_sftp_fault_to_each_client_handler() {
+        let mut fixture = FixtureServer::with_sftp_root_delay_and_fault(
+            credentials(),
+            Arc::new(PathBuf::from("/tmp/leantty-sftp-root")),
+            Duration::ZERO,
+            SftpFault::PutWriteRemove,
+        );
+
+        let client = fixture.new_client(None);
+
+        assert_eq!(client.sftp_fault, SftpFault::PutWriteRemove);
     }
 
     #[test]

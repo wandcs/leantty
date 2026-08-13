@@ -436,6 +436,16 @@ function Invoke-LeanTTYDeviceCtrlC {
     if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS Ctrl+C injection failed' }
 }
 
+function Invoke-LeanTTYDeviceCtrlAltS {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    & $Hdc -t $Target shell 'uinput -K -d 2072 -d 2045 -d 2035 -u 2035 -u 2045 -u 2072' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS Ctrl+Alt+S injection failed' }
+}
+
 function Invoke-LeanTTYDeviceCtrlD {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
@@ -462,7 +472,7 @@ function Test-LeanTTYDeviceKeyFilesPresent {
         [Parameter(Mandatory = $true)][string]$KeyName
     )
 
-    if ($KeyName -notmatch '^ltty_reg_[0-9a-f]{10}$') {
+    if ($KeyName -notmatch '^ltty_reg_(?:[0-9a-f]{10}|[a-p]{10})$') {
         throw 'Device regression key name is outside the disposable-key namespace'
     }
     $sshDirectory = '/data/app/el2/100/base/com.leantty.app/haps/entry/files/.ssh'
@@ -480,6 +490,22 @@ function Test-LeanTTYDeviceKeyFilesPresent {
     if ($result -eq 'PRESENT') { return $true }
     if ($result -eq 'ABSENT') { return $false }
     throw 'Unexpected disposable key-state response from the LeanTTY application sandbox'
+}
+
+function Get-LeanTTYDeviceRegressionKeyNames {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $sshDirectory = '/data/app/el2/100/base/com.leantty.app/haps/entry/files/.ssh'
+    $output = @(& $Hdc -t $Target shell -b com.leantty.app "ls -1 $sshDirectory" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Unable to enumerate disposable key state in the LeanTTY application sandbox'
+    }
+    return @($output | ForEach-Object { [string]$_ } | Where-Object {
+        $_ -match '^ltty_reg_(?:[0-9a-f]{10}|[a-p]{10})$'
+    } | Sort-Object -Unique)
 }
 
 function Submit-LeanTTYDeviceCommand {
@@ -513,7 +539,7 @@ function Get-LeanTTYAppLogs {
     $output = @(
         & $Hdc -t $Target shell (
             "hilog -z 500 -t app -P $ProcessId " +
-            '-T SessionViewModel,KeyCommandService,SshClient,EntryAbility,Index,' +
+            '-T SessionViewModel,KeyCommandService,SshClient,FileTransferClient,EntryAbility,Index,' +
             'TerminalSurfaceController,TerminalBridge,AppViewModel'
         ) 2>&1
     )
@@ -541,6 +567,62 @@ function Wait-LeanTTYAppLog {
         Start-Sleep -Milliseconds 200
     }
     throw "Timed out waiting for LeanTTY device state: $Pattern"
+}
+
+function Invoke-LeanTTYDevicePhysicalKey {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][int]$KeyCode
+    )
+
+    $failure = $null
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $Hdc
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        foreach ($argument in @('-t', $Target, 'shell', "uinput -K -d $KeyCode -u $KeyCode")) {
+            [void]$startInfo.ArgumentList.Add($argument)
+        }
+
+        $process = [Diagnostics.Process]::Start($startInfo)
+        try {
+            if (-not $process.WaitForExit(5000)) {
+                $failure = "timed out on attempt $attempt"
+                $process.Kill($true)
+                $process.WaitForExit()
+            } elseif ($process.ExitCode -eq 0) {
+                return
+            } else {
+                $failure = "exited with code $($process.ExitCode) on attempt $attempt"
+            }
+        } finally {
+            $process.Dispose()
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "HarmonyOS physical key injection failed for key ${KeyCode}: $failure"
+}
+
+function Resolve-LeanTTYAuthenticationObservation {
+    param(
+        [AllowEmptyString()][string]$SnapshotLogs = '',
+        [AllowEmptyString()][string]$LiveLogs = '',
+        [Parameter(Mandatory = $true)][string]$Pattern
+    )
+
+    $snapshotObserved = $SnapshotLogs -match $Pattern
+    $liveObserved = $LiveLogs -match $Pattern
+    if (-not $snapshotObserved -and -not $liveObserved) { return $null }
+    $combined = $SnapshotLogs + "`n" + $LiveLogs
+    $stateMatch = [regex]::Match($combined, $Pattern)
+    return [pscustomobject]@{
+        state = $stateMatch.Value
+        snapshotObserved = $snapshotObserved
+        liveObserved = $liveObserved
+        logs = $combined
+    }
 }
 
 function Invoke-LeanTTYDialogButton {
