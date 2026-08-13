@@ -381,8 +381,14 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
   `b95a2ad0aa5b1c3a12b3b2314e4e359c29f8a5de2fc3593cbc8c6f044297da66` 在同一 fixture 上精确收到
   Left `ESC [ D`、Right `ESC [ C`、`Ctrl+P` `0x10`、`Ctrl+C` `0x03`、Tab `0x09` 和 `Ctrl+V`
   的 17 字节剪贴板内容；搜索开关与 Pane/Tab 所有权回归也通过，临时凭据、fixture 和映射均已
-  清理。旧 `0d38130f...19edc` 候选已被产品修复取代，下一步必须从包含本修复和最终文档的干净
-  精确提交重建候选，再完成上述真实人工 smoke。
+  清理。旧 `0d38130f...19edc` 候选已被产品修复取代；正式候选随后从干净提交
+  `35aa36e442286219ee4dbd184107566465eaa8a6` 重建并保留，HAP SHA-256 为
+  `0116b6ecf02f7501541acf7ef654beb4c57246833a28d0de7a8f7240e7826c99`。同一包已通过完整
+  `verify-pc.ps1`、上述六种按键的精确服务器字节门禁、搜索打开/关闭/焦点与 Pane/Tab 所有权，
+  以及 131,089 字节 production GET -> Downloads -> PUT 的 SHA-256 往返。验收中发现 PUT/GET
+  harness 使用错误的 `rport rm` 留下 reverse 映射；提交 `6556839` 改用 `fport rm` 后，同一候选
+  在新端口再次完成往返，独立映射审计确认本轮端口已消失。剩余仅为上述不能由 HDC 替代的真实
+  人工 smoke。
 
 ## 3. 文档、版本与发布
 
