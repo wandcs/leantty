@@ -660,6 +660,9 @@ $sessionViewModel = Get-Content -LiteralPath (
 $indexPage = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
 ) -Raw
+$terminalPane = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\view\components\TerminalPane.ets'
+) -Raw
 $entryAbility = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
 ) -Raw
@@ -684,6 +687,11 @@ $fileTransferVerifier = Get-Content -LiteralPath (
 $putGetVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-put-get-pc.ps1'
 ) -Raw
+Assert-True (
+    $terminalPane.Contains('.onKeyPreIme') -and
+    $terminalPane.Contains('.onInterceptKeyEvent') -and
+    -not $terminalPane.Contains('.onKeyEventDispatch')
+) 'Terminal Web owns unhandled key dispatch; the generic component dispatcher must not shadow it'
 Assert-True (
     -not $sessionViewModel.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
     $acceptanceSource.Contains("import { ACCEPTANCE_TESTS } from 'BuildProfile'") -and
