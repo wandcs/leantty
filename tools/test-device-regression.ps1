@@ -485,6 +485,11 @@ foreach ($scriptName in @(
             $content.Contains("'resize cols=\d+ rows=\d+'") -and
             $content.Contains("'ltty-input-check afterperf'") -and
             $content.Contains("'input case=afterperf result=matched'") -and
+            $content.Contains("'layout-transport-close-connected.json'") -and
+            $content.Contains("'layout-transport-close-connected-dialog.json'") -and
+            $content.Contains("'SSH closed, exitCode=-1'") -and
+            $content.Contains("'ltty-input-check reconnect'") -and
+            $content.Contains("'input case=reconnect result=matched'") -and
             $content.Contains('Wait-AuthPaneCount -Count 1')
         ) 'SSH transport main-path coverage is incomplete'
         Assert-True (

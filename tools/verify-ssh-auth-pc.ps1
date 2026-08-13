@@ -1319,15 +1319,19 @@ try {
     Focus-AuthPane -Side 'left' -LayoutName 'layout-transport-left-connected.json'
     Submit-ConnectedInput -Text 'ltty-input-check afterperf'
     Wait-FixtureLog -Pattern 'input case=afterperf result=matched' | Out-Null
-    Close-FixtureShell
-    Focus-AuthPane -Side 'right' -LayoutName 'layout-transport-right-idle.json'
-    Invoke-ActivePaneCloseButton -LayoutName 'layout-transport-close-right.json'
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Invoke-ActivePaneCloseButton -LayoutName 'layout-transport-close-connected.json'
+    Invoke-ClosePaneDialog -LayoutName 'layout-transport-close-connected-dialog.json'
+    Wait-AuthLog -Pattern 'SSH closed, exitCode=-1'
     Wait-AuthPaneCount -Count 1 -LayoutName 'layout-transport-single-pane.json' | Out-Null
 
     Start-AuthCommand -User 'password'
     Wait-AuthLog -Pattern 'native auth event kind=password'
     Submit-AuthValue -Value $credentials.password -LayoutName 'layout-transport-reconnect-password.json'
     Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInput -Text 'ltty-input-check reconnect'
+    Wait-FixtureLog -Pattern 'input case=reconnect result=matched' | Out-Null
     Close-FixtureShell
     Complete-AuthStage -Name 'transport-main-path'
     }
