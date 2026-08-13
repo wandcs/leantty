@@ -241,12 +241,12 @@ tag, artifacts and version number are never moved, replaced or reused.
 
 | Component | Config File | Current |
 |---|---|---|
-| App (HAP) | `AppScope/app.json5` | `1.2.0` |
-| Native crate | `leantty_ssh/Cargo.toml` | `1.2.0` |
-| Core crate | `leantty_ssh/leantty-ssh-core/Cargo.toml` | `1.2.0` |
-| OHPM | `entry/oh-package.json5` | `1.2.0` |
-| Native OHPM | `entry/src/main/cpp/types/libleantty_ssh/oh-package.json5` | `1.2.0` |
-| Root OHPM | `oh-package.json5` | `1.2.0` |
+| App (HAP) | `AppScope/app.json5` | `1.3.0` |
+| Native crate | `leantty_ssh/Cargo.toml` | `1.3.0` |
+| Core crate | `leantty_ssh/leantty-ssh-core/Cargo.toml` | `1.3.0` |
+| OHPM | `entry/oh-package.json5` | `1.3.0` |
+| Native OHPM | `entry/src/main/cpp/types/libleantty_ssh/oh-package.json5` | `1.3.0` |
+| Root OHPM | `oh-package.json5` | `1.3.0` |
 | Release artifact name | `tools/build-all.ps1` | Derived from `AppScope/app.json5` unless explicitly supplied |
 
 All semantic version sources must stay aligned. The build script does not own

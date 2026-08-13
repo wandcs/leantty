@@ -31,7 +31,9 @@ export class BridgeProtocol {
   static readonly KIND_PING: string = 'ping'
   static readonly KIND_FIT: string = 'fit'
   static readonly KIND_FONT_SIZE: string = 'fontSize'
+  static readonly KIND_INPUT_SECURITY: string = 'inputSecurity'
   static readonly KIND_SECONDARY_ACTION: string = 'secondaryAction'
+  static readonly KIND_COPY_OR_INTERRUPT: string = 'copyOrInterrupt'
   static readonly KIND_SNAPSHOT_REQUEST: string = 'snapshotRequest'
   static readonly KIND_RESTORE_SNAPSHOT: string = 'restoreSnapshot'
   static readonly KIND_RESTORE_COMPLETE: string = 'restoreComplete'
@@ -89,6 +91,12 @@ export class BridgeProtocol {
     if (kind === BridgeProtocol.KIND_SEARCH_OPEN && payload.length > 0) {
       return null
     }
+    if (kind === BridgeProtocol.KIND_INPUT_SECURITY && payload !== 'plain' && payload !== 'masked') {
+      return null
+    }
+    if (kind === BridgeProtocol.KIND_COPY_OR_INTERRUPT && payload.length > 0) {
+      return null
+    }
     if ((kind === BridgeProtocol.KIND_RESTORE_SNAPSHOT || kind === BridgeProtocol.KIND_SNAPSHOT) &&
       payload.length > BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH) {
       return null
@@ -140,8 +148,16 @@ export class BridgeProtocol {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_FONT_SIZE, fontSize.toString())
   }
 
+  static inputSecurity(masked: boolean): BridgeMessage {
+    return BridgeProtocol.nativeControl(BridgeProtocol.KIND_INPUT_SECURITY, masked ? 'masked' : 'plain')
+  }
+
   static secondaryAction(): BridgeMessage {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SECONDARY_ACTION)
+  }
+
+  static copyOrInterrupt(): BridgeMessage {
+    return BridgeProtocol.nativeControl(BridgeProtocol.KIND_COPY_OR_INTERRUPT)
   }
 
   static snapshotRequest(requestId: number): BridgeMessage {
@@ -203,8 +219,10 @@ export class BridgeProtocol {
         kind === BridgeProtocol.KIND_PING ||
         kind === BridgeProtocol.KIND_FIT ||
         kind === BridgeProtocol.KIND_FONT_SIZE ||
+        kind === BridgeProtocol.KIND_INPUT_SECURITY ||
         kind === BridgeProtocol.KIND_COPY_SELECTION ||
         kind === BridgeProtocol.KIND_SECONDARY_ACTION ||
+        kind === BridgeProtocol.KIND_COPY_OR_INTERRUPT ||
         kind === BridgeProtocol.KIND_SNAPSHOT_REQUEST ||
         kind === BridgeProtocol.KIND_RESTORE_SNAPSHOT ||
         kind === BridgeProtocol.KIND_SEARCH_OPEN

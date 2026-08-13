@@ -237,6 +237,18 @@ assert.match(terminalHtml, /document\.documentElement\.style\.setProperty\('--te
   'theme changes must propagate their background to the Web terminal chrome');
 assert.match(terminalHtml, /themeObj\.overviewRulerBorder = themeObj\.background/,
   'the width-only overview ruler must not draw a contrasting edge line');
+assert.match(terminalHtml,
+  /\.xterm\.secure-input \.xterm-helper-textarea\s*\{[^}]*-webkit-text-security:\s*disc;/s,
+  'the xterm helper must visually mask only the typed secure-input state');
+assert.match(terminalHtml,
+  /case 'inputSecurity':[\s\S]*message\.payload !== 'plain'[\s\S]*message\.payload !== 'masked'[\s\S]*classList\.toggle\('secure-input', secureInput\)/,
+  'the web terminal must apply masking only for typed secure-input state');
+assert.match(terminalHtml,
+  /kind === 'inputSecurity' && \(payload === 'plain' \|\| payload === 'masked'\)/,
+  'the web-side native-message allowlist must admit only closed input-security payloads');
+assert.match(terminalHtml,
+  /term\.onKey\(function\(\)[\s\S]*scheduleSecureInputClear\(\)[\s\S]*function scheduleSecureInputClear\(\)[\s\S]*setTimeout\(function\(\)[\s\S]*term\.textarea\.value = ''[\s\S]*\}, 100\)/,
+  'secret helper values must be cleared after xterm has emitted the corresponding key event');
 assert.match(terminalHtml, /parseTerminalPacket\(e\.data\)/,
   'the MessagePort must accept the original binary terminal packet directly');
 assert.doesNotMatch(terminalHtml, /leanttyOutput\.pullOutput|decodePulledTerminalPacket|case 'outputAvailable':/,
@@ -301,6 +313,15 @@ assert.match(terminalHtml,
   /function handleSecondaryAction\(\)[\s\S]*?shouldRunTerminalSecondaryAction\(isSearchOpen\(\)\)[\s\S]*?copyTerminalSelection\(\)/,
   'secondary action must not copy or paste terminal content while search owns the Surface');
 assert.match(terminalHtml,
+  /var key = typeof event\.key === 'string' \? event\.key\.toLowerCase\(\) : '';[\s\S]*?var code = typeof event\.code === 'string' \? event\.code : '';[\s\S]*?key === 'v' \|\| code === 'KeyV'[\s\S]*?key !== 'c' && code !== 'KeyC'/,
+  'Ctrl+C and Ctrl+V must recognize the standard physical-key code when ArkWeb reports an unidentified key');
+assert.match(terminalHtml,
+  /window\.addEventListener\('copy', handleTerminalCopy, true\);[\s\S]*?function handleTerminalCopy\(event\) \{[\s\S]*?if \(isSearchOpen\(\)\) return;[\s\S]*?if \(copyTerminalSelection\(\)\) \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?event\.stopPropagation\(\);/,
+  'ArkWeb browser-level copy events must copy xterm-owned selection without stealing search-input copy');
+assert.match(terminalHtml,
+  /kind === 'copyOrInterrupt' && payload\.length === 0[\s\S]*?case 'copyOrInterrupt':[\s\S]*?handleCopyOrInterrupt\(\)[\s\S]*?function handleCopyOrInterrupt\(\)[\s\S]*?copySearchInputSelection\(\)[\s\S]*?copyTerminalSelection\(\)[\s\S]*?sendBridgeData\('terminal', '\\x03'\)/,
+  'typed native Ctrl+C routing must copy search or terminal selection before falling back to ETX');
+assert.match(terminalHtml,
   /var payload = raw\.substring\(kindEnd \+ 1\);[\s\S]*?!isSupportedNativeMessage\(channel, kind, payload\)/,
   'the web-side bridge parser must validate each native control payload before dispatch');
 assert.match(terminalHtml,
@@ -362,7 +383,7 @@ assert.match(terminalHtml,
   /term\.onKey\s*\(function\(\)\s*\{\s*acknowledgeBellAttention\(\);/s,
   'the first real keyboard input after BEL must acknowledge the owning pane');
 assert.match(terminalHtml,
-  /term\.textarea\.addEventListener\('compositionstart', acknowledgeBellAttention\);[\s\S]*term\.textarea\.addEventListener\('input', acknowledgeBellAttention, true\);[\s\S]*term\.textarea\.addEventListener\('paste', acknowledgeBellAttention\);/s,
+  /term\.textarea\.addEventListener\('compositionstart',[\s\S]*acknowledgeBellAttention\(\);[\s\S]*term\.textarea\.addEventListener\('input',[\s\S]*acknowledgeBellAttention\(\);[\s\S]*term\.textarea\.addEventListener\('paste', acknowledgeBellAttention\);/s,
   'IME composition, ArkWeb text input, and browser paste must acknowledge the owning pane');
 assert.match(terminalHtml,
   /if \(text\.length > 0 && term\) \{\s*acknowledgeBellAttention\(\);\s*term\.paste\(text\);/s,
@@ -521,6 +542,12 @@ assert.match(terminalBridge,
   /blur\(\): void \{\s*this\.pendingSearchOpen = false\s*this\.send\(BridgeProtocol\.blur\(\)\)/,
   'pane or tab blur must cancel a search-open intent queued behind bridge readiness or restore');
 assert.match(terminalBridge,
+  /setInputMasked\(masked: boolean\)[\s\S]*BridgeProtocol\.inputSecurity\(masked\)/,
+  'the native bridge must carry the current helper-input security mode');
+assert.match(terminalBridge,
+  /copyOrInterrupt\(\): void \{[\s\S]*BridgeProtocol\.copyOrInterrupt\(\)/,
+  'the native bridge must expose the typed pre-IME Ctrl+C action');
+assert.match(terminalBridge,
   /destroy\(\): void \{[\s\S]*?this\.msgPort\.close\(\)[\s\S]*?this\.onMessageHandler = null[\s\S]*?this\.pendingSearchOpen = false/,
   'destroying an old surface bridge must close its port, remove callbacks, and discard a late search intent');
 assert.match(terminalBridge,
@@ -556,6 +583,12 @@ assert.match(bridgeProtocol, /KIND_OPEN_URL:\s*string = 'openUrl'/,
 assert.match(bridgeProtocol,
   /KIND_SEARCH_OPEN:\s*string = 'searchOpen'[\s\S]*kind === BridgeProtocol\.KIND_SEARCH_OPEN && payload\.length > 0/,
   'search open must be a typed native-to-web control with an empty payload');
+assert.match(bridgeProtocol,
+  /KIND_INPUT_SECURITY:\s*string = 'inputSecurity'[\s\S]*payload !== 'plain' && payload !== 'masked'/,
+  'input security must be a typed native-to-web control with a closed payload set');
+assert.match(bridgeProtocol,
+  /KIND_COPY_OR_INTERRUPT:\s*string = 'copyOrInterrupt'[\s\S]*KIND_COPY_OR_INTERRUPT && payload\.length > 0[\s\S]*copyOrInterrupt\(\): BridgeMessage/,
+  'copy-or-interrupt must be a typed empty-payload native-to-web control');
 
 const sessionViewModel = readFileSync(
   new URL('../../entry/src/main/ets/viewmodel/SessionViewModel.ets', import.meta.url), 'utf8');
@@ -567,6 +600,9 @@ assert.match(sessionViewModel,
 assert.match(sessionViewModel,
   /if \(parsed === null\) \{\s*this\.writeError\("Unknown command\. Type 'help' for commands, or use: ssh user@host"\)/,
   'unknown idle commands must point to both local help and the direct SSH path');
+assert.match(sessionViewModel,
+  /private setMode[\s\S]*setInputMasked\(SessionViewModel\.isSecretInputMode\(newMode\)\)[\s\S]*PASSWORD_INPUT[\s\S]*KEY_PASSPHRASE_INPUT[\s\S]*AUTH_CHALLENGE_INPUT[\s\S]*KEY_PASSPHRASE_CHANGE_INPUT/,
+  'only local secret-entry modes may mask the xterm helper input');
 
 const terminalSurfaceController = readFileSync(
   new URL('../../entry/src/main/ets/model/terminal/TerminalSurfaceController.ets', import.meta.url), 'utf8');
@@ -657,6 +693,9 @@ assert.match(indexPage,
   /InteractionPolicy\.isTerminalSearchShortcut\([\s\S]*?this\.openActivePaneSearch\(\)/,
   'the exact shortcut must target only the active pane runtime');
 assert.match(indexPage,
+  /InteractionPolicy\.isTerminalCopyOrInterruptKey\([\s\S]*?runtime\.surface\.copyOrInterrupt\(\)[\s\S]*?return true/,
+  'the pre-IME Ctrl+C route must target and consume only the active pane');
+assert.match(indexPage,
   /private openActivePaneSearch\(\): void \{[\s\S]*?activePaneRuntime\(\)[\s\S]*?runtime\.surface\.openSearch\(\)/,
   'shortcut and menu search must share the active-pane routing helper');
 assert.match(indexPage,
@@ -701,14 +740,22 @@ assert.match(acceptanceSource, /Invoke-WithLeanTTYAcceptanceSource/,
 assert.match(acceptanceSource, /Acceptance: Rebuild Renderer/,
   'debug build transformation must own the renderer acceptance menu');
 assert.match(acceptanceSource,
-  /ACCEPTANCE_TESTS \? 7 : 6/,
-  'debug builds must add only the renderer trigger to keyboard menu traversal');
+  /\$downloadsManagerMenuIndex = if \(\$includeNativeFileDescriptorProbe\) \{ 9 \} else \{ 8 \}[\s\S]*?\$transferFixtureMenuIndex = if \(\$includeNativeFileDescriptorProbe\) \{ 10 \} else \{ 9 \}/,
+  'debug builds must include the bounded Downloads actions in keyboard menu traversal');
 assert.doesNotMatch(acceptanceSource, /Debug Material|Acceptance: Open Search|BACKGROUND_ULTRA_THICK/,
   'debug builds must reuse production material and Search controls');
 assert.match(acceptanceSource, /terminateRendererForAcceptance/,
   'debug build transformation must own the renderer termination trigger');
 assert.match(acceptanceSource, /pasteClipboardForAcceptance/,
   'debug build transformation must own the clipboard paste trigger');
+assert.match(acceptanceSource, /ACCEPTANCE_DOWNLOADS_NOREPLACE/,
+  'debug build transformation must own the Downloads no-replace probe');
+assert.match(acceptanceSource, /Acceptance: Downloads No-Replace/,
+  'debug build transformation must expose the Downloads no-replace probe');
+assert.match(acceptanceSource, /Acceptance: Downloads FD Boundary/,
+  'native verification builds must expose the Downloads FD boundary probe');
+assert.match(acceptanceSource, /Acceptance: Downloads Manager Boundary/,
+  'debug verification builds must expose the production Downloads manager boundary probe');
 assert.match(acceptanceSource, /finally[\s\S]*WriteAllBytes/,
   'debug build transformation must restore production ArkTS source in finally');
 assert.match(indexPage, /for \(let i = 0; i < MENU_ACTION_COUNT; i\+\+\)/,
@@ -777,8 +824,8 @@ assert.match(indexPage,
   /@Watch\('onWindowTransparencyAvailabilityChanged'\)[\s\S]*onWindowTransparencyAvailabilityChanged\(\)[\s\S]*this\.applyTheme\(\)/,
   'the initially opaque surface must refresh only after post-load window transparency succeeds');
 assert.match(acceptanceSource,
-  /if \(ACCEPTANCE_TESTS\) \{[\s\S]*menuRow\(6, '↻', 'Acceptance: Rebuild Renderer'/,
-  'the debug source transformation must add only the acceptance renderer entry');
+  /if \(ACCEPTANCE_TESTS\) \{[\s\S]*menuRow\(6, '↻', 'Acceptance: Rebuild Renderer'[\s\S]*menuRow\(7, '✓', 'Acceptance: Downloads No-Replace'/,
+  'the debug source transformation must add the two bounded acceptance entries');
 assert.match(acceptanceSource,
   /private rebuildRendererForAcceptance[\s\S]*?if \(!ACCEPTANCE_TESTS\)[\s\S]*?captureSnapshot\(\(captured: boolean\)[\s\S]*?terminateRendererForAcceptance/,
   'the injected acceptance action must wait for a confirmed production snapshot before terminating the renderer');

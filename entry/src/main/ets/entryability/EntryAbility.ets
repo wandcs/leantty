@@ -10,6 +10,7 @@ import { KeyPairInfo } from '../common/types/SshKeyTypes';
 import { FileUtils } from '../common/utils/FileUtils';
 import webview from '@ohos.web.webview';
 import { BusinessError } from '@ohos.base';
+import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator';
 
 const logger: Logger = new Logger('EntryAbility')
 const FALLBACK_TITLE_BUTTON_WIDTH: number = 140
@@ -162,7 +163,7 @@ export default class EntryAbility extends UIAbility {
       AppStorage.get<boolean>('skipNextTerminateConfirmation') ?? false
     AppStorage.setOrCreate('skipNextTerminateConfirmation', false)
     if (!InteractionPolicy.shouldConfirmApplicationClose(hasActiveSession, confirmationSuppressed)) {
-      return false
+      return !(await this.prepareApplicationClose())
     }
     if (this.mainWindow === null) {
       logger.warn('Application close canceled because the main window is unavailable')
@@ -177,10 +178,25 @@ export default class EntryAbility extends UIAbility {
           { text: 'Close LeanTTY', color: '#F38BA8' }
         ]
       })
-      return result.index !== 1
+      if (result.index !== 1) {
+        return true
+      }
+      return !(await this.prepareApplicationClose())
     } catch (e) {
       logger.error('Application close confirmation failed: ' + e)
       return true
+    }
+  }
+
+  private async prepareApplicationClose(): Promise<boolean> {
+    try {
+      await ApplicationCloseCoordinator.prepareTermination()
+      logger.info('Application close preparation completed')
+      return true
+    } catch (e) {
+      ApplicationCloseCoordinator.resetPreparation()
+      logger.error('Application close preparation failed: ' + e)
+      return false
     }
   }
 

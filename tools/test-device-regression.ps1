@@ -89,6 +89,25 @@ Assert-Throws -Action {
         $script:capturedHdcCalls[0][2] -eq 'shell' -and
         $script:capturedHdcCalls[0][3] -eq $expectedCommand
     ) 'Device text injection did not use one device-paced raw-key command'
+
+    $script:capturedHdcCalls.Clear()
+    $longText = 'a' * 87
+    Invoke-LeanTTYDeviceText `
+        -Hdc 'Invoke-FakeHdc' `
+        -Target 'regression-device' `
+        -Text $longText
+    Assert-True (
+        $script:capturedHdcCalls.Count -eq 3 -and
+        $script:capturedHdcCalls[0][3] -eq (
+            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 40) -IntervalMilliseconds 500
+        ) -and
+        $script:capturedHdcCalls[1][3] -eq (
+            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 40) -IntervalMilliseconds 500
+        ) -and
+        $script:capturedHdcCalls[2][3] -eq (
+            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 7) -IntervalMilliseconds 500
+        )
+    ) 'Long device text injection was not split below the physical uinput boundary'
 }
 
 & {
@@ -138,11 +157,39 @@ Assert-Throws -Action {
 $appLogParameters = (Get-Command Get-LeanTTYAppLogs).Parameters.Keys
 $waitLogParameters = (Get-Command Wait-LeanTTYAppLog).Parameters.Keys
 $waitLogSource = (Get-Command Wait-LeanTTYAppLog).Definition
+$physicalKeySource = (Get-Command Invoke-LeanTTYDevicePhysicalKey).Definition
 Assert-True (
     $appLogParameters -notcontains 'Pid' -and
     $waitLogParameters -notcontains 'Pid' -and
     $waitLogSource.Contains('[ValidateRange(1, 60)]')
 ) 'Device log helpers conflict with the read-only PowerShell PID automatic variable'
+Assert-True (
+    $physicalKeySource.Contains('$process.WaitForExit(5000)') -and
+    $physicalKeySource.Contains('$process.Kill($true)') -and
+    $physicalKeySource.Contains('$attempt -le 2')
+) 'Physical key injection can hang the device verification without a bounded retry'
+
+$authenticationPattern = 'File transfer authentication prompt=(host-key|password)'
+$liveOnlyObservation = Resolve-LeanTTYAuthenticationObservation `
+    -SnapshotLogs '' `
+    -LiveLogs 'File transfer authentication prompt=host-key' `
+    -Pattern $authenticationPattern
+$snapshotOnlyObservation = Resolve-LeanTTYAuthenticationObservation `
+    -SnapshotLogs 'File transfer authentication prompt=password' `
+    -LiveLogs '' `
+    -Pattern $authenticationPattern
+$dualObservation = Resolve-LeanTTYAuthenticationObservation `
+    -SnapshotLogs 'File transfer authentication prompt=password' `
+    -LiveLogs 'File transfer authentication prompt=password' `
+    -Pattern $authenticationPattern
+$missingObservation = Resolve-LeanTTYAuthenticationObservation `
+    -SnapshotLogs '' -LiveLogs '' -Pattern $authenticationPattern
+Assert-True (
+    $liveOnlyObservation.liveObserved -and -not $liveOnlyObservation.snapshotObserved -and
+    $snapshotOnlyObservation.snapshotObserved -and -not $snapshotOnlyObservation.liveObserved -and
+    $dualObservation.snapshotObserved -and $dualObservation.liveObserved -and
+    $null -eq $missingObservation
+) 'Authentication observation does not distinguish snapshot loss from an unobserved product state'
 
 $deviceRegressionText = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'device-regression.ps1'
@@ -157,8 +204,9 @@ Assert-True (
     $deviceRegressionText -notmatch 'terminal-line cleanup|backspaceCount'
 ) 'Device input cleanup still uses inferred backspaces'
 Assert-True (
-    $deviceRegressionText -match '-IntervalMilliseconds 500(?:\s|$)'
-) 'Device raw-key text injection does not use native device pacing for modifier transitions'
+    $deviceRegressionText -match '-IntervalMilliseconds 500(?:\s|$)' -and
+    $deviceRegressionText.Contains('$chunkLength = 40')
+) 'Device raw-key text injection does not preserve pacing and bounded batches'
 Assert-True (
     $deviceRegressionText -notmatch 'shell\s+run-as\s+com\.leantty\.app' -and
     $deviceRegressionText -match 'shell\s+-b\s+com\.leantty\.app'
@@ -216,6 +264,10 @@ $keyPresenceCommand = Get-Command Test-LeanTTYDeviceKeyFilesPresent -ErrorAction
 Assert-True ($null -ne $keyPresenceCommand) (
     'Device cleanup has no independent app-sandbox key-file verification helper'
 )
+$keyEnumerationCommand = Get-Command Get-LeanTTYDeviceRegressionKeyNames -ErrorAction SilentlyContinue
+Assert-True ($null -ne $keyEnumerationCommand) (
+    'Authentication matrix has no bounded disposable-key enumeration helper'
+)
 Assert-Throws -Action {
     Test-LeanTTYDeviceKeyFilesPresent `
         -Hdc 'unused' `
@@ -228,7 +280,7 @@ $deviceRegressionSource = Get-Content -LiteralPath (
 ) -Raw
 Assert-True (
     $deviceRegressionSource.Contains(
-        '-T SessionViewModel,KeyCommandService,SshClient,EntryAbility,Index'
+        '-T SessionViewModel,KeyCommandService,SshClient,FileTransferClient,EntryAbility,Index'
     )
 ) 'Device application log capture omits authentication or window lifecycle events'
 
@@ -577,20 +629,214 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 $sessionViewModel = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
 ) -Raw
+$indexPage = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
+) -Raw
+$entryAbility = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
+) -Raw
+$downloadsAccessManager = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\model\transfer\DownloadsAccessManager.ets'
+) -Raw
+$transferFileManager = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
+) -Raw
+$commandBarViewModel = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\viewmodel\CommandBarViewModel.ets'
+) -Raw
+$terminalTextPolicy = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\common\security\TerminalTextPolicy.ets'
+) -Raw
 $acceptanceSource = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'acceptance-source.ps1'
+) -Raw
+$fileTransferVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-file-transfer-pc.ps1'
+) -Raw
+$putGetVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-put-get-pc.ps1'
 ) -Raw
 Assert-True (
     -not $sessionViewModel.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
     $acceptanceSource.Contains("import { ACCEPTANCE_TESTS } from 'BuildProfile'") -and
     $acceptanceSource.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
     $acceptanceSource.Contains('Acceptance: Rebuild Renderer') -and
+    $acceptanceSource.Contains('Acceptance: Downloads No-Replace') -and
+    $acceptanceSource.Contains('Acceptance: Downloads FD Boundary') -and
+    $acceptanceSource.Contains('Acceptance: Downloads Manager Boundary') -and
+    $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_NOREPLACE') -and
+    $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_FD') -and
+    $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_MANAGER') -and
     -not $acceptanceSource.Contains('Acceptance: Open Search') -and
     -not $acceptanceSource.Contains('Debug Material') -and
     $acceptanceSource.Contains('pasteClipboardForAcceptance') -and
     $acceptanceSource.Contains('ctrlKey && altKey && !shiftKey && event.keyCode === 2038') -and
-    $acceptanceSource.Contains('Invoke-WithLeanTTYAcceptanceSource')
+    $acceptanceSource.Contains('ACCEPTANCE_LOCAL_DISK_FULL armed') -and
+    $acceptanceSource.Contains('No space left on device (os error 28)') -and
+    $acceptanceSource.Contains('Invoke-WithLeanTTYAcceptanceSource') -and
+    $acceptanceSource.Contains('Invoke-WithLeanTTYNativeAcceptanceSource')
 ) 'Acceptance-only ArkTS is not isolated from the production source tree'
+Assert-True (
+    $fileTransferVerifier.Contains('Acceptance: Downloads No-Replace') -and
+    $fileTransferVerifier.Contains('Acceptance: Downloads FD Boundary') -and
+    $fileTransferVerifier.Contains('Acceptance: Downloads Manager Boundary') -and
+    $fileTransferVerifier.Contains('ACCEPTANCE_DOWNLOADS_NOREPLACE passed=true') -and
+    $fileTransferVerifier.Contains('ACCEPTANCE_DOWNLOADS_FD passed=true') -and
+    $fileTransferVerifier.Contains('ACCEPTANCE_DOWNLOADS_MANAGER passed=true') -and
+    $fileTransferVerifier.Contains('managerObservation') -and
+    $fileTransferVerifier.Contains('device-downloads-capability.json') -and
+    $fileTransferVerifier.Contains('Get-LeanTTYDeviceLayout') -and
+    $fileTransferVerifier.Contains('Start-LeanTTYRegressionApp')
+) 'Focused file-transfer physical-PC gate is incomplete'
+Assert-True (
+    $putGetVerifier.Contains('get -p $FixturePort') -and
+    $putGetVerifier.Contains('put -p $FixturePort') -and
+    $putGetVerifier.Contains('completed direction=get,bytes=$expectedCompletionBytes|failed code=\S+') -and
+    $putGetVerifier.Contains('completed direction=put,bytes=$expectedCompletionBytes|failed code=\S+') -and
+    $putGetVerifier.Contains('GET completed without the FINALIZING stage') -and
+    $putGetVerifier.Contains('PUT completed without the FINALIZING stage') -and
+    $putGetVerifier.Contains('GET large-file progress completed without visible progress and live speed') -and
+    $putGetVerifier.Contains('PUT large-file progress completed without visible progress and live speed') -and
+    $putGetVerifier.Contains('FILE_TRANSFER progress=visible') -and
+    $putGetVerifier.Contains('FILE_TRANSFER speed=visible') -and
+    $putGetVerifier.Contains('GET then PUT changed the file SHA-256') -and
+    $putGetVerifier.Contains('HarmonyOS application logs exposed the temporary fixture password') -and
+    $putGetVerifier.Contains('[switch]$CancelGet') -and
+    $putGetVerifier.Contains('[switch]$CloseApplication') -and
+    $putGetVerifier.Contains('[switch]$ClosePane') -and
+    $putGetVerifier.Contains('[switch]$StallPreparation') -and
+    $putGetVerifier.Contains('[switch]$FailRemoteCleanup') -and
+    $putGetVerifier.Contains('[switch]$FailLocalCleanup') -and
+    $putGetVerifier.Contains('[switch]$LocalDiskFull') -and
+    $putGetVerifier.Contains('[switch]$Backpressure') -and
+    $putGetVerifier.Contains('[switch]$ForceTerminate') -and
+    $putGetVerifier.Contains('[switch]$LateEvents') -and
+    $putGetVerifier.Contains('[switch]$DisconnectGet') -and
+    $putGetVerifier.Contains('[switch]$AuthenticationMatrix') -and
+    $putGetVerifier.Contains("'-SftpFault'") -and
+    $putGetVerifier.Contains('[IO.FileShare]::ReadWrite') -and
+    $putGetVerifier.Contains('FILE_TRANSFER result=failed code=REMOTE_CLEANUP') -and
+    $putGetVerifier.Contains('Remote cleanup failure exposed the final remote file name') -and
+    $putGetVerifier.Contains('device-put-remote-cleanup-failure.json') -and
+    $putGetVerifier.Contains('device-get-local-cleanup-failure.json') -and
+    $putGetVerifier.Contains('device-get-local-disk-full.json') -and
+    $putGetVerifier.Contains('device-authentication-matrix.json') -and
+    $putGetVerifier.Contains('File transfer authentication prompt=private-key-passphrase') -and
+    $putGetVerifier.Contains('File transfer authentication prompt=keyboard-interactive') -and
+    $putGetVerifier.Contains('explicit -i affected only its command') -and
+    $putGetVerifier.Contains('Test-LeanTTYDeviceKeyFilesPresent') -and
+    $putGetVerifier.Contains('Get-LeanTTYTerminalInputText -Layout $typedLayout') -and
+    $putGetVerifier.Contains('Submit-HiddenTransferValue -Value $script:secret') -and
+    $putGetVerifier.Contains('Assert-LeanTTYLayoutExcludesValues') -and
+    $putGetVerifier.Contains('Wait-AuthenticationMatrixKeyCreated') -and
+    $putGetVerifier.Contains('device-put-get-backpressure.json') -and
+    $putGetVerifier.Contains('device-put-get-force-termination.json') -and
+    $putGetVerifier.Contains('device-put-get-late-events.json') -and
+    $putGetVerifier.Contains('Rejected stale file transfer event, kind=completed') -and
+    $putGetVerifier.Contains('function Wait-FileTransferAuthenticationState') -and
+    $putGetVerifier.Contains('auth-observer-') -and
+    $putGetVerifier.Contains('snapshotObserved') -and
+    $putGetVerifier.Contains('liveObserved') -and
+    $putGetVerifier.Contains('authentication-observation-timeout') -and
+    $putGetVerifier.Contains('SessionViewModel,FileTransferClient') -and
+    $putGetVerifier.Contains('aa force-stop com.leantty.app') -and
+    $putGetVerifier.Contains('Application close preparation') -and
+    $putGetVerifier.Contains('ACCEPTANCE_FILE_TRANSFER_DROPPED=[1-9]') -and
+    $putGetVerifier.Contains('cleanupFailureFinalPresent=false') -and
+    $putGetVerifier.Contains('temporaryCount=1') -and
+    $putGetVerifier.Contains('device-get-disconnect.json') -and
+    $putGetVerifier.Contains('[switch]$MinimizeGet') -and
+    $putGetVerifier.Contains('[switch]$SelectionCopy') -and
+    $putGetVerifier.Contains('[switch]$FileNameMatrix') -and
+    $putGetVerifier.Contains('Submit-TerminalTextWithAcceptanceData') -and
+    $putGetVerifier.Contains('device-put-get-file-name-matrix.json') -and
+    $putGetVerifier.Contains("('l' * 220) + '.bin'") -and
+    $putGetVerifier.Contains('Invoke-LeanTTYDeviceCtrlAltS') -and
+    $putGetVerifier.Contains('Invoke-LeanTTYDeviceCtrlC') -and
+    $putGetVerifier.Contains('Clipboard copy success=true,length=4') -and
+    $putGetVerifier.Contains('Window visibility changed: visible=false') -and
+    $putGetVerifier.Contains('transfer-restored-after-minimized-get.png') -and
+    $putGetVerifier.Contains('FILE_TRANSFER result=failed code=NETWORK') -and
+    $putGetVerifier.Contains('ACCEPTANCE_LOCAL_DISK_FULL armed') -and
+    $putGetVerifier.Contains('ACCEPTANCE_FILE_TRANSFER_PREPARATION waiting=true') -and
+    $putGetVerifier.Contains('device-put-get-pane-close-preparing.json') -and
+    $putGetVerifier.Contains('device-put-get-application-close-preparing.json') -and
+    $putGetVerifier.Contains('SftpDelayMilliseconds') -and
+    $putGetVerifier.Contains('Invoke-LeanTTYDeviceCtrlC') -and
+    $putGetVerifier.Contains('FILE_TRANSFER result=(cancelled|failed|completed)') -and
+    $putGetVerifier.Contains("terminalMatches.Count -ne 1") -and
+    $putGetVerifier.Contains('Application close preparation completed') -and
+    $putGetVerifier.Contains('EnhanceCloseBtn') -and
+    $putGetVerifier.Contains('device-put-get-application-close.json') -and
+    $putGetVerifier.Contains('device-put-get-pane-close.json') -and
+    $putGetVerifier.Contains('one Pane remained usable in the original application process') -and
+    $putGetVerifier.Contains('temporaryPresent=false') -and
+    $putGetVerifier.Contains('device-put-get-cancel.json') -and
+    $putGetVerifier.Contains('-WindowStyle Hidden') -and
+    $putGetVerifier.Contains('device-put-get.json')
+) 'Production PUT/GET physical-PC verifier is incomplete'
+Assert-True (
+    $sessionViewModel.Contains("const width: number = 30") -and
+    $sessionViewModel.Contains("'\r\u001b[2K' + SessionViewModel.styleTransferProgress") -and
+    $sessionViewModel.Contains("\u001b[32m●\u001b[0m") -and
+    $sessionViewModel.Contains('FILE_TRANSFER progress=visible') -and
+    $sessionViewModel.Contains('FILE_TRANSFER speed=visible') -and
+    $sessionViewModel.Contains("FILE_TRANSFER stage=finalizing")
+) 'Production PUT/GET terminal progress is not fixed-width, in-place, and stateful'
+Assert-True (
+    $indexPage.Contains('ApplicationCloseCoordinator.register(this.applicationCloseHandler)') -and
+    $indexPage.Contains('ApplicationCloseCoordinator.unregister(this.applicationCloseHandler)') -and
+    $indexPage.Contains('await this.disconnectAllRuntimes()') -and
+    $entryAbility.Contains('await ApplicationCloseCoordinator.prepareTermination()') -and
+    $entryAbility.Contains('ApplicationCloseCoordinator.resetPreparation()') -and
+    $indexPage.Contains('ApplicationCloseCoordinator.resetPreparation()') -and
+    $entryAbility.Contains('Application close preparation failed')
+) 'Application termination does not await the same bounded Pane disconnect path'
+Assert-True (
+    $sessionViewModel.Contains('this.requestFileTransferCancellation()') -and
+    $sessionViewModel.Contains('this.transferPreparationCancellation') -and
+    $sessionViewModel.Contains('await this.transferCompletion') -and
+    $transferFileManager.Contains('DownloadsAccessManager.ensure(context, cancellation)') -and
+    $downloadsAccessManager.Contains('Promise.race<string>') -and
+    $downloadsAccessManager.Contains('TRANSFER_CANCELLED')
+) 'Downloads preparation cannot be released by the owning Pane cancellation path'
+Assert-True (
+    $transferFileManager.Contains('fs.OpenMode.READ_ONLY | fs.OpenMode.NOFOLLOW') -and
+    $transferFileManager.Contains('fs.OpenMode.READ_ONLY | fs.OpenMode.DIR | fs.OpenMode.NOFOLLOW') -and
+    $transferFileManager.Contains('!stat.isFile() || stat.isSymbolicLink()') -and
+    $transferFileManager.Contains('!stat.isDirectory() || stat.isSymbolicLink()') -and
+    $transferFileManager.Contains('fs.moveFileSync(prepared.tempPath, prepared.finalPath, 1)') -and
+    $transferFileManager.Contains('fs.moveFileSync(prepared.tempPath, candidatePath, 1)') -and
+    $transferFileManager.Contains('index < TransferFileManager.MAX_AUTOMATIC_NAMES') -and
+    $transferFileManager.Contains("throw new Error('LOCAL_CONFLICT: no available automatic Downloads name')") -and
+    $transferFileManager.Contains("tempName: string = '.leantty-'") -and
+    $transferFileManager.Contains("if (prepared.tempPath.length > 0)") -and
+    $transferFileManager.Contains('fs.unlinkSync(prepared.tempPath)')
+) 'Downloads transfer ownership, no-follow, no-replace, bounded numbering, or cleanup contract regressed'
+Assert-True (
+    $commandBarViewModel.Contains('safeCompletionValue') -and
+    $commandBarViewModel.Contains('TerminalTextPolicy.isSafe(value)') -and
+    $terminalTextPolicy.Contains('code === 0x1B || code < 0x20') -and
+    $terminalTextPolicy.Contains('(code >= 0x7F && code <= 0x9F)') -and
+    $terminalTextPolicy.Contains('codePoint >= 0x202A && codePoint <= 0x202E') -and
+    $terminalTextPolicy.Contains('codePoint >= 0x2066 && codePoint <= 0x206F') -and
+    $terminalTextPolicy.Contains('codePoint >= 0xE0020 && codePoint <= 0xE007F') -and
+    $commandBarViewModel.Contains('fs.listFileSync(path)') -and
+    $commandBarViewModel.Contains('private static readonly MAX_COMPLETIONS: number = 100') -and
+    -not $commandBarViewModel.Contains('DownloadsAccessManager') -and
+    -not $commandBarViewModel.Contains('FileTransferClient') -and
+    -not $commandBarViewModel.Contains('SshClient')
+) 'Tab completion can prompt, connect, recurse, inject controls, or exceed its candidate boundary'
+Assert-True (
+    $sessionViewModel -match (
+        'private finishCancelledFileTransfer\(\): void \{[\s\S]*?' +
+        "this\.logger\.info\('FILE_TRANSFER result=cancelled'\)"
+    ) -and
+    $sessionViewModel -notmatch (
+        "if \(event\.kind === 'cancelled'\) \{\s*" +
+        "this\.logger\.info\('FILE_TRANSFER result=cancelled'\)"
+    )
+) 'Cancelled transfer terminal telemetry is not emitted exactly from the shared finish path'
 
 foreach ($productionSource in @(
     'entry\src\main\ets\pages\Index.ets',

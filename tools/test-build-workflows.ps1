@@ -92,6 +92,8 @@ try {
         Join-Path $repoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets'
         Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\model\transfer\FileTransferClient.ets'
     )
     $acceptanceSourceHashes = @{}
     foreach ($path in $acceptanceArkTsPaths) {
@@ -104,8 +106,46 @@ try {
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_SUBMIT')) (
             'Debug acceptance source injection omitted input telemetry'
         )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_LOCAL_CLEANUP_FAILURE')) (
+            'Debug acceptance source injection omitted local cleanup failure control'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_DOWNLOADS_NOREPLACE')) (
+            'Debug acceptance source injection omitted the Downloads no-replace probe'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_DOWNLOADS_MANAGER')) (
+            'Debug acceptance source injection omitted the production Downloads manager probe'
+        )
+        Assert-True (-not ($injectedText -join "`n").Contains('ACCEPTANCE_DOWNLOADS_FD')) (
+            'Routine debug acceptance injection included the native-only Downloads FD probe'
+        )
         Assert-True (($injectedText -join "`n").Contains('Acceptance: Rebuild Renderer')) (
             'Debug acceptance source injection omitted renderer trigger'
+        )
+        Assert-True (($injectedText -join "`n").Contains('Acceptance: Downloads No-Replace')) (
+            'Debug acceptance source injection omitted the Downloads probe menu action'
+        )
+        Assert-True (($injectedText -join "`n").Contains('Acceptance: Downloads Manager Boundary')) (
+            'Debug acceptance source injection omitted the Downloads manager boundary action'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_TRANSFER_FIXTURE')) (
+            'Debug acceptance source injection omitted transfer fixture telemetry'
+        )
+        Assert-True (($injectedText -join "`n").Contains('force-put-source.bin')) (
+            'Debug acceptance source injection omitted the force-termination PUT source'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_FILE_TRANSFER_LATE_EVENT')) (
+            'Debug acceptance source injection omitted stale transfer event control'
+        )
+        Assert-True (($injectedText -join "`n").Contains(
+                'ACCEPTANCE_FILE_TRANSFER_PREPARATION waiting=true'
+            )) (
+            'Debug acceptance source injection omitted the stalled preparation trigger'
+        )
+        Assert-True (($injectedText -join "`n").Contains('Acceptance: Transfer Fixture')) (
+            'Debug acceptance source injection omitted the transfer fixture action'
+        )
+        Assert-True (-not ($injectedText -join "`n").Contains('Acceptance: Downloads FD Boundary')) (
+            'Routine debug acceptance injection included the native-only Downloads FD menu action'
         )
         Assert-True (-not ($injectedText -join "`n").Contains('Debug Material')) (
             'Debug acceptance source injection must not restore the retired material comparator'
@@ -121,6 +161,61 @@ try {
         Assert-True (
             (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $acceptanceSourceHashes[$path]
         ) "Acceptance source injection did not restore $path byte-for-byte"
+    }
+    $nativeAcceptancePaths = @(
+        Join-Path $repoRoot 'leantty_ssh\src\lib.rs'
+        Join-Path $repoRoot 'entry\src\main\cpp\types\libleantty_ssh\index.d.ts'
+    )
+    $nativeAcceptanceHashes = @{}
+    foreach ($path in $nativeAcceptancePaths) {
+        $nativeAcceptanceHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+    Invoke-WithLeanTTYNativeAcceptanceSource -RepoRoot $repoRoot -Action {
+        $nativeInjectedText = $nativeAcceptancePaths | ForEach-Object {
+            Get-Content -LiteralPath $_ -Raw
+        }
+        Assert-True (($nativeInjectedText -join "`n").Contains('ssh_acceptance_probe_file_descriptor')) (
+            'Debug native acceptance injection omitted the FD boundary probe'
+        )
+        Assert-True (($nativeInjectedText -join "`n").Contains(
+                'ACCEPTANCE_LOCAL_TEMP_CLEANUP_FAILURE'
+            )) (
+            'Debug native acceptance injection omitted the local temporary cleanup failure control'
+        )
+        Assert-True (($nativeInjectedText -join "`n").Contains(
+                'ACCEPTANCE_FILE_TRANSFER_DROPPED'
+            )) (
+            'Debug native acceptance injection omitted the transfer callback backpressure metric'
+        )
+        $borrowedFdImportCount = ([regex]::Matches(
+                [IO.File]::ReadAllText((Join-Path $repoRoot 'leantty_ssh\src\lib.rs')),
+                '(?m)^use std::os::fd::BorrowedFd;$'
+            )).Count
+        Assert-True ($borrowedFdImportCount -eq 1) (
+            'Debug native acceptance injection duplicated the production BorrowedFd import'
+        )
+        Assert-True (($nativeInjectedText -join "`n").Contains(
+                "): AcceptanceFileDescriptorProbeResult`nexport interface KnownHostsQueryResult"
+            )) 'Debug native type injection merged adjacent declarations'
+        Invoke-WithLeanTTYAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
+            $fdInjectedText = $acceptanceArkTsPaths | ForEach-Object {
+                Get-Content -LiteralPath $_ -Raw
+            }
+            Assert-True (($fdInjectedText -join "`n").Contains('ACCEPTANCE_DOWNLOADS_FD')) (
+                'Native-backed acceptance injection omitted the Downloads FD boundary probe'
+            )
+            Assert-True (($fdInjectedText -join "`n").Contains('Acceptance: Downloads FD Boundary')) (
+                'Native-backed acceptance injection omitted the Downloads FD menu action'
+            )
+            Assert-True (($fdInjectedText -join "`n").Contains('ACCEPTANCE_DOWNLOADS_MANAGER')) (
+                'Native-backed acceptance injection omitted the production Downloads manager probe'
+            )
+        }
+    }
+    foreach ($path in $nativeAcceptancePaths) {
+        Assert-True (
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $nativeAcceptanceHashes[$path]
+        ) "Native acceptance source injection did not restore $path byte-for-byte"
     }
 
     Assert-LeanTTYHarnessOnlyPaths `
@@ -285,6 +380,15 @@ try {
         $devBuildText.Contains('Invoke-WithLeanTTYBuildLock')
     ) 'dev-build.ps1 is not protected by the repository build lock'
 
+    $devPcText = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'dev-pc.ps1'
+    ) -Raw
+    Assert-True (
+        $devPcText.Contains(". (Join-Path `$PSScriptRoot 'device-regression.ps1')") -and
+        $devPcText.Contains('Start-LeanTTYRegressionApp') -and
+        $devPcText.Contains('Get-LeanTTYDeviceUnlockPasswordPath')
+    ) 'dev-pc.ps1 does not use the conditional regression-PC unlock flow'
+
     $verifyPcText = Get-Content -LiteralPath (
         Join-Path $PSScriptRoot 'verify-pc.ps1'
     ) -Raw
@@ -294,6 +398,14 @@ try {
         $verifyPcText.Contains('verify-pc evidence directory must be outside the repository') -and
         $verifyPcText.Contains('$evidenceDirectoryFullPath.StartsWith(')
     ) 'verify-pc evidence would be deleted by its own clean build'
+    Assert-True (
+        $verifyPcText.Contains("'oh-package-lock.json5'") -and
+        $verifyPcText.Contains("'entry/oh-package-lock.json5'") -and
+        $verifyPcText.Contains('[IO.File]::ReadAllBytes($fullPath)') -and
+        $verifyPcText.Contains('git -C $repoRoot hash-object -- $relativePath') -and
+        $verifyPcText.Contains('[IO.File]::WriteAllBytes(') -and
+        $verifyPcText.Contains('verify-pc build changed the committed formal-release candidate')
+    ) 'verify-pc does not preserve generated OHPM lockfiles while rejecting content drift'
 
     $buildAllText = Get-Content -LiteralPath (
         Join-Path $PSScriptRoot 'build-all.ps1'

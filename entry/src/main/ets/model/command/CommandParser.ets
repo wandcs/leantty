@@ -1,5 +1,6 @@
 import { SshConfig, SshConfigHost } from '../ssh/SshConfig'
 import { KeyAlgorithm } from '../../common/types/SshKeyTypes'
+import { TerminalTextPolicy } from '../../common/security/TerminalTextPolicy'
 
 export class CommandParseResult {
   isValid: boolean
@@ -68,8 +69,47 @@ export class KeyCommandResult {
   }
 }
 
+export enum TransferDirection {
+  PUT = 0,
+  GET = 1,
+  SCP_HINT = 2
+}
+
+export class TransferCommandResult {
+  direction: TransferDirection
+  isValid: boolean
+  host: string
+  port: number
+  username: string
+  identityFile: string
+  localPath: string
+  remotePath: string
+  automaticLocalName: boolean
+  localTargetDirectory: boolean
+  remoteTargetDirectory: boolean
+  errorMessage: string
+
+  constructor(direction: TransferDirection) {
+    this.direction = direction
+    this.isValid = false
+    this.host = ''
+    this.port = 22
+    this.username = ''
+    this.identityFile = ''
+    this.localPath = ''
+    this.remotePath = ''
+    this.automaticLocalName = false
+    this.localTargetDirectory = false
+    this.remoteTargetDirectory = false
+    this.errorMessage = ''
+  }
+}
+
 export class CommandParser {
-  static parseInput(input: string, sshConfig: SshConfig): CommandParseResult | KeyCommandResult | null {
+  static parseInput(
+    input: string,
+    sshConfig: SshConfig
+  ): CommandParseResult | KeyCommandResult | TransferCommandResult | null {
     let trimmed: string = input.trim()
     let words: string[] = trimmed.length > 0 ? trimmed.split(/\s+/) : []
     if (trimmed === '?' || trimmed === '？' || trimmed === '-h' || trimmed === '--help' || words[0] === 'help') {
@@ -103,6 +143,12 @@ export class CommandParser {
     }
     if (words[0] === 'ssh-copy-id') {
       return CommandParser.parseSshCopyId(trimmed)
+    }
+    if (words[0] === 'put' || words[0] === 'get') {
+      return CommandParser.parseTransfer(trimmed, sshConfig)
+    }
+    if (words[0] === 'scp') {
+      return new TransferCommandResult(TransferDirection.SCP_HINT)
     }
     if (trimmed.startsWith('ssh ') || trimmed.startsWith('ssh@') || trimmed.length === 0) {
       return CommandParser.parseCommand(trimmed, sshConfig)
@@ -233,6 +279,229 @@ export class CommandParser {
     result.isValid = result.username.length > 0 && result.host.length > 0
     if (!result.isValid) { result.errorMessage = 'Invalid SSH target' }
     return result
+  }
+
+  static parseTransfer(input: string, sshConfig: SshConfig): TransferCommandResult {
+    let tokenized: string[] | string = CommandParser.tokenizeTransfer(input)
+    let command: string = input.trim().startsWith('get') ? 'get' : 'put'
+    let direction: TransferDirection = command === 'get' ? TransferDirection.GET : TransferDirection.PUT
+    let result: TransferCommandResult = new TransferCommandResult(direction)
+    let usage: string = direction === TransferDirection.PUT ?
+      'Usage: put [-p port] [-i identity] [--] <local-relative-file> <host>:<remote-path>' :
+      'Usage: get [-p port] [-i identity] [--] <host>:<remote-file> [local-relative-path]'
+    if (typeof tokenized === 'string') {
+      result.errorMessage = command + ': ' + tokenized
+      return result
+    }
+    let args: string[] = tokenized
+    if (args.length === 0 || args[0] !== command) {
+      result.errorMessage = usage
+      return result
+    }
+    let portText: string = ''
+    let identity: string = ''
+    let operands: string[] = []
+    let optionsEnded: boolean = false
+    for (let index: number = 1; index < args.length; index++) {
+      let argument: string = args[index]
+      if (!optionsEnded && argument === '--') {
+        optionsEnded = true
+      } else if (!optionsEnded && (argument === '-p' || argument === '-i')) {
+        if (index + 1 >= args.length) {
+          result.errorMessage = command + ': missing value after ' + argument
+          return result
+        }
+        let value: string = args[index + 1]
+        if (argument === '-p') {
+          if (portText.length > 0) {
+            result.errorMessage = command + ': duplicate option -p'
+            return result
+          }
+          let port: number = parseInt(value, 10)
+          if (!/^\d+$/.test(value) || isNaN(port) || port < 1 || port > 65535) {
+            result.errorMessage = command + ': port must be between 1 and 65535'
+            return result
+          }
+          portText = value
+        } else {
+          if (identity.length > 0) {
+            result.errorMessage = command + ': duplicate option -i'
+            return result
+          }
+          if (value.length === 0) {
+            result.errorMessage = command + ': identity must not be empty'
+            return result
+          }
+          identity = value
+        }
+        index++
+      } else if (!optionsEnded && argument.startsWith('-')) {
+        result.errorMessage = command + ': unsupported option ' + argument
+        return result
+      } else {
+        operands.push(argument)
+      }
+    }
+    let expectedMinimum: number = direction === TransferDirection.PUT ? 2 : 1
+    let expectedMaximum: number = 2
+    if (operands.length < expectedMinimum || operands.length > expectedMaximum) {
+      result.errorMessage = usage
+      return result
+    }
+    let remoteOperand: string = direction === TransferDirection.PUT ? operands[1] : operands[0]
+    let localOperand: string = direction === TransferDirection.PUT ? operands[0] :
+      (operands.length === 2 ? operands[1] : '')
+    let remoteParts: string[] | string = CommandParser.splitRemoteOperand(remoteOperand)
+    if (typeof remoteParts === 'string') {
+      result.errorMessage = command + ': ' + remoteParts
+      return result
+    }
+    result.remotePath = remoteParts[1]
+    result.remoteTargetDirectory = direction === TransferDirection.PUT &&
+      (result.remotePath.length === 0 || result.remotePath.endsWith('/'))
+    if (!CommandParser.validRemotePath(result.remotePath, result.remoteTargetDirectory)) {
+      result.errorMessage = direction === TransferDirection.GET ?
+        command + ': remote source must name one safe file and must not end with /' :
+        command + ': remote target must name a safe file or end with / for a directory'
+      return result
+    }
+    result.localTargetDirectory = direction === TransferDirection.GET && localOperand.endsWith('/')
+    if ((direction === TransferDirection.PUT || localOperand.length > 0) &&
+      !CommandParser.validDownloadsRelativePath(localOperand, result.localTargetDirectory)) {
+      result.errorMessage = command + ': local path must stay within Downloads and use a relative file path'
+      return result
+    }
+    result.localPath = localOperand
+    result.automaticLocalName = direction === TransferDirection.GET &&
+      (localOperand.length === 0 || result.localTargetDirectory)
+    if (direction === TransferDirection.PUT && result.remoteTargetDirectory) {
+      let slash: number = localOperand.lastIndexOf('/')
+      let basename: string = localOperand.substring(slash + 1)
+      result.remotePath = (result.remotePath.length === 0 ? './' : result.remotePath) + basename
+      if (!CommandParser.validRemotePath(result.remotePath, false)) {
+        result.errorMessage = command + ': derived remote file path is too long or unsafe'
+        return result
+      }
+    }
+    let sshCommand: string = 'ssh '
+    if (portText.length > 0) { sshCommand += '-p ' + portText + ' ' }
+    if (identity.length > 0) { sshCommand += '-i ' + identity + ' ' }
+    sshCommand += remoteParts[0]
+    let connection: CommandParseResult = CommandParser.parseCommand(sshCommand, sshConfig)
+    if (!connection.isValid) {
+      result.errorMessage = command + ': ' + connection.errorMessage
+      return result
+    }
+    result.host = connection.host
+    result.port = connection.port
+    result.username = connection.username
+    result.identityFile = connection.identityFile
+    result.isValid = true
+    return result
+  }
+
+  private static tokenizeTransfer(input: string): string[] | string {
+    let tokens: string[] = []
+    let current: string = ''
+    let quote: string = ''
+    let escaping: boolean = false
+    let tokenStarted: boolean = false
+    for (let index: number = 0; index < input.length; index++) {
+      let character: string = input[index]
+      if (escaping) {
+        current += character
+        escaping = false
+        tokenStarted = true
+      } else if (character === '\\' && quote !== "'") {
+        escaping = true
+        tokenStarted = true
+      } else if (quote.length > 0) {
+        if (character === quote) { quote = '' } else { current += character }
+        tokenStarted = true
+      } else if (character === '"' || character === "'") {
+        quote = character
+        tokenStarted = true
+      } else if (/\s/.test(character)) {
+        if (tokenStarted) {
+          tokens.push(current)
+          current = ''
+          tokenStarted = false
+        }
+      } else {
+        current += character
+        tokenStarted = true
+      }
+    }
+    if (escaping) { return 'trailing escape is not allowed' }
+    if (quote.length > 0) { return 'unterminated quote' }
+    if (tokenStarted) { tokens.push(current) }
+    return tokens
+  }
+
+  private static splitRemoteOperand(value: string): string[] | string {
+    let separator: number = -1
+    let bracketDepth: number = 0
+    for (let index: number = 0; index < value.length; index++) {
+      if (value[index] === '[') { bracketDepth++ }
+      else if (value[index] === ']') { bracketDepth-- }
+      else if (value[index] === ':' && bracketDepth === 0) { separator = index; break }
+      if (bracketDepth < 0 || bracketDepth > 1) { return 'invalid bracketed remote target' }
+    }
+    if (bracketDepth !== 0 || separator <= 0) {
+      return 'remote target must use <host>:<remote-path>'
+    }
+    return [value.substring(0, separator), value.substring(separator + 1)]
+  }
+
+  private static validDownloadsRelativePath(path: string, directoryTarget: boolean): boolean {
+    if (path.length === 0 || path.startsWith('/') || path.startsWith('\\') ||
+      CommandParser.utf8Length(path) > 4096 ||
+      /^[A-Za-z]:/.test(path) || path.includes('\\') || CommandParser.hasUnsafePathCharacter(path) ||
+      (path.endsWith('/') && !directoryTarget)) {
+      return false
+    }
+    let normalized: string = directoryTarget ? path.substring(0, path.length - 1) : path
+    if (normalized.length === 0) { return false }
+    let components: string[] = normalized.split('/')
+    for (let index: number = 0; index < components.length; index++) {
+      if (components[index].length === 0 || components[index] === '.' || components[index] === '..' ||
+        CommandParser.utf8Length(components[index]) > 255) {
+        return false
+      }
+    }
+    return true
+  }
+
+  private static validRemotePath(path: string, directoryTarget: boolean): boolean {
+    if (path.length > 4096 || CommandParser.hasUnsafePathCharacter(path)) {
+      return false
+    }
+    if (directoryTarget) {
+      return path.length === 0 || path.endsWith('/')
+    }
+    if (path.length === 0 || path.endsWith('/')) { return false }
+    let normalized: string = path.replace(/\\/g, '/')
+    let basename: string = normalized.substring(normalized.lastIndexOf('/') + 1)
+    return basename.length > 0 && basename !== '.' && basename !== '..'
+  }
+
+  private static hasUnsafePathCharacter(path: string): boolean {
+    return !TerminalTextPolicy.isSafe(path)
+  }
+
+  private static utf8Length(value: string): number {
+    let length: number = 0
+    for (let index: number = 0; index < value.length; index++) {
+      let code: number = value.charCodeAt(index)
+      if (code <= 0x7F) { length++ }
+      else if (code <= 0x7FF) { length += 2 }
+      else if (code >= 0xD800 && code <= 0xDBFF && index + 1 < value.length &&
+        value.charCodeAt(index + 1) >= 0xDC00 && value.charCodeAt(index + 1) <= 0xDFFF) {
+        length += 4
+        index++
+      } else { length += 3 }
+    }
+    return length
   }
 
   private static parseHostPort(hostPort: string, result: CommandParseResult): void {

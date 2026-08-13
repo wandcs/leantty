@@ -28,6 +28,15 @@ export class InteractionPolicy {
     return keyCode === 2022 && ctrlKey && altKey && !shiftKey
   }
 
+  static isTerminalTabKey(keyCode: number, ctrlKey: boolean,
+    altKey: boolean, shiftKey: boolean): boolean {
+    return keyCode === 2049 && !ctrlKey && !altKey && !shiftKey
+  }
+
+  static isTerminalCopyOrInterruptKey(keyCode: number, ctrlKey: boolean, altKey: boolean): boolean {
+    return keyCode === 2019 && ctrlKey && !altKey
+  }
+
   static transparencyShortcutDirection(keyCode: number, ctrlKey: boolean,
     altKey: boolean): number {
     if (!ctrlKey || !altKey) {

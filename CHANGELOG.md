@@ -2,6 +2,129 @@
 
 ## [Unreleased]
 
+## [1.3.0] - In development
+
+### Added
+
+- Added bounded foreground `put` and `get` commands for one file at a time
+  between the authorized Downloads tree and an SFTP remote path. Existing
+  Downloads subdirectories and explicit trailing-`/` directory targets retain
+  the source basename without adding recursive transfer or directory creation.
+  Explicit file-name conflicts fail; downloads whose final basename is selected
+  by LeanTTY keep both files with a numbered name. Bounded Tab completion covers
+  local files/directories, Host aliases and LeanTTY key names without prompting
+  for Downloads access or enumerating remote directories. The
+  commands reuse existing Host, Identity, authentication and known-host rules,
+  support an optional per-command port or identity, and keep file bytes in the
+  Rust/native stream instead of ArkTS, ArkWeb or terminal output. A fixed-width
+  30-cell line progress meter updates in place with percentage, transferred/total
+  size, smoothed live speed and ETA, then exposes the finalizing stage without
+  animation or a separate GUI. Its selected line-drawing glyphs are locked to
+  the bundled font and covered by Regular/Bold one-cell advance regression tests. Completion
+  output includes elapsed time and average speed. Restrained ANSI status colors
+  keep text as the source of meaning; a single verified one-cell green dot marks
+  successful final commit without resembling an expandable control.
+  Each Pane now owns an explicit transfer lifecycle from local preparation
+  through finalization and one terminal result; cancellation during Downloads
+  preparation cannot later start a native transfer. File-transfer failures map
+  to bounded actionable categories without echoing native/server detail, and
+  SFTP channel/subsystem setup, session initialization, metadata, open, close,
+  rename, cleanup and teardown waits have finite bounds and share the foreground
+  cancellation path. Confirmed application termination waits for every Pane's
+  existing transfer cancellation and cleanup promise before process exit; normal
+  Pane close waits for that same Pane-owned completion path. Downloads permission
+  preparation now races each Pane's cancellation without cancelling the shared
+  system request, so a late permission result cannot open files or start native
+  transfer work for a closed Pane. Completion candidates now reject terminal
+  control characters and malformed Unicode before Host, key, file or directory
+  names can reach the command line or candidate list.
+
+### Security
+
+- Added no-follow local source opening, native descriptor revalidation,
+  exclusive local and remote temporary files, and no-overwrite final commits.
+  Existing destination files are never replaced; task-owned partial files are
+  cleaned on observed failure or cancellation, and transfer events are scoped
+  by transfer, Pane and generation identifiers.
+- Kept remote temporary basenames bounded and independent of the requested
+  final basename, so valid long remote filenames do not exceed the server's
+  per-component limit during an upload.
+- Passwords, private-key passphrases and non-echoing keyboard-interactive
+  responses now also mask and promptly clear the ArkWeb/xterm helper input.
+  The typed Native-to-Web state is restored after renderer attachment, while
+  ordinary command input remains accessible; device layout snapshots and logs
+  are asserted not to contain temporary credentials.
+
+### Development
+
+- Added repository-only SFTP interoperability and physical-PC acceptance
+  fixtures. The production GET-to-Downloads-to-PUT event chain has completed
+  SHA-256-exact ARM64 device round trips with both 131,089-byte generated data
+  and a 118,349,760-byte caller-provided file. The large-file pass exercised
+  directory-target basename derivation, local auto-numbering, Tab completion,
+  live progress/speed, finalization and exact cleanup. The acceptance-source
+  injector now preserves an existing production `BorrowedFd` import and has a
+  regression assertion for import uniqueness. A controlled delayed-SFTP
+  physical-PC gate now proves that an in-flight GET cancelled by no-selection
+  Ctrl+C returns to IDLE within 436 ms without exposing the numbered final file
+  or retaining its task-owned temporary file. Additional delayed-SFTP gates use
+  the real application and Pane confirmation dialogs: application close awaits
+  one cancelled result and clean IDLE before process exit, while Pane close
+  preserves the original process and a surviving Pane; neither path exposes a
+  final file or retains local/remote task temporary objects. Controlled stalled-
+  preparation gates prove the same behavior before authentication or native
+  transfer begins, including absence of late progress, finalizing, or completion
+  events. A controlled SFTP write-plus-remove failure gate proves that remote
+  cleanup failure emits one actionable `REMOTE_CLEANUP`, returns the Pane to
+  IDLE, never exposes the final name, and leaves only the identifiable random
+  temporary name described to the user. Transfers now reject a known-size
+  source that ends early, and remote GET read failures map to the network
+  guidance instead of generic path/permission guidance. A physical-PC gate
+  terminates the controlled SSH service after positive GET progress and proves
+  one `NETWORK` result, clean IDLE, and no final or temporary local file. A
+  compile-time-isolated local cleanup fault gate preserves the primary
+  `REMOTE_NOT_FOUND` result, appends the actionable cleanup warning, returns to
+  IDLE, never exposes the requested final name, and proves exactly one owned
+  `.part` remains until the acceptance fixture removes it. A callback-
+  backpressure gate forces a two-event native queue to drop intermediate
+  progress while preserving finalization, exactly one completion, clean IDLE,
+  no temporary file and a SHA-256-exact 8 MiB GET-to-PUT round trip. Forced-
+  termination gates stop the application after positive GET/PUT progress and
+   prove that no partial final name is exposed, restart remains usable, and only
+   the documented identifiable local or remote temporary file may remain until
+   explicit cleanup. A two-Pane late-event gate injects old completed events
+   after one cancelled GET and one disconnected GET; both are rejected by the
+   transfer/Pane/generation identity boundary without a false completion, final
+  file or temporary-file leak, while both Panes and the original process remain
+  usable. Authentication-stage device observation now combines a pre-submit,
+  PID-scoped live hilog stream with the bounded tail snapshot, records which
+  source observed each structured state, and captures layout, screenshot and
+  diagnostics when neither source observes authentication before the deadline.
+  A production `TransferFileManager` device probe now proves preflight and
+  commit-time local conflicts preserve existing bytes, automatic conflicts
+  choose the minimal available numbered name without retransmission, temporary
+  files stay in the final directory, nested PUT owns the no-follow source FD,
+  and task cleanup removes only its exact temporary path. A physical-PC
+  authentication matrix completes transfers with password, unencrypted and
+  encrypted keys, two-round keyboard-interactive, and command-local identity,
+  then removes its disposable key through the product workflow. Separate
+  device gates prove safe recovery with no SFTP subsystem, remote permission
+  denial, unsupported reliable rename and local disk exhaustion. A zero-byte
+  round trip is SHA-256 exact, and an 8 MiB GET completes while the real window
+  is minimized, restores in the same process, then continues through PUT and
+  cleanup. A selected-text Ctrl+C physical gate now copies the xterm-owned
+  selection without cancelling the active GET, then completes GET, PUT and
+  SHA-256 verification. Ctrl+C is routed before ArkWeb consumes selection copy;
+  file-name gates now round-trip space, Unicode and 224-character basenames,
+  while a fixed-font Tab matrix proves offline completion, bounded listing and
+  unsafe-control filtering against the production command buffer. A production
+  Downloads manager probe exhausts all 10,000 automatic names without changing
+  occupied contents. An in-flight 8 MiB GET also survives real system suspend,
+  wake and unlock in the same process, then completes PUT and exact cleanup.
+  With a selection Ctrl+C copies without cancelling the transfer; without a
+  selection it still sends ETX. First-permission acceptance remains pending on
+  a genuinely unprivileged installation state.
+
 ## [1.2.0] - 2026-08-08
 
 ### Added

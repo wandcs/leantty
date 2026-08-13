@@ -13,6 +13,7 @@ import { InteractionPolicy, WorkspaceNavigationAction } from '../model/ui/Intera
 import { UserPreferences } from '../model/settings/UserPreferences'
 import { TerminalSurfaceController } from '../model/terminal/TerminalSurfaceController'
 import { BrowserLauncher } from '../model/browser/BrowserLauncher'
+import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator'
 
 const logger: Logger = new Logger('IndexPage')
 const WARM_TAB_RETENTION_MS: number = 30000
@@ -79,6 +80,9 @@ struct Index {
   private warmTabEvictionTimerId: number = -1
   @StorageLink('pcTitleButtonReservedWidth') titleButtonReservedWidth: number = 140
   private themeChangeHandler: () => void = () => { this.applyTheme() }
+  private applicationCloseHandler: () => Promise<void> = async (): Promise<void> => {
+    await this.disconnectAllRuntimes()
+  }
 
   aboutToAppear(): void {
     this.fontSize = InteractionPolicy.clampFontSize(this.fontSize)
@@ -87,10 +91,12 @@ struct Index {
     this.syncWorkspace()
     this.applyTheme()
     ThemeManager.getInstance().onThemeChange(this.themeChangeHandler)
+    ApplicationCloseCoordinator.register(this.applicationCloseHandler)
     logger.info('Index page initialized')
   }
 
   aboutToDisappear(): void {
+    ApplicationCloseCoordinator.unregister(this.applicationCloseHandler)
     ThemeManager.getInstance().removeThemeChange(this.themeChangeHandler)
     this.clearWarmTabEvictionTimer()
     AppStorage.setOrCreate('hasActiveSshSession', false)
@@ -413,6 +419,7 @@ struct Index {
 
   private addPaneRuntime(pane: PaneInfo): void {
     let vm: SessionViewModel = new SessionViewModel()
+    vm.setPaneIdentity(pane.id)
     vm.setOnStateChange((state: SshSessionState) => {
       this.updatePaneState(pane.id, state)
     })
@@ -688,6 +695,21 @@ struct Index {
       altKey = event.getModifierKeyState(['Alt'])
     } else {
       ctrlKey = (event.metaKey & 1) !== 0
+    }
+    if (InteractionPolicy.isTerminalTabKey(event.keyCode, ctrlKey, altKey, shiftKey)) {
+      let runtime: PaneRuntime | null = this.activePaneRuntime()
+      if (runtime !== null) {
+        runtime.viewModel.handleTerminalInput('\t')
+        return true
+      }
+    }
+
+    if (InteractionPolicy.isTerminalCopyOrInterruptKey(event.keyCode, ctrlKey, altKey)) {
+      let runtime: PaneRuntime | null = this.activePaneRuntime()
+      if (runtime !== null) {
+        runtime.surface.copyOrInterrupt()
+        return true
+      }
     }
 
     let navigationAction: WorkspaceNavigationAction = InteractionPolicy.workspaceNavigationAction(
@@ -987,6 +1009,7 @@ struct Index {
       let context = this.getUIContext().getHostContext() as common.UIAbilityContext
       await context.terminateSelf()
     } catch (e) {
+      ApplicationCloseCoordinator.resetPreparation()
       AppStorage.setOrCreate('skipNextTerminateConfirmation', false)
       logger.error('Application termination failed: ' + e)
       let runtime: PaneRuntime | null = this.findPaneRuntime(paneId)
@@ -1033,6 +1056,15 @@ struct Index {
       logger.warn('Pane disconnect failed: ' + e)
     }
     runtime.detachSurface()
+  }
+
+  private async disconnectAllRuntimes(): Promise<void> {
+    let runtimes: PaneRuntime[] = this.paneRuntimes.slice()
+    let pending: Promise<void>[] = []
+    for (let i: number = 0; i < runtimes.length; i++) {
+      pending.push(runtimes[i].viewModel.disconnect())
+    }
+    await Promise.all(pending)
   }
 
   private requestActiveTabFit(): void {

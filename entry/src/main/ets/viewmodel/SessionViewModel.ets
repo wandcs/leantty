@@ -6,7 +6,12 @@ import { SshKeyManager } from '../model/ssh/SshKeyManager'
 import { KeyPairInfo } from '../common/types/SshKeyTypes'
 import { BridgeProtocol, BridgeMessage } from '../model/bridge/BridgeProtocol'
 import { CommandBarViewModel, CommandParseResult, KeyCommandResult } from './CommandBarViewModel'
-import { CommandParser, KeyCommandKind } from '../model/command/CommandParser'
+import {
+  CommandParser,
+  KeyCommandKind,
+  TransferCommandResult,
+  TransferDirection
+} from '../model/command/CommandParser'
 import { KeyCommandService, KeyCommandContext } from '../model/command/KeyCommandService'
 import { Logger } from '../common/logger/Logger'
 import { FileUtils } from '../common/utils/FileUtils'
@@ -20,6 +25,15 @@ import { common } from '@kit.AbilityKit'
 import { KnownHostsManager } from '../model/ssh/KnownHostsManager'
 import { UserGuideManager, UserGuideResult } from '../model/guide/UserGuideManager'
 import { UserGuidePolicy } from '../model/guide/UserGuidePolicy'
+import {
+  FileTransferClient,
+  FileTransferOptions,
+  FileTransferProgress
+} from '../model/transfer/FileTransferClient'
+import { TransferFileManager, TransferLocalFile } from '../model/transfer/TransferFileManager'
+import { FileTransferLifecycle, FileTransferPhase } from '../model/transfer/FileTransferLifecycle'
+import { FileTransferFailurePresenter } from '../model/transfer/FileTransferFailure'
+import { TerminalTextPolicy } from '../common/security/TerminalTextPolicy'
 
 export { TerminalMode } from '../common/types/TerminalTypes'
 
@@ -76,6 +90,27 @@ export class SessionViewModel {
   private terminalFocused: boolean = false
   private outputObserverDecoder: util.TextDecoder = util.TextDecoder.create('utf-8')
   private localHelpPending: boolean = false
+  private paneId: string = ''
+  private fileTransferClient: FileTransferClient | null = null
+  private transferCommand: TransferCommandResult | null = null
+  private transferLocalFile: TransferLocalFile | null = null
+  private transferLastProgressMs: number = 0
+  private transferLastBytes: number = 0
+  private transferProgressText: string = ''
+  private transferProgressVisible: boolean = false
+  private transferProgressObserved: boolean = false
+  private transferSpeedObserved: boolean = false
+  private transferStartedMs: number = 0
+  private transferSpeedSampleMs: number = 0
+  private transferSpeedSampleBytes: number = 0
+  private transferSpeedBytesPerSecond: number = 0
+  private transferCompletion: Promise<void> | null = null
+  private resolveTransferCompletion: (() => void) | null = null
+  private transferPreparationCancellation: Promise<void> | null = null
+  private resolveTransferPreparationCancellation: (() => void) | null = null
+  private transferLifecycle: FileTransferLifecycle = new FileTransferLifecycle()
+  private transferCancellationRequested: boolean = false
+  private transferControlFailureCode: string = ''
 
   getSession(): SshSession {
     return this.session
@@ -87,6 +122,18 @@ export class SessionViewModel {
 
   getMode(): TerminalMode {
     return this.mode
+  }
+
+  setPaneIdentity(paneId: string): void {
+    this.paneId = paneId
+  }
+
+  hasActiveTransfer(): boolean {
+    return this.transferLifecycle.isActive()
+  }
+
+  getFileTransferPhase(): FileTransferPhase {
+    return this.transferLifecycle.getPhase()
   }
 
   setOnStateChange(callback: (state: SshSessionState) => void): void {
@@ -119,6 +166,7 @@ export class SessionViewModel {
 
   bindTerminalSurface(surface: TerminalSurfaceController): void {
     this.terminalSurface = surface
+    surface.setInputMasked(SessionViewModel.isSecretInputMode(this.mode))
     surface.setOnMessage((msg: BridgeMessage) => {
       this.handleBridgeMessage(msg)
     })
@@ -198,6 +246,12 @@ export class SessionViewModel {
   }
 
   async disconnect(): Promise<void> {
+    if (this.transferLifecycle.isActive()) {
+      this.requestFileTransferCancellation()
+      if (this.transferCompletion !== null) {
+        await this.transferCompletion
+      }
+    }
     if (this.sshClient.hasActiveSession()) {
       await this.sshClient.disconnect()
     }
@@ -228,6 +282,17 @@ export class SessionViewModel {
   }
 
   private cancelPendingConnection(): void {
+    if (this.transferLifecycle.isActive()) {
+      this.passwordBuffer = ''
+      this.hostKeyBuffer = ''
+      this.pendingKeyPassphrase = ''
+      this.clearAuthChallenge()
+      this.requestFileTransferCancellation()
+      this.setMode(TerminalMode.TRANSFERRING)
+      this.clearTransferProgress()
+      this.writeTerminal('^C\r\nCancelling file transfer...')
+      return
+    }
     this.sshClient.disconnect()
     this.passwordBuffer = ''
     this.hostKeyBuffer = ''
@@ -276,9 +341,19 @@ export class SessionViewModel {
 
   private setMode(newMode: TerminalMode): void {
     this.mode = newMode
+    if (this.terminalSurface !== null) {
+      this.terminalSurface.setInputMasked(SessionViewModel.isSecretInputMode(newMode))
+    }
     if (this.onModeChange !== null) {
       this.onModeChange(newMode)
     }
+  }
+
+  private static isSecretInputMode(mode: TerminalMode): boolean {
+    return mode === TerminalMode.PASSWORD_INPUT ||
+      mode === TerminalMode.KEY_PASSPHRASE_INPUT ||
+      mode === TerminalMode.AUTH_CHALLENGE_INPUT ||
+      mode === TerminalMode.KEY_PASSPHRASE_CHANGE_INPUT
   }
 
   private onSshEvent(event: SshClientEvent, data: string): void {
@@ -708,19 +783,44 @@ export class SessionViewModel {
       return
     }
     let accepted: boolean = answer === 'yes'
+    let transferClient: FileTransferClient | null = this.activeFileTransferClient()
+    if (transferClient !== null && !accepted) {
+      this.transferControlFailureCode = 'HOST_KEY_REJECTED'
+    }
     if (accepted) {
       if (this.context === null) {
-        this.sshClient.verifyHostKey(false)
-        this.onSshError('Host key could not be retained because the application context is unavailable')
+        if (transferClient !== null) {
+          this.transferControlFailureCode = 'HOST_KEY_ERROR'
+          transferClient.verifyHostKey(false)
+          transferClient.cancel()
+        } else {
+          this.sshClient.verifyHostKey(false)
+          this.onSshError('Host key could not be retained because the application context is unavailable')
+        }
         return
       }
       try {
-        DurableStateManager.commitKnownHostLine(this.context, this.sshClient.getPendingKnownHostLine())
+        DurableStateManager.commitKnownHostLine(this.context, transferClient !== null ?
+          transferClient.getPendingKnownHostLine() : this.sshClient.getPendingKnownHostLine())
       } catch (e) {
-        this.sshClient.verifyHostKey(false)
-        this.onSshError('Host key could not be retained: ' + e)
+        if (transferClient !== null) {
+          this.transferControlFailureCode = 'HOST_KEY_ERROR'
+          transferClient.verifyHostKey(false)
+          transferClient.cancel()
+        } else {
+          this.sshClient.verifyHostKey(false)
+          this.onSshError('Host key could not be retained: ' + e)
+        }
         return
       }
+    }
+    if (transferClient !== null) {
+      if (transferClient.verifyHostKey(accepted)) {
+        this.setMode(TerminalMode.TRANSFERRING)
+        this.session.setState(SshSessionState.CONNECTING)
+        this.notifyStateChange()
+      }
+      return
     }
     if (this.sshClient.verifyHostKey(accepted) && accepted) {
       this.setMode(TerminalMode.CONNECTING)
@@ -752,9 +852,22 @@ export class SessionViewModel {
     }
 
     this.commandBarVm.addToHistory(cmd)
-    let parsed: CommandParseResult | KeyCommandResult | null = CommandParser.parseInput(cmd, this.commandBarVm.getSshConfig())
+    let parsed: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+      CommandParser.parseInput(cmd, this.commandBarVm.getSshConfig())
     if (parsed === null) {
       this.writeError("Unknown command. Type 'help' for commands, or use: ssh user@host")
+      return
+    }
+    if (parsed instanceof TransferCommandResult) {
+      if (parsed.direction === TransferDirection.SCP_HINT) {
+        this.writeError('LeanTTY does not implement scp. Use put for uploads or get for downloads.')
+        return
+      }
+      if (!parsed.isValid) {
+        this.writeError(parsed.errorMessage)
+        return
+      }
+      this.startFileTransfer(parsed)
       return
     }
     if (parsed instanceof KeyCommandResult) {
@@ -781,6 +894,505 @@ export class SessionViewModel {
     this.connect(host, port, username)
   }
 
+  private async startFileTransfer(command: TransferCommandResult): Promise<void> {
+    if (this.context === null || this.paneId.length === 0) {
+      this.writeError('File transfer is unavailable because the Pane context is missing.')
+      return
+    }
+    if (!this.setFileTransferPhase(FileTransferPhase.PREPARING)) {
+      this.writeError('File transfer is unavailable because this Pane already owns a transfer.')
+      return
+    }
+    this.transferCancellationRequested = false
+    this.transferControlFailureCode = ''
+    this.transferCompletion = new Promise<void>((resolve: () => void) => {
+      this.resolveTransferCompletion = resolve
+    })
+    this.transferPreparationCancellation = new Promise<void>((resolve: () => void) => {
+      this.resolveTransferPreparationCancellation = resolve
+    })
+    this.setMode(TerminalMode.TRANSFERRING)
+    this.session.setState(SshSessionState.CONNECTING)
+    this.notifyStateChange()
+    this.writeTerminal('\u001b[36mPreparing\u001b[0m ' +
+      (command.direction === TransferDirection.PUT ? 'upload' : 'download') + '...\r\n')
+    let prepared: TransferLocalFile | null = null
+    try {
+      prepared = command.direction === TransferDirection.PUT ?
+        await TransferFileManager.preparePut(
+          this.context, command.localPath, this.transferPreparationCancellation) :
+        await TransferFileManager.prepareGet(
+          this.context, command.remotePath, command.localPath, command.automaticLocalName,
+          this.transferPreparationCancellation)
+      if (this.transferCancellationRequested) {
+        TransferFileManager.cleanup(prepared)
+        prepared = null
+        this.finishCancelledFileTransfer()
+        return
+      }
+      if (command.direction === TransferDirection.GET && prepared.nameConflictExpected) {
+        this.writeTerminal('\u001b[33mDownloads/' +
+          SessionViewModel.terminalSafeText(prepared.localName) +
+          ' already exists. A unique name will be chosen when the download finishes.\u001b[0m\r\n')
+      }
+      this.transferCommand = command
+      this.transferLocalFile = prepared
+      this.pendingKeyPath = command.identityFile
+      let key: KeyPairInfo | null = this.resolvePrivateKey()
+      let options: FileTransferOptions = new FileTransferOptions()
+      options.direction = command.direction === TransferDirection.PUT ? 'put' : 'get'
+      options.host = command.host
+      options.port = command.port
+      options.username = command.username
+      options.knownHostsPath = this.knownHostsPath
+      options.paneId = this.paneId
+      options.remotePath = command.remotePath
+      if (key !== null) {
+        options.privateKeyPath = key.filePath
+        options.privateKeyRequiresPassphrase = key.hasPassphrase
+      }
+      if (command.direction === TransferDirection.PUT) {
+        if (prepared.file === null) {
+          throw new Error('LOCAL_OPEN: Downloads source descriptor is unavailable')
+        }
+        options.localDescriptor = prepared.file.fd
+      } else {
+        options.localPath = prepared.tempPath
+      }
+      let client: FileTransferClient = new FileTransferClient()
+      client.onEvent((event: SshClientEvent, data: string) => {
+        this.onTransferAuthEvent(event, data)
+      })
+      client.onProgress((event: FileTransferProgress) => {
+        this.onFileTransferProgress(event)
+      })
+      this.fileTransferClient = client
+      client.start(options)
+      TransferFileManager.close(prepared)
+      this.transferLastProgressMs = 0
+      this.transferLastBytes = 0
+      this.transferProgressText = ''
+      this.transferProgressVisible = false
+      this.transferProgressObserved = false
+      this.transferSpeedObserved = false
+      this.transferStartedMs = 0
+      this.transferSpeedSampleMs = 0
+      this.transferSpeedSampleBytes = 0
+      this.transferSpeedBytesPerSecond = 0
+    } catch (e) {
+      let cleanupSucceeded: boolean = true
+      try {
+        TransferFileManager.cleanup(prepared)
+      } catch (cleanupError) {
+        cleanupSucceeded = false
+        this.logger.warn('File transfer preparation cleanup failed: ' + cleanupError)
+      }
+      if (this.transferCancellationRequested) {
+        this.finishCancelledFileTransfer()
+      } else {
+        this.finishFileTransferState(FileTransferPhase.FAILED)
+        let message: string = this.fileTransferError('PREPARING', '' + e)
+        if (!cleanupSucceeded) {
+          message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true)
+        }
+        this.writeError(message)
+      }
+    }
+  }
+
+  private onTransferAuthEvent(event: SshClientEvent, data: string): void {
+    switch (event) {
+      case SshClientEvent.PASSWORD_PROMPT:
+        this.logger.info('File transfer authentication prompt=password')
+        this.setMode(TerminalMode.PASSWORD_INPUT)
+        this.passwordBuffer = ''
+        this.writeTerminal('\r\nPassword: ')
+        break
+      case SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT:
+        this.logger.info('File transfer authentication prompt=private-key-passphrase')
+        this.pendingKeyPassphrase = ''
+        this.setMode(TerminalMode.KEY_PASSPHRASE_INPUT)
+        this.writeTerminal('\r\nThe key at ' + data + ' is encrypted.\r\nEnter passphrase: ')
+        break
+      case SshClientEvent.AUTH_BANNER:
+        this.writeAuthenticationText(data)
+        break
+      case SshClientEvent.AUTH_CHALLENGE:
+        this.logger.info('File transfer authentication prompt=keyboard-interactive')
+        this.beginAuthChallenge()
+        break
+      case SshClientEvent.HOST_KEY_PROMPT:
+        this.logger.info('File transfer authentication prompt=host-key')
+        this.hostKeyBuffer = ''
+        this.setMode(TerminalMode.HOST_KEY_INPUT)
+        this.writeTerminal('\r\nThe authenticity of this host cannot be established.\r\n' +
+          'Fingerprint: ' + data + '\r\nTrust this host key? Type yes or no: ')
+        break
+      case SshClientEvent.HOST_KEY_CHANGED:
+        this.transferControlFailureCode = 'HOST_KEY_CHANGED'
+        this.writeTerminal('\r\n' + this.transferHostKeyChangedWarning(data) + '\r\n')
+        if (this.fileTransferClient !== null) { this.fileTransferClient.cancel() }
+        break
+      case SshClientEvent.ERROR:
+        this.transferControlFailureCode = 'HOST_KEY_ERROR'
+        this.logger.warn('Transfer authentication control error: ' + data)
+        break
+      default:
+        break
+    }
+  }
+
+  private transferHostKeyChangedWarning(data: string): string {
+    try {
+      let record: Record<string, string | number> = JSON.parse(data)
+      return SessionViewModel.buildHostKeyChangedWarning(
+        '' + record['host'], Number(record['port']), '' + record['algorithm'],
+        '' + record['oldFingerprint'], '' + record['newFingerprint'])
+    } catch (e) {
+      return 'Remote host identification changed. The file transfer was stopped.'
+    }
+  }
+
+  private onFileTransferProgress(event: FileTransferProgress): void {
+    if (event.kind === 'preparing') {
+      this.setFileTransferPhase(FileTransferPhase.PREPARING)
+      this.setMode(TerminalMode.TRANSFERRING)
+      return
+    }
+    if (event.kind === 'transferring') {
+      this.setFileTransferPhase(FileTransferPhase.TRANSFERRING)
+      this.setMode(TerminalMode.TRANSFERRING)
+      return
+    }
+    if (event.kind === 'progress') {
+      this.transferLastBytes = event.transferredBytes
+      this.renderTransferProgress(event.transferredBytes, event.totalBytes, false)
+      return
+    }
+    if (event.kind === 'finalizing') {
+      this.setFileTransferPhase(FileTransferPhase.FINALIZING)
+      this.setMode(TerminalMode.TRANSFERRING)
+      this.logger.info('FILE_TRANSFER stage=finalizing')
+      this.renderTransferProgress(event.transferredBytes, event.totalBytes, true)
+      return
+    }
+    if (event.kind === 'completed') {
+      this.completeFileTransfer(event.transferredBytes)
+      return
+    }
+    if (event.kind === 'cancelled') {
+      if (this.transferControlFailureCode.length > 0) {
+        let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+        let message: string = this.fileTransferError(this.transferControlFailureCode, '')
+        if (!cleanupSucceeded) {
+          message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true)
+        }
+        this.clearTransferProgress()
+        this.finishFileTransferState(FileTransferPhase.FAILED)
+        this.writeError(message)
+        return
+      }
+      this.finishCancelledFileTransfer()
+      return
+    }
+    if (event.kind === 'failed') {
+      let effectiveCode: string = this.transferControlFailureCode.length > 0 ?
+        this.transferControlFailureCode : event.code
+      this.logger.warn('FILE_TRANSFER result=failed code=' + effectiveCode)
+      let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+      let message: string = this.fileTransferError(effectiveCode, event.detail)
+      if (!cleanupSucceeded && effectiveCode !== 'LOCAL_CLEANUP') {
+        message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true)
+      }
+      this.clearTransferProgress()
+      this.finishFileTransferState(FileTransferPhase.FAILED)
+      this.writeError(message)
+    }
+  }
+
+  private completeFileTransfer(bytes: number): void {
+    let command: TransferCommandResult | null = this.transferCommand
+    let prepared: TransferLocalFile | null = this.transferLocalFile
+    if (command === null || prepared === null) {
+      let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+      this.finishFileTransferState(FileTransferPhase.FAILED)
+      let message: string = 'File transfer completed without a current Pane owner; no final file was exposed.'
+      if (!cleanupSucceeded) { message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true) }
+      this.writeError(message)
+      return
+    }
+    try {
+      this.clearTransferProgress()
+      let summary: string
+      if (command.direction === TransferDirection.GET) {
+        this.setMode(TerminalMode.TRANSFERRING)
+        let actualName: string = TransferFileManager.commitGet(prepared)
+        summary = 'Downloaded ' + SessionViewModel.terminalSafeText(command.remotePath) +
+          ' to Downloads/' + SessionViewModel.terminalSafeText(actualName)
+        if (actualName !== prepared.localName) { summary += ' (Renamed)' }
+      } else {
+        summary = 'Uploaded Downloads/' + SessionViewModel.terminalSafeText(command.localPath) +
+          ' to ' + SessionViewModel.terminalSafeText(command.remotePath)
+      }
+      let elapsedMs: number = this.transferStartedMs > 0 ?
+        Math.max(0, Date.now() - this.transferStartedMs) : 0
+      this.logger.info('FILE_TRANSFER result=completed direction=' +
+        (command.direction === TransferDirection.GET ? 'get' : 'put') +
+        ',bytes=' + Math.floor(bytes).toString() +
+        ',durationMs=' + Math.floor(elapsedMs).toString())
+      let transferStats: string = SessionViewModel.formatTransferCompletion(bytes, elapsedMs)
+      this.finishFileTransferState(FileTransferPhase.SUCCEEDED)
+      this.writeTerminal('\r\n\u001b[32m●\u001b[0m ' + summary +
+        ' (' + transferStats + ').\r\nltty> ')
+    } catch (e) {
+      let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+      let message: string = this.fileTransferError('LOCAL_COMMIT', '' + e)
+      if (!cleanupSucceeded) { message += '\r\n' + FileTransferFailurePresenter.cleanupWarning(true) }
+      this.finishFileTransferState(FileTransferPhase.FAILED)
+      this.writeError(message)
+    }
+  }
+
+  private cleanupTransferLocalFile(): boolean {
+    try {
+      TransferFileManager.cleanup(this.transferLocalFile)
+      return true
+    } catch (e) {
+      this.logger.warn('Owned transfer temporary file cleanup failed: ' + e)
+      return false
+    }
+  }
+
+  private renderTransferProgress(transferredBytes: number, totalBytes: number,
+    finalizing: boolean): void {
+    let now: number = Date.now()
+    this.updateTransferSpeed(transferredBytes, now, finalizing)
+    let text: string = SessionViewModel.formatTransferProgress(
+      transferredBytes, totalBytes, this.transferSpeedBytesPerSecond, finalizing)
+    if (!finalizing && this.transferProgressVisible &&
+      (text === this.transferProgressText || now - this.transferLastProgressMs < 250)) {
+      return
+    }
+    this.transferLastProgressMs = now
+    this.transferProgressText = text
+    this.transferProgressVisible = true
+    if (!finalizing && transferredBytes > 0 && !this.transferProgressObserved) {
+      this.transferProgressObserved = true
+      this.logger.info('FILE_TRANSFER progress=visible')
+    }
+    if (this.transferSpeedBytesPerSecond > 0 && !this.transferSpeedObserved) {
+      this.transferSpeedObserved = true
+      this.logger.info('FILE_TRANSFER speed=visible')
+    }
+    this.writeTerminal('\r\u001b[2K' + SessionViewModel.styleTransferProgress(text, finalizing))
+  }
+
+  private updateTransferSpeed(transferredBytes: number, now: number, force: boolean): void {
+    let transferred: number = Number.isFinite(transferredBytes) && transferredBytes > 0 ?
+      Math.floor(transferredBytes) : 0
+    if (this.transferStartedMs === 0 || transferred < this.transferSpeedSampleBytes) {
+      this.transferStartedMs = now
+      this.transferSpeedSampleMs = now
+      this.transferSpeedSampleBytes = transferred
+      this.transferSpeedBytesPerSecond = 0
+      return
+    }
+    let elapsedMs: number = now - this.transferSpeedSampleMs
+    if (elapsedMs <= 0 || (!force && elapsedMs < 1000)) { return }
+    let sample: number = (transferred - this.transferSpeedSampleBytes) * 1000 / elapsedMs
+    if (sample > 0) {
+      this.transferSpeedBytesPerSecond = this.transferSpeedBytesPerSecond > 0 ?
+        this.transferSpeedBytesPerSecond * 0.65 + sample * 0.35 : sample
+    }
+    this.transferSpeedSampleMs = now
+    this.transferSpeedSampleBytes = transferred
+  }
+
+  private clearTransferProgress(): void {
+    if (!this.transferProgressVisible) { return }
+    this.writeTerminal('\r\u001b[2K')
+    this.transferProgressText = ''
+    this.transferProgressVisible = false
+    this.transferProgressObserved = false
+    this.transferSpeedObserved = false
+  }
+
+  private finishCancelledFileTransfer(): void {
+    this.logger.info('FILE_TRANSFER result=cancelled')
+    let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
+    this.clearTransferProgress()
+    this.finishFileTransferState(FileTransferPhase.CANCELLED)
+    let cleanupWarning: string = cleanupSucceeded ? '' :
+      '\r\n\u001b[31m' + FileTransferFailurePresenter.cleanupWarning(true) + '\u001b[0m'
+    this.writeTerminal('\r\n\u001b[33mCancelled\u001b[0m.' + cleanupWarning + '\r\nltty> ')
+  }
+
+  private requestFileTransferCancellation(): void {
+    this.transferCancellationRequested = true
+    if (this.resolveTransferPreparationCancellation !== null) {
+      this.resolveTransferPreparationCancellation()
+      this.resolveTransferPreparationCancellation = null
+    }
+    if (this.fileTransferClient !== null && this.fileTransferClient.hasActiveTransfer()) {
+      this.fileTransferClient.cancel()
+    }
+  }
+
+  private setFileTransferPhase(phase: FileTransferPhase): boolean {
+    let previous: FileTransferPhase = this.transferLifecycle.getPhase()
+    if (!this.transferLifecycle.transition(phase)) {
+      this.logger.warn('Rejected file transfer phase transition ' + previous.toString() +
+        ' -> ' + phase.toString())
+      return false
+    }
+    if (previous !== phase) {
+      this.logger.info('FILE_TRANSFER phase=' + FileTransferPhase[phase])
+    }
+    return true
+  }
+
+  private finishFileTransferState(result: FileTransferPhase): void {
+    if (!FileTransferLifecycle.isTerminalPhase(result) || !this.setFileTransferPhase(result)) {
+      this.logger.warn('File transfer attempted to finish with an invalid lifecycle state')
+    }
+    this.pendingKeyPath = ''
+    this.pendingKeyPassphrase = ''
+    this.passwordBuffer = ''
+    this.hostKeyBuffer = ''
+    this.clearAuthChallenge()
+    this.fileTransferClient = null
+    this.transferCommand = null
+    this.transferLocalFile = null
+    this.transferLastProgressMs = 0
+    this.transferLastBytes = 0
+    this.transferProgressText = ''
+    this.transferProgressVisible = false
+    this.transferProgressObserved = false
+    this.transferSpeedObserved = false
+    this.transferStartedMs = 0
+    this.transferSpeedSampleMs = 0
+    this.transferSpeedSampleBytes = 0
+    this.transferSpeedBytesPerSecond = 0
+    this.transferCancellationRequested = false
+    this.transferControlFailureCode = ''
+    this.session.setState(SshSessionState.DISCONNECTED)
+    this.setMode(TerminalMode.IDLE)
+    this.notifyStateChange()
+    if (this.resolveTransferCompletion !== null) {
+      this.resolveTransferCompletion()
+    }
+    this.resolveTransferCompletion = null
+    this.transferCompletion = null
+    this.resolveTransferPreparationCancellation = null
+    this.transferPreparationCancellation = null
+    this.setFileTransferPhase(FileTransferPhase.IDLE)
+  }
+
+  private fileTransferError(code: string, detail: string): string {
+    let direction: string = this.transferCommand !== null &&
+      this.transferCommand.direction === TransferDirection.GET ? 'get' : 'put'
+    return FileTransferFailurePresenter.describe(code, detail, direction).message
+  }
+
+  static formatTransferBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes < 0) { return '0 B' }
+    if (bytes < 1024) { return Math.floor(bytes).toString() + ' B' }
+    if (bytes < 1024 * 1024) { return (bytes / 1024).toFixed(1) + ' KiB' }
+    if (bytes < 1024 * 1024 * 1024) { return (bytes / (1024 * 1024)).toFixed(1) + ' MiB' }
+    return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GiB'
+  }
+
+  static formatTransferRate(bytesPerSecond: number): string {
+    if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) { return '--' }
+    return SessionViewModel.formatTransferBytes(bytesPerSecond) + '/s'
+  }
+
+  static formatTransferCompletion(bytes: number, elapsedMs: number): string {
+    let safeElapsedMs: number = Number.isFinite(elapsedMs) && elapsedMs > 0 ? elapsedMs : 0
+    let text: string = SessionViewModel.formatTransferBytes(bytes) + ' in ' +
+      SessionViewModel.formatTransferClock(Math.round(safeElapsedMs / 1000))
+    let averageSpeed: number = safeElapsedMs > 0 ? bytes * 1000 / safeElapsedMs : 0
+    if (averageSpeed > 0) {
+      text += ', avg ' + SessionViewModel.formatTransferRate(averageSpeed)
+    }
+    return text
+  }
+
+  static formatTransferClock(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds < 0) { return '--:--' }
+    let value: number = Math.floor(seconds)
+    let hours: number = Math.floor(value / 3600)
+    let minutes: number = Math.floor((value % 3600) / 60)
+    let remainingSeconds: number = value % 60
+    if (hours > 0) {
+      return hours.toString() + ':' + minutes.toString().padStart(2, '0') + ':' +
+        remainingSeconds.toString().padStart(2, '0')
+    }
+    return minutes.toString().padStart(2, '0') + ':' +
+      remainingSeconds.toString().padStart(2, '0')
+  }
+
+  static formatTransferAmount(transferred: number, total: number): string {
+    if (total < 1024) {
+      return Math.floor(transferred).toString() + '/' + Math.floor(total).toString() + ' B'
+    }
+    let divisor: number = 1024
+    let unit: string = 'KiB'
+    if (total >= 1024 * 1024 * 1024) {
+      divisor = 1024 * 1024 * 1024
+      unit = 'GiB'
+    } else if (total >= 1024 * 1024) {
+      divisor = 1024 * 1024
+      unit = 'MiB'
+    }
+    return (transferred / divisor).toFixed(1) + '/' + (total / divisor).toFixed(1) + ' ' + unit
+  }
+
+  static formatTransferProgress(transferredBytes: number, totalBytes: number,
+    speedBytesPerSecond: number, finalizing: boolean): string {
+    const width: number = 30
+    let transferred: number = Number.isFinite(transferredBytes) && transferredBytes > 0 ?
+      Math.floor(transferredBytes) : 0
+    let total: number = Number.isFinite(totalBytes) && totalBytes > 0 ? Math.floor(totalBytes) : 0
+    let bar: string = '─'.repeat(width)
+    let percentage: string = ' --%'
+    let amount: string = SessionViewModel.formatTransferBytes(transferred)
+    if (total > 0) {
+      let ratio: number = Math.min(1, transferred / total)
+      if (transferred >= total) {
+        bar = '━'.repeat(width)
+      } else {
+        let filled: number = Math.min(width - 1, Math.floor(ratio * width))
+        bar = '━'.repeat(filled) + '╸' + '─'.repeat(width - filled - 1)
+      }
+      percentage = Math.floor(ratio * 100).toString().padStart(3, ' ') + '%'
+      amount = SessionViewModel.formatTransferAmount(transferred, total)
+    } else if (finalizing) {
+      bar = '━'.repeat(width)
+      percentage = '100%'
+    }
+    let text: string = '[' + bar + '] ' + percentage + ' ' + amount + '  ' +
+      SessionViewModel.formatTransferRate(speedBytesPerSecond)
+    if (finalizing) { return text + '  Finalizing...' }
+    let eta: string = '--:--'
+    if (total > transferred && speedBytesPerSecond > 0) {
+      eta = SessionViewModel.formatTransferClock(
+        Math.ceil((total - transferred) / speedBytesPerSecond))
+    }
+    return text + '  ETA ' + eta
+  }
+
+  static styleTransferProgress(text: string, finalizing: boolean): string {
+    let percentageEnd: number = text.indexOf(']') + 6
+    if (percentageEnd < 6 || percentageEnd > text.length) { return text }
+    let styled: string = '\u001b[36m' + text.substring(0, percentageEnd) +
+      '\u001b[0m' + text.substring(percentageEnd)
+    if (finalizing) {
+      styled = styled.replace('Finalizing...', '\u001b[33mFinalizing...\u001b[0m')
+    }
+    return styled
+  }
+
   private submitPassword(): void {
     if (this.mode !== TerminalMode.PASSWORD_INPUT) {
       return
@@ -788,8 +1400,11 @@ export class SessionViewModel {
     this.writeTerminal('\r\n')
     let pw: string = this.passwordBuffer
     this.passwordBuffer = ''
-    if (this.sshClient.authPassword(pw)) {
-      this.setMode(TerminalMode.CONNECTING)
+    let transferClient: FileTransferClient | null = this.activeFileTransferClient()
+    let accepted: boolean = transferClient !== null ?
+      transferClient.authPassword(pw) : this.sshClient.authPassword(pw)
+    if (accepted) {
+      this.setMode(transferClient !== null ? TerminalMode.TRANSFERRING : TerminalMode.CONNECTING)
       this.session.setState(SshSessionState.CONNECTING)
       this.notifyStateChange()
     }
@@ -803,8 +1418,19 @@ export class SessionViewModel {
       this.commandLine.setText(completed)
       this.redrawLocalCommandLine()
     } else if (matches.length > 1) {
-      this.writeTerminal('\r\n' + matches.join('  ') + '\r\nltty> ' + this.commandLine.getText())
+      let visible: string[] = []
+      for (let index: number = 0; index < matches.length; index++) {
+        visible.push(SessionViewModel.terminalSafeText(matches[index]))
+      }
+      let notice: string = this.commandBarVm.completionNotice()
+      if (notice.length > 0) { visible.push(notice) }
+      this.writeTerminal('\r\n' + visible.join('  ') + '\r\nltty> ' +
+        SessionViewModel.terminalSafeText(this.commandLine.getText()))
     }
+  }
+
+  private static terminalSafeText(value: string): string {
+    return TerminalTextPolicy.escape(value)
   }
 
   private navigateHistory(direction: number): void {
@@ -1107,9 +1733,15 @@ export class SessionViewModel {
   }
 
   private beginAuthChallenge(): void {
-    let challenge: AuthChallengeInfo | null = this.sshClient.takePendingAuthChallenge()
+    let transferClient: FileTransferClient | null = this.activeFileTransferClient()
+    let challenge: AuthChallengeInfo | null = transferClient !== null ?
+      transferClient.takePendingAuthChallenge() : this.sshClient.takePendingAuthChallenge()
     if (challenge === null) {
-      this.onSshError('Missing keyboard-interactive challenge')
+      if (transferClient !== null) {
+        transferClient.cancel()
+      } else {
+        this.onSshError('Missing keyboard-interactive challenge')
+      }
       return
     }
     this.clearAuthChallenge()
@@ -1153,13 +1785,16 @@ export class SessionViewModel {
     this.authPromptIndex = 0
     this.authResponseBuffer = ''
     this.authResponses = []
-    let submitted: boolean = this.sshClient.authKeyboardInteractiveResponses(roundId, responses)
+    let transferClient: FileTransferClient | null = this.activeFileTransferClient()
+    let submitted: boolean = transferClient !== null ?
+      transferClient.authKeyboardInteractiveResponses(roundId, responses) :
+      this.sshClient.authKeyboardInteractiveResponses(roundId, responses)
     for (let i = 0; i < responses.length; i++) {
       responses[i] = ''
     }
     responses.length = 0
     if (submitted) {
-      this.setMode(TerminalMode.CONNECTING)
+      this.setMode(transferClient !== null ? TerminalMode.TRANSFERRING : TerminalMode.CONNECTING)
       this.notifyStateChange()
     }
   }
@@ -1181,10 +1816,20 @@ export class SessionViewModel {
     this.writeTerminal('\r\n')
     let pass: string = this.pendingKeyPassphrase
     this.pendingKeyPassphrase = ''
-    if (this.sshClient.authPrivateKeyPassphrase(pass)) {
-      this.setMode(TerminalMode.CONNECTING)
+    let transferClient: FileTransferClient | null = this.activeFileTransferClient()
+    let accepted: boolean = transferClient !== null ?
+      transferClient.authPrivateKeyPassphrase(pass) : this.sshClient.authPrivateKeyPassphrase(pass)
+    if (accepted) {
+      this.setMode(transferClient !== null ? TerminalMode.TRANSFERRING : TerminalMode.CONNECTING)
       this.notifyStateChange()
     }
+  }
+
+  private activeFileTransferClient(): FileTransferClient | null {
+    if (this.fileTransferClient === null || !this.fileTransferClient.hasActiveTransfer()) {
+      return null
+    }
+    return this.fileTransferClient
   }
 
 }

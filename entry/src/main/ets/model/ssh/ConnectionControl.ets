@@ -4,7 +4,8 @@ export class ConnectionControl {
   static shouldInterrupt(mode: TerminalMode, input: string): boolean {
     let pending: boolean = mode === TerminalMode.CONNECTING ||
       mode === TerminalMode.PASSWORD_INPUT || mode === TerminalMode.HOST_KEY_INPUT ||
-      mode === TerminalMode.KEY_PASSPHRASE_INPUT || mode === TerminalMode.AUTH_CHALLENGE_INPUT
+      mode === TerminalMode.KEY_PASSPHRASE_INPUT || mode === TerminalMode.AUTH_CHALLENGE_INPUT ||
+      mode === TerminalMode.TRANSFERRING
     return pending && input === '\u0003'
   }
 

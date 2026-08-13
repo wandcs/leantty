@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const ICON_CELL_FIXTURE = 'XXXXXXXXX';
+const ICON_CELL_FIXTURE = 'X●X━X╸X─XXXXXXXXX';
 const FONT_FILES = [
   'JetBrainsMonoNerdFontMono-Regular.ttf',
   'JetBrainsMonoNerdFontMono-Bold.ttf'
 ];
 const MAX_OUTLINE_OVERSHOOT_RATIO = 0.02;
+const MAX_CONNECTOR_OVERSHOOT_RATIO = 0.04;
+const CONNECTING_LINE_CODE_POINTS = new Set([0x2500, 0x2501, 0x2578]);
 
 function readTables(font) {
   const tables = new Map();
@@ -100,6 +102,9 @@ for (const fontFile of FONT_FILES) {
   );
   const tables = readTables(font);
   const cmapOffset = findBmpCmap(font, tables);
+  const referenceGlyphIndex = glyphIndexForCodePoint(font, cmapOffset, 'X'.codePointAt(0));
+  assert.notEqual(referenceGlyphIndex, 0, `${fontFile} must contain the ASCII X reference glyph`);
+  const terminalCellWidth = glyphHorizontalMetrics(font, tables, referenceGlyphIndex).advanceWidth;
   const iconCodePoints = [...ICON_CELL_FIXTURE]
     .filter(character => character !== 'X')
     .map(character => character.codePointAt(0));
@@ -108,7 +113,15 @@ for (const fontFile of FONT_FILES) {
     const glyphIndex = glyphIndexForCodePoint(font, cmapOffset, codePoint);
     assert.notEqual(glyphIndex, 0, `${fontFile} must contain U+${codePoint.toString(16).toUpperCase()}`);
     const metrics = glyphHorizontalMetrics(font, tables, glyphIndex);
-    const allowedOvershoot = Math.ceil(metrics.advanceWidth * MAX_OUTLINE_OVERSHOOT_RATIO);
+    assert.equal(
+      metrics.advanceWidth,
+      terminalCellWidth,
+      `${fontFile} U+${codePoint.toString(16).toUpperCase()} must advance exactly one terminal cell`
+    );
+    const overshootRatio = CONNECTING_LINE_CODE_POINTS.has(codePoint)
+      ? MAX_CONNECTOR_OVERSHOOT_RATIO
+      : MAX_OUTLINE_OVERSHOOT_RATIO;
+    const allowedOvershoot = Math.ceil(metrics.advanceWidth * overshootRatio);
     assert.ok(
       metrics.xMin >= -allowedOvershoot &&
         metrics.xMax <= metrics.advanceWidth + allowedOvershoot,

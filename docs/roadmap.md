@@ -143,7 +143,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 - [`design/command-system.md`](design/command-system.md)
 - 活动顺序和勾选状态只在 [`next-work.md`](next-work.md) 维护。
 
-## 当前 milestone：1.2 — 终端检索与日常效率
+## 已完成 milestone：1.2 — 终端检索与日常效率
 
 ### 为什么现在做
 
@@ -183,7 +183,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 [`design/ui-interaction-polish.md`](design/ui-interaction-polish.md)。上述条件已闭合，
 活动顺序与完成状态只在 [`next-work.md`](next-work.md) 维护。
 
-## 条件 milestone：1.3 — 受约束的单文件交付
+## 当前 milestone：1.3 — 受约束的单文件交付
 
 ### 用户结果
 
@@ -199,7 +199,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 - 复用唯一 Host/Identity、认证、主机指纹、取消和错误模型。
 - 前台、当前 Pane、短生命周期传输；无覆盖提交，失败和取消清理本任务临时文件。
 
-### 进入条件
+### 当前实现前门禁
 
 - 公共 Downloads 的原子无覆盖提交在物理 HarmonyOS PC 上成立。
 - 远端排他临时文件、标准 rename、并发冲突和服务器差异有受控互操作证据。
@@ -213,8 +213,10 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 目录浏览、递归、多源、同步、后台队列、覆盖选项、文件预览/打开、任意本地路径和
 第二套 Host/Identity 均不进入范围。
 
-技术草案：[`design/file-transfer.md`](design/file-transfer.md)。该文档当前是 WIP，
-不在 [`next-work.md`](next-work.md) 中，因此没有实现授权。
+活动方案：[`design/file-transfer.md`](design/file-transfer.md)。1.3 已于 2026-08-08 在
+1.2.0 提交 AppGallery 审核后进入活动开发；先闭合本节可靠性门禁，再按
+[`next-work.md`](next-work.md) 的依赖顺序实现。门禁失败时取消或推迟本 milestone，不能
+扩大为文件管理器补救。
 
 ## 拟议 milestone：1.4 — HSL 本地执行环境入口
 

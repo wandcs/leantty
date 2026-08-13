@@ -1,0 +1,14 @@
+[package]
+name = "leantty-sftp-interop-fixture"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1"
+russh = { version = "=0.62.5", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "=2.4.0"
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "time"] }

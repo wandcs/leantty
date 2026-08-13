@@ -1,17 +1,17 @@
 # LeanTTY 最小文件传输技术方案
 
-> 状态：WIP；产品边界已初步收敛，可靠性门禁尚未闭合，未授权实现
+> 状态：活动实现；产品边界与实现前可靠性决策已冻结，当前执行实现和验证
 >
-> 拟议 milestone：1.3.0；版本与范围仍须在 1.2 完成后重新确认
+> 当前 milestone：1.3；版本号在保留候选准备阶段再按版本规则推进
 >
-> 初稿日期：2026-07-26；最近更新：2026-08-03
+> 初稿日期：2026-07-26；最近更新：2026-08-09
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
 > 版本顺序：[`roadmap.md`](../roadmap.md)
 >
 > 工作排期仍以 [`next-work.md`](../next-work.md) 为唯一有效 TODO。本文记录为什么值得
-> 做、如何限制复杂度、已经取得的证据和后续验收门槛，不单独授权实现。
+> 做、如何限制复杂度、已经取得的证据和后续验收门槛，不维护第二份活动清单。
 >
 > 命令面治理：[`command-system.md`](command-system.md)
 
@@ -32,12 +32,14 @@ SSH 的 SFTP 子系统传输。
 真机路径：/storage/Users/currentUser/Download
 ```
 
-不再创建或要求用户理解 `Downloads/LeanTTY` 子目录。`.` 和所有本地相对路径都
-从 Downloads 解析。
+不再创建或要求用户理解 `Downloads/LeanTTY` 子目录。Downloads 是固定安全根，但 1.3
+允许用户在其中引用任意层级的**既有相对子目录**；命令不创建目录，也不引入本地当前目录。
+目录目标必须用尾部 `/` 明确表达，文件路径没有尾部 `/` 时始终按最终文件名解释。
 
 文件冲突统一按最终名称的选择者处理：用户明确指定目标名时失败且不修改已有文件；
-`get` 省略本地目标、由 LeanTTY 采用默认名称时，冲突自动生成 `name (n).ext` 并
-保留两份。1.3 不提供覆盖选项或确认对话框。
+`get` 省略本地目标或明确指向既有本地目录时，由 LeanTTY 采用远端 basename，冲突自动
+生成 `name (n).ext` 并保留两份。`put` 的远端名称即使来自目录加本地 basename，也不自动
+编号。1.3 不提供覆盖选项或确认对话框。
 
 该选择是在目标 HarmonyOS PC 上实际验证 Picker 后作出的产品决策，不是因为 Picker
 不可用：
@@ -53,9 +55,10 @@ SSH 的 SFTP 子系统传输。
 因此 1.3 接受“上传前偶尔需要把文件移动或复制到 Downloads”的成本，换取稳定、
 键盘优先、可预测且可重复执行的路径式命令。
 
-这一结论只把最小文件传输保留为条件 1.3 候选。只有它被明确写入 `next-work.md` 后才允许
-开始实现。本文后续关于临时文件和路径细节仍包含未确认候选，统一列在“后续讨论
-清单与实现前门禁”中，不能因已经写入草案而视为批准。
+2026-08-08，1.2.0 提交 AppGallery 审核后，用户确认开始 1.3 开发；最小文件传输已经进入
+`next-work.md`。同日，本地无覆盖提交、SFTP/OpenSSH 互操作和 FD/no-follow 能力边界门禁
+均已闭合，剩余生命周期与路径语义也已冻结；产品 PUT/GET 实现已经开始。尚未完成的自动化
+与物理机矩阵仍以唯一工作清单为准，构建或安装成功不等于能力完成。
 
 ## 二、为什么值得做
 
@@ -120,8 +123,8 @@ OpenSSH `scp` 的多源、递归、远端到远端、完整选项和任意本地
 - 永不静默覆盖已有文件。用户明确指定最终目标名时冲突失败；`get` 省略本地目标、
   由 LeanTTY 采用远端 basename 时，冲突自动生成唯一名称并保留两份。
 - 最终名称不能暴露损坏内容；临时文件和最终提交方式是实现前门禁。
-- 失败、取消和下次启动不得删除无法证明属于 LeanTTY 的文件；精确所有权方案仍待
-  讨论。
+- 失败和受控取消只删除当前任务记录的精确临时对象；应用启动不按文件名前缀扫描或删除。
+  强制终止可能留下隐藏临时文件，但绝不能留下损坏的最终名称。
 - 不扫描、索引或展示 Downloads 的其他内容。
 
 这些问题不改变 Downloads 与专用子目录的取舍，但必须在实现前闭合，不能用
@@ -138,7 +141,7 @@ Downloads 更易用作为降低可靠性要求的理由。
 | `upload` / `download` | 没有复用 SFTP 的 `put/get` 方向认知，且与已选命令形成重复入口 |
 | 文件选择器 | 真机已证明可选取和保存单个文件，但每次传输都会进入 GUI，破坏路径重放并增加 URI/FD 生命周期；1.3 拟采用 Downloads 单一路径模型 |
 | 任意本地绝对路径 | 真机已经证明普通应用不能仅凭路径访问 Images 等公共目录 |
-| 路径自动补全 | 必须枚举 Downloads 或远端目录，引入建议状态、隐私暴露和远端请求时序 |
+| 远端路径自动补全 | 会在 Tab 时引入连接、认证、目录读取与网络时序；1.3 只补本地 Downloads、Host 和 LeanTTY 密钥名 |
 | 连接后复用当前 SSH Session | 让交互式 PTY 与 SFTP channel 共享生命周期、取消和错误状态 |
 | 自动打开文件管理器 | HarmonyOS 没有已经确认的稳定“打开并定位目录”接口，也会打断终端操作 |
 | 目录、通配符和多文件 | 需要递归、批次、部分成功、冲突和恢复模型 |
@@ -190,22 +193,25 @@ SSH 配置中的 `IdentityFile` 当前存在“文件路径”和“LeanTTY key 
 上传语法：
 
 ```text
-put [-p port] [-i identity] <local-file> <host>:<remote-file>
+put [-p port] [-i identity] [--] <local-file> <host>:<remote-path>
 ```
 
 ```shell
 put demo.jpeg prod:/tmp/demo.jpeg
+put reports/demo.jpeg prod:/tmp/inbox/
+put reports/demo.jpeg prod:
 put demo.jpeg deploy@example.com:/tmp/demo.jpeg
 ```
 
 下载语法：
 
 ```text
-get [-p port] [-i identity] <host>:<remote-file> [local-file]
+get [-p port] [-i identity] [--] <host>:<remote-file> [local-path]
 ```
 
 ```shell
 get prod:/var/log/app.log
+get prod:/var/log/app.log reports/
 get prod:/var/log/app.log app-local.log
 ```
 
@@ -218,14 +224,15 @@ get "prod:/tmp/Quarterly report.pdf" "Quarterly report.pdf"
 ```
 
 本地命令分词只支持完成该需求所需的单引号、双引号和反斜杠转义；不实现环境变量、
-命令替换、管道、重定向、`~` 展开或通配符展开。
+命令替换、管道、重定向、`~` 展开或通配符展开。`--` 终止选项解析，用于明确传递以
+`-` 开头的文件名；它不改变路径安全边界。
 
 用户输入 `scp` 时不执行传输，只给出迁移提示：
 
 ```text
 `scp` is not supported. Use:
   put <local-file> <host>:<remote-file>
-  get <host>:<remote-file> [local-file]
+  get <host>:<remote-file> [local-path]
 ```
 
 不提供 `scp`、`upload`、`download` 或其他等价别名。
@@ -234,18 +241,23 @@ get "prod:/tmp/Quarterly report.pdf" "Quarterly report.pdf"
 
 方向由命令决定，不再根据两个位置参数猜测：
 
-- `put` 的第一个位置参数必须是 Downloads 内的本地相对文件，第二个必须是远端。
-- `get` 的第一个位置参数必须是远端；第二个是可选的 Downloads 内本地相对文件。
+- `put` 的第一个位置参数是 Downloads 内的本地相对文件，第二个必须是远端文件或目录。
+- `get` 的第一个位置参数必须是远端文件；第二个是可选的 Downloads 内相对文件或目录。
 - `get` 省略本地目标时，使用远端文件的 basename 保存到 Downloads 根。
-- 远端目标必须明确到文件名；1.3 拒绝尾部 `/`，不推断远端目录和最终文件名。
+- 目录意图必须由尾部 `/` 明示。`get ... reports/` 保存到
+  `Downloads/reports/<remote-basename>`；`put reports/app.log prod:/srv/inbox/` 上传到
+  `/srv/inbox/app.log`。`put ... prod:` 等价于目标 SFTP Session 初始目录 `prod:./`。
+- 没有尾部 `/` 的路径永远按最终文件名处理。如果它实际是目录，命令失败并提示补上 `/`，
+  不根据文件系统状态静默切换解释。
 
 - `prod:/path`：优先按现有 Host 别名解析。
 - `deploy@example.com:/path`：一次性直接目标。
 - 远端绝对路径保持绝对。
 - 远端相对路径相对于 SFTP 登录后的初始目录。
 - 1.3 不承诺远端 `~` 展开。
-- 本地路径只接受相对于 Downloads 的路径，不接受 HarmonyOS 内部绝对路径。
-- 目录、多个源、远端到远端和命令方向不匹配全部拒绝。
+- 本地路径只接受 Downloads 内的相对路径；接受既有子目录但不创建目录，不接受 HarmonyOS
+  内部绝对路径、盘符、反斜杠、空组件、`.` 或 `..`。
+- 目录源、递归、多个源、远端到远端和命令方向不匹配全部拒绝。
 
 `put/get` 的连接选项与现有 LeanTTY `ssh` 和 `ssh-copy-id` 一致，使用小写 `-p`
 覆盖 SSH 端口。由于命令不叫 `scp`，不继承 SCP 为避让“保留时间和权限”而使用
@@ -280,11 +292,17 @@ ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY
 
 - Downloads 是唯一且隐含的本地根，不建立可切换的本地当前目录。
 - `demo.jpeg` 表示 `Downloads/demo.jpeg`。
-- `logs/app.log` 表示 `Downloads/logs/app.log`。
-- 只允许规范化后仍位于 Downloads 内的相对路径。
-- `get` 省略本地目标时，直接使用远端 basename 保存到 Downloads 根。
+- `logs/app.log` 表示 `Downloads/logs/app.log`；`logs/` 必须已经存在，命令不创建或进入
+  持久当前目录。
+- 每个路径组件必须非空且不是 `.` 或 `..`；单个组件按 UTF-8 编码不得超过 255 字节，
+  整体路径另设有界长度。
+- `get` 省略本地目标时直接保存到 Downloads 根；目标以 `/` 结尾时，在该既有目录中采用
+  远端 basename。
 - 拒绝所有本地绝对路径、`..` 逃逸、符号链接逃逸、设备文件和目录源。
-- 不读取目录列表来提供补全、推荐或浏览。
+- 解析与实际打开逐组件约束中间目录不得是 symlink，并在最终操作时重新验证；字符串检查
+  不是访问授权，最终对象仍使用 no-follow / 排他创建边界。
+- Tab 只为当前输入组件执行一次有界的本地目录枚举，不递归、不建立浏览状态，也不触发
+  Downloads 授权；实际 `put/get` 才能请求权限。
 
 如果用户输入：
 
@@ -305,9 +323,11 @@ Move demo.jpeg to Downloads, then run:
 ### 5.2 上传
 
 - 源必须是 Downloads 中一个明确存在、可读的普通文件。
-- 远端目标必须明确，不支持目录递归和通配符。
-- `put` 的远端目标始终由用户明确指定。连接并确认目标已经存在时，在传输文件数据前
-  失败，不覆盖，也不擅自生成另一个远端名称。
+- 远端目标可以是明确文件名，也可以用尾部 `/` 明示一个既有目录；目录目标使用本地源的
+  basename。`host:` 表示该独立 SFTP Session 的初始目录，等价于 `host:./`。
+- 无论远端最终名称由用户直接输入还是从目录和本地 basename 推导，连接并确认它已经存在
+  时都在传输文件数据前失败，不覆盖，也不擅自生成另一个远端名称。
+- 不创建远端目录，不支持目录源、递归和通配符。
 - 上传使用目标所在远端目录中的唯一临时名称，并以
   `CREATE | EXCL | WRITE` 排他创建；不能使用会截断已有文件的高层 `create()`。
 - 临时文件完整写入并成功关闭后，使用标准 `SSH_FXP_RENAME` 提交为最终名称。不能
@@ -342,10 +362,12 @@ ltty>
 - 下载目标只能位于 Downloads。
 - `get <host>:<remote-file>` 省略本地目标时，由 LeanTTY 采用远端 basename。
   如果该名称已存在，自动生成不冲突的新名称，保留已有文件和新下载。
+- `get <host>:<remote-file> <local-directory>/` 明确指向既有本地目录时，也由 LeanTTY 在
+  该目录中采用远端 basename，并使用相同的自动编号规则。
 - `get <host>:<remote-file> <local-file>` 明确指定本地目标时，如果该名称已存在，
   在传输文件数据前失败，不覆盖，也不自动改名。
-- 省略本地目标且预检查发现 basename 冲突时，开始前只说明完成时将选择唯一名称，
-  不提前承诺某个可能被其他 Pane 或应用抢占的最终名称。
+- 省略本地目标或指向目录，且预检查发现 basename 冲突时，开始前只说明完成时将选择
+  唯一名称，不提前承诺某个可能被其他 Pane 或应用抢占的最终名称。
 - 先在最终目标所在目录写入 `.leantty-<random>.part` 一类 LeanTTY 可识别的唯一
   临时文件。
 - 完成写入、关闭并核对已传输长度后，才以“目标存在则失败”的方式提交最终名称。
@@ -356,12 +378,12 @@ ltty>
 > 用户明确选择最终目标名时，冲突失败；LeanTTY 选择默认最终名称时，冲突生成
 > 唯一名称。
 
-这不是上传和下载各自拥有一套任意策略。`put` 的远端目标和带本地参数的 `get` 目标
-都由用户明确选择，因此失败；只有省略本地参数的 `get` 由 LeanTTY 负责名称，因此
-自动保留两份。1.3 不弹确认对话框，也不提供 `--force`、`--overwrite` 或持久冲突
-设置。
+这不是上传和下载各自拥有一套任意策略。`put` 的远端最终名称属于上传目标，冲突始终
+失败；`get` 的明确本地文件名也冲突失败。只有省略本地参数或指向本地目录的 `get` 由
+LeanTTY 负责最终 basename，因此自动保留两份。1.3 不弹确认对话框，也不提供 `--force`、
+`--overwrite` 或持久冲突设置。
 
-#### 5.3.1 省略本地目标时的文件名冲突规则
+#### 5.3.1 LeanTTY 选择本地名称时的冲突规则
 
 采用 macOS/Windows 下载器常见的扩展名前数字去重形式：
 
@@ -405,8 +427,8 @@ ltty>
 - `copy`、`副本` 等文字会涉及本地化；纯数字形式稳定、短且容易预测。
 - 最终文件名仍保留原后缀，文件管理器和关联应用可以继续按类型识别。
 
-该自动改名只适用于**省略本地目标的下载**。它不适用于上传，也不适用于用户明确
-输入本地目标的下载。
+该自动改名只适用于**省略本地目标或目标为目录的下载**。它不适用于上传，也不适用于
+用户明确输入本地最终文件名的下载。
 
 预检查检测到冲突后，在传输开始前显示：
 
@@ -414,6 +436,31 @@ ltty>
 File already exists: Downloads/app.log
 A unique name will be chosen when the download completes.
 ```
+
+完成时显示实际目录、实际名称和改名事实，例如：
+
+```text
+● Downloaded 15.3 MiB in 2.4s
+  prod:/logs/app.log -> Downloads/reports/app (1).log (Renamed)
+```
+
+### 5.4 Tab 补全
+
+Tab 补全只优化已经授权的键盘主路径，不把命令栏变成文件管理器：
+
+- `put` 的本地源补全 Downloads 中当前一层的普通文件和既有目录；目录候选追加 `/`。
+- `get` 的可选本地目标只补既有目录；已有文件不能作为目标候选，因为明确文件名不覆盖。
+- `put/get` 的远端操作数只补已有 Host 别名；`-i` 只补 LeanTTY 自己管理的密钥名。
+- 不补远端路径。按 Tab 不连接、认证或列出服务器目录，也不触发 Downloads 权限请求。
+- 唯一文件候选完成后追加空格，唯一目录候选追加 `/`；多候选第一次只扩展公共前缀，
+  再次 Tab 才显示候选。
+- 每次只列当前目录一层；默认隐藏以 `.` 开头的项，除非当前组件本身以 `.` 开头；候选最多
+  显示 100 项，超出时提示 `100+ matches; type more`。
+- 匹配保持原始大小写和 Unicode，不做大小写折叠或额外规范化；空格、引号和反斜杠必须
+  转义成现有解析器可重新读取的命令文本。
+- 列表输出、错误和完成摘要都必须净化控制字符，不能让文件名或远端路径向终端注入控制
+  序列。文件名不进入日志。
+- `--` 终止选项解析，使以 `-` 开头的合法本地文件名能被明确输入和补全。
 
 完成提交后才显示确定的实际名称：
 
@@ -509,6 +556,13 @@ IDLE
 独立传输生命周期是真实状态边界，因此可以有一个局部、可测试的传输状态类型；不再
 增加 TransferManager、任务队列或持久后台服务。
 
+2026-08-12 实现已把该边界收敛到每个 `SessionViewModel` 自己持有的
+`FileTransferLifecycle`。状态只允许
+`IDLE → PREPARING → TRANSFERRING → FINALIZING → SUCCEEDED/FAILED/CANCELLED → IDLE`；非法
+跨阶段转换被拒绝并记录安全日志。Downloads 授权、路径验证和 FD 准备从 `PREPARING` 起就属于
+同一个 Pane 完成 Promise，因此准备期间的 `Ctrl+C` 或受控关闭会设置取消意图，异步准备返回后
+只清理本任务对象并进入 `CANCELLED`，不会迟到创建 native Session。
+
 ### 6.2 ArkTS、N-API 与 Rust
 
 职责划分：
@@ -517,27 +571,59 @@ IDLE
 | --- | --- |
 | `CommandParser` | `put/get` 分词、参数、方向和本地/远端位置验证 |
 | `SshConfig` | HostName、User、Port、IdentityFile 的唯一解析 |
-| `LocalTransferPathPolicy` | Download 授权、路径规范化、逃逸检查和本地临时文件 |
+| `TransferFileManager` | Downloads 授权后的 basename 边界、打开、临时文件和无覆盖提交 |
 | `SessionViewModel` | 当前 Pane 的前台状态、提示、取消和完成文案 |
 | Rust/russh | SSH 连接、主机校验、认证和 channel 生命周期 |
 | `russh-sftp` | SFTP 文件操作和流式读写 |
-| N-API | 启动、取消和节流后的结构化传输事件 |
+| N-API | 启动、取消和带总量的结构化传输事件 |
 
 文件字节不得经过 ArkTS、WebView H2 Bridge 或终端输出中转。Rust 从已验证的本地
 受控路径流式读写；ArkTS 只接收进度、完成和安全错误类别。
 
-当前 `russh 0.62.5` 上游示例使用 `russh-sftp 2.3.0`。它是实现候选，不是未经验证
-即可加入的结论；落地前必须完成许可证、依赖、ARM64 构建和目标服务器互操作审计。
+7.7 已把检查时最新的 `russh-sftp 2.4.0` 接入产品并锁定依赖；`russh 0.62.5` 共存、
+WSL/OpenSSH E2E、产品 Rust 测试和 OHOS ARM64 调试 HAP 构建已经通过。7.9 又闭合了实际
+PUT/GET 小/大文件真机主链；后续 7.10—7.14 已闭合错误、生命周期、认证、文件名、补全、
+10,000 名称耗尽与休眠恢复矩阵。正式候选与发布门禁仍按第九节执行。
 
 ### 6.3 进度与错误
 
-进度在同一终端行节流更新：
+进度采用固定 30 格的轻量线条 thermometer，在同一终端行节流更新：
 
 ```text
-app.log                    64%   9.8 MiB / 15.3 MiB   4.2 MiB/s
+[━━━━━━━━━━━━━━━╸──────────────]  50% 7.7/15.3 MiB  4.2 MiB/s  ETA 00:02
 ```
 
-无法可靠取得总大小时只显示已传输字节数。不为每个数据块跨 N-API 或新增一行。
+选择该形态前对照了常见 CLI 的正式定义：curl 默认表格同时展示百分比、平均/当前速度和
+总计/已用/剩余时间；Wget 默认使用 ASCII bar，非 TTY 则退化为 dot；aria2 的紧凑 readout
+使用 `完成量/总量(百分比) + DL/UL 速度 + ETA`；rsync 每个文件显示已完成字节、百分比、
+速度和 ETA，完成行改为全程平均速度与耗时；OpenSSH 进度实现以 80 列作为默认窗口宽度，
+每秒更新并响应终端宽度变化。共同点不是“条越长越好”，而是在经典终端宽度中优先保留
+完成量、速度和时间。
+
+LeanTTY 因而把整行目标控制在典型 80 列附近：30 格条使用 `━`、`╸` 与 `─`，比实心块更轻，
+又比 `=>-` 更连贯。应用不允许更换终端字体，三个字形与完成标记 `●` 都固定由随包字体提供，
+并由 Regular/Bold 字形存在、advance width 与 ASCII 单 cell 完全一致的回归锁定。线条字形只
+允许字体原生不超过 4% 的连接性轮廓延伸，其他图标仍限制为 2%；不支持任意未验证 Unicode。
+进度行不重复占用文件名列，因为开始和完成提示已经给出源/目标。
+ArkTS 使用 `CR + EL`（回车和清除当前行）原地刷新，250ms 内不重复写终端；速度以约 1 秒
+字节窗口采样并轻度平滑，既保持实时感，也避免 SFTP 分块造成闪跳。无法可靠取得总大小时
+保留已传输量和实时速度，但显示 `--%` 与 `ETA --:--`，不伪造完成比例。复制结束后先显示
+`Finalizing...`，只有关闭、同步和无覆盖最终提交成功后才输出完成提示：
+
+```text
+Downloaded ... (112.9 MiB in 00:22, avg 5.1 MiB/s).
+```
+
+完成、失败或取消前清除进度行；完成摘要中的耗时从首个数据阶段事件算到最终提交完成，
+不包含用户输入命令、主机确认或认证凭据所花时间。
+
+颜色遵循“文字是唯一语义、颜色只帮助扫描”的边界：活动条形条、百分比和 `Preparing`
+使用终端 ANSI cyan，`Finalizing` 与 `Cancelled` 使用 yellow，失败继续复用既有 red；路径、
+大小、速度、ETA 和解释文字保持默认前景色。最终文件已经安全提交后，完成行只增加一个
+green `●`，不使用容易被理解为展开控件的 `[+]`。该符号由应用固定打包的 JetBrains Mono
+Nerd Font Mono 提供，Regular/Bold 的字体回归已验证 U+25CF 字形存在且轮廓限定在一个等宽
+cell 内。即便剥离 ANSI 和 `●`，`Downloaded` / `Uploaded`、`Finalizing`、`Cancelled` 与错误
+句子仍提供完整语义；不使用整行高饱和着色、闪烁或动画。
 
 错误至少区分：
 
@@ -554,6 +640,54 @@ app.log                    64%   9.8 MiB / 15.3 MiB   4.2 MiB/s
 - 清理失败。
 
 错误说明下一步，不记录文件内容、凭据或不必要的完整敏感路径。
+
+实现使用有限的 `FileTransferFailureKind` 分类权限、本地/远端冲突、路径、对象不存在、无 SFTP、
+认证、主机校验、空间不足、网络、最终提交、清理、I/O 和未知失败。Rust/N-API 仍传递稳定 code
+供分类和测试；终端只显示由 code、方向和少量安全判据生成的固定行动文案，不拼接底层 detail，
+避免服务器错误、路径、凭据或控制序列进入终端。清理失败不会被吞掉：本地与远端分别提示用户
+检查并删除本任务格式的隐藏临时对象，同时继续保证已有最终目标不被替换。
+
+复制循环外的 SFTP metadata/open/close/rename，以及本地 flush/sync 已统一经过可取消的 30 秒
+等待边界；失败后的远端 remove 采用独立 30 秒清理上界，避免取消信号抢占必要清理。超时统一为
+`SFTP_TIMEOUT`，清理失败统一为 `LOCAL_CLEANUP` / `REMOTE_CLEANUP`。这些实现边界已经由 Rust
+取消/超时测试和 ArkTS 分类测试覆盖。受控 SFTP fixture 又在物理 PC 上让生产 PUT 的写入与随后
+remove 依次失败：终端只显示固定的远端临时文件处理建议，恰好一次 `REMOTE_CLEANUP` 后回到
+`IDLE`；最终名未出现，仅保留一个符合所有权格式的随机临时名。随后，编译期隔离的原生/ArkTS
+双层故障点让一个专用生产 GET 在
+`REMOTE_NOT_FOUND` 后真实进入本地 unlink 异常路径：终端保留该主错误，追加固定清理警告并回到
+`IDLE`；明确最终名未出现，fixture 在清理前只观察到一个同目录 `.part`，随后删除验收数据。
+这闭合本地清理失败门禁；注入只存在于该调试 HAP，构建后源码逐字节还原。
+
+另一个编译期隔离门禁把文件传输 N-API 队列缩到 2，并让专用 8 MiB GET 的首个 ArkTS 进度回调
+阻塞 1.5 秒。受控慢速 SFTP 期间原生层确认 5 个非最终进度因队列已满被丢弃；阻塞送达的
+`FINALIZING`/完成事件仍恰好到达，Pane 回到 `IDLE`，最终文件只在完整提交后出现且没有 `.part`
+残留。随后 PUT 回传与源 SHA-256 一致。这闭合“允许丢中间进度、绝不丢终态”的回调背压门禁。
+
+物理 PC 又在生产 GET/PUT 出现正字节进度后执行系统 `aa force-stop`。旧进程没有应用关闭准备、
+传输终态或 `IDLE`；GET/PUT 最终名都未出现，各自仅留下一个符合本任务所有权格式的隐藏本地或
+远端临时文件。每次重启后新 Pane 均可聚焦，验收夹具记录现场后删除残留。这验证了强制终止下
+“不能承诺清理，但绝不暴露半成品最终名”的冻结边界。
+
+复制完成还必须满足实际字节数等于源在打开后声明的已知大小；否则不得进入 `FINALIZING` 或提交。
+无错误提前 EOF 使用 `SOURCE_CHANGED`，GET 的远端读连接错误使用 `NETWORK`，PUT 的本地读错误
+继续使用 `READ`。物理 PC 已在生产 GET 出现正字节进度后终止受控 SSH 服务：客户端只产生一次
+`NETWORK`，10,418 毫秒内回到 `IDLE`，终端提示检查网络和 Host；自动编号最终文件与任务所有的
+本地 `.part` 均未出现或已精确清理。该门禁闭合单 Pane 的传输中断线与截断提交风险。
+
+双 Pane 门禁随后先取消左 Pane 的在途 GET，再让同一 Pane 启动第二个 GET；编译期隔离夹具把旧
+`transferId + paneId + generation` 的事件伪装为完成并重新送达，生产 `FileTransferClient` 拒绝该
+事件。第二个 GET 在正字节进度后由受控 SSH 服务断线结束，终态恰好为一次 `NETWORK`；焦点转移
+到右 Pane 后，第二个旧完成事件延迟 10 秒到达并再次被拒绝。两次拒绝没有产生伪完成、最终文件
+或任务 `.part`，两个 Pane 与原应用进程均保留，右 Pane 可聚焦。该门禁闭合取消和断线后的旧事件
+不能污染新传输或另一个 Pane 的身份边界；证据位于
+`build/verification/put-get-late-events-final-8/`。
+
+物理门禁的认证阶段不再只依赖轮询 hilog 尾部快照。验证脚本会在提交命令前启动按当前应用 PID
+和认证相关标签过滤的实时 hilog 流，同时保留原快照；任一来源观察到结构化 host-key/password/
+failed 状态即可继续，来源随结果记录。两者在固定 30/20 秒内都未命中时，脚本保存布局、截图与
+诊断 JSON，并将结果明确归为“产品认证状态未被观察到”，不以无界重试推断成功。纯函数回归覆盖
+快照缺失而实时流命中的情形；物理 PC 主链又以三个认证检查点证明实时捕获、快照与最终传输结果
+一致，且捕获日志不含凭据。
 
 ## 七、已经完成的验证
 
@@ -635,25 +769,261 @@ Downloads 权限探针完成后：
 Picker 探针完成后也重新执行了相同恢复流程；新的正常进程无
 `PICKER_SAVE_PROBE`，安装包无 Downloads 权限，仓库无 Picker 探针源码差异。
 
-### 7.6 证据边界
+### 7.6 2026-08-08 Downloads 根目录无覆盖提交门禁
 
-已经验证的是 HarmonyOS 的公共目录授权模型、“用户移动到 Download 后应用可读写”
-路径，以及 Picker 的单文件选择与用户可见保存路径，不是完整文件传输实现。
+1.3 启动后，仓库在现有 debug acceptance 构建期注入机制中加入了一个克制的
+`Downloads No-Replace` 探针，并用 `tools/verify-file-transfer-pc.ps1` 在物理 HAD-W32
+（ARM64、API 22、HarmonyOS `6.0.0.130`）执行。探针只在公共 Downloads 根目录创建四个
+带随机 token 的精确路径，release 包继续由 marker 门禁拒绝验收专用代码。
+
+| 验证项 | 结果 | 支持的结论 |
+| --- | --- | --- |
+| 完整写入、`fsync`、关闭同目录临时文件后执行 `fs.moveFileSync(temp, final, 1)` | 成功；源消失，最终文件逐字节等于完整输入 | 公共 Downloads 根上的 mode 1 成功提交路径成立 |
+| 预检查目标不存在后，由另一对象在提交前创建最终名称 | mode 1 返回 `File exists` | 提交期竞态不会退化为覆盖 |
+| 冲突后的最终目标与传入临时文件 | 两者逐字节分别保持原有内容 | 已有目标不变，失败任务仍拥有自己的临时对象 |
+| finally 精确删除四个探针路径后由应用再次检查 | 四个路径均不存在；`cleanupComplete=true` | 不依赖前缀扫描，也未留下本轮一次性数据 |
+
+调试 HAP 构建、安装、启动和脚本化重跑均通过；被测 marker 为
+`ACCEPTANCE_DOWNLOADS_NOREPLACE`。该结果证明当前目标系统和授权目录上的候选提交原语，
+不是完整下载实现，也不替代后续 FD/no-follow、取消、跨重启或 SFTP 验证。
+
+### 7.7 2026-08-08 `russh-sftp` / OpenSSH 互操作门禁
+
+仓库新增了独立 workspace `leantty_ssh/sftp-interop-fixture`，只验证协议原语，不接入产品
+crate、N-API 或 HAP。fixture 精确锁定 `russh 0.62.5` 和检查时最新的
+`russh-sftp 2.4.0`，每次运行创建临时 host/client key、临时 localhost OpenSSH 配置和临时
+远端目录，退出时终止服务器并删除整个临时根。
+
+| 验证项 | 结果 | 支持的结论 |
+| --- | --- | --- |
+| WSL Ubuntu 26.04、Rust 1.96、OpenSSH 10.2p1 E2E | 连续两次通过 | 当前工具链与受控 OpenSSH 基线可重复 |
+| `OpenFlags::CREATE | EXCLUDE | WRITE` 创建临时文件 | 新名称成功；已有名称失败 | 不需要调用会 truncate 的高层 `create()` |
+| 完整关闭后调用 `SftpSession.rename()` | 新目标成功且内容一致 | `russh-sftp` 的标准 SFTP v3 rename 路径可用 |
+| 预检查后创建最终目标，再执行标准 rename | rename 失败；目标和临时文件内容分别保持 | OpenSSH 基线的提交期竞态不会覆盖 |
+| 精确删除本轮四个远端路径并复查目录 | `cleanupComplete=true`，临时目录为空 | 失败与成功路径可以只清理任务所有对象 |
+| `cargo fmt --check`、clippy `-D warnings` | 通过 | fixture 源码门禁通过 |
+| `aarch64-unknown-linux-ohos` 交叉 `cargo check --locked` | 通过 | crate 与传递依赖可由当前 OHOS NDK/Rust 工具链编译 |
+
+`russh-sftp 2.4.0` 使用 Apache-2.0；与当前产品锁文件相比，除 fixture 自身和测试用
+`anyhow` 外，新增包名为 `russh-sftp`、`dashmap`、`gloo-timers`、`serde_bytes`、
+`tokio-util` 及其锁/容器传递依赖，声明许可证均为 MIT、Apache-2.0 或二者任选。
+它不直接依赖某个 `russh` 版本，而是接收 `AsyncRead + AsyncWrite` stream；本次实际编译和
+E2E 已证明可与 0.62.5 共存。
+
+该 fixture 本身不是产品依赖。初始协议门禁完成后，产品已把精确 `russh-sftp` 依赖写入
+`Cargo.lock`、更新许可证材料并通过 ARM64 HAP 构建；7.9 已补上生产事件链真机主路径，
+7.10—7.14 已分别闭合无 SFTP、权限拒绝、取消、断线和服务器差异矩阵。
+
+### 7.8 2026-08-08 FD/no-follow 能力边界门禁
+
+`tools/verify-file-transfer-pc.ps1` 在同一物理 ARM64 PC 上追加了 debug-only FD 边界探针。
+ArkTS 以 `lstat` 拒绝非普通文件并用 `READ_ONLY | NOFOLLOW` 打开 Downloads 源文件；随后把
+原路径移走并在同名路径写入不同内容，再由 native 复制 FD、`fstat` 并读取。native 读到的
+仍是原始已打开对象，证明上传不会在验证后按字符串路径重新打开替换对象。
+
+系统拒绝在公共 Downloads 和应用私有 cache 中创建符号链接，因此本机没有构造出可直接
+观察 `NOFOLLOW` 拒绝 symlink 的对象；可观察结论是当前系统在两个应用可写位置都禁止创建
+该对象。产品仍保留 `lstat + NOFOLLOW + native fstat` 三层规则，不能把系统当前的创建拒绝
+当作未来平台可省略 no-follow 的理由。探针全部使用随机精确路径并确认清理完成。
+
+### 7.9 2026-08-09 产品 PUT/GET 大文件主链
+
+`tools/verify-put-get-pc.ps1` 使用生产 `get` / `put` 命令、认证状态机、结构化事件和本地提交
+路径，在同一物理 ARM64 PC 上对下载目录中的
+`DoubaoIME_Installer_0.6.3.07271.exe` 连续执行两轮 `GET → Downloads → PUT`。源文件为
+118,349,760 字节（112.9 MiB），SHA-256 为
+`3cb7d8f41e6815992b0208552ad4626fd9ad0e4e159beaecba1afe34d494c613`。
+
+两轮稳定性复验复用同一个 HAP（SHA-256
+`0524c04d7d4a143ba828f85b98a95a767d645dec649b04cd454fc3bb4cd9a018`）；线条字形收敛后又构建
+最终视觉候选（SHA-256 `420e36acfd02f55def662c03a721e68debcd85725d9675411e97876fa889e7c1`）
+并执行第三轮。结果如下：
+
+| 轮次 | GET | PUT | 完整性与清理 |
+| --- | --- | --- | --- |
+| 1 | 6.232 秒，18.11 MiB/s | 1.942 秒，58.12 MiB/s | 双向 SHA-256 一致；本地一次性文件与远端临时对象精确清理 |
+| 2 | 6.254 秒，18.05 MiB/s | 1.917 秒，58.87 MiB/s | 双向 SHA-256 一致；本地一次性文件与远端临时对象精确清理 |
+| 最终视觉候选 | 6.198 秒，18.21 MiB/s | 2.202 秒，51.24 MiB/s | 双向 SHA-256 一致；本地一次性文件与远端临时对象精确清理 |
+
+三轮都观察到正字节进度、实时速度和独立 `FINALIZING` 阶段。最终视觉候选把条形字形改为
+`━`、`╸`、`─`；它们与 `●` 一起通过固定打包字体 Regular/Bold 的单 cell advance 回归，并
+再次通过同一大文件主链。重复验证还暴露了
+HarmonyOS `uinput` 单次长文本在 50 字符处截断的测试基础设施边界，验证器已改为每 40 字符
+分批注入；修复后重复候选和最终视觉候选的命令均完整进入传输。该问题发生在测试命令注入阶段，
+不是 SFTP 或产品传输失败。
+
+#### 7.9.1 子目录、自动命名与 Tab 补全主链
+
+路径语义和 Tab 补全收敛后，验证器又分别使用 131,089 字节定向文件和用户指定的
+`DoubaoIME_Installer_0.6.3.07271.exe` 完成真实生产事件链。大文件为 118,349,760 字节，
+SHA-256 为 `3cb7d8f41e6815992b0208552ad4626fd9ad0e4e159beaecba1afe34d494c613`；结果如下：
+
+| 文件 | GET | PUT | 路径、补全与冲突证据 |
+| --- | --- | --- | --- |
+| 131,089 字节 | 0.078 秒 | 0.076 秒 | 已存在本地/远端目录；GET 目录和 PUT 文件经 Tab 完成；自动编号且原文件不变；双向 SHA-256 一致 |
+| 118,349,760 字节 | 6.550 秒，17.23 MiB/s | 1.959 秒，57.59 MiB/s | 同上；空格转义、正字节进度、实时速度、`FINALIZING` 和精确清理均通过 |
+
+GET 的本地目录候选完成后保留目录意图，最终在同一既有目录中把远端 basename 提交为
+`source (1).bin`，预置的 `source.bin` 内容保持不变；PUT 的本地文件候选包含空格，补全后正确
+转义，远端目录目标沿用本地 basename。Tab 阶段没有建立网络连接，命令也没有创建本地或远端
+目录。大文件门禁证据保存在
+`build/verification/put-get-20260809-102025/device-put-get.json`。
+
+HDC bundle shell 无法直接在应用已获授权的公共 Download 中准备验收状态，且权限失败不会反映为
+非零 HDC 退出码。验证器因此改用仅在调试构建中编译注入的验收 action 创建和精确清理固定测试
+目录与冲突文件；产品命令仍是被测路径，正式包沿用现有策略排除所有验收 action 和标记。SSH
+fixture 同时补齐了受约束的相对子目录解析，并拒绝空组件、`.`、`..` 和反斜杠，避免 fixture
+自身把产品的合法嵌套路径误报为权限错误。
+
+### 7.10 证据边界
+
+已经验证的是 HarmonyOS 的公共目录授权模型、“用户移动到 Download 后应用可读写”路径、
+Picker 的单文件选择与用户可见保存路径，以及密码认证下显式 basename、既有一级相对子目录、
+目录目标、自动编号冲突和 Tab 补全的生产 PUT/GET 小文件与 112.9 MiB 大文件主链；这些定向
+证据仍不是完整文件传输验收矩阵。
 
 以下内容**尚未验证**：
 
-- 直接把 Download 根目录作为最终产品根时的完整上传/下载交互。
-- `put/get` 命令解析、引号和 Host/Identity 复用。
-- `russh-sftp` 在 LeanTTY ARM64 HAP 中的构建和运行。
-- 与 OpenSSH 服务器的上传、下载、取消、断线和错误互操作。
-- Downloads 上的 `moveFile(temp, final, 1)` 无覆盖提交。
-- SFTP 排他临时文件、标准 rename 的无覆盖提交和并发抢占处理。
-- 大文件流式传输、临时文件清理和崩溃清理。
+- 未授权/拒绝/恢复的首次 Downloads 系统权限交互；当前已授权设备不能在不清除应用持久数据的
+  前提下安全重现该状态。
+- 其他不受控 OpenSSH 服务器的跨版本互操作。
+- 最终同一保留候选的核心终端回归。
 
-此前真机实际读写发生在 `Download/LeanTTY` 子目录。改为直接使用 Download 根目录
-是基于同一已授权目录映射作出的产品决策，仍须在实现验收时补一次根目录端到端测试。
-由于临时探针已经移除，仓库中不保留可作为持续回归的测试代码；实现阶段必须重新
-建立受控测试并保存可复现步骤。
+此前权限验证主要在 `Download/LeanTTY` 子目录执行；7.6、7.8、7.9 和 7.9.1 已依次补齐
+Download 根目录提交原语、已打开对象能力边界、生产 `put/get` 定向端到端主链，以及既有
+相对子目录/自动编号/Tab 补全主链。仓库保留编译期隔离的聚焦门禁脚本；后续验收继续复用生产
+传输事件链，不能把探针扩展为第二套传输实现。
+
+### 7.11 2026-08-12 生命周期、错误与等待边界
+
+`FileTransferLifecycle` 的 Pane 隔离、合法阶段和三个终态回到 `IDLE` 已由 ArkTS 定向测试覆盖；
+错误分类测试证明权限、冲突、路径、无 SFTP、认证、主机校验、空间、网络、提交和清理可区分，
+未知 code 被限制为安全字符且底层 detail 不进入文案。Rust 定向测试证明复制循环外的通用等待
+同时响应取消和超时。解析矩阵覆盖分词、引号/转义、`--`、缺参、未知/重复选项、方向/多源、
+IPv6、Unicode、控制字符、空/超长路径和孤立 surrogate，并证明 `scp` 仅提示且覆盖选项被拒绝；
+矩阵同时修复了空字符串 PUT 本地源曾误用 GET 省略目标规则的问题。ArkTS 97/97、产品库
+17/17、workspace clippy、ARM64 native 与调试 HAP 构建均通过。
+设备随后按仓库的专用测试机条件解锁流程恢复，并直接启动当时已经安装、SHA-256 为
+`82e63465776698a584984693a69f7780b9741c5b94ae0ddfd29f0fc6cea34121` 的 HAP。用户指定的
+118,349,760 字节安装包完成 GET 与 PUT：GET 10.215 秒（11.05 MiB/s），PUT 4.308 秒
+（26.20 MiB/s），双向 SHA-256 均为
+`3cb7d8f41e6815992b0208552ad4626fd9ad0e4e159beaecba1afe34d494c613`；既有本地目录、自动编号、
+远端目录 basename、Tab、正字节进度、实时速度、`FINALIZING`、无覆盖和清理全部通过。
+编译期隔离的专用验收 HAP 也再次通过 Downloads no-replace 与 FD/no-follow 探针。上述证据闭合
+当前产品主链和本地能力边界。SFTP channel 建立、subsystem 请求、Session 初始化、Session 关闭
+和 SSH 断开也已复用复制循环外相同的 30 秒等待与取消原语；不再存在独立无界等待。
+
+同日，仓库受控 SFTP fixture 以每次读写 50 毫秒延迟提供 8,388,608 字节源，物理 ARM64 PC 在
+生产 GET 出现正字节进度后注入无选区 `Ctrl+C`。产品恰好产生一次 `cancelled`，436 毫秒内回到
+`IDLE` 和原 `ltty>`；既有 Downloads `source.bin` 字节不变，自动编号最终文件未暴露，任务所有
+同目录 `.part` 在 fixture 清理前已不存在。对应调试 HAP SHA-256 为
+`ab2f0b3c2dcdfd4efcac2df82c1ad9efab64b2b6eaa9d0a2d73de38224ca05f9`。这闭合了无选区
+`Ctrl+C` 的在途 GET 路径；断线、清理失败和其余生命周期物理矩阵仍按第九节保留。
+
+2026-08-13，有选区路径也在物理 ARM64 PC 闭合。验收先暴露出 ArkWeb 在 xterm 选区存在时
+既不稳定分发 DOM `keydown`，也会吞掉浏览器级 `copy`；因此产品不再依赖这两个不可靠入口。
+精确 Ctrl+C 现在由 Web 的 `onKeyPreIme` 在 ArkUI 前置层消费，经空 payload typed bridge 交给
+所属 xterm 判定：搜索框只复制自己的文本选区，终端选区优先复制，无选区才向 Pane 输入流发送
+ETX。1 MiB 受控慢速 GET 在正字节进度和实时速度可见后建立 4 字符选区，Ctrl+C 只产生一次
+成功剪贴板写入且没有改变传输终态；随后 GET、PUT、`FINALIZING`、双向 SHA-256 和任务临时
+对象清理全部通过。HAP SHA-256 为
+`8c97fa390f742efea09ae24bc10d441b480097167e9c199a2e75f40766c6e97d`，证据位于
+`build/verification/put-get-selection-copy-final-9/`。
+
+同一物理 PC 又以每次 SFTP 读写 250 毫秒延迟运行生产 GET，并分别经过真实系统关闭按钮与活动
+Pane 的 `×` / `Close pane` 确认。应用关闭路径在恰好一次 `cancelled` 和 `IDLE` 后才记录关闭准备
+完成，确认到旧进程退出为 793 毫秒；重启检查证明既有文件字节不变，自动编号最终文件未出现，
+本地和远端任务临时对象均不存在。Pane 关闭路径先创建第二个 Pane，再关闭传输 Pane；710 毫秒
+内恰好一次 `cancelled` 并回到 `IDLE`，原进程与另一个 Pane 继续存在，最终文件与临时对象均未
+留下。这闭合了传输中的受控 Pane/应用关闭；后续门禁又闭合异步 Downloads 准备期间关闭、
+强制终止、断线、背压、清理失败和迟到事件隔离。两条门禁复用当前源码构建的同一调试 HAP，
+SHA-256 为 `942a775628625f6dda9c7df8297e12ae6255fe04769a514a7fe93587fedca51f`。
+
+后续审计发现系统 Downloads 请求若长期不返回，当前 Pane 的 `disconnect()` 会被其
+`transferCompletion` 间接阻塞。实现现在保留共享权限请求的进程内 single-flight 所有权，只让每个
+Pane 自己的准备取消 Promise 与共享请求竞争；取消当前 Pane 不取消系统对话框或其他 Pane 的请求，
+但会立即结束本 Pane 的 `PREPARING`，且共享请求稍后完成不能继续本 Pane 的文件打开/native 启动。
+ArkTS 98/98 与调试注入逐字节还原契约通过。编译期隔离的哨兵又在物理 PC 让生产 GET 永久停在
+`PREPARING`：确认关闭应用 496 毫秒内完成唯一 `cancelled`、`IDLE`、关闭准备及进程退出；确认
+关闭 Pane 406 毫秒内完成相同终态，并保留原 PID 与另一个 Pane。两条路径均没有认证、进度、
+`FINALIZING`、完成事件或文件残留；共同调试 HAP SHA-256 为
+`d756165a410ffe2cdaf01c5f864c864e3d59eccfc8b06ee78018b854c47757b5`。
+
+### 7.12 2026-08-13 连接解析与 Downloads 管理边界
+
+2026-08-13 的连接解析回归证明 `ssh`、`put` 和 `get` 对同一 Host 的 HostName、User、Port 与
+IdentityFile 得到完全相同的有效连接参数；命令级 `put/get -p/-i` 只改变当次结果，后续
+`ssh`、`put`、`get` 仍恢复 Host 值，且 SSH config 文本没有变化。同一测试还在传输解析前后固定
+`host add/set/list`、`key list`、`help` 和 `exit` 的既有命令类型，防止文件传输扩展改变本地命令
+入口。可信 ArkTS 测试为 100/100；实现继续只使用 `CommandParser.parseCommand` 这一条连接解析
+路径，不增加传输专用 Host、Identity 或认证配置。
+
+同日新增的编译期隔离探针直接调用生产 `TransferFileManager`，在物理 HAD-W32 的随机 Downloads
+子目录完成明确目标预存在、准备后目标抢占、自动名称连续冲突、多级既有目录 PUT FD、同目录临时
+文件与产品 cleanup。两个明确冲突均逐字节保持已有目标不变；提交期冲突还保持完整临时对象，随后
+只由产品 cleanup 删除。自动名称在 basename 和 `(1)` 已存在时，不重传即把同一临时对象以 mode 1
+提交为最小可用 `(2)`，三份内容均符合预期。多级目录源经逐组件目录检查和最终 `NOFOLLOW` 打开，
+探针从产品持有的 FD 读到原对象；全部随机路径最终删除。既有 no-replace 与 native FD 探针在同一
+HAP 再次通过；系统仍拒绝在 Downloads 和私有 cache 创建 symlink，因此没有伪造平台做不到的
+symlink 成功场景。HAP SHA-256 为
+`0eb2098ddf09c6314e28cbd05419c1d47bae3e1b62ac8e103d1cb5180912a71d`，结构化证据位于
+`build/verification/file-transfer-manager-boundary-final/`。可信 ArkTS 命名测试还固定隐藏文件、复合
+后缀、尾点、Unicode 安全截断和第 9,999 号候选；7.14 又在生产 manager 上实际闭合完整
+10,000 名占用门禁。
+
+补全候选现在在 Host alias、LeanTTY 密钥名和 Downloads 条目三个入口统一拒绝 ESC、C0/C1
+控制字符与孤立 surrogate；不以替换字符伪造一个无法重新解析到原对象的路径。可信 ArkTS 回归
+覆盖安全 Unicode 与上述拒绝集，并构造包含 ESC 的 Host 配置，证明不安全 alias 不会进入 `get`
+候选，安全候选仍正常工作。文件系统上下文、转义、候选上限和未授权真机矩阵仍按第九节保留。
+
+### 7.13 2026-08-13 认证、安全输入、失败互操作与最小化
+
+物理 HAD-W32 的完整认证矩阵已经使用生产 `put/get` 闭合未加密 Ed25519 key、为同一 key 增加
+passphrase 后的加密 key、两轮 keyboard-interactive，以及显式 `-i` 后恢复到无 identity 密码认证。
+每种方式都完成实际 SFTP 文件传输；命令级 identity 没有改变后续命令，临时 key 最终通过产品
+`key rm` 工作流删除。证据位于
+`build/verification/put-get-authentication-matrix-final-2/`。
+
+认证审计同时发现，仅在终端画面中回显 `*` 不足以保护 WebView 的辅助输入元素：系统布局树曾可
+读取其明文 value。现在 `SessionViewModel` 只对密码、private-key passphrase、非回显
+keyboard-interactive response 和 key passphrase change 模式发送有类型的 `inputSecurity=masked`；
+`TerminalBridge` 在 ArkWeb 重建后重放该状态，Web 侧在 xterm 已消费 `onKey` 后有界清空 helper
+value，离开安全模式时立即清理。Bridge allowlist 只接受 `plain/masked`。完整矩阵的每个安全输入
+前后布局快照均为空，应用日志也不含临时凭据；普通命令可访问输入和终端画布没有被替换或隐藏。
+
+同一 HAP 还分别验证无 SFTP subsystem、远端权限拒绝、标准可靠 rename 不可用：三条路径都只
+产生一次稳定失败，回到 `IDLE`，不暴露最终名、不留下任务临时文件，也不退化为覆盖操作。空文件
+完成双向 SHA-256 精确的 GET/PUT，最终摘要显示 `0 B` 与耗时。8 MiB 延迟 GET 在正字节阶段由
+真实窗口按钮最小化，在不可见期间完成；恢复后保持原 PID、终端焦点和完整结果，并继续完成 PUT、
+哈希与清理。对应证据位于 `build/verification/put-get-sftp-*-final*/`、
+`build/verification/put-get-empty-final/` 和 `build/verification/put-get-minimize-final/`。
+
+### 7.14 2026-08-13 文件名、补全、序号耗尽与休眠恢复
+
+物理 HAD-W32 的生产命令事件链完成空格、Unicode 和 224 字符 basename 的 131,089 字节
+`GET → Downloads 自动编号 → PUT`。三组均保留既有文件、选择最小 `(1)` 名称、经过
+`FINALIZING` 并保持相同 SHA-256。长文件名首次暴露出上传临时名复制最终 basename 后超过远端
+单组件上限；修复后远端临时名固定为同目录、排他的 `.leantty-<transfer>-<nonce>.part`，长度不再
+随最终名增长，仍使用标准无覆盖 rename。Rust 255 字节 basename 回归与真机长名称往返均通过。
+证据位于 `build/verification/put-get-file-name-matrix-final-9/`，HAP SHA-256 为
+`5928accd750c2bfb0a1d37c77111cd87b2e32d86672c8175856da14ce391b4ab`。
+
+同一 HAP 的固定字体 Tab 矩阵又覆盖既有目录、空格、引号规范化、Unicode、隐藏项、公共前缀、
+再次 Tab 的有界候选列表和 Unicode 格式控制字符排除。每次补全都从生产 `CommandLineBuffer`
+记录结果，未请求 Downloads 权限、未进入传输状态或远端认证。证据位于
+`build/verification/put-get-tab-completion-final-1/`。另一个编译期隔离探针在生产
+`TransferFileManager` 上实际占用 basename 与 `(1)..(9999)` 共 10,000 个名称；自动提交返回
+`LOCAL_CONFLICT`，所有占用内容逐字节不变，完整临时对象仍由本任务持有并由产品 cleanup 精确
+删除。证据位于 `build/verification/file-transfer-manager-boundary-final-3/`，HAP SHA-256 为
+`de2f269145bdea2fe089ce8dbcda47ac1d41c6eeae3fb24431bc3915571a3bb4`。
+
+最后，8 MiB 延迟 GET 在正字节进度与实时速度出现后执行真实 `power-shell suspend`，5 秒后由
+已验证的 HDC `wakeup` 路径唤醒并使用仓库外本机凭据解锁。应用保持同一 PID，GET 在
+`FINALIZING` 后提交完整文件；同一 Pane 随后完成 PUT、双向 SHA-256 和精确清理。证据位于
+`build/verification/put-get-suspend-final-3/`，HAP SHA-256 为
+`57044b4927448c909e2167775f0f528f211144a69e5e712e3672543f5ec44ca9`。当前源码的软件门禁随后
+全部通过，包括 ArkTS 104/104、Web/指南、PowerShell、WSL Rust fmt/clippy、native/core/fixture
+测试与 SSH fixture E2E；证据为 `build/verification/targeted-regression-1.3-final-2.json`。
 
 ## 八、后续讨论清单与实现前门禁
 
@@ -682,18 +1052,23 @@ Picker 探针完成后也重新执行了相同恢复流程；新的正常进程�
    等价入口。
 4. 用户输入 `scp` 时只显示 `put/get` 迁移提示，不作为别名执行。
 5. `put/get` 使用与现有 `ssh` 一致的小写 `-p` 和 `-i` 连接选项。
-6. `get` 省略本地目标时使用远端 basename；`put` 和 `get` 的远端路径都必须明确
-   到文件名，1.3 不接受尾部 `/` 的远端目录目标。
+6. `get` 省略本地目标时使用远端 basename；`get` 的远端源必须是文件。`put` 的远端
+   目标可以明确到文件名，也可以用尾部 `/` 明示既有目录并沿用本地 basename；`host:`
+   表示 SFTP 初始目录。
+7. 本地相对路径允许穿过 Downloads 内的既有子目录；目录意图必须以 `/` 明示，命令不创建
+   目录，也不维持本地或远端当前目录。
 
 #### 8.1.3 文件冲突与目标名称所有权
 
 1. 上传和下载都不静默覆盖已有文件。
 2. 用户明确选择最终目标名时冲突失败；LeanTTY 选择默认最终名称时冲突生成唯一
    名称。这是上传和下载共同使用的唯一判断规则。
-3. `put` 的远端目标始终明确，因此远端同名文件存在时失败。
+3. `put` 的远端目标无论明确给出文件名还是由目录和本地 basename 推导，同名对象存在时
+   都失败。
 4. `get` 明确提供本地目标时，本地同名文件存在则失败。
-5. `get` 省略本地目标时由 LeanTTY 采用远端 basename；冲突使用最小可用的
-   `name (n).ext`。开始时不承诺可能被并发抢占的名称，完成时显示实际保存名称。
+5. `get` 省略本地目标或明确指向既有目录时由 LeanTTY 采用远端 basename；冲突使用最小
+   可用的 `name (n).ext`。开始时不承诺可能被并发抢占的名称，完成时显示实际保存名称和
+   `Renamed`。
 6. 1.3 不增加确认对话框、`--force`、`--overwrite` 或可配置冲突策略。
 
 选择原因：
@@ -761,13 +1136,14 @@ Picker 探针完成后也重新执行了相同恢复流程；新的正常进程�
    `fs.moveFile(temp, final, 1)` 提交；API 24 SDK 声明 `mode = 1` 在目标同名文件
    存在时抛出 `File exists`，而不是覆盖。
 3. 明确本地目标只尝试一次；提交冲突时删除本次临时文件并失败。
-4. 省略本地目标时，在传输完成后依次尝试 basename、`name (1).ext`、
-   `name (2).ext`，直到无覆盖提交成功；不提前占用或承诺最终名称。
+4. 省略本地目标或明确指向既有目录时，在传输完成后依次尝试 basename、
+   `name (1).ext`、`name (2).ext`，直到无覆盖提交成功；不提前占用或承诺最终名称。
 
-上述 SDK 声明主要描述应用沙箱路径，尚未证明公共 Downloads 上具有相同的原子和
-无覆盖行为。因此 `moveFile(..., 1)` 仍是待真机验证的实现候选，不是已经取得的
-平台证据。若它不能满足要求，再评估 native `renameat2(RENAME_NOREPLACE)`；不能
-直接假设 NDK 头文件中存在声明就代表目标文件系统支持。
+2026-08-08 的 7.6 物理机门禁已经证明，当前目标系统的公共 Downloads 根目录上，
+`moveFileSync(..., 1)` 可以在完整关闭临时文件后成功提交，并在提交前被并发抢占时返回
+`File exists`、保持两侧内容不变。当前不需要引入 native
+`renameat2(RENAME_NOREPLACE)` 回退；若后续支持的目标系统出现不同结果，应安全失败并重新
+评估，而不是静默切换为覆盖语义。
 
 远端上传的推荐实现：
 
@@ -776,34 +1152,37 @@ Picker 探针完成后也重新执行了相同恢复流程；新的正常进程�
 2. 完整写入并成功关闭后，使用 SFTP v3 标准 `SSH_FXP_RENAME` 提交。标准语义要求
    `newpath` 已存在时报错；不能使用具有覆盖语义的
    `posix-rename@openssh.com`。
-3. 当前 OpenSSH 对普通文件的标准 rename 优先使用 link/unlink 做无竞态提交，但
-   仍需用实际 `russh-sftp` 客户端和目标 OpenSSH 服务器验证协议结果、错误映射和
-   临时文件清理。
+3. 当前 OpenSSH 对普通文件的标准 rename 优先使用 link/unlink 做无竞态提交。7.7 已用
+   实际 `russh-sftp 2.4.0` 客户端和 OpenSSH 10.2p1 验证成功、目标冲突、内容保持与临时文件
+   清理；产品实现已复用该原语，并由 7.10—7.14 补齐结构化错误映射和目标服务器差异。
 4. 服务器不支持可靠无覆盖提交时，本次上传安全失败；不能退化成直接写最终名称、
    删除已有目标或覆盖 rename。
 
-本地 Downloads 和远端 OpenSSH 两侧验证都通过前，本节保持“实现前可靠性门禁”
-状态，不把推荐方案写成已验证能力。
+本地 Downloads、受控 OpenSSH 协议原语和 FD/no-follow 门禁均已闭合；产品实现已接入，
+实际服务器上的完整传输、取消与错误矩阵也由 7.9—7.14 闭合。
 
 #### 8.2.2 路径验证与打开之间的 TOCTOU
 
-ArkTS 先验证字符串路径、Rust 再按路径重新打开，会给符号链接替换留下窗口。需要
-选择并验证真正的能力边界：
+唯一实现已经冻结：上传由 ArkTS 在已授权 Downloads 根中逐组件验证相对路径；每个中间
+目录必须已经存在、是目录且不是 symlink，最终对象执行 `lstat`，再用
+`READ_ONLY | NOFOLLOW` 打开。N-API 在同步返回前复制 FD 并 `fstat` 为普通文件，Rust 只从
+复制后的已打开对象流式读取，不再按路径打开。7.8 已在真机证明根目录源路径被替换后，
+native 仍读取原始对象；7.12 又闭合了既有多级子目录的逐组件边界。
 
-- ArkTS 打开已经授权的文件，把文件描述符及明确所有权交给 Rust；或
-- Rust 相对于可信 Downloads 目录句柄执行 no-follow 打开，并在打开后 `fstat`。
+下载不会打开既有用户文件：ArkTS 在逐组件验证的最终既有目录中生成随机精确临时路径，
+native 使用 `create_new` 排他创建本任务的新对象；完成后关闭并 `sync_all`，ArkTS 再在同一
+目录以 mode 1 提交。最终提交前重新验证目录链；任何中间目录被替换为 symlink、移出
+Downloads 或改变类型时安全失败，不把临时文件跨目录提交。
 
-不能把“规范化过的字符串”当作文件访问授权，也不能让文件字节经过 WebView。
+字符串规范化只负责拒绝越界输入，不充当访问授权；文件字节不经过 ArkTS 字符串、WebView
+或终端流。
 
 #### 8.2.3 临时文件所有权与跨重启清理
 
-文件名符合 `.leantty-*.part` 不足以证明归 LeanTTY 所有。不得扫描 Downloads
-后删除所有匹配前缀的文件。候选只有：
-
-- 持久保存每个精确临时文件的随机 ID，只清理有记录的对象；或
-- 不做启动扫描，接受极端崩溃留下隐藏临时文件。
-
-该问题按用户当前讨论顺序暂后置，但实现前必须作出选择。
+文件名符合 `.leantty-*.part` 不足以证明归 LeanTTY 所有。1.3 选择不持久记录、不在启动时
+扫描 Downloads：正常失败、取消和受控 Pane/应用关闭只删除当前内存任务记录的精确临时
+路径；进程被强制终止时可能留下隐藏 `.part`，但提交模型保证它不会以最终名称出现。
+LeanTTY 不按前缀认领、删除或恢复任何跨重启对象。
 
 #### 8.2.4 `Ctrl+C` 与终端复制
 
@@ -812,39 +1191,52 @@ ArkTS 先验证字符串路径、Rust 再按路径重新打开，会给符号链
 - 有选区时复制，不取消。
 - 无选区时取消当前传输。
 
-还需要确认传输提示是否必须明确写出该规则，并在真机上验证选区、焦点和取消事件。
+提示保留现有终端规则，不增加常驻说明。无选区取消和有选区复制均已在物理机在途 GET 中
+验证；搜索输入框只复制自身选区的策略由 Web 回归保护。
 
 #### 8.2.5 生命周期、并发与迟到事件
 
-实现前必须定义：
+唯一行为已经冻结：
 
-- 两个 Pane 同时首次申请 Downloads 权限时如何串行化。
-- 关闭 Pane 是等待清理结束，还是由 native 在受控生命周期内完成。
-- N-API 事件携带 `transferId + paneId + generation`，避免取消后的迟到事件写入
-  新 Session。
-- 最小化、休眠和系统终止时是继续、暂停还是取消。
-- 强制终止不能保证执行清理，只能依靠提交模型保证半文件不暴露为最终名称。
+- Downloads 权限请求由进程内 static Promise 跨 Pane single-flight；同一时刻只存在一条系统
+  授权流程，拒绝后 Promise 清除，下一条显式命令可以重试。
+- 关闭 Pane 或应用的受控关闭先发送 native 取消并等待该任务的最终事件与精确清理，再释放
+  Pane 所有者；不把清理交给迟到的 UI 回调猜测。
+- 每个 N-API 事件携带并校验 `transferId + paneId + generation`；取消后或旧 Pane 的迟到事件
+  被丢弃，不得写入新 Session。
+- 最小化不主动暂停或取消，前台任务在系统仍调度进程且网络可用时继续；休眠、网络切换或
+  系统挂起导致 I/O 失败时进入统一失败清理。1.3 不增加后台服务、断点续传或恢复队列。
+- 强制终止不能保证清理；依靠 8.2.3 的临时对象规则保证半文件不暴露为最终名称。
 
-#### 8.2.6 尚未闭合的路径语义
+2026-08-12 的实现中，普通 Pane 关闭继续 `await SessionViewModel.disconnect()`；应用关闭由
+`EntryAbility.onPrepareToTerminateAsync()` 等待页面注册的 single-flight 准备 Promise，该 Promise
+并行等待所有 Pane 的同一个 `disconnect()` 完成路径。若准备或最终 `terminateSelf()` 失败会清除
+本次准备状态，下一次显式关闭可重试。页面析构仍只作为已完成受控准备后的兜底，不把系统强制
+终止宣称为可等待的清理路径。
 
-最小版本仍需明确：
+#### 8.2.6 路径语义
 
-- 远端符号链接是否跟随。
-- IPv6 地址与 `host:path` 冒号如何消歧。
-- 非 UTF-8 远端文件名如何处理。
-- Downloads 内本地子目录不存在时是否创建。
-- 空 basename 和超长名称的失败规则。
+- 下载对远端源先 `lstat`，拒绝 symlink 和非普通文件；打开后再次 `fstat`，不跟随被替换的
+  符号链接。上传目标预检查也使用 `lstat`，任何已有对象都按冲突处理。
+- 直接 IPv6 目标必须写成 `user@[2001:db8::1]:/path/file`；方括号内冒号不作为
+  `host:path` 分隔符。Host 别名继续由现有 `SshConfig` 解析。
+- 1.3 的 ArkTS/N-API 字符串边界只支持有效 UTF-8 名称；无法表示为字符串的非 UTF-8 远端
+  名称不支持，也不增加字节路径入口。
+- 本地只接受 Downloads 内由 `/` 分隔的相对路径，允许但不创建既有子目录。拒绝绝对路径、
+  盘符、`\\`、空组件、`.`、`..` 和 NUL；每个中间对象必须是非 symlink 目录。
+- `get` 的远端源必须是普通文件，不能以 `/` 结尾。`put` 的远端目标以 `/` 结尾或路径为空
+  时表示目录；否则表示最终文件名。远端相对路径始终相对于本次 SFTP Session 初始目录，
+  不承诺 `~` 展开，也不创建目录。
+- 本地单组件超过 255 UTF-8 字节、整体相对路径超过 4096 字节或远端路径超过 4096 字符均
+  失败。自动编号若超过 255 UTF-8 字节，只在 Unicode 边界截短 stem，保留 ` (n)` 与原
+  后缀；basename 与 `1..9999` 均冲突则失败。
+- 文件名与远端路径中的 NUL、ESC、C0/C1 控制字符和换行拒绝进入命令执行；补全候选和用户
+  可见路径在写入终端前再次转义，避免控制序列注入。
 
-以下规则已经由 `put/get` 命令决策闭合：本地只接受 Downloads 下的相对路径，不
-接受内部绝对路径；远端路径必须明确到文件名；不接受尾部 `/`；`get` 省略本地目标
-时保存到 Downloads 根，不再需要 `.` 特殊目标。
+### 8.3 决策状态
 
-### 8.3 建议讨论顺序
-
-1. 真机验证 Downloads 的 `moveFile(temp, final, 1)` 无覆盖提交。
-2. 验证 `russh-sftp` 与 OpenSSH 的排他临时文件和标准 rename。
-3. FD/no-follow 路径能力边界。
-4. 临时文件、生命周期和剩余路径语义。
+实现前门禁与剩余语义已于 2026-08-09 冻结。新的路径根、覆盖语义、后台生命周期或恢复
+策略必须先回到 `next-work.md` 和产品原则重新授权，不能在实现中增加隐式候选。
 
 ## 九、仍需完成的验证
 
@@ -853,23 +1245,26 @@ ArkTS 先验证字符串路径、Rust 再按路径重新打开，会给符号链
 Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.3 已确认的唯一
 规则实现，不能额外增加 Host 扩展、对话框或覆盖分支。
 
-- `put/get` 分词覆盖引号、反斜杠、缺少参数、未知选项和未闭合引号。
+- `put/get` 分词覆盖引号、反斜杠、`--`、缺少参数、未知选项和未闭合引号。
 - `put` 只接受本地到远端，`get` 只接受远端到本地。
 - `get` 省略本地目标时正确提取远端 basename。
-- 远端尾部 `/`、目录、多个源、方向不匹配和本地绝对路径均被拒绝。
+- `get` 远端源尾部 `/`、目录源、多个源、方向不匹配和本地绝对路径均被拒绝；`put` 的
+  远端尾部 `/` 和 `host:` 正确使用本地 basename，路径不带 `/` 时不会因同名目录静默改义。
 - `scp` 只返回迁移提示，不启动连接；其他别名不被接受。
 - Host 与直接目标解析结果和 `ssh` 一致。
 - `-i`、Host IdentityFile、默认认证回退优先级一致。
 - `put/get -i` 只覆盖当前命令，不改变后续 `ssh` 或 `put/get`。
 - `host add/set/list` 的语法和输出不因文件传输改变；文件传输不新增持久 Identity。
-- 本地路径规范化后不能逃出 Downloads。
-- 不跟随会逃逸的符号链接。
+- 本地多级相对路径规范化后不能逃出 Downloads；空组件、`.`、`..`、反斜杠、盘符、超长
+  组件与超长路径均失败。
+- 既有子目录可用但不由命令创建；任何中间 symlink、最终 symlink、目录上传源和目录类型
+  竞态都安全失败。
 - `put` 目标已存在时在传输数据前失败，错误包含远端冲突路径，已有文件内容不变。
 - `get` 明确本地目标且已存在时在传输数据前失败，错误包含冲突路径和指定新名称的
   可执行示例，已有文件内容不变。
-- `get` 省略本地目标且 basename 已存在时，验证最小可用序号、后缀、隐藏文件、
-  Unicode、长度、序号耗尽、并发抢占、开始时不承诺最终名称以及完成时显示实际
-  名称。
+- `get` 省略本地目标或目标为既有目录，且 basename 已存在时，验证最小可用序号、后缀、
+  隐藏文件、Unicode、长度、序号耗尽、并发抢占、开始时不承诺最终名称以及完成时显示
+  实际名称和改名事实。
 - 检查与最终提交之间发生并发冲突时仍不覆盖，并返回与名称所有权一致的结果。
 - 下载最终名称在临时文件完整关闭前不可见；明确目标提交冲突时只清理本次临时文件。
 - 上传临时文件使用 `CREATE | EXCL | WRITE`；标准 rename 冲突不改动已有远端目标。
@@ -879,6 +1274,8 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
 - 下载临时文件成功提交；失败和取消清理。
 - 小文件、空文件和大文件内容哈希一致。
 - 进度事件节流，两个 Pane 的传输状态不串联。
+- Tab 覆盖 `put` 本地文件/目录、`get` 本地目录、Host、`-i`、公共前缀、再次 Tab 列表、
+  隐藏项、候选上限、转义和控制字符净化；证明不触发权限请求、远端连接或递归枚举。
 
 ### 9.2 物理 HarmonyOS PC
 
@@ -887,20 +1284,24 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
 3. 在没有同名文件时省略本地目标下载 `app.log`，从系统文件管理器确认
    `Downloads/app.log` 可见且哈希一致。
 4. 拒绝权限后确认终端仍可用，再次执行时可以恢复。
-5. 验证空格、Unicode、长文件名和 Downloads 内相对子目录。
-6. 分别预置远端上传目标、明确指定的本地下载目标和省略目标的 basename：前两者
-   必须失败且原文件哈希不变；后者必须选择最小可用的 `name (n).ext`、不修改
-   后缀，开始时不承诺最终名称，完成时显示原名称与实际名称。
+5. 验证空格、Unicode、长名称和 Downloads 内既有多级子目录；确认不存在的目录不会被
+   创建，中间 symlink/类型替换安全失败，临时文件和最终文件始终位于同一目标目录。
+6. 分别预置远端上传目标、明确指定的本地下载目标，以及省略目标或指向目录的 basename：
+   前两者必须失败且原文件哈希不变；LeanTTY 选择的本地名称必须使用最小可用的
+   `name (n).ext`、不修改后缀，开始时不承诺最终名称，完成时显示原名称与实际名称。
 7. 在预检查后、最终提交前抢占目标名称：明确目标必须失败且已有文件哈希不变；
    省略下载目标必须使用下一个名称，不能重新传输文件。
-8. 中途 `Ctrl+C`、断网、关闭 Pane 和关闭应用，不留下最终名称的损坏文件。
-9. 如果最终选择跨重启清理，验证只删除精确记录为 LeanTTY 所有的 `.part` 文件；
-   如果选择不扫描，验证启动时不会按文件名前缀触碰 Downloads 内容。
+8. 中途无选区 `Ctrl+C`、确认关闭 Pane 和确认关闭应用不留下最终名称或任务临时文件已经通过；
+   继续验证有选区只复制、断网及其余系统生命周期场景。
+9. 验证启动时不会按文件名前缀触碰 Downloads 内容；受控取消只删除本任务精确临时路径，
+   强制终止后即使留下隐藏临时文件，也不得出现损坏最终名称。
 10. 使用密码、未加密密钥、加密密钥和 `keyboard-interactive` Host 各完成传输。
 11. 验证 `put/get -i other` 只临时覆盖，不改变后续 `ssh prod` 或
     `put/get ... prod:...`。
 12. 服务器没有 SFTP、远端权限拒绝和本地空间不足时错误清楚且可恢复。
 13. 检查 hilog、命令历史和错误快照不包含凭据或文件内容。
+14. 在未授权和已授权状态分别验证 Tab：不弹权限、不连接服务器；文件/目录、空格、Unicode、
+    公共前缀和有界候选列表可用，控制字符不能改变终端布局。
 
 没有完成自动化、ARM64 干净构建和上述真机矩阵前，不得把文件传输标为完成或写入
 发布宣传。
@@ -910,8 +1311,8 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
 | 产品原则 | 文件传输方案如何满足 |
 | --- | --- |
 | 可靠是底线 | 独立短生命周期 Session；明确 `TRANSFERRING` 与 `FINALIZING`；同目录临时文件和禁止替换提交；统一取消和错误分类；真机验收 |
-| 简洁是默认选择 | `put/get` 方向明确；一个 Downloads 根；按目标名称所有权使用一条冲突规则；复用现有 Host 而不扩展管理命令；单文件；无 GUI、补全、队列和后台状态 |
-| 易用只优化核心路径 | 复用 SFTP 的 `put/get` 认知；省略下载目标时自动保留两份；明确目标冲突时给出可执行的改名示例 |
+| 简洁是默认选择 | `put/get` 方向明确；一个 Downloads 根；按目标名称所有权使用一条冲突规则；复用现有 Host 而不扩展管理命令；单文件；无 GUI、远端补全、队列和后台状态 |
+| 易用只优化核心路径 | 复用 SFTP 的 `put/get` 认知；允许既有子目录和显式目录目标；LeanTTY 选择下载名称时自动保留两份；只为本地路径、Host 和密钥提供有界 Tab 补全 |
 | 不并存等价模型 | 不提供 `scp` 等别名；`ssh` 与 `put/get` 共用 Host、Identity、主机指纹和认证解析 |
 | 优先复用标准 | 用户表面复用 OpenSSH SFTP 的 `put/get` 方向；传输复用 SSH SFTP 子系统；权限复用 HarmonyOS Download 授权 |
 | 明确安全边界 | 不访问任意用户路径；不扩大到 Images/Documents/Desktop；文件字节不经过 WebView；不记录秘密 |
@@ -940,6 +1341,11 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
 - [LeanTTY milestones](../roadmap.md)
 - [OpenSSH `sftp` 手册](https://man.openbsd.org/sftp.1)
 - [OpenSSH `scp` 手册：未采用命令名的兼容性对照](https://man.openbsd.org/scp.1)
+- [OpenSSH `progressmeter.c`：80 列默认宽度与 1 秒更新间隔](https://github.com/openssh/openssh-portable/blob/master/progressmeter.c)
+- [curl 进度表：百分比、速度与时间字段](https://curl.se/docs/tutorial.html#Progress-Meter)
+- [GNU Wget 进度类型：ASCII bar 与非 TTY dot](https://www.gnu.org/software/wget/manual/wget.html#index-progress_002dtype)
+- [aria2 console readout：完成量、速度与 ETA](https://aria2.github.io/manual/en/html/aria2c.html#console-readout)
+- [rsync `--progress`：速度、ETA 与完成摘要](https://download.samba.org/pub/rsync/rsync.1)
 - [SFTP v3 rename：目标存在属于错误](https://datatracker.ietf.org/doc/html/draft-spaghetti-sshm-filexfer-00)
 - [OpenSSH `sftp-server` 当前无覆盖 rename 实现](https://github.com/openssh/openssh-portable/blob/master/sftp-server.c)
 - [rsync 官方手册：更新、跳过和备份已有目标](https://download.samba.org/pub/rsync/rsync.1)
@@ -950,7 +1356,7 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
 - [Chromium Downloads API：`uniquify` 冲突行为](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/chrome/common/extensions/api/downloads.webidl)
 - [Apple：保留多个冲突版本时为额外版本增加数字](https://support.apple.com/guide/mac-help/mh40780/mac)
 - [russh 0.62.5 SFTP client 示例](https://docs.rs/crate/russh/0.62.5/source/examples/sftp_client.rs)
-- [`russh-sftp` 2.3.0 文档](https://docs.rs/russh-sftp/2.3.0/russh_sftp/)
-- [`russh-sftp` `SftpSession`：create、open flags 与 rename](https://docs.rs/russh-sftp/2.3.0/russh_sftp/client/struct.SftpSession.html)
+- [`russh-sftp` 2.4.0 文档](https://docs.rs/russh-sftp/2.4.0/russh_sftp/)
+- [`russh-sftp` `SftpSession`：create、open flags 与 rename](https://docs.rs/russh-sftp/2.4.0/russh_sftp/client/struct.SftpSession.html)
 - [HarmonyOS 文件授权持久化](https://developer.huawei.com/consumer/cn/doc/HarmonyOS-Guides/native-fileshare-guidelines)
 - [HarmonyOS 应用隐私保护](https://developer.huawei.com/consumer/cn/doc/doccenter-architecture/bpta-app-privacy-protection)
