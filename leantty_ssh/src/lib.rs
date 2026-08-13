@@ -526,7 +526,6 @@ struct SessionReceivers {
 }
 
 const INPUT_WRITE_CHUNK_BYTES: usize = 32 * 1024;
-const INPUT_WRITE_PACING_DELAY: Duration = Duration::from_millis(10);
 
 async fn send_scheduled_input<S, SF, R, RF, E>(
     bytes: Vec<u8>,
@@ -576,7 +575,7 @@ where
         }
         offset = end;
         if offset < bytes.len() {
-            tokio::time::sleep(INPUT_WRITE_PACING_DELAY).await;
+            tokio::task::yield_now().await;
         }
     }
     (Ok(()), resize_errors)
@@ -588,45 +587,11 @@ async fn run_channel_writer(
     mut resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
     control_callback: JsCallback,
 ) {
-    let mut trace_follow_up_writes = false;
-    let mut follow_up_write_count = 0_u32;
-    let mut follow_up_byte_count = 0_usize;
-    let mut trace_tick = tokio::time::interval(Duration::from_secs(1));
-    trace_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    trace_tick.tick().await;
     loop {
         tokio::select! {
-          _ = trace_tick.tick(), if trace_follow_up_writes => {
-            send_control(
-              &control_callback,
-              &format!(
-                "OUTPUT_METRICS:{{\"writes\":{},\"writeBytes\":{},\"stage\":\"writer-alive-after-large-input\"}}",
-                follow_up_write_count, follow_up_byte_count,
-              ),
-            );
-          }
           data = write_rx.recv() => {
             match data {
               Some(bytes) => {
-                let byte_count = bytes.len();
-                let is_follow_up_write = trace_follow_up_writes;
-                let has_line_end = bytes.iter().any(|byte| matches!(*byte, b'\r' | b'\n'));
-                let all_printable = bytes.iter().all(|byte| matches!(*byte, b' '..=b'~' | b'\r' | b'\n'));
-                if is_follow_up_write {
-                  follow_up_write_count += 1;
-                  follow_up_byte_count += byte_count;
-                }
-                let trace_follow_up_progress = is_follow_up_write &&
-                  (follow_up_write_count == 1 || follow_up_write_count % 8 == 0 || has_line_end);
-                if trace_follow_up_progress {
-                  send_control(
-                    &control_callback,
-                    &format!(
-                      "OUTPUT_METRICS:{{\"writes\":{},\"writeBytes\":{},\"lineEnd\":{},\"allPrintable\":{},\"stage\":\"followup-dequeued\"}}",
-                      follow_up_write_count, follow_up_byte_count, has_line_end, all_printable,
-                    ),
-                  );
-                }
                 let (write_result, resize_errors) = send_scheduled_input(
                   bytes,
                   &mut resize_rx,
@@ -636,53 +601,21 @@ async fn run_channel_writer(
                 for error in resize_errors {
                   send_control(&control_callback, &format!("RESIZE_ERROR:{}", error));
                 }
-                match write_result {
-                  Ok(()) => {
-                    if trace_follow_up_progress {
-                      send_control(
-                        &control_callback,
-                        &format!(
-                          "OUTPUT_METRICS:{{\"writes\":{},\"writeBytes\":{},\"lineEnd\":{},\"allPrintable\":{},\"stage\":\"followup-sent\"}}",
-                          follow_up_write_count, follow_up_byte_count, has_line_end, all_printable,
-                        ),
-                      );
-                    }
-                    if is_follow_up_write && has_line_end {
-                      trace_follow_up_writes = false;
-                    }
-                    if byte_count >= 512 * 1024 {
-                      send_control(
-                        &control_callback,
-                        &format!("OUTPUT_METRICS:{{\"writeBytes\":{},\"stage\":\"large-input-completed\"}}", byte_count),
-                      );
-                      trace_follow_up_writes = true;
-                      follow_up_write_count = 0;
-                      follow_up_byte_count = 0;
-                    }
-                  }
-                  Err(error) => send_control(&control_callback, &format!("WRITE_ERROR:{}", error)),
+                if let Err(error) = write_result {
+                  send_control(&control_callback, &format!("WRITE_ERROR:{}", error));
                 }
               }
-              None => {
-                send_control(&control_callback, "OUTPUT_METRICS:{\"stage\":\"writer-exit-write-closed\"}");
-                break;
-              },
+              None => break,
             }
           }
           size = resize_rx.recv() => {
             match size {
               Some((cols, rows)) => {
-                send_control(&control_callback, "OUTPUT_METRICS:{\"stage\":\"resize-dequeued\"}");
                 if let Err(error) = channel.window_change(cols, rows, 0, 0).await {
                   send_control(&control_callback, &format!("RESIZE_ERROR:{}", error));
-                } else {
-                  send_control(&control_callback, "OUTPUT_METRICS:{\"stage\":\"resize-sent\"}");
                 }
               }
-              None => {
-                send_control(&control_callback, "OUTPUT_METRICS:{\"stage\":\"writer-exit-resize-closed\"}");
-                break;
-              },
+              None => break,
             }
           }
         }

@@ -174,7 +174,6 @@ struct FixtureServer {
     shell_input: Vec<u8>,
     pending_perf_request: Option<PerfStreamRequest>,
     pending_paste: Option<PasteTransfer>,
-    trace_post_paste_input: bool,
     channels: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
     sftp_root: Arc<PathBuf>,
     sftp_delay: Duration,
@@ -215,7 +214,6 @@ impl FixtureServer {
             shell_input: Vec::new(),
             pending_perf_request: None,
             pending_paste: None,
-            trace_post_paste_input: false,
             channels: Arc::new(Mutex::new(HashMap::new())),
             sftp_root,
             sftp_delay,
@@ -626,15 +624,8 @@ impl Handler for FixtureServer {
                 );
                 session.data(channel, marker.into_bytes())?;
                 self.pending_paste = None;
-                self.trace_post_paste_input = true;
             }
             return Ok(());
-        }
-        if self.trace_post_paste_input {
-            eprintln!("post-paste input bytes={}", format_input_hex(data));
-            if data.iter().any(|byte| matches!(*byte, b'\r' | b'\n')) {
-                self.trace_post_paste_input = false;
-            }
         }
         if data.contains(&0x04) {
             session.data(channel, b"logout\r\n".as_slice())?;

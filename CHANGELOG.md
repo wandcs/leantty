@@ -46,11 +46,6 @@
   open/composing/closed ownership state, so IME composition gets its first
   `Escape` and ordinary terminal `Escape` remains untouched when search is not
   active.
-- Large terminal input now advances through bounded, ordered SSH writes instead
-  of occupying one indivisible writer call. This keeps SSH-window backpressure,
-  services terminal resize while a write is blocked, and lets ordinary input
-  continue after a large paste without defining a fixed completion-time promise.
-
 ### Security
 
 - Added no-follow local source opening, native descriptor revalidation,

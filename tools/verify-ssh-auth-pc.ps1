@@ -1307,7 +1307,6 @@ try {
     Wait-FixtureLog `
         -Pattern 'paste case=russhmain bytes=1048576 result=matched' `
         -TimeoutSeconds 30 | Out-Null
-    Wait-AuthLog -Pattern 'large-input-completed' -TimeoutSeconds 10
 
     Invoke-AuthPerfSample -CaseId 'russhmain' | Out-Null
 
