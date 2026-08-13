@@ -526,6 +526,7 @@ struct SessionReceivers {
 }
 
 async fn run_channel_writer(
+    session_id: u32,
     channel: russh::ChannelWriteHalf<russh::client::Msg>,
     mut write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     mut resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
@@ -536,8 +537,20 @@ async fn run_channel_writer(
           data = write_rx.recv() => {
             match data {
               Some(bytes) => {
-                if let Err(error) = channel.data_bytes(bytes).await {
-                  send_control(&control_callback, &format!("WRITE_ERROR:{}", error));
+                let byte_count = bytes.len();
+                if byte_count >= 64 * 1024 {
+                  eprintln!("[LTTY_SSH] session={} write_bytes={} stage=started", session_id, byte_count);
+                }
+                match channel.data_bytes(bytes).await {
+                  Ok(()) => {
+                    if byte_count >= 64 * 1024 {
+                      eprintln!("[LTTY_SSH] session={} write_bytes={} stage=completed", session_id, byte_count);
+                    }
+                  }
+                  Err(error) => {
+                    eprintln!("[LTTY_SSH] session={} write_bytes={} stage=failed error={}", session_id, byte_count, error);
+                    send_control(&control_callback, &format!("WRITE_ERROR:{}", error));
+                  }
                 }
               }
               None => break,
@@ -1147,6 +1160,7 @@ async fn run_session(
 
     let (mut channel_read, channel_write) = channel.split();
     let channel_writer = tokio::spawn(run_channel_writer(
+        session_id,
         channel_write,
         receivers.write_rx,
         receivers.resize_rx,
