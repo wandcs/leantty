@@ -227,7 +227,7 @@ impl FixtureServer {
             if matches!(*byte, b'\r' | b'\n') {
                 if command.is_none() {
                     command = parse_fixture_command_line(&self.shell_input);
-                    if command.is_none() && self.shell_input.starts_with(b"ltty-") {
+                    if command.is_none() && !self.shell_input.is_empty() {
                         eprintln!(
                             "fixture command bytes={} result=unrecognized",
                             format_input_hex(&self.shell_input)
