@@ -23,8 +23,8 @@
 | SSH 与 Mosh 命令体系 | Accepted 能力取舍基线 | 跨 1.1–1.7 | [`command-system.md`](command-system.md) |
 | SSH keyboard-interactive 与多方法认证 | Implementing；实现中闭合 WIP 细节 | 1.1 | [`ssh-authentication.md`](ssh-authentication.md) |
 | 工作区键盘导航 | Implementing（Tab）；WIP（Pane 前置门禁） | 1.1 | [`workspace-navigation.md`](workspace-navigation.md) |
-| 终端 scrollback 搜索 | Released on GitHub；AppGallery 审核中 | 1.2 | [`terminal-search.md`](terminal-search.md) |
-| 桌面终端界面与交互收敛 | Released on GitHub；AppGallery 审核中 | 1.2 | [`ui-interaction-polish.md`](ui-interaction-polish.md) |
+| 终端 scrollback 搜索 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`terminal-search.md`](terminal-search.md) |
+| 桌面终端界面与交互收敛 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`ui-interaction-polish.md`](ui-interaction-polish.md) |
 | 最小单文件传输 | Implementing / 功能矩阵已闭合，待首授权与保留候选 smoke | 1.3 | [`file-transfer.md`](file-transfer.md) |
 | HSL 本地执行环境入口 | WIP / 未授权实现 | 拟议 1.4 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
 | OpenSSH ProxyJump | WIP / 未授权实现 | 拟议 1.5 | [`proxy-jump.md`](proxy-jump.md) |

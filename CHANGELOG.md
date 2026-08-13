@@ -135,6 +135,8 @@
 
 ## [1.2.0] - 2026-08-08
 
+**AppGallery review approved; released to users on 2026-08-13.**
+
 ### Added
 
 - Added current-surface terminal search with the fixed `Ctrl+Alt+F` entry,

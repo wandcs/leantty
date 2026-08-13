@@ -179,6 +179,12 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 - WIP 方案中的交互、xterm 集成、输入/选择冲突和真机验收点已经共同确认。
 - 明确证明现有 Terminal Surface 可以局部实现，无需增加跨 Session 状态或长期索引。
 
+### 发布状态
+
+- `v1.2.0` 已于 2026-08-13 通过 AppGallery 审核并正式上架；商店版本映射到既有
+  GitHub Release、不可变签名标签、精确提交
+  `90c20cacf47ac620ccc89d21e70b6cdbbfeb0a68` 和已归档 production APP。
+
 技术方案：[`design/terminal-search.md`](design/terminal-search.md) 与
 [`design/ui-interaction-polish.md`](design/ui-interaction-polish.md)。上述条件已闭合，
 活动顺序与完成状态只在 [`next-work.md`](next-work.md) 维护。

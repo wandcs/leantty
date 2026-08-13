@@ -1,6 +1,6 @@
 # 桌面终端界面与交互收敛
 
-> 状态：Verified；发布候选待按最新 UI 修复重建
+> 状态：Verified；GitHub/AppGallery 已发布
 >
 > milestone：1.2
 >
@@ -8,7 +8,7 @@
 >
 > 实现授权：[`next-work.md`](../next-work.md)
 >
-> 最近更新：2026-08-08
+> 最近更新：2026-08-13
 
 本文冻结 LeanTTY 1.2 的桌面终端界面与交互收敛方案。它解决现有界面在多 Tab、BEL
 提醒、内容层次、搜索密度和分屏反馈上的一致性问题，不改变 Tab → Pane → Session

@@ -4,7 +4,9 @@
 >
 > milestone：1.2.0
 >
-> 更新日期：2026-08-08
+> 发布状态：GitHub/AppGallery 已发布；AppGallery 于 2026-08-13 审核通过并上架
+>
+> 更新日期：2026-08-13
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
