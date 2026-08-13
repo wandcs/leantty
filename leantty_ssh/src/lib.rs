@@ -672,8 +672,11 @@ async fn run_channel_writer(
           size = resize_rx.recv() => {
             match size {
               Some((cols, rows)) => {
+                send_control(&control_callback, "OUTPUT_METRICS:{\"stage\":\"resize-dequeued\"}");
                 if let Err(error) = channel.window_change(cols, rows, 0, 0).await {
                   send_control(&control_callback, &format!("RESIZE_ERROR:{}", error));
+                } else {
+                  send_control(&control_callback, "OUTPUT_METRICS:{\"stage\":\"resize-sent\"}");
                 }
               }
               None => {
