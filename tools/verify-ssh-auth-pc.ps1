@@ -1304,9 +1304,11 @@ try {
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-LeanTTYPasteShortcut
     Wait-AuthLog -Pattern 'Clipboard paste ok,1048576' -TimeoutSeconds 30
+    Wait-AuthLog -Pattern 'D: 1048576 chars' -TimeoutSeconds 30
     Wait-FixtureLog `
         -Pattern 'paste case=russhmain bytes=1048576 result=matched' `
         -TimeoutSeconds 30 | Out-Null
+    Wait-AuthLog -Pattern 'large-input-completed' -TimeoutSeconds 10
 
     Invoke-AuthPerfSample -CaseId 'russhmain' | Out-Null
 
