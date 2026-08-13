@@ -280,11 +280,17 @@ ASCII 查询、正反向导航、Pane/Tab 所有权、warm eviction 和窗口 re
 之后的 37 字节 PERF 命令只进入 ArkTS/native 队列，没有到达 fixture。因此 1.3 尚不能冻结正式
 候选，也不能把“大粘贴连续可用”记为通过。
 
-后续诊断提交 `ba7d21e` 又证明，大写入和后续 37 字节写入都能从产品 writer 出队并由
-`data_bytes(...).await` 报告完成，而 fixture 仍没有观察到后续命令。因此不再把单次 future 返回
-当作远端 PTY 已恢复可用的边界，也不继续围绕该边界反复试验。1.3 改为在现有单 writer/FIFO 内
-有界推进较大输入，在块之间恢复 resize、取消/断开和后续写入的调度机会；保持字节顺序和 SSH
-window 背压，不先引入固定睡眠。完整上下文、竞品调研、实现边界和版本决定见
+2026-08-13 又把受控样本提高到 OSC52 安全上界的 1 MiB：32 KiB 有界分块能逐字节完整到达
+fixture；仅 `yield_now` 和额外 10 ms 固定节奏都未让随后命令到达。失败现场连续观察到后续
+37 个单字符事件进入 ArkTS，native 同步入队调用没有报告拒绝；fixture 在粘贴完成后没有收到
+任何后续字节。一次性 control-callback 探针曾观察到大写入完成，但没有给出稳定可复核的后续
+writer/resize 边界，因此不能据此宣称 native writer 已完成后续写入，也不能继续靠调整块大小或
+睡眠碰运气。10 ms 节流和一次性探针已从保留实现中删除。
+
+下一步先在 WSL 中建立覆盖“产品 mpsc writer actor + russh channel + 1 MiB + 紧随短命令”的最小
+回归，复现真机的任务唤醒/控制分支行为；再决定是让 pending data/resize future 共同受 select
+调度，还是用已验证的 russh 修复版本替换当前实现。仍保持单 writer/FIFO、字节顺序和 SSH
+window 背压，不引入第二套输入通道。完整上下文、竞品调研、实现边界和版本决定见
 [`design/terminal-input-scheduling.md`](design/terminal-input-scheduling.md)。当前诊断提交和 HAP
 都不是可保留或发布的 1.3 候选；完成后删除一次性探针，或仅在其仍满足有界、无内容、低噪声的
 持续诊断价值时保留。
@@ -307,6 +313,8 @@ window 背压，不先引入固定睡眠。完整上下文、竞品调研、实�
   native/core/fixture tests、fixture E2E、相关 PowerShell helper tests 和 `git diff --check`。
   完成条件是压力样本逐字节匹配后，同一 Session 的 PERF/普通命令获得 fixture 可观察响应，
   分屏 resize、断开和重连均通过；场景超时只防止测试无界等待，不形成 512 KiB/30 秒产品 SLA。
+  当前最近证据：1 MiB 本体完整匹配，但紧随命令未到 fixture；下一动作不是继续调节延迟，而是
+  先让产品 writer actor 的 Rust 回归复现同一失败，再基于该回归修改 pending data/resize 调度。
 - [x] 覆盖 Downloads 边界、no-follow、FD 所有权、目标预存在、提交期并发抢占、自动编号、
   后缀/隐藏文件/Unicode/序号耗尽、既有多级子目录、中间 symlink、目录意图、临时文件同目录
   可见性与精确清理；每个冲突用例验证已有内容哈希不变。

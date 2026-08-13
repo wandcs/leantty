@@ -42,7 +42,7 @@ IME 和 TUI 输入共享 Session writer。因此产品必须保证的不是某�
 
 ## 二、当前实现与实机证据
 
-1.3 收尾 smoke 使用受控 SSH fixture 检查了 512 KiB 终端粘贴，以及粘贴后的普通 PERF
+1.3 收尾 smoke 使用受控 SSH fixture 检查了 512 KiB、随后 1 MiB 终端粘贴，以及粘贴后的普通 PERF
 命令、resize、断开和重连。
 
 已经观察到：
@@ -50,12 +50,14 @@ IME 和 TUI 输入共享 Session writer。因此产品必须保证的不是某�
 - russh 通用 `AsyncRead/copy` 写入路径以约 8 KiB 分块，30 秒内远端只收到 278,528 字节；
 - 改用拥有型、窗口感知的 `data_bytes` 后，fixture 以约 32 KiB 分块收到完整 524,288 字节，
   内容一致；
-- 随后的 37 字节 PERF 命令进入 ArkTS/native 队列；最新诊断还观察到 writer 将大写入和
-  后续写入都报告为 `data_bytes` 完成，但 fixture 没有收到后续命令；
+- 1 MiB 样本也按 32 KiB 分块逐字节完整到达；仅调度让步和额外 10 ms 固定节奏都没有让随后
+  命令到达；
+- 随后的 37 个单字符事件进入 ArkTS，native 同步入队调用未报告拒绝，但 fixture 在粘贴完成后
+  没有收到任何后续字节；一次性 control-callback 探针不足以稳定界定 writer 内部停在哪个 await；
 - 因而 `data_bytes(...).await` 的成功不能单独作为“远端 PTY 已处理、同一会话已经恢复公平
   调度”的产品证据；继续只追究这个 future 的返回边界不会闭合用户问题。
 
-该诊断证明当前“一整个大输入对应一次不可分割 writer 调用”的调度方式不足以支撑连续可用性，
+该诊断证明当前 writer actor 的连续调度仍未闭合，且固定延迟不是修复，
 但不证明 russh、xterm 或 SSH 协议本身普遍无法处理大粘贴。512 KiB 是用于稳定暴露问题的压力
 样本，不是 LeanTTY 宣布支持的最大尺寸，也不是要求普通用户经常执行的工作流。
 
@@ -107,6 +109,11 @@ LeanTTY 当前实机失败发生在第二层，不能用第一层的弹窗绕过
 
 具体块大小和使用 `data`/`data_bytes` 的选择是实现细节，必须由自动化背压用例和物理 PC 结果
 决定，不在本文固化为用户合同。
+
+当前下一实现步骤是先在 WSL 回归中覆盖完整的产品 writer actor，而不是只直接调用 russh
+channel：使用与产品一致的 mpsc 输入/resize 接收器，发送 1 MiB 后立即排入短命令，并观察任务
+唤醒、FIFO 和控制分支。只有该回归能复现或明确排除真机现象后，才选择 pending data/resize
+future 的共同调度结构，或评估含相关修复的 russh 版本；不再用物理 PC 反复试块大小和睡眠。
 
 ### 4.2 1.3.0 不做
 
