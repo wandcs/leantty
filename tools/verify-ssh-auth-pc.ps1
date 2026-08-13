@@ -560,6 +560,11 @@ function Invoke-LeanTTYPasteShortcut {
     # the system UI injector to deliver the complete browser key event.
     & $hdc -t $Target shell 'uitest uiInput keyEvent 2072 2045 2038' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to invoke LeanTTY paste shortcut' }
+    # The uitest chord can leave synthetic modifiers latched after ArkWeb has
+    # accepted the trusted paste event. Release every member explicitly so the
+    # next device-paced command is ordinary terminal input.
+    & $hdc -t $Target shell 'uinput -K -u 2038 -u 2045 -u 2072' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to release LeanTTY paste shortcut modifiers' }
 }
 
 function Save-SafeDiagnosticText {

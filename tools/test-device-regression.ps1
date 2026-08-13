@@ -478,6 +478,7 @@ foreach ($scriptName in @(
             $content.Contains("'Clipboard paste ok,1048576'") -and
             $content.Contains("'paste case=russhmain bytes=1048576 result=matched'") -and
             $content.Contains("'uitest uiInput keyEvent 2072 2045 2038'") -and
+            $content.Contains("'uinput -K -u 2038 -u 2045 -u 2072'") -and
             $content.Contains("Invoke-AuthPerfSample -CaseId 'russhmain'") -and
             $content.Contains('"completenessPercent":100') -and
             $content.Contains("'resize cols=\d+ rows=\d+'") -and
