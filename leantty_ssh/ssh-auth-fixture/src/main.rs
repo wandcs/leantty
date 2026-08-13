@@ -599,6 +599,12 @@ impl Handler for FixtureServer {
                 return Ok(());
             }
             transfer.received += accepted;
+            eprintln!(
+                "paste case={} received={} total={} state=progress",
+                transfer.case_id,
+                transfer.received,
+                transfer.payload.len()
+            );
             if transfer.received == transfer.payload.len() {
                 let marker = format!(
                     "\r\nLTTY_PASTE_OK:{}:{}\r\nfixture> ",
