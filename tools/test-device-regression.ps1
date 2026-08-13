@@ -521,6 +521,7 @@ foreach ($scriptName in @(
             -not $content.Contains("'uitest uiInput keyEvent 2072 2017'") -and
             $content.Contains('Clear-TerminalSearchQuery -CharacterCount $query.Length') -and
             $content.Contains('Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length') -and
+            $content.Contains("'LEANTTY_NO_RESULT_ZXQVK'") -and
             $content.Contains("'^Search text'") -and
             $content.Contains('[AllowEmptyString()]') -and
             $content.Contains("'^No results$'") -and

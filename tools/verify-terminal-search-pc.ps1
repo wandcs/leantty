@@ -689,7 +689,7 @@ try {
         Wait-TerminalSearchQueryState `
             -ExpectedQuery '' `
             -LayoutName 'layout-ascii-query-cleared.json' | Out-Null
-        $missingQuery = 'LEANTTY_NO_RESULT_8A6D'
+        $missingQuery = 'LEANTTY_NO_RESULT_ZXQVK'
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $missingQuery
         $missing = Wait-TerminalSearchQueryState `
             -ExpectedQuery $missingQuery `
