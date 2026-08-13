@@ -540,11 +540,19 @@ async fn run_channel_writer(
                 let byte_count = bytes.len();
                 if byte_count >= 64 * 1024 {
                   eprintln!("[LTTY_SSH] session={} write_bytes={} stage=started", session_id, byte_count);
+                  send_control(
+                    &control_callback,
+                    &format!("OUTPUT_METRICS:{{\"writeBytes\":{},\"stage\":\"started\"}}", byte_count),
+                  );
                 }
                 match channel.data_bytes(bytes).await {
                   Ok(()) => {
                     if byte_count >= 64 * 1024 {
                       eprintln!("[LTTY_SSH] session={} write_bytes={} stage=completed", session_id, byte_count);
+                      send_control(
+                        &control_callback,
+                        &format!("OUTPUT_METRICS:{{\"writeBytes\":{},\"stage\":\"completed\"}}", byte_count),
+                      );
                     }
                   }
                   Err(error) => {
