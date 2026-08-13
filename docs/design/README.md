@@ -26,6 +26,7 @@
 | 终端 scrollback 搜索 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`terminal-search.md`](terminal-search.md) |
 | 桌面终端界面与交互收敛 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`ui-interaction-polish.md`](ui-interaction-polish.md) |
 | 最小单文件传输 | Implementing / 功能矩阵已闭合，待首授权与保留候选 smoke | 1.3 | [`file-transfer.md`](file-transfer.md) |
+| 终端输入调度与大粘贴连续可用性 | Implementing / 1.3 发布阻断可靠性门禁 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
 | HSL 本地执行环境入口 | WIP / 未授权实现 | 拟议 1.4 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
 | OpenSSH ProxyJump | WIP / 未授权实现 | 拟议 1.5 | [`proxy-jump.md`](proxy-jump.md) |
 | Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.6 | [`mosh.md`](mosh.md) |

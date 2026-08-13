@@ -280,27 +280,33 @@ ASCII 查询、正反向导航、Pane/Tab 所有权、warm eviction 和窗口 re
 之后的 37 字节 PERF 命令只进入 ArkTS/native 队列，没有到达 fixture。因此 1.3 尚不能冻结正式
 候选，也不能把“大粘贴连续可用”记为通过。
 
-当前诊断断点为提交 `14c14089e08fc9d47e24dcc2400a2c0cfcfc7f3e`，对应开发 HAP SHA-256
-`f3668d061e6345a4249fc0c70494a931d31c656dc5e5b3b815eb08a64cf67ccb`。它只对不小于 64 KiB 的
-native 写入通过既有调试性能日志记录 `started/completed` 和字节数，不记录内容、不进入终端。
-下一轮先用该包只跑 `transport-main-path`，以这两个阶段事件区分 `data_bytes` future 未返回与 writer
-后续调度问题；随后修复串行写入队列，证明大写入后的普通输入、resize、断开和重连仍按序可用，
-并补一条覆盖产品 writer 而不只是 fixture 自身的背压回归。诊断完成后删除一次性探针，或仅在其
-仍满足有界、无内容、低噪声的持续诊断价值时保留。中止中的最后一次诊断没有形成产品结论；WSL
-fixture 已结束，本次唯一遗留的 `tcp:22222` 反向映射已精确删除，其他既有映射未改动。
+后续诊断提交 `ba7d21e` 又证明，大写入和后续 37 字节写入都能从产品 writer 出队并由
+`data_bytes(...).await` 报告完成，而 fixture 仍没有观察到后续命令。因此不再把单次 future 返回
+当作远端 PTY 已恢复可用的边界，也不继续围绕该边界反复试验。1.3 改为在现有单 writer/FIFO 内
+有界推进较大输入，在块之间恢复 resize、取消/断开和后续写入的调度机会；保持字节顺序和 SSH
+window 背压，不先引入固定睡眠。完整上下文、竞品调研、实现边界和版本决定见
+[`design/terminal-input-scheduling.md`](design/terminal-input-scheduling.md)。当前诊断提交和 HAP
+都不是可保留或发布的 1.3 候选；完成后删除一次性探针，或仅在其仍满足有界、无内容、低噪声的
+持续诊断价值时保留。
 
 完成 1.3 必须满足：实现前门禁均有可复现证据；`put/get` 的解析、所有权、取消、冲突和
 清理通过自动化；干净 ARM64 构建通过；同一个保留候选完成全部适用的物理 HarmonyOS PC
 矩阵；文档、版本、签名、归档、GitHub Release 和 AppGallery 记录可追溯。SDK 声明、构建、
 安装或启动不能替代真实行为验收。
 
+本问题的版本归属已经确定：1.3.0 只闭合终端输入 writer 的连续可用性及其回归，不新增大粘贴
+弹窗、slow paste、块大小/延迟设置或固定完成时限。危险多行/控制字符粘贴确认只作为未来 MINOR
+尚未排期的评估议题，不自动进入既定 1.4 HSL milestone，也不授权实现；仅按字节数弹窗和可调
+节流当前不分配版本。若以后出现持续用户证据，必须重新按产品原则评审并先提升到本文件。
+
 ## 1. 自动化与集成门禁
 
-- [ ] 闭合 SSH 大写入后的连续可用性：用当前诊断 HAP 确认 `data_bytes` 的完成边界，修复时保持
-  写入顺序、SSH window 背压、resize 和取消/断开有界；新增产品 writer 回归，并通过 WSL Rust
-  fmt、clippy、native/core/fixture tests、fixture E2E、相关 PowerShell helper tests 和
-  `git diff --check`。完成条件是 512 KiB 字节匹配后，同一 Session 立即接受 PERF/普通命令，
-  分屏 resize、断开和重连均通过，不依赖放宽超时。
+- [ ] 闭合 SSH 大写入后的连续可用性：在现有单 writer/FIFO 内有界推进较大输入，在块之间恢复
+  后续输入和控制事件的调度机会；保持写入顺序、SSH window 背压、resize 和取消/断开有界，
+  不先引入固定睡眠或第二套输入通道。新增覆盖产品 writer 的回归，并通过 WSL Rust fmt、clippy、
+  native/core/fixture tests、fixture E2E、相关 PowerShell helper tests 和 `git diff --check`。
+  完成条件是压力样本逐字节匹配后，同一 Session 的 PERF/普通命令获得 fixture 可观察响应，
+  分屏 resize、断开和重连均通过；场景超时只防止测试无界等待，不形成 512 KiB/30 秒产品 SLA。
 - [x] 覆盖 Downloads 边界、no-follow、FD 所有权、目标预存在、提交期并发抢占、自动编号、
   后缀/隐藏文件/Unicode/序号耗尽、既有多级子目录、中间 symlink、目录意图、临时文件同目录
   可见性与精确清理；每个冲突用例验证已有内容哈希不变。
@@ -348,7 +354,8 @@ fixture 已结束，本次唯一遗留的 `tcp:22222` 反向映射已精确删�
   已发布能力。
 - [ ] 准备正式发布包时才运行 `tools/test-regression.ps1`、`tools/verify-pc.ps1` 和
   `release-process.md` 的隔离 production/review 流程；冻结一个精确提交、tree、native 输出、
-  签名 APP/HAP、哈希和同候选物理机证据。
+  签名 APP/HAP、哈希和同候选物理机证据。当前 `14c1408` / `ba7d21e` 诊断源码和对应开发包
+  不是可保留或发布的 1.3 候选。
 - [ ] 1.2.0 AppGallery 审核已于 2026-08-13 通过并上架。1.3.0 仍须先发布不可变签名标签和
   匹配 GitHub Release，才提交同版本 production APP；不移动标签、不替换 Release。
 
