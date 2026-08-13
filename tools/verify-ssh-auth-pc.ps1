@@ -459,24 +459,33 @@ function Submit-AuthValue {
 function Focus-ActiveCommandInput {
     param([Parameter(Mandatory = $true)][string]$LayoutName)
     Activate-RegressionWindow
-    $layout = Get-LeanTTYDeviceLayout `
-        -Hdc $hdc `
-        -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory $LayoutName)
-    $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
-    $focusedNodes = @($nodes | Where-Object { [string]$_.attributes.focused -eq 'true' })
-    if ($focusedNodes.Count -eq 1) {
-        $inputNode = $focusedNodes[0]
-    } elseif ($nodes.Count -eq 1) {
-        $inputNode = $nodes[0]
-    } else {
+    $layoutPath = Join-Path $EvidenceDirectory $LayoutName
+    $inputNode = $null
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $layout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc `
+            -Target $Target `
+            -LocalPath $layoutPath
+        $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
+        $focusedNodes = @($nodes | Where-Object { [string]$_.attributes.focused -eq 'true' })
+        if ($focusedNodes.Count -eq 1) {
+            $inputNode = $focusedNodes[0]
+        } elseif ($nodes.Count -eq 1) {
+            $inputNode = $nodes[0]
+        }
+        if ($null -eq $inputNode -and $stopwatch.Elapsed.TotalSeconds -lt 10) {
+            Start-Sleep -Milliseconds 200
+        }
+    } while ($null -eq $inputNode -and $stopwatch.Elapsed.TotalSeconds -lt 10)
+    if ($null -eq $inputNode) {
         throw '[environment] Unable to identify the active terminal input before command submission'
     }
     Set-LeanTTYTerminalInputFocus `
         -Hdc $hdc `
         -Target $Target `
         -InputNode $inputNode `
-        -LocalPath (Join-Path $EvidenceDirectory $LayoutName) `
+        -LocalPath $layoutPath `
         -TimeoutSeconds 10 | Out-Null
 }
 
