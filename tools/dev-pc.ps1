@@ -8,6 +8,7 @@
 #>
 param(
     [string]$Target = '',
+    [string]$UnlockPasswordPath = '',
     [string]$HapPath = '',
     [switch]$Clean,
     [switch]$ForceNative,
@@ -23,6 +24,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'build-lock.ps1')
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
+. (Join-Path $PSScriptRoot 'device-regression.ps1')
 
 Invoke-WithLeanTTYBuildLock -RepoRoot $repoRoot -Operation 'dev-pc' -Action {
 if ($LatestCandidate) {
@@ -94,12 +96,17 @@ if ($LASTEXITCODE -ne 0 -or $installOutput -match '(?i)\[Fail\]|error') {
 Write-Host 'INSTALL SUCCESS' -ForegroundColor Green
 
 if (-not $NoLaunch) {
-    $launchOutput = Invoke-HdcShell $hdc $Target 'aa start -a EntryAbility -b com.leantty.app'
-    if ($launchOutput -match '(?i)\[Fail\]|error') { throw "App launch failed: $launchOutput" }
-    Start-Sleep -Milliseconds 800
-    $appPid = (Invoke-HdcShell $hdc $Target 'pidof com.leantty.app').Trim()
-    if ([string]::IsNullOrWhiteSpace($appPid)) { throw 'LeanTTY process did not start' }
-    Write-Host "LeanTTY started. PID=$appPid" -ForegroundColor Green
+    if ([string]::IsNullOrWhiteSpace($UnlockPasswordPath)) {
+        $UnlockPasswordPath = Get-LeanTTYDeviceUnlockPasswordPath
+    }
+    $start = Start-LeanTTYRegressionApp `
+        -Hdc $hdc `
+        -Target $Target `
+        -CredentialPath $UnlockPasswordPath `
+        -RepositoryRoot $repoRoot
+    Write-Host (
+        "LeanTTY started. PID=$($start.processId), unlock=$($start.unlock)"
+    ) -ForegroundColor Green
 }
 
 if ($FollowLogs) {

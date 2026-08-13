@@ -380,6 +380,15 @@ try {
         $devBuildText.Contains('Invoke-WithLeanTTYBuildLock')
     ) 'dev-build.ps1 is not protected by the repository build lock'
 
+    $devPcText = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'dev-pc.ps1'
+    ) -Raw
+    Assert-True (
+        $devPcText.Contains(". (Join-Path `$PSScriptRoot 'device-regression.ps1')") -and
+        $devPcText.Contains('Start-LeanTTYRegressionApp') -and
+        $devPcText.Contains('Get-LeanTTYDeviceUnlockPasswordPath')
+    ) 'dev-pc.ps1 does not use the conditional regression-PC unlock flow'
+
     $verifyPcText = Get-Content -LiteralPath (
         Join-Path $PSScriptRoot 'verify-pc.ps1'
     ) -Raw
