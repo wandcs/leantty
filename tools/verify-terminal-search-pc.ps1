@@ -327,6 +327,7 @@ function Wait-TerminalSearchQueryState {
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ExpectedQuery,
         [Parameter(Mandatory = $true)][string]$LayoutName,
         [string]$ExpectedResultPattern = '',
+        [bool]$RequireSearchInputFocus = $true,
         [ValidateRange(1, 30)][int]$TimeoutSeconds = 15
     )
     $path = Join-Path $EvidenceDirectory $LayoutName
@@ -335,7 +336,8 @@ function Wait-TerminalSearchQueryState {
         $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $path
         $searchInputs = @(Get-TerminalSearchInputNodes -Layout $layout)
         if ($searchInputs.Count -eq 1 -and
-            [string]$searchInputs[0].attributes.focused -eq 'true') {
+            (-not $RequireSearchInputFocus -or
+                [string]$searchInputs[0].attributes.focused -eq 'true')) {
             $query = [string]$searchInputs[0].attributes.text
             if ([string]::IsNullOrEmpty($query)) {
                 $query = [string]$searchInputs[0].attributes.originalText
@@ -403,14 +405,31 @@ function Invoke-TerminalSearchShortcut {
 }
 
 function Clear-TerminalSearchQuery {
-    & $hdc -t $Target shell 'uitest uiInput keyEvent 2072 2017' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to select the complete terminal search query' }
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2055
+    param([Parameter(Mandatory = $true)][ValidateRange(1, 4096)][int]$CharacterCount)
+
+    # ArkWeb on this physical PC does not receive an injected Ctrl+A chord in
+    # its focused HTML input. Delete the known bounded test query one character
+    # at a time so this gate measures search behavior rather than that injector
+    # limitation.
+    for ($index = 0; $index -lt $CharacterCount; $index++) {
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2055
+    }
 }
 
 function Invoke-TerminalSearchPrevious {
-    & $hdc -t $Target shell 'uitest uiInput keyEvent 2047 2054' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to invoke Shift+Enter in terminal search' }
+    $layout = Get-LeanTTYDeviceLayout `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'layout-search-previous-control.json')
+    $previous = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+        [string]$_.attributes.type -eq 'button' -and
+        [string]$_.attributes.originalText -eq 'Previous match, Shift+Enter' -and
+        [string]$_.attributes.visible -eq 'true'
+    })
+    if ($previous.Count -ne 1) {
+        throw '[harness] Previous terminal search control was not uniquely available'
+    }
+    Invoke-LeanTTYLayoutNodeClick -Node $previous[0]
 }
 
 function Invoke-TerminalWorkspaceChord {
@@ -679,18 +698,18 @@ try {
             -ExpectedResultPattern '^[1-9][0-9]*/[1-9][0-9]*$' `
             -LayoutName 'layout-ascii-query-match.json'
 
-        Clear-TerminalSearchQuery
+        Clear-TerminalSearchQuery -CharacterCount $query.Length
         Wait-TerminalSearchQueryState `
             -ExpectedQuery '' `
             -LayoutName 'layout-ascii-query-cleared.json' | Out-Null
-        $missingQuery = 'LEANTTY_NO_RESULT_8A6D'
+        $missingQuery = 'LEANTTY_NO_RESULT_ZXQVK'
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $missingQuery
         $missing = Wait-TerminalSearchQueryState `
             -ExpectedQuery $missingQuery `
             -ExpectedResultPattern '^No results$' `
             -LayoutName 'layout-ascii-query-no-results.json'
 
-        Clear-TerminalSearchQuery
+        Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length
         Wait-TerminalSearchQueryState `
             -ExpectedQuery '' `
             -LayoutName 'layout-ascii-navigation-cleared.json' | Out-Null
@@ -724,6 +743,7 @@ try {
             $previous = Wait-TerminalSearchQueryState `
                 -ExpectedQuery 't' `
                 -ExpectedResultPattern "^$expectedIndex/$($position.count)$" `
+                -RequireSearchInputFocus $false `
                 -LayoutName ("layout-ascii-previous-$step.json")
             $backwardLabels.Add($previous.resultLabel)
         }

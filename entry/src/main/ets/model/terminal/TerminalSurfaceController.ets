@@ -28,6 +28,8 @@ export class TerminalSurfaceController {
   private onBellAttentionHandler: (() => void) | null = null
   private onAttentionAcknowledgedHandler: (() => void) | null = null
   private onOpenUrlHandler: ((url: string) => void) | null = null
+  private searchOpen: boolean = false
+  private searchComposing: boolean = false
   private logger: Logger = new Logger('TerminalSurfaceController')
   private textEncoder: util.TextEncoder = new util.TextEncoder()
   private nextSnapshotRequestId: number = 1
@@ -106,6 +108,8 @@ export class TerminalSurfaceController {
       this.bridge.destroy()
       this.bridge = null
     }
+    this.searchOpen = false
+    this.searchComposing = false
     this.outputBuffer.markDetached()
     this.notifyOutputPauseChange(previousPaused)
   }
@@ -157,7 +161,25 @@ export class TerminalSurfaceController {
 
   openSearch(): void {
     if (this.bridge !== null) {
+      this.searchOpen = true
+      this.searchComposing = false
       this.bridge.openSearch()
+    }
+  }
+
+  isSearchOpen(): boolean {
+    return this.searchOpen
+  }
+
+  isSearchComposing(): boolean {
+    return this.searchComposing
+  }
+
+  closeSearch(): void {
+    this.searchOpen = false
+    this.searchComposing = false
+    if (this.bridge !== null) {
+      this.bridge.closeSearch()
     }
   }
 
@@ -230,6 +252,12 @@ export class TerminalSurfaceController {
   }
 
   private handleBridgeMessage(sourceBridge: TerminalBridge, msg: BridgeMessage): void {
+    if (this.bridge === sourceBridge && msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_SEARCH_STATE) {
+      this.searchOpen = msg.payload !== 'closed'
+      this.searchComposing = msg.payload === 'composing'
+      return
+    }
     if (msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
       msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_BELL_ATTENTION) {
       if (this.onBellAttentionHandler !== null) {

@@ -517,8 +517,13 @@ foreach ($scriptName in @(
             $content.Contains("'warm-tab-eviction'") -and
             $content.Contains("'window-renderer-lifecycle'") -and
             $content.Contains("'uitest uiInput keyEvent 2072 2045 2022'") -and
-            $content.Contains("'uitest uiInput keyEvent 2047 2054'") -and
-            $content.Contains("'uitest uiInput keyEvent 2072 2017'") -and
+            -not $content.Contains("'uitest uiInput keyEvent 2047 2054'") -and
+            $content.Contains("'Previous match, Shift+Enter'") -and
+            $content.Contains('-RequireSearchInputFocus $false') -and
+            -not $content.Contains("'uitest uiInput keyEvent 2072 2017'") -and
+            $content.Contains('Clear-TerminalSearchQuery -CharacterCount $query.Length') -and
+            $content.Contains('Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length') -and
+            $content.Contains("'LEANTTY_NO_RESULT_ZXQVK'") -and
             $content.Contains("'^Search text'") -and
             $content.Contains('[AllowEmptyString()]') -and
             $content.Contains("'^No results$'") -and

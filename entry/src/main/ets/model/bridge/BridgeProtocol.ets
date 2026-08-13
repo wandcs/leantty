@@ -38,6 +38,8 @@ export class BridgeProtocol {
   static readonly KIND_RESTORE_SNAPSHOT: string = 'restoreSnapshot'
   static readonly KIND_RESTORE_COMPLETE: string = 'restoreComplete'
   static readonly KIND_SEARCH_OPEN: string = 'searchOpen'
+  static readonly KIND_SEARCH_CLOSE: string = 'searchClose'
+  static readonly KIND_SEARCH_STATE: string = 'searchState'
 
   static readonly KIND_READY: string = 'ready'
   static readonly KIND_RESIZE: string = 'resize'
@@ -89,6 +91,13 @@ export class BridgeProtocol {
       return null
     }
     if (kind === BridgeProtocol.KIND_SEARCH_OPEN && payload.length > 0) {
+      return null
+    }
+    if (kind === BridgeProtocol.KIND_SEARCH_CLOSE && payload.length > 0) {
+      return null
+    }
+    if (kind === BridgeProtocol.KIND_SEARCH_STATE && payload !== 'open' &&
+      payload !== 'composing' && payload !== 'closed') {
       return null
     }
     if (kind === BridgeProtocol.KIND_INPUT_SECURITY && payload !== 'plain' && payload !== 'masked') {
@@ -172,6 +181,10 @@ export class BridgeProtocol {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SEARCH_OPEN)
   }
 
+  static searchClose(): BridgeMessage {
+    return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SEARCH_CLOSE)
+  }
+
   static copySelection(): BridgeMessage {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_COPY_SELECTION)
   }
@@ -225,7 +238,8 @@ export class BridgeProtocol {
         kind === BridgeProtocol.KIND_COPY_OR_INTERRUPT ||
         kind === BridgeProtocol.KIND_SNAPSHOT_REQUEST ||
         kind === BridgeProtocol.KIND_RESTORE_SNAPSHOT ||
-        kind === BridgeProtocol.KIND_SEARCH_OPEN
+        kind === BridgeProtocol.KIND_SEARCH_OPEN ||
+        kind === BridgeProtocol.KIND_SEARCH_CLOSE
     }
     return kind === BridgeProtocol.KIND_READY ||
       kind === BridgeProtocol.KIND_RESIZE ||
@@ -240,6 +254,7 @@ export class BridgeProtocol {
       kind === BridgeProtocol.KIND_RENDERER_STATE ||
       kind === BridgeProtocol.KIND_OPEN_URL ||
       kind === BridgeProtocol.KIND_RESTORE_COMPLETE ||
+      kind === BridgeProtocol.KIND_SEARCH_STATE ||
       kind === BridgeProtocol.KIND_SNAPSHOT
   }
 }

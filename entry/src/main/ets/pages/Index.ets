@@ -686,6 +686,12 @@ struct Index {
     if (event.type !== KeyType.Down) {
       return false
     }
+    let activeRuntime: PaneRuntime | null = this.activePaneRuntime()
+    if (event.keyCode === 2070 && activeRuntime !== null && activeRuntime.surface.isSearchOpen() &&
+      !activeRuntime.surface.isSearchComposing()) {
+      activeRuntime.surface.closeSearch()
+      return true
+    }
     let ctrlKey: boolean = false
     let shiftKey: boolean = false
     let altKey: boolean = false
@@ -697,7 +703,7 @@ struct Index {
       ctrlKey = (event.metaKey & 1) !== 0
     }
     if (InteractionPolicy.isTerminalTabKey(event.keyCode, ctrlKey, altKey, shiftKey)) {
-      let runtime: PaneRuntime | null = this.activePaneRuntime()
+      let runtime: PaneRuntime | null = activeRuntime
       if (runtime !== null) {
         runtime.viewModel.handleTerminalInput('\t')
         return true
@@ -705,7 +711,7 @@ struct Index {
     }
 
     if (InteractionPolicy.isTerminalCopyOrInterruptKey(event.keyCode, ctrlKey, altKey)) {
-      let runtime: PaneRuntime | null = this.activePaneRuntime()
+      let runtime: PaneRuntime | null = activeRuntime
       if (runtime !== null) {
         runtime.surface.copyOrInterrupt()
         return true

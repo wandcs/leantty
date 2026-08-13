@@ -39,6 +39,14 @@
   control characters and malformed Unicode before Host, key, file or directory
   names can reach the command line or candidate list.
 
+### Fixed
+
+- Physical `Escape` now closes an active terminal search and restores the
+  terminal focus on HarmonyOS PC. The Web surface reports only its bounded
+  open/composing/closed ownership state, so IME composition gets its first
+  `Escape` and ordinary terminal `Escape` remains untouched when search is not
+  active.
+
 ### Security
 
 - Added no-follow local source opening, native descriptor revalidation,

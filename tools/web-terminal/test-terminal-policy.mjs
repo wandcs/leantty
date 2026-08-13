@@ -282,8 +282,12 @@ assert.ok(searchUiStart >= 0 && searchUiEnd > searchUiStart,
 const searchUiBody = terminalHtml.slice(searchUiStart, searchUiEnd);
 assert.match(searchUiBody, /input\.addEventListener\('input',[\s\S]*?runSearch\(false, true\)/,
   'committed query input must stay inside the current web terminal search state');
-assert.doesNotMatch(searchUiBody, /sendBridge(?:Data|Control)|term\.(?:input|paste|write)/,
+assert.doesNotMatch(searchUiBody, /sendBridgeData|term\.(?:input|paste|write)/,
   'query text and search navigation must never enter the SSH terminal-input bridge');
+const searchUiControlKinds = Array.from(
+  searchUiBody.matchAll(/sendBridgeControl\('([^']+)'/g), match => match[1]);
+assert.deepEqual(Array.from(new Set(searchUiControlKinds)), ['searchState'],
+  'search UI may expose only its bounded ownership and composition state');
 assert.match(terminalHtml,
   /function closeSearch\(restoreTerminalFocus\)[\s\S]*searchAddon\.clearDecorations\(\)[\s\S]*term\.focus\(\)/,
   'closing search must clear short-lived decorations and optionally restore terminal focus');
@@ -325,12 +329,15 @@ assert.match(terminalHtml,
   /var payload = raw\.substring\(kindEnd \+ 1\);[\s\S]*?!isSupportedNativeMessage\(channel, kind, payload\)/,
   'the web-side bridge parser must validate each native control payload before dispatch');
 assert.match(terminalHtml,
-  /function isSupportedNativeMessage\(channel, kind, payload\)[\s\S]*?kind === 'searchOpen' && payload\.length === 0/,
-  'searchOpen must be accepted by the web-side allowlist only with an empty payload');
+  /function isSupportedNativeMessage\(channel, kind, payload\)[\s\S]*?kind === 'searchOpen' \|\| kind === 'searchClose'[\s\S]*?payload\.length === 0/,
+  'search open and close must be accepted by the web-side allowlist only with empty payloads');
 assert.match(terminalHtml, /term\.buffer\.onBufferChange\(function\(\) \{ closeSearch\(true\); \}\)/,
   'normal and alternate buffer switches must close the local search state');
-assert.doesNotMatch(terminalHtml, /sendBridgeControl\('search/,
-  'query text and result state must never leave the Terminal Surface');
+assert.match(terminalHtml,
+  /function openSearch\(\)[\s\S]*?sendBridgeControl\('searchState', 'open'\)[\s\S]*?function closeSearch[\s\S]*?sendBridgeControl\('searchState', 'closed'\)[\s\S]*?compositionstart[\s\S]*?sendBridgeControl\('searchState', 'composing'\)/,
+  'the terminal surface must report only its bounded open, composing, or closed search state');
+assert.doesNotMatch(terminalHtml, /sendBridgeControl\('search(?:Query|Result)'/,
+  'query text and result details must never leave the Terminal Surface');
 assert.match(terminalHtml, /serializeAddon = new SerializeAddon\.SerializeAddon\(\)/,
   'terminal recovery checkpoints must use xterm framebuffer serialization');
 assert.match(terminalHtml,
@@ -539,6 +546,9 @@ assert.match(terminalBridge,
   /pendingSearchOpen[\s\S]*private pumpSearchOpen[\s\S]*!this\.ready \|\| this\.awaitingRestoreComplete[\s\S]*BridgeProtocol\.searchOpen\(\)/,
   'search open must wait for the current bridge and framebuffer restore boundary');
 assert.match(terminalBridge,
+  /closeSearch\(\): void \{[\s\S]*?this\.pendingSearchOpen = false[\s\S]*?BridgeProtocol\.searchClose\(\)/,
+  'search close must cancel a pending open and cross the current typed bridge');
+assert.match(terminalBridge,
   /blur\(\): void \{\s*this\.pendingSearchOpen = false\s*this\.send\(BridgeProtocol\.blur\(\)\)/,
   'pane or tab blur must cancel a search-open intent queued behind bridge readiness or restore');
 assert.match(terminalBridge,
@@ -583,6 +593,21 @@ assert.match(bridgeProtocol, /KIND_OPEN_URL:\s*string = 'openUrl'/,
 assert.match(bridgeProtocol,
   /KIND_SEARCH_OPEN:\s*string = 'searchOpen'[\s\S]*kind === BridgeProtocol\.KIND_SEARCH_OPEN && payload\.length > 0/,
   'search open must be a typed native-to-web control with an empty payload');
+assert.match(bridgeProtocol,
+  /KIND_SEARCH_CLOSE:\s*string = 'searchClose'[\s\S]*KIND_SEARCH_STATE:\s*string = 'searchState'[\s\S]*KIND_SEARCH_STATE && payload !== 'open'[\s\S]*?payload !== 'composing' && payload !== 'closed'/,
+  'search close and its bounded open, composing, or closed state must use the typed bridge allowlist');
+
+const terminalSurface = readFileSync(
+  new URL('../../entry/src/main/ets/model/terminal/TerminalSurfaceController.ets', import.meta.url), 'utf8');
+assert.match(terminalSurface,
+  /isSearchOpen\(\): boolean[\s\S]*?isSearchComposing\(\): boolean[\s\S]*?closeSearch\(\): void[\s\S]*?bridge\.closeSearch\(\)[\s\S]*?KIND_SEARCH_STATE[\s\S]*?msg\.payload !== 'closed'[\s\S]*?msg\.payload === 'composing'/,
+  'the native terminal surface must track web search and composition ownership and expose a bounded close action');
+
+const terminalSearchIndexPage = readFileSync(
+  new URL('../../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
+assert.match(terminalSearchIndexPage,
+  /event\.keyCode === 2070[\s\S]*?activeRuntime\.surface\.isSearchOpen\(\)[\s\S]*?!activeRuntime\.surface\.isSearchComposing\(\)[\s\S]*?activeRuntime\.surface\.closeSearch\(\)/,
+  'physical Escape must close active web search without stealing an IME composition escape');
 assert.match(bridgeProtocol,
   /KIND_INPUT_SECURITY:\s*string = 'inputSecurity'[\s\S]*payload !== 'plain' && payload !== 'masked'/,
   'input security must be a typed native-to-web control with a closed payload set');
