@@ -636,6 +636,13 @@ async fn run_channel_writer(
     .await;
 }
 
+fn channel_writer_exit_message(result: std::result::Result<(), tokio::task::JoinError>) -> String {
+    match result {
+        Ok(()) => "SSH channel writer stopped unexpectedly".to_string(),
+        Err(error) => format!("SSH channel writer task failed: {error}"),
+    }
+}
+
 enum ConnectWaitResult<T, E> {
     Connected(T),
     Failed(E),
@@ -1225,12 +1232,13 @@ async fn run_session(
     send_control(&control_callback, "CONNECTED");
 
     let (mut channel_read, channel_write) = channel.split();
-    let mut channel_writer = Box::pin(run_channel_writer(
+    let mut channel_writer = tokio::spawn(run_channel_writer(
         channel_write,
         receivers.write_rx,
         receivers.resize_rx,
         control_callback.clone(),
     ));
+    let mut channel_writer_active = true;
 
     let mut pending_output: Vec<u8> = Vec::new();
     let mut output_tick = tokio::time::interval(Duration::from_millis(16));
@@ -1304,14 +1312,21 @@ async fn run_session(
             connection_task_result = Some(result);
             break;
           }
-          () = channel_writer.as_mut() => {
-            send_control(&control_callback, "WRITE_ERROR:SSH channel writer stopped unexpectedly");
+          result = &mut channel_writer, if channel_writer_active => {
+            channel_writer_active = false;
+            send_control(
+              &control_callback,
+              &format!("WRITE_ERROR:{}", channel_writer_exit_message(result)),
+            );
             break;
           }
         }
     }
 
-    drop(channel_writer);
+    if channel_writer_active {
+        channel_writer.abort();
+        let _ = channel_writer.await;
+    }
     if local_disconnect_requested {
         let _ = tokio::time::timeout(
             Duration::from_secs(1),
@@ -2185,12 +2200,12 @@ pub fn ssh_protect_private_key(key_path: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_client_config, is_current_auth_generation, run_channel_writer_core,
-        send_scheduled_input, should_flush_immediately, wait_for_auth_command,
-        wait_for_auth_exchange, wait_for_connect, AuthExchangeResult, AuthMethod, AuthWaitResult,
-        ConnectProgress, ConnectWaitResult, FileTransferEvent, OutputDeliveryMetrics,
-        AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
-        SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
+        build_client_config, channel_writer_exit_message, is_current_auth_generation,
+        run_channel_writer_core, send_scheduled_input, should_flush_immediately,
+        wait_for_auth_command, wait_for_auth_exchange, wait_for_connect, AuthExchangeResult,
+        AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult, FileTransferEvent,
+        OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
+        INPUT_WRITE_CHUNK_BYTES, SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
     };
     use napi_ohos::Status;
     use russh::client;
@@ -2363,6 +2378,17 @@ mod tests {
         };
         let (server_result, ()) = tokio::join!(running, managed_client);
         server_result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn channel_writer_panic_becomes_an_observable_error() {
+        let writer = tokio::spawn(async {
+            panic!("writer-test-panic");
+        });
+        let message = channel_writer_exit_message(writer.await);
+
+        assert!(message.starts_with("SSH channel writer task failed:"));
+        assert!(message.contains("panicked"));
     }
 
     #[tokio::test]
