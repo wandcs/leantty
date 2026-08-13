@@ -518,7 +518,9 @@ foreach ($scriptName in @(
             $content.Contains("'window-renderer-lifecycle'") -and
             $content.Contains("'uitest uiInput keyEvent 2072 2045 2022'") -and
             $content.Contains("'uitest uiInput keyEvent 2047 2054'") -and
-            $content.Contains("'uitest uiInput keyEvent 2072 2017'") -and
+            -not $content.Contains("'uitest uiInput keyEvent 2072 2017'") -and
+            $content.Contains('Clear-TerminalSearchQuery -CharacterCount $query.Length') -and
+            $content.Contains('Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length') -and
             $content.Contains("'^Search text'") -and
             $content.Contains('[AllowEmptyString()]') -and
             $content.Contains("'^No results$'") -and

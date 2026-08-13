@@ -403,9 +403,15 @@ function Invoke-TerminalSearchShortcut {
 }
 
 function Clear-TerminalSearchQuery {
-    & $hdc -t $Target shell 'uitest uiInput keyEvent 2072 2017' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to select the complete terminal search query' }
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2055
+    param([Parameter(Mandatory = $true)][ValidateRange(1, 4096)][int]$CharacterCount)
+
+    # ArkWeb on this physical PC does not receive an injected Ctrl+A chord in
+    # its focused HTML input. Delete the known bounded test query one character
+    # at a time so this gate measures search behavior rather than that injector
+    # limitation.
+    for ($index = 0; $index -lt $CharacterCount; $index++) {
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2055
+    }
 }
 
 function Invoke-TerminalSearchPrevious {
@@ -679,7 +685,7 @@ try {
             -ExpectedResultPattern '^[1-9][0-9]*/[1-9][0-9]*$' `
             -LayoutName 'layout-ascii-query-match.json'
 
-        Clear-TerminalSearchQuery
+        Clear-TerminalSearchQuery -CharacterCount $query.Length
         Wait-TerminalSearchQueryState `
             -ExpectedQuery '' `
             -LayoutName 'layout-ascii-query-cleared.json' | Out-Null
@@ -690,7 +696,7 @@ try {
             -ExpectedResultPattern '^No results$' `
             -LayoutName 'layout-ascii-query-no-results.json'
 
-        Clear-TerminalSearchQuery
+        Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length
         Wait-TerminalSearchQueryState `
             -ExpectedQuery '' `
             -LayoutName 'layout-ascii-navigation-cleared.json' | Out-Null
