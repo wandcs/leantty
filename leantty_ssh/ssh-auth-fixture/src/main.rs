@@ -38,6 +38,7 @@ const PERF_MAX_LINE_WIDTH: usize = 160;
 const PERF_OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
 const PASTE_PREPARE_COMMAND: &str = "ltty-paste-prepare";
 const INPUT_CHECK_COMMAND: &str = "ltty-input-check";
+const EXIT_COMMAND: &str = "ltty-exit";
 const BELL_COMMAND: &str = "ltty-bell";
 const BELL_MIN_DELAY_MS: u64 = 100;
 const BELL_MAX_DELAY_MS: u64 = 5_000;
@@ -720,6 +721,13 @@ impl Handler for FixtureServer {
                 let response = format!("\r\nLTTY_INPUT_OK:{case_id}\r\nfixture> ");
                 session.data(channel, response.into_bytes())?;
             }
+            Some(FixtureCommand::Exit) => {
+                eprintln!("shell command=exit result=closed");
+                session.data(channel, b"logout\r\n".as_slice())?;
+                session.exit_status_request(channel, 0)?;
+                session.eof(channel)?;
+                session.close(channel)?;
+            }
             Some(FixtureCommand::Bell(request)) => {
                 eprintln!(
                     "bell case={} delay_ms={} state=scheduled",
@@ -793,6 +801,7 @@ enum FixtureCommand {
     Perf(PerfCommand),
     Paste(PasteRequest),
     InputCheck(String),
+    Exit,
     Bell(BellRequest),
 }
 
@@ -803,6 +812,9 @@ fn parse_fixture_command(input: &[u8]) -> Option<FixtureCommand> {
     let command = std::str::from_utf8(input).ok()?;
     let mut parts = command.split_ascii_whitespace();
     let kind = parts.next()?;
+    if kind == EXIT_COMMAND {
+        return parts.next().is_none().then_some(FixtureCommand::Exit);
+    }
     let case_id = parts.next()?;
     if kind == INPUT_CHECK_COMMAND {
         return (parts.next().is_none() && is_valid_perf_case_id(case_id))
@@ -1494,6 +1506,10 @@ mod tests {
             Some(FixtureCommand::InputCheck("input01".to_string()))
         );
         assert_eq!(parse_fixture_command(b"ltty-input-check bad:id"), None);
+        assert_eq!(
+            parse_fixture_command(b"ltty-exit"),
+            Some(FixtureCommand::Exit)
+        );
         assert_eq!(
             parse_fixture_command_line(b"[Oltty-input-check input01"),
             Some(FixtureCommand::InputCheck("input01".to_string()))

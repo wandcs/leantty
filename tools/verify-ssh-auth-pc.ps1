@@ -545,8 +545,19 @@ function Start-AuthCommand {
 }
 
 function Close-FixtureShell {
-    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-LeanTTYDeviceCtrlD -Hdc $hdc -Target $Target
+    for ($exitAttempt = 1; $exitAttempt -le 3; $exitAttempt++) {
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Submit-ConnectedInput -Text 'ltty-exit'
+        try {
+            Wait-FixtureLog -Pattern 'shell command=exit result=closed' -TimeoutSeconds 10 | Out-Null
+            break
+        } catch {
+            if ($exitAttempt -ge 3) {
+                throw '[harness] Device did not submit the fixture exit command after three attempts'
+            }
+            Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+        }
+    }
     Wait-AuthLog -Pattern 'SSH closed, exitCode=0'
 }
 
