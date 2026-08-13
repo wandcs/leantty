@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.3 — 受约束的单文件交付`](roadmap.md)
 >
-> 当前阶段：实现与定向集成验证
+> 当前阶段：实现收尾；先闭合 SSH 大写入连续可用性，再冻结 1.3 正式候选
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -270,6 +270,25 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
 回归：ArkTS 104/104、Web/固定字体/指南、PowerShell、WSL Rust fmt/clippy/native/core/fixture
 测试及 SSH fixture E2E；证据为 `build/verification/targeted-regression-1.3-final-2.json`。
 
+2026-08-13 收尾时，物理 PC 的终端搜索 `Escape` 已改为由 Web 只上报
+`open/composing/closed` 所有权状态，ArkTS 只在搜索已打开且不处于 IME composition 时拦截物理
+`Escape`；HAD-W32 已验证搜索关闭并恢复终端焦点，普通终端 `Escape` 不受影响。终端搜索的
+ASCII 查询、正反向导航、Pane/Tab 所有权、warm eviction 和窗口 renderer lifecycle 也已由同一
+保留候选闭合。随后在 SSH 主路径 smoke 中发现 512 KiB 终端粘贴使用 russh 通用
+`AsyncRead/copy` 路径时以 8 KiB 分块，30 秒只到 278,528 字节；切换到拥有型、窗口感知的
+`data_bytes` 后，fixture 在时限内按 32 KiB 分块收到完整 524,288 字节且内容匹配，但该次大写入
+之后的 37 字节 PERF 命令只进入 ArkTS/native 队列，没有到达 fixture。因此 1.3 尚不能冻结正式
+候选，也不能把“大粘贴连续可用”记为通过。
+
+当前诊断断点为提交 `14c14089e08fc9d47e24dcc2400a2c0cfcfc7f3e`，对应开发 HAP SHA-256
+`f3668d061e6345a4249fc0c70494a931d31c656dc5e5b3b815eb08a64cf67ccb`。它只对不小于 64 KiB 的
+native 写入通过既有调试性能日志记录 `started/completed` 和字节数，不记录内容、不进入终端。
+下一轮先用该包只跑 `transport-main-path`，以这两个阶段事件区分 `data_bytes` future 未返回与 writer
+后续调度问题；随后修复串行写入队列，证明大写入后的普通输入、resize、断开和重连仍按序可用，
+并补一条覆盖产品 writer 而不只是 fixture 自身的背压回归。诊断完成后删除一次性探针，或仅在其
+仍满足有界、无内容、低噪声的持续诊断价值时保留。中止中的最后一次诊断没有形成产品结论；WSL
+fixture 已结束，本次唯一遗留的 `tcp:22222` 反向映射已精确删除，其他既有映射未改动。
+
 完成 1.3 必须满足：实现前门禁均有可复现证据；`put/get` 的解析、所有权、取消、冲突和
 清理通过自动化；干净 ARM64 构建通过；同一个保留候选完成全部适用的物理 HarmonyOS PC
 矩阵；文档、版本、签名、归档、GitHub Release 和 AppGallery 记录可追溯。SDK 声明、构建、
@@ -277,6 +296,11 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
 
 ## 1. 自动化与集成门禁
 
+- [ ] 闭合 SSH 大写入后的连续可用性：用当前诊断 HAP 确认 `data_bytes` 的完成边界，修复时保持
+  写入顺序、SSH window 背压、resize 和取消/断开有界；新增产品 writer 回归，并通过 WSL Rust
+  fmt、clippy、native/core/fixture tests、fixture E2E、相关 PowerShell helper tests 和
+  `git diff --check`。完成条件是 512 KiB 字节匹配后，同一 Session 立即接受 PERF/普通命令，
+  分屏 resize、断开和重连均通过，不依赖放宽超时。
 - [x] 覆盖 Downloads 边界、no-follow、FD 所有权、目标预存在、提交期并发抢占、自动编号、
   后缀/隐藏文件/Unicode/序号耗尽、既有多级子目录、中间 symlink、目录意图、临时文件同目录
   可见性与精确清理；每个冲突用例验证已有内容哈希不变。
@@ -311,7 +335,8 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
   终端可恢复、错误可执行且已有文件不变；检查 hilog、命令历史和错误快照不含凭据或文件内容。
 - [ ] 在同一个保留候选上完成键盘、IME、Tab/Pane、终端输入输出、搜索、选择/复制、链接、
   tmux/vim/less/Agent TUI、窗口与 SSH 主路径的最小稳定 smoke，证明文件传输没有破坏现有核心
-  终端事件链。
+  终端事件链。先完成上一节的大写入修复，再从干净精确提交重建候选；此前搜索、Pane/Tab、
+  warm eviction 和窗口证据可作为范围依据，但不能替代新候选上的同包 smoke。
 
 ## 3. 文档、版本与发布
 
