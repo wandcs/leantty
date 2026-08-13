@@ -474,8 +474,9 @@ foreach ($scriptName in @(
         Assert-True (
             $content.Contains("'transport-main-path'") -and
             $content.Contains("'ltty-input-check russhmain'") -and
-            $content.Contains("'ltty-paste-prepare russhmain 524288'") -and
-            $content.Contains("'Clipboard paste ok,524288'") -and
+            $content.Contains("'ltty-paste-prepare russhmain 1048576'") -and
+            $content.Contains("'Clipboard paste ok,1048576'") -and
+            $content.Contains("'paste case=russhmain bytes=1048576 result=matched'") -and
             $content.Contains("'uitest uiInput keyEvent 2072 2045 2038'") -and
             $content.Contains("Invoke-AuthPerfSample -CaseId 'russhmain'") -and
             $content.Contains('"completenessPercent":100') -and

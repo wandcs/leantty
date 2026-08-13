@@ -14,6 +14,8 @@ use tokio::time::timeout;
 
 const WINDOW_SIZE: usize = 16 * 1024;
 const LARGE_PASTE_BYTES: usize = 512 * 1024;
+const CONTINUOUS_INPUT_BYTES: usize = 1024 * 1024 + 17;
+const INPUT_WRITE_CHUNK_BYTES: usize = 32 * 1024;
 const SHORT_WAIT: Duration = Duration::from_millis(150);
 const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -129,6 +131,73 @@ fn large_paste() -> Vec<u8> {
     (0..LARGE_PASTE_BYTES)
         .map(|index| (index % 251) as u8)
         .collect()
+}
+
+#[tokio::test]
+async fn bounded_owned_writes_preserve_follow_up_after_one_mebibyte() -> TestResult {
+    let socket = TcpListener::bind("127.0.0.1:0").await?;
+    let address = socket.local_addr()?;
+    let (_resume_tx, resume_rx) = watch::channel(true);
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let mut server = PausedServer {
+        resume_rx,
+        event_tx,
+    };
+    let running = server.run_on_socket(server_config()?, &socket);
+    let server_handle = running.handle();
+
+    let client = async move {
+        let (session, channel) = connect_client(address).await?;
+        let payload = (0..CONTINUOUS_INPUT_BYTES)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let follow_up = b"ltty-input-check after-large\r";
+
+        for chunk in payload.chunks(INPUT_WRITE_CHUNK_BYTES) {
+            channel.data_bytes(chunk.to_vec()).await?;
+            tokio::task::yield_now().await;
+        }
+        channel.window_change(181, 49, 0, 0).await?;
+        channel.data_bytes(follow_up.to_vec()).await?;
+        channel.eof().await?;
+
+        let mut received = Vec::with_capacity(payload.len() + follow_up.len());
+        let mut resize_seen = false;
+        timeout(TEST_TIMEOUT, async {
+            while received.len() < payload.len() + follow_up.len() || !resize_seen {
+                match event_rx.recv().await {
+                    Some(ServerEvent::Data(data)) => received.extend_from_slice(&data),
+                    Some(ServerEvent::Resize(cols, rows)) => {
+                        resize_seen = cols == 181 && rows == 49;
+                    }
+                    Some(ServerEvent::Eof | ServerEvent::Close) | None => break,
+                }
+            }
+        })
+        .await?;
+
+        assert_eq!(&received[..payload.len()], payload);
+        assert_eq!(&received[payload.len()..], follow_up);
+        if !resize_seen {
+            return Err(io::Error::other("resize was lost after bounded input").into());
+        }
+        session
+            .disconnect(Disconnect::ByApplication, "test complete", "")
+            .await?;
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    };
+
+    let managed_client = async move {
+        let result = timeout(Duration::from_secs(15), client).await;
+        server_handle.shutdown("test complete".to_string());
+        match result {
+            Ok(result) => result,
+            Err(error) => Err(error.into()),
+        }
+    };
+    let (server_result, client_result) = tokio::join!(running, managed_client);
+    server_result?;
+    client_result
 }
 
 #[tokio::test]

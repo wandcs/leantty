@@ -41,7 +41,7 @@ const INPUT_CHECK_COMMAND: &str = "ltty-input-check";
 const BELL_COMMAND: &str = "ltty-bell";
 const BELL_MIN_DELAY_MS: u64 = 100;
 const BELL_MAX_DELAY_MS: u64 = 5_000;
-const PASTE_MAX_BYTES: usize = 512 * 1024;
+const PASTE_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone)]
 struct Credentials {
@@ -1458,11 +1458,11 @@ mod tests {
             bytes: PASTE_MAX_BYTES,
         };
         assert_eq!(
-            parse_fixture_command(b"ltty-paste-prepare paste01 524288"),
+            parse_fixture_command(b"ltty-paste-prepare paste01 1048576"),
             Some(FixtureCommand::Paste(request.clone()))
         );
         assert_eq!(
-            parse_fixture_command(b"ltty-paste-prepare paste01 524289"),
+            parse_fixture_command(b"ltty-paste-prepare paste01 1048577"),
             None
         );
         assert_eq!(

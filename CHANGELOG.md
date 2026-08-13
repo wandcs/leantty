@@ -46,9 +46,10 @@
   open/composing/closed ownership state, so IME composition gets its first
   `Escape` and ordinary terminal `Escape` remains untouched when search is not
   active.
-- Large terminal writes now use russh's owned, SSH-window-aware send path,
-  avoiding the generic 8 KiB `AsyncRead` pacing that could make a 512 KiB paste
-  exceed the bounded physical-PC acceptance timeout.
+- Large terminal input now advances through bounded, ordered SSH writes instead
+  of occupying one indivisible writer call. This keeps SSH-window backpressure,
+  services terminal resize while a write is blocked, and lets ordinary input
+  continue after a large paste without defining a fixed completion-time promise.
 
 ### Security
 

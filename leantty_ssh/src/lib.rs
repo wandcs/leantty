@@ -525,75 +525,85 @@ struct SessionReceivers {
     output_pause_rx: tokio::sync::mpsc::Receiver<bool>,
 }
 
+const INPUT_WRITE_CHUNK_BYTES: usize = 32 * 1024;
+const INPUT_WRITE_PACING_DELAY: Duration = Duration::from_millis(10);
+
+async fn send_scheduled_input<S, SF, R, RF, E>(
+    bytes: Vec<u8>,
+    resize_rx: &mut tokio::sync::mpsc::Receiver<(u32, u32)>,
+    mut send_chunk: S,
+    mut send_resize: R,
+) -> (std::result::Result<(), E>, Vec<E>)
+where
+    S: FnMut(Vec<u8>) -> SF,
+    SF: Future<Output = std::result::Result<(), E>>,
+    R: FnMut((u32, u32)) -> RF,
+    RF: Future<Output = std::result::Result<(), E>>,
+{
+    if bytes.is_empty() {
+        return (send_chunk(bytes).await, Vec::new());
+    }
+
+    let mut resize_errors = Vec::new();
+    let mut resize_open = true;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let end = (offset + INPUT_WRITE_CHUNK_BYTES).min(bytes.len());
+        let mut sending = Box::pin(send_chunk(bytes[offset..end].to_vec()));
+        let write_result = loop {
+            if !resize_open {
+                break sending.as_mut().await;
+            }
+            tokio::select! {
+              size = resize_rx.recv() => {
+                match size {
+                  Some(mut latest) => {
+                    while let Ok(next) = resize_rx.try_recv() {
+                      latest = next;
+                    }
+                    if let Err(error) = send_resize(latest).await {
+                      resize_errors.push(error);
+                    }
+                  }
+                  None => resize_open = false,
+                }
+              }
+              result = sending.as_mut() => break result,
+            }
+        };
+        if let Err(error) = write_result {
+            return (Err(error), resize_errors);
+        }
+        offset = end;
+        if offset < bytes.len() {
+            tokio::time::sleep(INPUT_WRITE_PACING_DELAY).await;
+        }
+    }
+    (Ok(()), resize_errors)
+}
+
 async fn run_channel_writer(
-    session_id: u32,
     channel: russh::ChannelWriteHalf<russh::client::Msg>,
     mut write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     mut resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
     control_callback: JsCallback,
 ) {
-    let mut trace_follow_up_writes = false;
-    let mut follow_up_write_count = 0_u32;
-    let mut follow_up_byte_count = 0_usize;
     loop {
         tokio::select! {
           data = write_rx.recv() => {
             match data {
               Some(bytes) => {
-                let byte_count = bytes.len();
-                let is_follow_up_write = trace_follow_up_writes;
-                let has_line_end = bytes.iter().any(|byte| matches!(*byte, b'\r' | b'\n'));
-                if is_follow_up_write {
-                  follow_up_write_count += 1;
-                  follow_up_byte_count += byte_count;
+                let (write_result, resize_errors) = send_scheduled_input(
+                  bytes,
+                  &mut resize_rx,
+                  |chunk| channel.data_bytes(chunk),
+                  |(cols, rows)| channel.window_change(cols, rows, 0, 0),
+                ).await;
+                for error in resize_errors {
+                  send_control(&control_callback, &format!("RESIZE_ERROR:{}", error));
                 }
-                let trace_follow_up_progress = is_follow_up_write &&
-                  (follow_up_write_count == 1 || follow_up_write_count % 8 == 0 || has_line_end);
-                if trace_follow_up_progress {
-                  send_control(
-                    &control_callback,
-                    &format!(
-                      "OUTPUT_METRICS:{{\"writes\":{},\"writeBytes\":{},\"lineEnd\":{},\"stage\":\"followup-dequeued\"}}",
-                      follow_up_write_count, follow_up_byte_count, has_line_end,
-                    ),
-                  );
-                }
-                if byte_count >= 64 * 1024 {
-                  eprintln!("[LTTY_SSH] session={} write_bytes={} stage=started", session_id, byte_count);
-                  send_control(
-                    &control_callback,
-                    &format!("OUTPUT_METRICS:{{\"writeBytes\":{},\"stage\":\"started\"}}", byte_count),
-                  );
-                }
-                match channel.data_bytes(bytes).await {
-                  Ok(()) => {
-                    if trace_follow_up_progress {
-                      send_control(
-                        &control_callback,
-                        &format!(
-                          "OUTPUT_METRICS:{{\"writes\":{},\"writeBytes\":{},\"lineEnd\":{},\"stage\":\"followup-sent\"}}",
-                          follow_up_write_count, follow_up_byte_count, has_line_end,
-                        ),
-                      );
-                    }
-                    if is_follow_up_write && has_line_end {
-                      trace_follow_up_writes = false;
-                    }
-                    if byte_count >= 64 * 1024 {
-                      eprintln!("[LTTY_SSH] session={} write_bytes={} stage=completed", session_id, byte_count);
-                      send_control(
-                        &control_callback,
-                        &format!("OUTPUT_METRICS:{{\"writeBytes\":{},\"stage\":\"completed\"}}", byte_count),
-                      );
-                      trace_follow_up_writes = true;
-                      follow_up_write_count = 0;
-                      follow_up_byte_count = 0;
-                    }
-                  }
-                  Err(error) => {
-                    eprintln!("[LTTY_SSH] session={} write_bytes={} stage=failed error={}", session_id, byte_count, error);
-                    send_control(&control_callback, &format!("WRITE_ERROR:{}", error));
-                  }
+                if let Err(error) = write_result {
+                  send_control(&control_callback, &format!("WRITE_ERROR:{}", error));
                 }
               }
               None => break,
@@ -1203,7 +1213,6 @@ async fn run_session(
 
     let (mut channel_read, channel_write) = channel.split();
     let channel_writer = tokio::spawn(run_channel_writer(
-        session_id,
         channel_write,
         receivers.write_rx,
         receivers.resize_rx,
@@ -2160,15 +2169,108 @@ pub fn ssh_protect_private_key(key_path: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_client_config, is_current_auth_generation, should_flush_immediately,
-        wait_for_auth_command, wait_for_auth_exchange, wait_for_connect, AuthExchangeResult,
-        AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult, FileTransferEvent,
-        OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
-        SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
+        build_client_config, is_current_auth_generation, send_scheduled_input,
+        should_flush_immediately, wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
+        AuthExchangeResult, AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult,
+        FileTransferEvent, OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
+        INPUT_WRITE_CHUNK_BYTES, SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
     };
     use napi_ohos::Status;
     use std::future::pending;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tokio::sync::{mpsc, Notify};
+
+    #[tokio::test]
+    async fn scheduled_input_is_bounded_and_services_resize_during_backpressure() {
+        let payload = (0..(1024 * 1024 + 17))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let expected = payload.clone();
+        let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let resize_seen = Arc::new(AtomicBool::new(false));
+        let first_send_gate = Arc::new(Notify::new());
+        let (resize_tx, mut resize_rx) = mpsc::channel(1);
+        resize_tx.send((181, 49)).await.unwrap();
+
+        let sent_chunks = Arc::clone(&chunks);
+        let sent_count = Arc::clone(&send_count);
+        let send_gate = Arc::clone(&first_send_gate);
+        let observed_resize = Arc::clone(&resize_seen);
+        let resize_gate = Arc::clone(&first_send_gate);
+        let (write_result, resize_errors) = tokio::time::timeout(
+            Duration::from_secs(1),
+            send_scheduled_input(
+                payload,
+                &mut resize_rx,
+                move |chunk| {
+                    let chunks = Arc::clone(&sent_chunks);
+                    let gate = Arc::clone(&send_gate);
+                    let call = sent_count.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        if call == 0 {
+                            tokio::time::timeout(Duration::from_millis(100), gate.notified())
+                                .await
+                                .map_err(|_| "resize was starved by backpressured input")?;
+                        }
+                        chunks.lock().unwrap().push(chunk);
+                        Ok::<(), &'static str>(())
+                    }
+                },
+                move |size| {
+                    let resize_seen = Arc::clone(&observed_resize);
+                    let gate = Arc::clone(&resize_gate);
+                    async move {
+                        assert_eq!(size, (181, 49));
+                        resize_seen.store(true, Ordering::SeqCst);
+                        gate.notify_one();
+                        Ok::<(), &'static str>(())
+                    }
+                },
+            ),
+        )
+        .await
+        .expect("scheduled input did not finish");
+
+        assert_eq!(write_result, Ok(()));
+        assert!(resize_errors.is_empty());
+        assert!(resize_seen.load(Ordering::SeqCst));
+        let chunks = chunks.lock().unwrap();
+        assert!(chunks.len() > 1);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.len() <= INPUT_WRITE_CHUNK_BYTES));
+        assert_eq!(chunks.concat(), expected);
+    }
+
+    #[tokio::test]
+    async fn scheduled_input_keeps_small_writes_on_the_direct_path() {
+        let payload = b"ordinary terminal input\r".to_vec();
+        let expected = payload.clone();
+        let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let sent_chunks = Arc::clone(&chunks);
+        let (_resize_tx, mut resize_rx) = mpsc::channel(1);
+
+        let (write_result, resize_errors) = send_scheduled_input(
+            payload,
+            &mut resize_rx,
+            move |chunk| {
+                let chunks = Arc::clone(&sent_chunks);
+                async move {
+                    chunks.lock().unwrap().push(chunk);
+                    Ok::<(), &'static str>(())
+                }
+            },
+            |_| async { Ok::<(), &'static str>(()) },
+        )
+        .await;
+
+        assert_eq!(write_result, Ok(()));
+        assert!(resize_errors.is_empty());
+        assert_eq!(chunks.lock().unwrap().as_slice(), &[expected]);
+    }
 
     #[test]
     fn interactive_small_packets_flush_immediately() {

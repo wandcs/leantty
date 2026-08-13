@@ -1294,13 +1294,13 @@ try {
     Wait-FixtureLog -Pattern 'input case=russhmain result=matched' | Out-Null
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 524288'
-    Wait-AuthLog -Pattern 'OSC 52 clipboard write success=true,length=524288' -TimeoutSeconds 30
+    Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'
+    Wait-AuthLog -Pattern 'OSC 52 clipboard write success=true,length=1048576' -TimeoutSeconds 30
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-LeanTTYPasteShortcut
-    Wait-AuthLog -Pattern 'Clipboard paste ok,524288' -TimeoutSeconds 30
+    Wait-AuthLog -Pattern 'Clipboard paste ok,1048576' -TimeoutSeconds 30
     Wait-FixtureLog `
-        -Pattern 'paste case=russhmain bytes=524288 result=matched' `
+        -Pattern 'paste case=russhmain bytes=1048576 result=matched' `
         -TimeoutSeconds 30 | Out-Null
 
     Invoke-AuthPerfSample -CaseId 'russhmain' | Out-Null
