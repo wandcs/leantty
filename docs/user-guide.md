@@ -2,9 +2,9 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-08
+> Last updated: 2026-08-13
 >
-> Applies to: the current repository 1.2.0 development behavior. An installed
+> Applies to: the current repository 1.3.0 development behavior. An installed
 > release may not contain every command described here; check the matching
 > GitHub Release and `CHANGELOG.md` before relying on a capability.
 
@@ -158,6 +158,47 @@ ssh-copy-id -i id_work -p 2222 user@example.com
 The command installs one public-key line and does not duplicate an identical
 existing line. It is a bounded helper, not a general remote file editor.
 
+## Single-file transfer
+
+At an idle `ltty>` prompt, transfer one file between the authorized HarmonyOS
+Downloads tree and an SFTP server:
+
+```text
+put report.pdf user@example.com:/incoming/
+put -p 2222 -i id_work builds/app.bin work:/incoming/app.bin
+get user@example.com:/reports/latest.csv
+get work:/reports/latest.csv reports/
+```
+
+`put` and `get` reuse the same Host, port, Identity, host-key and authentication
+rules as `ssh`. A command-local `-p` or `-i` applies only to that transfer. The
+remote endpoint must provide SFTP; LeanTTY does not expose an interactive SFTP
+shell.
+
+Local paths are relative to Downloads. Existing subdirectories are allowed,
+but LeanTTY does not create directories, recurse, expand wildcards or transfer
+multiple sources. A trailing `/` means an existing directory and keeps the
+source basename. `get` may omit its local target and then also uses the remote
+basename.
+
+LeanTTY never overwrites an existing file. An explicitly named destination
+fails on conflict. When LeanTTY chose a download basename because the target
+was omitted or was a directory, it keeps both files by committing to the first
+available `name (n).ext` and reports the actual name after completion. Uploads
+fail if their final remote name already exists.
+
+Transfers run in the current pane. Progress stays on one terminal line and
+shows percentage, transferred size, live speed and ETA; completion reports the
+size and elapsed time. With no terminal selection, `Ctrl+C` cancels the active
+transfer and cleans its owned partial file. With a selection, `Ctrl+C` keeps
+the normal copy behavior. Closing the pane or application uses the same bounded
+cancellation path. Forced termination may leave an identifiable `.part` file;
+LeanTTY never claims or removes partial files from an earlier process.
+
+Passwords, key passphrases and non-echoing keyboard-interactive responses are
+masked and removed from the WebView input helper after the key event is
+consumed. They are not command options and are not written to command history.
+
 ## Host-key maintenance
 
 Find every matching algorithm record for one exact endpoint without changing
@@ -207,6 +248,8 @@ the file.
 | `ssh -G host-name` | Show the supported effective configuration |
 | `ssh-keygen -t ...`, `-y`, `-l`, `-p`, `-F`, `-R` | Generate, inspect or maintain SSH assets |
 | `ssh-copy-id -i ...` | Install one public key |
+| `put [-p port] [-i identity] local-file host:remote-path` | Upload one Downloads file through SFTP |
+| `get [-p port] [-i identity] host:remote-file [local-path]` | Download one SFTP file into Downloads |
 | `key list/import/export/rm` | Manage LeanTTY key pairs |
 | `host add/set/list/rm` | Manage LeanTTY Host entries |
 | `exit` | Close the current idle pane or tab path |

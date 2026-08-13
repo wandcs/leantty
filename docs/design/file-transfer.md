@@ -556,6 +556,13 @@ IDLE
 独立传输生命周期是真实状态边界，因此可以有一个局部、可测试的传输状态类型；不再
 增加 TransferManager、任务队列或持久后台服务。
 
+2026-08-12 实现已把该边界收敛到每个 `SessionViewModel` 自己持有的
+`FileTransferLifecycle`。状态只允许
+`IDLE → PREPARING → TRANSFERRING → FINALIZING → SUCCEEDED/FAILED/CANCELLED → IDLE`；非法
+跨阶段转换被拒绝并记录安全日志。Downloads 授权、路径验证和 FD 准备从 `PREPARING` 起就属于
+同一个 Pane 完成 Promise，因此准备期间的 `Ctrl+C` 或受控关闭会设置取消意图，异步准备返回后
+只清理本任务对象并进入 `CANCELLED`，不会迟到创建 native Session。
+
 ### 6.2 ArkTS、N-API 与 Rust
 
 职责划分：
@@ -575,7 +582,8 @@ IDLE
 
 7.7 已把检查时最新的 `russh-sftp 2.4.0` 接入产品并锁定依赖；`russh 0.62.5` 共存、
 WSL/OpenSSH E2E、产品 Rust 测试和 OHOS ARM64 调试 HAP 构建已经通过。7.9 又闭合了实际
-PUT/GET 小/大文件真机主链；错误矩阵和正式发布许可证门禁仍须闭合。
+PUT/GET 小/大文件真机主链；后续 7.10—7.14 已闭合错误、生命周期、认证、文件名、补全、
+10,000 名称耗尽与休眠恢复矩阵。正式候选与发布门禁仍按第九节执行。
 
 ### 6.3 进度与错误
 
@@ -632,6 +640,54 @@ cell 内。即便剥离 ANSI 和 `●`，`Downloaded` / `Uploaded`、`Finalizing
 - 清理失败。
 
 错误说明下一步，不记录文件内容、凭据或不必要的完整敏感路径。
+
+实现使用有限的 `FileTransferFailureKind` 分类权限、本地/远端冲突、路径、对象不存在、无 SFTP、
+认证、主机校验、空间不足、网络、最终提交、清理、I/O 和未知失败。Rust/N-API 仍传递稳定 code
+供分类和测试；终端只显示由 code、方向和少量安全判据生成的固定行动文案，不拼接底层 detail，
+避免服务器错误、路径、凭据或控制序列进入终端。清理失败不会被吞掉：本地与远端分别提示用户
+检查并删除本任务格式的隐藏临时对象，同时继续保证已有最终目标不被替换。
+
+复制循环外的 SFTP metadata/open/close/rename，以及本地 flush/sync 已统一经过可取消的 30 秒
+等待边界；失败后的远端 remove 采用独立 30 秒清理上界，避免取消信号抢占必要清理。超时统一为
+`SFTP_TIMEOUT`，清理失败统一为 `LOCAL_CLEANUP` / `REMOTE_CLEANUP`。这些实现边界已经由 Rust
+取消/超时测试和 ArkTS 分类测试覆盖。受控 SFTP fixture 又在物理 PC 上让生产 PUT 的写入与随后
+remove 依次失败：终端只显示固定的远端临时文件处理建议，恰好一次 `REMOTE_CLEANUP` 后回到
+`IDLE`；最终名未出现，仅保留一个符合所有权格式的随机临时名。随后，编译期隔离的原生/ArkTS
+双层故障点让一个专用生产 GET 在
+`REMOTE_NOT_FOUND` 后真实进入本地 unlink 异常路径：终端保留该主错误，追加固定清理警告并回到
+`IDLE`；明确最终名未出现，fixture 在清理前只观察到一个同目录 `.part`，随后删除验收数据。
+这闭合本地清理失败门禁；注入只存在于该调试 HAP，构建后源码逐字节还原。
+
+另一个编译期隔离门禁把文件传输 N-API 队列缩到 2，并让专用 8 MiB GET 的首个 ArkTS 进度回调
+阻塞 1.5 秒。受控慢速 SFTP 期间原生层确认 5 个非最终进度因队列已满被丢弃；阻塞送达的
+`FINALIZING`/完成事件仍恰好到达，Pane 回到 `IDLE`，最终文件只在完整提交后出现且没有 `.part`
+残留。随后 PUT 回传与源 SHA-256 一致。这闭合“允许丢中间进度、绝不丢终态”的回调背压门禁。
+
+物理 PC 又在生产 GET/PUT 出现正字节进度后执行系统 `aa force-stop`。旧进程没有应用关闭准备、
+传输终态或 `IDLE`；GET/PUT 最终名都未出现，各自仅留下一个符合本任务所有权格式的隐藏本地或
+远端临时文件。每次重启后新 Pane 均可聚焦，验收夹具记录现场后删除残留。这验证了强制终止下
+“不能承诺清理，但绝不暴露半成品最终名”的冻结边界。
+
+复制完成还必须满足实际字节数等于源在打开后声明的已知大小；否则不得进入 `FINALIZING` 或提交。
+无错误提前 EOF 使用 `SOURCE_CHANGED`，GET 的远端读连接错误使用 `NETWORK`，PUT 的本地读错误
+继续使用 `READ`。物理 PC 已在生产 GET 出现正字节进度后终止受控 SSH 服务：客户端只产生一次
+`NETWORK`，10,418 毫秒内回到 `IDLE`，终端提示检查网络和 Host；自动编号最终文件与任务所有的
+本地 `.part` 均未出现或已精确清理。该门禁闭合单 Pane 的传输中断线与截断提交风险。
+
+双 Pane 门禁随后先取消左 Pane 的在途 GET，再让同一 Pane 启动第二个 GET；编译期隔离夹具把旧
+`transferId + paneId + generation` 的事件伪装为完成并重新送达，生产 `FileTransferClient` 拒绝该
+事件。第二个 GET 在正字节进度后由受控 SSH 服务断线结束，终态恰好为一次 `NETWORK`；焦点转移
+到右 Pane 后，第二个旧完成事件延迟 10 秒到达并再次被拒绝。两次拒绝没有产生伪完成、最终文件
+或任务 `.part`，两个 Pane 与原应用进程均保留，右 Pane 可聚焦。该门禁闭合取消和断线后的旧事件
+不能污染新传输或另一个 Pane 的身份边界；证据位于
+`build/verification/put-get-late-events-final-8/`。
+
+物理门禁的认证阶段不再只依赖轮询 hilog 尾部快照。验证脚本会在提交命令前启动按当前应用 PID
+和认证相关标签过滤的实时 hilog 流，同时保留原快照；任一来源观察到结构化 host-key/password/
+failed 状态即可继续，来源随结果记录。两者在固定 30/20 秒内都未命中时，脚本保存布局、截图与
+诊断 JSON，并将结果明确归为“产品认证状态未被观察到”，不以无界重试推断成功。纯函数回归覆盖
+快照缺失而实时流命中的情形；物理 PC 主链又以三个认证检查点证明实时捕获、快照与最终传输结果
+一致，且捕获日志不含凭据。
 
 ## 七、已经完成的验证
 
@@ -755,8 +811,8 @@ crate、N-API 或 HAP。fixture 精确锁定 `russh 0.62.5` 和检查时最新�
 E2E 已证明可与 0.62.5 共存。
 
 该 fixture 本身不是产品依赖。初始协议门禁完成后，产品已把精确 `russh-sftp` 依赖写入
-`Cargo.lock`、更新许可证材料并通过 ARM64 HAP 构建；7.9 已补上生产事件链真机主路径。
-无 SFTP、权限拒绝、取消、断线和服务器差异仍须单独验收，本节不能替代这些矩阵。
+`Cargo.lock`、更新许可证材料并通过 ARM64 HAP 构建；7.9 已补上生产事件链真机主路径，
+7.10—7.14 已分别闭合无 SFTP、权限拒绝、取消、断线和服务器差异矩阵。
 
 ### 7.8 2026-08-08 FD/no-follow 能力边界门禁
 
@@ -828,15 +884,146 @@ Picker 的单文件选择与用户可见保存路径，以及密码认证下显�
 
 以下内容**尚未验证**：
 
-- 未授权/拒绝/恢复，以及明确文件名冲突、提交期并发抢占和序号耗尽的完整 Download 交互。
-- 与其他实际 OpenSSH 服务器的认证方式、无 SFTP、权限拒绝、取消、断线和错误互操作。
-- 产品事件链中的并发抢占、错误映射、取消、断线和崩溃清理。
-- 空文件、多级/Unicode/长路径、中间 symlink，以及完整尺寸和生命周期矩阵。
+- 未授权/拒绝/恢复的首次 Downloads 系统权限交互；当前已授权设备不能在不清除应用持久数据的
+  前提下安全重现该状态。
+- 其他不受控 OpenSSH 服务器的跨版本互操作。
+- 最终同一保留候选的核心终端回归。
 
 此前权限验证主要在 `Download/LeanTTY` 子目录执行；7.6、7.8、7.9 和 7.9.1 已依次补齐
 Download 根目录提交原语、已打开对象能力边界、生产 `put/get` 定向端到端主链，以及既有
 相对子目录/自动编号/Tab 补全主链。仓库保留编译期隔离的聚焦门禁脚本；后续验收继续复用生产
 传输事件链，不能把探针扩展为第二套传输实现。
+
+### 7.11 2026-08-12 生命周期、错误与等待边界
+
+`FileTransferLifecycle` 的 Pane 隔离、合法阶段和三个终态回到 `IDLE` 已由 ArkTS 定向测试覆盖；
+错误分类测试证明权限、冲突、路径、无 SFTP、认证、主机校验、空间、网络、提交和清理可区分，
+未知 code 被限制为安全字符且底层 detail 不进入文案。Rust 定向测试证明复制循环外的通用等待
+同时响应取消和超时。解析矩阵覆盖分词、引号/转义、`--`、缺参、未知/重复选项、方向/多源、
+IPv6、Unicode、控制字符、空/超长路径和孤立 surrogate，并证明 `scp` 仅提示且覆盖选项被拒绝；
+矩阵同时修复了空字符串 PUT 本地源曾误用 GET 省略目标规则的问题。ArkTS 97/97、产品库
+17/17、workspace clippy、ARM64 native 与调试 HAP 构建均通过。
+设备随后按仓库的专用测试机条件解锁流程恢复，并直接启动当时已经安装、SHA-256 为
+`82e63465776698a584984693a69f7780b9741c5b94ae0ddfd29f0fc6cea34121` 的 HAP。用户指定的
+118,349,760 字节安装包完成 GET 与 PUT：GET 10.215 秒（11.05 MiB/s），PUT 4.308 秒
+（26.20 MiB/s），双向 SHA-256 均为
+`3cb7d8f41e6815992b0208552ad4626fd9ad0e4e159beaecba1afe34d494c613`；既有本地目录、自动编号、
+远端目录 basename、Tab、正字节进度、实时速度、`FINALIZING`、无覆盖和清理全部通过。
+编译期隔离的专用验收 HAP 也再次通过 Downloads no-replace 与 FD/no-follow 探针。上述证据闭合
+当前产品主链和本地能力边界。SFTP channel 建立、subsystem 请求、Session 初始化、Session 关闭
+和 SSH 断开也已复用复制循环外相同的 30 秒等待与取消原语；不再存在独立无界等待。
+
+同日，仓库受控 SFTP fixture 以每次读写 50 毫秒延迟提供 8,388,608 字节源，物理 ARM64 PC 在
+生产 GET 出现正字节进度后注入无选区 `Ctrl+C`。产品恰好产生一次 `cancelled`，436 毫秒内回到
+`IDLE` 和原 `ltty>`；既有 Downloads `source.bin` 字节不变，自动编号最终文件未暴露，任务所有
+同目录 `.part` 在 fixture 清理前已不存在。对应调试 HAP SHA-256 为
+`ab2f0b3c2dcdfd4efcac2df82c1ad9efab64b2b6eaa9d0a2d73de38224ca05f9`。这闭合了无选区
+`Ctrl+C` 的在途 GET 路径；断线、清理失败和其余生命周期物理矩阵仍按第九节保留。
+
+2026-08-13，有选区路径也在物理 ARM64 PC 闭合。验收先暴露出 ArkWeb 在 xterm 选区存在时
+既不稳定分发 DOM `keydown`，也会吞掉浏览器级 `copy`；因此产品不再依赖这两个不可靠入口。
+精确 Ctrl+C 现在由 Web 的 `onKeyPreIme` 在 ArkUI 前置层消费，经空 payload typed bridge 交给
+所属 xterm 判定：搜索框只复制自己的文本选区，终端选区优先复制，无选区才向 Pane 输入流发送
+ETX。1 MiB 受控慢速 GET 在正字节进度和实时速度可见后建立 4 字符选区，Ctrl+C 只产生一次
+成功剪贴板写入且没有改变传输终态；随后 GET、PUT、`FINALIZING`、双向 SHA-256 和任务临时
+对象清理全部通过。HAP SHA-256 为
+`8c97fa390f742efea09ae24bc10d441b480097167e9c199a2e75f40766c6e97d`，证据位于
+`build/verification/put-get-selection-copy-final-9/`。
+
+同一物理 PC 又以每次 SFTP 读写 250 毫秒延迟运行生产 GET，并分别经过真实系统关闭按钮与活动
+Pane 的 `×` / `Close pane` 确认。应用关闭路径在恰好一次 `cancelled` 和 `IDLE` 后才记录关闭准备
+完成，确认到旧进程退出为 793 毫秒；重启检查证明既有文件字节不变，自动编号最终文件未出现，
+本地和远端任务临时对象均不存在。Pane 关闭路径先创建第二个 Pane，再关闭传输 Pane；710 毫秒
+内恰好一次 `cancelled` 并回到 `IDLE`，原进程与另一个 Pane 继续存在，最终文件与临时对象均未
+留下。这闭合了传输中的受控 Pane/应用关闭；后续门禁又闭合异步 Downloads 准备期间关闭、
+强制终止、断线、背压、清理失败和迟到事件隔离。两条门禁复用当前源码构建的同一调试 HAP，
+SHA-256 为 `942a775628625f6dda9c7df8297e12ae6255fe04769a514a7fe93587fedca51f`。
+
+后续审计发现系统 Downloads 请求若长期不返回，当前 Pane 的 `disconnect()` 会被其
+`transferCompletion` 间接阻塞。实现现在保留共享权限请求的进程内 single-flight 所有权，只让每个
+Pane 自己的准备取消 Promise 与共享请求竞争；取消当前 Pane 不取消系统对话框或其他 Pane 的请求，
+但会立即结束本 Pane 的 `PREPARING`，且共享请求稍后完成不能继续本 Pane 的文件打开/native 启动。
+ArkTS 98/98 与调试注入逐字节还原契约通过。编译期隔离的哨兵又在物理 PC 让生产 GET 永久停在
+`PREPARING`：确认关闭应用 496 毫秒内完成唯一 `cancelled`、`IDLE`、关闭准备及进程退出；确认
+关闭 Pane 406 毫秒内完成相同终态，并保留原 PID 与另一个 Pane。两条路径均没有认证、进度、
+`FINALIZING`、完成事件或文件残留；共同调试 HAP SHA-256 为
+`d756165a410ffe2cdaf01c5f864c864e3d59eccfc8b06ee78018b854c47757b5`。
+
+### 7.12 2026-08-13 连接解析与 Downloads 管理边界
+
+2026-08-13 的连接解析回归证明 `ssh`、`put` 和 `get` 对同一 Host 的 HostName、User、Port 与
+IdentityFile 得到完全相同的有效连接参数；命令级 `put/get -p/-i` 只改变当次结果，后续
+`ssh`、`put`、`get` 仍恢复 Host 值，且 SSH config 文本没有变化。同一测试还在传输解析前后固定
+`host add/set/list`、`key list`、`help` 和 `exit` 的既有命令类型，防止文件传输扩展改变本地命令
+入口。可信 ArkTS 测试为 100/100；实现继续只使用 `CommandParser.parseCommand` 这一条连接解析
+路径，不增加传输专用 Host、Identity 或认证配置。
+
+同日新增的编译期隔离探针直接调用生产 `TransferFileManager`，在物理 HAD-W32 的随机 Downloads
+子目录完成明确目标预存在、准备后目标抢占、自动名称连续冲突、多级既有目录 PUT FD、同目录临时
+文件与产品 cleanup。两个明确冲突均逐字节保持已有目标不变；提交期冲突还保持完整临时对象，随后
+只由产品 cleanup 删除。自动名称在 basename 和 `(1)` 已存在时，不重传即把同一临时对象以 mode 1
+提交为最小可用 `(2)`，三份内容均符合预期。多级目录源经逐组件目录检查和最终 `NOFOLLOW` 打开，
+探针从产品持有的 FD 读到原对象；全部随机路径最终删除。既有 no-replace 与 native FD 探针在同一
+HAP 再次通过；系统仍拒绝在 Downloads 和私有 cache 创建 symlink，因此没有伪造平台做不到的
+symlink 成功场景。HAP SHA-256 为
+`0eb2098ddf09c6314e28cbd05419c1d47bae3e1b62ac8e103d1cb5180912a71d`，结构化证据位于
+`build/verification/file-transfer-manager-boundary-final/`。可信 ArkTS 命名测试还固定隐藏文件、复合
+后缀、尾点、Unicode 安全截断和第 9,999 号候选；7.14 又在生产 manager 上实际闭合完整
+10,000 名占用门禁。
+
+补全候选现在在 Host alias、LeanTTY 密钥名和 Downloads 条目三个入口统一拒绝 ESC、C0/C1
+控制字符与孤立 surrogate；不以替换字符伪造一个无法重新解析到原对象的路径。可信 ArkTS 回归
+覆盖安全 Unicode 与上述拒绝集，并构造包含 ESC 的 Host 配置，证明不安全 alias 不会进入 `get`
+候选，安全候选仍正常工作。文件系统上下文、转义、候选上限和未授权真机矩阵仍按第九节保留。
+
+### 7.13 2026-08-13 认证、安全输入、失败互操作与最小化
+
+物理 HAD-W32 的完整认证矩阵已经使用生产 `put/get` 闭合未加密 Ed25519 key、为同一 key 增加
+passphrase 后的加密 key、两轮 keyboard-interactive，以及显式 `-i` 后恢复到无 identity 密码认证。
+每种方式都完成实际 SFTP 文件传输；命令级 identity 没有改变后续命令，临时 key 最终通过产品
+`key rm` 工作流删除。证据位于
+`build/verification/put-get-authentication-matrix-final-2/`。
+
+认证审计同时发现，仅在终端画面中回显 `*` 不足以保护 WebView 的辅助输入元素：系统布局树曾可
+读取其明文 value。现在 `SessionViewModel` 只对密码、private-key passphrase、非回显
+keyboard-interactive response 和 key passphrase change 模式发送有类型的 `inputSecurity=masked`；
+`TerminalBridge` 在 ArkWeb 重建后重放该状态，Web 侧在 xterm 已消费 `onKey` 后有界清空 helper
+value，离开安全模式时立即清理。Bridge allowlist 只接受 `plain/masked`。完整矩阵的每个安全输入
+前后布局快照均为空，应用日志也不含临时凭据；普通命令可访问输入和终端画布没有被替换或隐藏。
+
+同一 HAP 还分别验证无 SFTP subsystem、远端权限拒绝、标准可靠 rename 不可用：三条路径都只
+产生一次稳定失败，回到 `IDLE`，不暴露最终名、不留下任务临时文件，也不退化为覆盖操作。空文件
+完成双向 SHA-256 精确的 GET/PUT，最终摘要显示 `0 B` 与耗时。8 MiB 延迟 GET 在正字节阶段由
+真实窗口按钮最小化，在不可见期间完成；恢复后保持原 PID、终端焦点和完整结果，并继续完成 PUT、
+哈希与清理。对应证据位于 `build/verification/put-get-sftp-*-final*/`、
+`build/verification/put-get-empty-final/` 和 `build/verification/put-get-minimize-final/`。
+
+### 7.14 2026-08-13 文件名、补全、序号耗尽与休眠恢复
+
+物理 HAD-W32 的生产命令事件链完成空格、Unicode 和 224 字符 basename 的 131,089 字节
+`GET → Downloads 自动编号 → PUT`。三组均保留既有文件、选择最小 `(1)` 名称、经过
+`FINALIZING` 并保持相同 SHA-256。长文件名首次暴露出上传临时名复制最终 basename 后超过远端
+单组件上限；修复后远端临时名固定为同目录、排他的 `.leantty-<transfer>-<nonce>.part`，长度不再
+随最终名增长，仍使用标准无覆盖 rename。Rust 255 字节 basename 回归与真机长名称往返均通过。
+证据位于 `build/verification/put-get-file-name-matrix-final-9/`，HAP SHA-256 为
+`5928accd750c2bfb0a1d37c77111cd87b2e32d86672c8175856da14ce391b4ab`。
+
+同一 HAP 的固定字体 Tab 矩阵又覆盖既有目录、空格、引号规范化、Unicode、隐藏项、公共前缀、
+再次 Tab 的有界候选列表和 Unicode 格式控制字符排除。每次补全都从生产 `CommandLineBuffer`
+记录结果，未请求 Downloads 权限、未进入传输状态或远端认证。证据位于
+`build/verification/put-get-tab-completion-final-1/`。另一个编译期隔离探针在生产
+`TransferFileManager` 上实际占用 basename 与 `(1)..(9999)` 共 10,000 个名称；自动提交返回
+`LOCAL_CONFLICT`，所有占用内容逐字节不变，完整临时对象仍由本任务持有并由产品 cleanup 精确
+删除。证据位于 `build/verification/file-transfer-manager-boundary-final-3/`，HAP SHA-256 为
+`de2f269145bdea2fe089ce8dbcda47ac1d41c6eeae3fb24431bc3915571a3bb4`。
+
+最后，8 MiB 延迟 GET 在正字节进度与实时速度出现后执行真实 `power-shell suspend`，5 秒后由
+已验证的 HDC `wakeup` 路径唤醒并使用仓库外本机凭据解锁。应用保持同一 PID，GET 在
+`FINALIZING` 后提交完整文件；同一 Pane 随后完成 PUT、双向 SHA-256 和精确清理。证据位于
+`build/verification/put-get-suspend-final-3/`，HAP SHA-256 为
+`57044b4927448c909e2167775f0f528f211144a69e5e712e3672543f5ec44ca9`。当前源码的软件门禁随后
+全部通过，包括 ArkTS 104/104、Web/指南、PowerShell、WSL Rust fmt/clippy、native/core/fixture
+测试与 SSH fixture E2E；证据为 `build/verification/targeted-regression-1.3-final-2.json`。
 
 ## 八、后续讨论清单与实现前门禁
 
@@ -967,12 +1154,12 @@ Download 根目录提交原语、已打开对象能力边界、生产 `put/get` 
    `posix-rename@openssh.com`。
 3. 当前 OpenSSH 对普通文件的标准 rename 优先使用 link/unlink 做无竞态提交。7.7 已用
    实际 `russh-sftp 2.4.0` 客户端和 OpenSSH 10.2p1 验证成功、目标冲突、内容保持与临时文件
-   清理；产品实现仍须复用该原语并补齐结构化错误映射和实际目标服务器差异。
+   清理；产品实现已复用该原语，并由 7.10—7.14 补齐结构化错误映射和目标服务器差异。
 4. 服务器不支持可靠无覆盖提交时，本次上传安全失败；不能退化成直接写最终名称、
    删除已有目标或覆盖 rename。
 
 本地 Downloads、受控 OpenSSH 协议原语和 FD/no-follow 门禁均已闭合；产品实现已接入，
-但实际服务器上的完整传输、取消与错误矩阵仍未验证，本节不能据此把 `put/get` 写成完成能力。
+实际服务器上的完整传输、取消与错误矩阵也由 7.9—7.14 闭合。
 
 #### 8.2.2 路径验证与打开之间的 TOCTOU
 
@@ -980,7 +1167,7 @@ Download 根目录提交原语、已打开对象能力边界、生产 `put/get` 
 目录必须已经存在、是目录且不是 symlink，最终对象执行 `lstat`，再用
 `READ_ONLY | NOFOLLOW` 打开。N-API 在同步返回前复制 FD 并 `fstat` 为普通文件，Rust 只从
 复制后的已打开对象流式读取，不再按路径打开。7.8 已在真机证明根目录源路径被替换后，
-native 仍读取原始对象；子目录逐组件边界仍须补齐定向真机验证。
+native 仍读取原始对象；7.12 又闭合了既有多级子目录的逐组件边界。
 
 下载不会打开既有用户文件：ArkTS 在逐组件验证的最终既有目录中生成随机精确临时路径，
 native 使用 `create_new` 排他创建本任务的新对象；完成后关闭并 `sync_all`，ArkTS 再在同一
@@ -1004,7 +1191,8 @@ LeanTTY 不按前缀认领、删除或恢复任何跨重启对象。
 - 有选区时复制，不取消。
 - 无选区时取消当前传输。
 
-提示保留现有终端规则，不增加常驻说明；选区、焦点和取消事件仍须真机验证。
+提示保留现有终端规则，不增加常驻说明。无选区取消和有选区复制均已在物理机在途 GET 中
+验证；搜索输入框只复制自身选区的策略由 Web 回归保护。
 
 #### 8.2.5 生命周期、并发与迟到事件
 
@@ -1019,6 +1207,12 @@ LeanTTY 不按前缀认领、删除或恢复任何跨重启对象。
 - 最小化不主动暂停或取消，前台任务在系统仍调度进程且网络可用时继续；休眠、网络切换或
   系统挂起导致 I/O 失败时进入统一失败清理。1.3 不增加后台服务、断点续传或恢复队列。
 - 强制终止不能保证清理；依靠 8.2.3 的临时对象规则保证半文件不暴露为最终名称。
+
+2026-08-12 的实现中，普通 Pane 关闭继续 `await SessionViewModel.disconnect()`；应用关闭由
+`EntryAbility.onPrepareToTerminateAsync()` 等待页面注册的 single-flight 准备 Promise，该 Promise
+并行等待所有 Pane 的同一个 `disconnect()` 完成路径。若准备或最终 `terminateSelf()` 失败会清除
+本次准备状态，下一次显式关闭可重试。页面析构仍只作为已完成受控准备后的兜底，不把系统强制
+终止宣称为可等待的清理路径。
 
 #### 8.2.6 路径语义
 
@@ -1097,7 +1291,8 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
    `name (n).ext`、不修改后缀，开始时不承诺最终名称，完成时显示原名称与实际名称。
 7. 在预检查后、最终提交前抢占目标名称：明确目标必须失败且已有文件哈希不变；
    省略下载目标必须使用下一个名称，不能重新传输文件。
-8. 中途 `Ctrl+C`、断网、关闭 Pane 和关闭应用，不留下最终名称的损坏文件。
+8. 中途无选区 `Ctrl+C`、确认关闭 Pane 和确认关闭应用不留下最终名称或任务临时文件已经通过；
+   继续验证有选区只复制、断网及其余系统生命周期场景。
 9. 验证启动时不会按文件名前缀触碰 Downloads 内容；受控取消只删除本任务精确临时路径，
    强制终止后即使留下隐藏临时文件，也不得出现损坏最终名称。
 10. 使用密码、未加密密钥、加密密钥和 `keyboard-interactive` Host 各完成传输。
