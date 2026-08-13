@@ -584,7 +584,12 @@ impl Handler for FixtureServer {
         // buffer and blocks the fixture session even though Handler::data is in use.
         tokio::spawn(async move { while shell_channel.wait().await.is_some() {} });
         session.channel_success(channel)?;
-        session.data(channel, b"LEANTTY_AUTH_FIXTURE_OK\r\nfixture> ".as_slice())?;
+        let greeting = if self.session_scenario == Some(Scenario::Navigation) {
+            b"\x1b]52;c;bGVhbnR0eS1rZXktcGFzdGU=\x07LEANTTY_AUTH_FIXTURE_OK\r\nfixture> ".as_slice()
+        } else {
+            b"LEANTTY_AUTH_FIXTURE_OK\r\nfixture> ".as_slice()
+        };
+        session.data(channel, greeting)?;
         Ok(())
     }
 
@@ -653,6 +658,7 @@ impl Handler for FixtureServer {
             return Ok(());
         }
         if self.session_scenario == Some(Scenario::Navigation) {
+            eprintln!("navigation input hex={}", format_input_hex(data));
             let captured = format!(
                 "\r\nLEANTTY_INPUT_HEX:{}\r\nfixture> ",
                 format_input_hex(data)

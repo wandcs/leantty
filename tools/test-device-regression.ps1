@@ -419,6 +419,16 @@ foreach ($scriptName in @(
             $content.Contains('deviceProgramIntervalMilliseconds = 500')
         ) 'SSH authentication scenario does not enforce the layout/log secret boundary'
         Assert-True (
+            $content.Contains("'terminal-key-input'") -and
+            $content.Contains("Start-AuthCommand -User 'navigation'") -and
+            $content.Contains("left = 'navigation input hex=1b 5b 44'") -and
+            $content.Contains("right = 'navigation input hex=1b 5b 43'") -and
+            $content.Contains("ctrlP = 'navigation input hex=10'") -and
+            $content.Contains("ctrlC = 'navigation input hex=03'") -and
+            $content.Contains("tab = 'navigation input hex=09'") -and
+            $content.Contains("ctrlVPaste = 'navigation input hex=6c 65 61 6e 74 74 79")
+        ) 'SSH authentication scenario does not capture terminal key bytes at the server boundary'
+        Assert-True (
             $content.Contains('[string[]]$Only') -and
             $content.Contains('[switch]$DiagnosticHap') -and
             $content.Contains('[switch]$VerifyPreferencesUnchanged') -and
