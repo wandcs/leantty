@@ -622,7 +622,11 @@ ArkWeb/xterm 的未处理按键分发。
 `b95a2ad0aa5b1c3a12b3b2314e4e359c29f8a5de2fc3593cbc8c6f044297da66`，同一 fixture 精确收到
 Left `ESC [ D`、Right `ESC [ C`、`Ctrl+P` `0x10`、`Ctrl+C` `0x03`、Tab `0x09`，以及
 `Ctrl+V` 触发的 17 字节 OSC 52 剪贴板内容；搜索开关、Pane/Tab 所有权和清理审计同时通过。
-该诊断包用于证明因果关系，正式候选仍须从包含修复及记录的干净精确提交重建。
+该诊断包用于证明因果关系。正式候选随后从干净提交
+`35aa36e442286219ee4dbd184107566465eaa8a6` 重建，保留 HAP SHA-256 为
+`0116b6ecf02f7501541acf7ef654beb4c57246833a28d0de7a8f7240e7826c99`；同包重新通过六种按键
+精确字节、搜索打开/关闭/焦点、Pane/Tab 所有权和 production PUT/GET 往返门禁。PUT/GET
+harness 的 reverse 映射清理命令同时在 `6556839` 中纠正，并以新端口复跑和独立映射审计闭合。
 
 ## 验证边界
 
