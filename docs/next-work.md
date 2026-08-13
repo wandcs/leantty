@@ -374,7 +374,15 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
   warm eviction 和窗口/renderer lifecycle），以及 production GET -> Downloads -> PUT 的 131,089
   字节 SHA-256 往返、补全、冲突命名、认证提示、终端续用和清理。剩余只保留 HDC 不能替代的
   物理键盘与中英文 IME、真实选区/复制和 URL 激活，以及真实远端上的 tmux/vim/less/Agent TUI
-  最小 smoke；不得用输入注入或 repository fixture 冒充这些结论。
+  最小 smoke；不得用输入注入或 repository fixture 冒充这些结论。真实 OpenCode smoke 随后发现
+  左右方向键、`Ctrl+P` 和 `Ctrl+V` 未到达 TUI；服务器端字节门禁证明旧候选只收到显式转发的
+  `Ctrl+C` / Tab。根因是文件传输提交 `a9874b8` 新增的通用 `onKeyEventDispatch` 遮住了 Web/xterm
+  的未处理按键。移除该重复分发层后，诊断 HAP
+  `b95a2ad0aa5b1c3a12b3b2314e4e359c29f8a5de2fc3593cbc8c6f044297da66` 在同一 fixture 上精确收到
+  Left `ESC [ D`、Right `ESC [ C`、`Ctrl+P` `0x10`、`Ctrl+C` `0x03`、Tab `0x09` 和 `Ctrl+V`
+  的 17 字节剪贴板内容；搜索开关与 Pane/Tab 所有权回归也通过，临时凭据、fixture 和映射均已
+  清理。旧 `0d38130f...19edc` 候选已被产品修复取代，下一步必须从包含本修复和最终文档的干净
+  精确提交重建候选，再完成上述真实人工 smoke。
 
 ## 3. 文档、版本与发布
 
