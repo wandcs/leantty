@@ -606,6 +606,24 @@ HAP 构建、测试签名、安装和启动成功，SHA-256 为
 layout 位于 `C:\tmp\leantty-shortcut-buttons-20260808-r1`。该 debug HAP 只证明本次定向
 改动，不替代从新精确提交重建的正式发布候选。
 
+### 2026-08-14 ArkWeb 终端按键分发回归
+
+真实 OpenCode TUI smoke 发现左右方向键、`Ctrl+P` 和 `Ctrl+V` 未到达远端，而显式产品
+路径中的 `Ctrl+C` 和 Tab 仍可用。服务器边界 fixture 逐次记录输入字节，确认旧候选
+`0d38130f...19edc` 只收到 `0x03` 和 `0x09`；问题不是 WSL、OpenCode 或 SSH 编码差异。
+根因是文件传输改动同时在 TerminalPane 注册 `onKeyPreIme`、Web 专用
+`onInterceptKeyEvent` 和通用 `onKeyEventDispatch`，最后一层抢先结束了原本应继续交给
+ArkWeb/xterm 的未处理按键分发。
+
+修复仅移除重复的 `onKeyEventDispatch`，保留 `onKeyPreIme` 与
+`onInterceptKeyEvent`：前者继续承载 Tab、`Ctrl+C` 和产品快捷键，后者继续让 Web 在产品
+未消费时按原生路径处理终端输入和可信剪贴板事件。不增加逐键映射、模拟粘贴或第二套输入
+通道。修复后的诊断 HAP SHA-256 为
+`b95a2ad0aa5b1c3a12b3b2314e4e359c29f8a5de2fc3593cbc8c6f044297da66`，同一 fixture 精确收到
+Left `ESC [ D`、Right `ESC [ C`、`Ctrl+P` `0x10`、`Ctrl+C` `0x03`、Tab `0x09`，以及
+`Ctrl+V` 触发的 17 字节 OSC 52 剪贴板内容；搜索开关、Pane/Tab 所有权和清理审计同时通过。
+该诊断包用于证明因果关系，正式候选仍须从包含修复及记录的干净精确提交重建。
+
 ## 验证边界
 
 ### 自动化证明

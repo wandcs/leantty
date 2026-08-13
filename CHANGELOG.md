@@ -41,6 +41,11 @@
 
 ### Fixed
 
+- Restored ordinary terminal key delivery through ArkWeb after the file-transfer
+  keyboard interception change. Left/Right, `Ctrl+P` and other TUI-owned keys
+  now reach the remote PTY again, while `Ctrl+C`, Tab, product search and
+  workspace shortcuts retain their explicit behavior; `Ctrl+V` once again
+  follows the system clipboard paste event instead of being lost before xterm.
 - Kept SSH terminal input continuously usable after large writes. The existing
   single writer now has full actor-level regression coverage and supervised
   failure reporting; 1 MiB input is delivered without truncation or reordering,
