@@ -581,12 +581,14 @@ where
     (Ok(()), resize_errors)
 }
 
-async fn run_channel_writer(
+async fn run_channel_writer_core<R>(
     channel: russh::ChannelWriteHalf<russh::client::Msg>,
     mut write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     mut resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
-    control_callback: JsCallback,
-) {
+    mut report: R,
+) where
+    R: FnMut(String),
+{
     loop {
         tokio::select! {
           data = write_rx.recv() => {
@@ -599,10 +601,10 @@ async fn run_channel_writer(
                   |(cols, rows)| channel.window_change(cols, rows, 0, 0),
                 ).await;
                 for error in resize_errors {
-                  send_control(&control_callback, &format!("RESIZE_ERROR:{}", error));
+                  report(format!("RESIZE_ERROR:{}", error));
                 }
                 if let Err(error) = write_result {
-                  send_control(&control_callback, &format!("WRITE_ERROR:{}", error));
+                  report(format!("WRITE_ERROR:{}", error));
                 }
               }
               None => break,
@@ -612,13 +614,32 @@ async fn run_channel_writer(
             match size {
               Some((cols, rows)) => {
                 if let Err(error) = channel.window_change(cols, rows, 0, 0).await {
-                  send_control(&control_callback, &format!("RESIZE_ERROR:{}", error));
+                  report(format!("RESIZE_ERROR:{}", error));
                 }
               }
               None => break,
             }
           }
         }
+    }
+}
+
+async fn run_channel_writer(
+    channel: russh::ChannelWriteHalf<russh::client::Msg>,
+    write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
+    control_callback: JsCallback,
+) {
+    run_channel_writer_core(channel, write_rx, resize_rx, |event| {
+        send_control(&control_callback, &event);
+    })
+    .await;
+}
+
+fn channel_writer_exit_message(result: std::result::Result<(), tokio::task::JoinError>) -> String {
+    match result {
+        Ok(()) => "SSH channel writer stopped unexpectedly".to_string(),
+        Err(error) => format!("SSH channel writer task failed: {error}"),
     }
 }
 
@@ -1211,12 +1232,13 @@ async fn run_session(
     send_control(&control_callback, "CONNECTED");
 
     let (mut channel_read, channel_write) = channel.split();
-    let channel_writer = tokio::spawn(run_channel_writer(
+    let mut channel_writer = tokio::spawn(run_channel_writer(
         channel_write,
         receivers.write_rx,
         receivers.resize_rx,
         control_callback.clone(),
     ));
+    let mut channel_writer_active = true;
 
     let mut pending_output: Vec<u8> = Vec::new();
     let mut output_tick = tokio::time::interval(Duration::from_millis(16));
@@ -1290,11 +1312,21 @@ async fn run_session(
             connection_task_result = Some(result);
             break;
           }
+          result = &mut channel_writer, if channel_writer_active => {
+            channel_writer_active = false;
+            send_control(
+              &control_callback,
+              &format!("WRITE_ERROR:{}", channel_writer_exit_message(result)),
+            );
+            break;
+          }
         }
     }
 
-    channel_writer.abort();
-    let _ = channel_writer.await;
+    if channel_writer_active {
+        channel_writer.abort();
+        let _ = channel_writer.await;
+    }
     if local_disconnect_requested {
         let _ = tokio::time::timeout(
             Duration::from_secs(1),
@@ -2168,18 +2200,196 @@ pub fn ssh_protect_private_key(key_path: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_client_config, is_current_auth_generation, send_scheduled_input,
-        should_flush_immediately, wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
-        AuthExchangeResult, AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult,
-        FileTransferEvent, OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
+        build_client_config, channel_writer_exit_message, is_current_auth_generation,
+        run_channel_writer_core, send_scheduled_input, should_flush_immediately,
+        wait_for_auth_command, wait_for_auth_exchange, wait_for_connect, AuthExchangeResult,
+        AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult, FileTransferEvent,
+        OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
         INPUT_WRITE_CHUNK_BYTES, SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
     };
     use napi_ohos::Status;
+    use russh::client;
+    use russh::keys::{Algorithm, PrivateKey, PrivateKeyWithHashAlg, PublicKey};
+    use russh::server::{self, Auth, Handler, Msg, Server as _, Session};
+    use russh::{Channel, ChannelMsg, Disconnect};
     use std::future::pending;
+    use std::net::SocketAddr;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tokio::net::TcpListener;
     use tokio::sync::{mpsc, Notify};
+
+    const ACTOR_TEST_WINDOW_BYTES: usize = 16 * 1024;
+
+    #[derive(Debug)]
+    enum ActorServerEvent {
+        Data(Vec<u8>),
+        Resize(u32, u32),
+    }
+
+    #[derive(Clone)]
+    struct ActorServer {
+        event_tx: mpsc::UnboundedSender<ActorServerEvent>,
+    }
+
+    impl server::Server for ActorServer {
+        type Handler = Self;
+
+        fn new_client(&mut self, _: Option<SocketAddr>) -> Self::Handler {
+            self.clone()
+        }
+    }
+
+    impl Handler for ActorServer {
+        type Error = russh::Error;
+
+        async fn auth_publickey(&mut self, _: &str, _: &PublicKey) -> Result<Auth, Self::Error> {
+            Ok(Auth::Accept)
+        }
+
+        async fn channel_open_session(
+            &mut self,
+            mut channel: Channel<Msg>,
+            reply: server::ChannelOpenHandle,
+            _: &mut Session,
+        ) -> Result<(), Self::Error> {
+            let event_tx = self.event_tx.clone();
+            reply.accept().await;
+            tokio::spawn(async move {
+                while let Some(message) = channel.wait().await {
+                    let event = match message {
+                        ChannelMsg::Data { data } => ActorServerEvent::Data(data.to_vec()),
+                        ChannelMsg::WindowChange {
+                            col_width,
+                            row_height,
+                            ..
+                        } => ActorServerEvent::Resize(col_width, row_height),
+                        ChannelMsg::Eof | ChannelMsg::Close => return,
+                        _ => continue,
+                    };
+                    if event_tx.send(event).is_err() {
+                        return;
+                    }
+                }
+            });
+            Ok(())
+        }
+    }
+
+    struct ActorClient;
+
+    impl client::Handler for ActorClient {
+        type Error = russh::Error;
+
+        async fn check_server_key(&mut self, _: &PublicKey) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn product_writer_actor_preserves_follow_up_after_one_mebibyte() {
+        let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let mut server = ActorServer { event_tx };
+        let config = Arc::new(server::Config {
+            keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap()],
+            window_size: ACTOR_TEST_WINDOW_BYTES as u32,
+            channel_buffer_size: 1,
+            ..Default::default()
+        });
+        let running = server.run_on_socket(config, &socket);
+        let server_handle = running.handle();
+
+        let client = async move {
+            let config = Arc::new(client::Config {
+                window_size: ACTOR_TEST_WINDOW_BYTES as u32,
+                channel_buffer_size: 1,
+                ..Default::default()
+            });
+            let key = Arc::new(PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap());
+            let mut session = client::connect(config, address, ActorClient).await.unwrap();
+            let hash = session.best_supported_rsa_hash().await.unwrap().flatten();
+            assert!(session
+                .authenticate_publickey("user", PrivateKeyWithHashAlg::new(key, hash))
+                .await
+                .unwrap()
+                .success());
+            let channel = session.channel_open_session().await.unwrap();
+            let (_read_half, write_half) = channel.split();
+            let (write_tx, write_rx) = mpsc::channel(4096);
+            let (resize_tx, resize_rx) = mpsc::channel(8);
+            let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+            let reported_errors = Arc::clone(&errors);
+            let writer = tokio::spawn(run_channel_writer_core(
+                write_half,
+                write_rx,
+                resize_rx,
+                move |error| reported_errors.lock().unwrap().push(error),
+            ));
+
+            let payload = (0..(1024 * 1024 + 17))
+                .map(|index| (index % 251) as u8)
+                .collect::<Vec<_>>();
+            let follow_up = b"ltty-input-check actor\r";
+            write_tx.send(payload.clone()).await.unwrap();
+            resize_tx.send((181, 49)).await.unwrap();
+            for byte in follow_up {
+                write_tx.send(vec![*byte]).await.unwrap();
+            }
+
+            let mut received = Vec::with_capacity(payload.len() + follow_up.len());
+            let mut resize_seen = false;
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while received.len() < payload.len() + follow_up.len() || !resize_seen {
+                    match event_rx.recv().await {
+                        Some(ActorServerEvent::Data(data)) => received.extend_from_slice(&data),
+                        Some(ActorServerEvent::Resize(cols, rows)) => {
+                            resize_seen = cols == 181 && rows == 49;
+                        }
+                        None => break,
+                    }
+                }
+            })
+            .await
+            .expect("product writer actor did not deliver input and resize");
+
+            assert_eq!(&received[..payload.len()], payload);
+            assert_eq!(&received[payload.len()..], follow_up);
+            assert!(resize_seen);
+            assert!(errors.lock().unwrap().is_empty());
+            assert!(
+                !writer.is_finished(),
+                "product writer actor stopped unexpectedly"
+            );
+            writer.abort();
+            assert!(writer.await.unwrap_err().is_cancelled());
+            session
+                .disconnect(Disconnect::ByApplication, "test complete", "")
+                .await
+                .unwrap();
+        };
+
+        let managed_client = async move {
+            let result = tokio::time::timeout(Duration::from_secs(15), client).await;
+            server_handle.shutdown("test complete".to_string());
+            result.expect("product writer actor test timed out");
+        };
+        let (server_result, ()) = tokio::join!(running, managed_client);
+        server_result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn channel_writer_panic_becomes_an_observable_error() {
+        let writer = tokio::spawn(async {
+            panic!("writer-test-panic");
+        });
+        let message = channel_writer_exit_message(writer.await);
+
+        assert!(message.starts_with("SSH channel writer task failed:"));
+        assert!(message.contains("panicked"));
+    }
 
     #[tokio::test]
     async fn scheduled_input_is_bounded_and_services_resize_during_backpressure() {
