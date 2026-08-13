@@ -808,6 +808,8 @@ Assert-True (
     $putGetVerifier.Contains('one Pane remained usable in the original application process') -and
     $putGetVerifier.Contains('temporaryPresent=false') -and
     $putGetVerifier.Contains('device-put-get-cancel.json') -and
+    $putGetVerifier.Contains('fport rm "tcp:$FixturePort" "tcp:$FixturePort"') -and
+    -not $putGetVerifier.Contains('rport rm "tcp:$FixturePort"') -and
     $putGetVerifier.Contains('-WindowStyle Hidden') -and
     $putGetVerifier.Contains('device-put-get.json')
 ) 'Production PUT/GET physical-PC verifier is incomplete'
