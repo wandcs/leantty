@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - In development
+
 ### Added
 
 - Added bounded foreground `put` and `get` commands for one file at a time

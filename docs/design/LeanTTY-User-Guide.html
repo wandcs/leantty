@@ -6,10 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="1">
+  <meta name="leantty-guide-revision" content="2">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>LeanTTY 1.2.0 使用指南 / User Guide</title>
+  <title>LeanTTY 1.3.0 使用指南 / User Guide</title>
   <style>
     :root {
       color-scheme: dark;
@@ -936,7 +936,7 @@
       <span class="brand-name">LeanTTY</span>
     </a>
     <div class="masthead-meta">
-      <span class="edition">使用指南 · 1.2.0</span>
+      <span class="edition">使用指南 · 1.3.0</span>
       <div class="language-switch" role="group" aria-label="指南语言">
         <label for="language-zh">中文</label>
         <label for="language-en" lang="en">English</label>
@@ -990,9 +990,10 @@
         <li><a href="#zh-trust"><span class="toc-index">03</span><span>信任与身份</span></a></li>
         <li><a href="#zh-workspace"><span class="toc-index">04</span><span>工作区</span></a></li>
         <li><a href="#zh-shortcuts"><span class="toc-index">05</span><span>快捷键</span></a></li>
-        <li><a href="#zh-commands"><span class="toc-index">06</span><span>本地命令</span></a></li>
-        <li><a href="#zh-data"><span class="toc-index">07</span><span>数据与隐私</span></a></li>
-        <li><a href="#zh-recovery"><span class="toc-index">08</span><span>故障恢复</span></a></li>
+        <li><a href="#zh-transfer"><span class="toc-index">06</span><span>单文件传输</span></a></li>
+        <li><a href="#zh-commands"><span class="toc-index">07</span><span>本地命令</span></a></li>
+        <li><a href="#zh-data"><span class="toc-index">08</span><span>数据与隐私</span></a></li>
+        <li><a href="#zh-recovery"><span class="toc-index">09</span><span>故障恢复</span></a></li>
       </ol>
     </nav>
 
@@ -1195,6 +1196,32 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         </p>
       </section>
 
+      <section id="zh-transfer" class="doc-section">
+        <p class="section-kicker">Downloads 与 SFTP</p>
+        <h2>在当前 Pane 传输一个文件。</h2>
+        <p class="section-intro">
+          <code>put</code> 和 <code>get</code> 复用 <code>ssh</code> 的 Host、端口、Identity、
+          主机校验和认证规则；远端必须提供 SFTP。
+        </p>
+
+        <pre><code>put report.pdf user@example.com:/incoming/
+put -p 2222 -i id_work builds/app.bin work:/incoming/app.bin
+get user@example.com:/reports/latest.csv
+get work:/reports/latest.csv reports/</code></pre>
+
+        <p>
+          本地路径相对于已授权的 Downloads；允许既有子目录，但不创建目录、不递归、不展开
+          通配符，也不接受多个源。目标以 <code>/</code> 结尾时必须是既有目录，并自动沿用源文件名；
+          <code>get</code> 省略本地目标时也沿用远端文件名。
+        </p>
+        <p>
+          LeanTTY 从不覆盖已有文件。明确文件名冲突会失败；由 LeanTTY 选择下载名称时，会提交到
+          第一个可用的 <code>name (n).ext</code>。进度在单行显示百分比、已传输量、实时速度与 ETA，
+          完成后显示文件大小和耗时。无选区时 <kbd>Ctrl</kbd>+<kbd>C</kbd> 取消当前传输；有选区时
+          仍只复制。正常取消和受控关闭只清理本任务拥有的临时文件。
+        </p>
+      </section>
+
       <section id="zh-commands" class="doc-section">
         <p class="section-kicker">本地命令参考</p>
         <h2>命令面小而明确。</h2>
@@ -1213,6 +1240,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
               <tr><td><code>help &lt;command&gt;</code></td><td>显示一个受支持命令的简短帮助。</td></tr>
               <tr><td><code>ssh …</code></td><td>直接连接，或通过保存的 OpenSSH Host 连接。</td></tr>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>不发起连接，显示当前支持的最终配置。</td></tr>
+              <tr><td><code>put …</code></td><td>通过 SFTP 上传 Downloads 中的一个文件。</td></tr>
+              <tr><td><code>get …</code></td><td>通过 SFTP 下载一个文件到 Downloads。</td></tr>
               <tr><td><code>host add|set|list|rm</code></td><td>管理 OpenSSH Host 配置中由 LeanTTY 拥有的区域。</td></tr>
               <tr><td><code>key list|import|export|rm</code></td><td>管理已经验证的 LeanTTY 密钥对。</td></tr>
               <tr><td><code>ssh-keygen …</code></td><td>生成、检查或更新密钥与主机信任记录。</td></tr>
@@ -1223,7 +1252,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         </div>
 
         <p>
-          使用 <code>help ssh</code>、<code>help host</code>、<code>help key</code>、
+          使用 <code>help ssh</code>、<code>help put</code>、<code>help get</code>、
+          <code>help host</code>、<code>help key</code>、
           <code>help ssh-keygen</code> 或 <code>&lt;command&gt; --help</code> 查看准确语法。
           不支持的选项会明确失败，不会被静默忽略。
         </p>
@@ -1325,7 +1355,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.2.0</strong> · 离线使用指南 · 修订 1 · 发布于 2026-08-08</div>
+    <div><strong>LeanTTY 1.3.0</strong> · 离线使用指南 · 修订 2 · 开发版 2026-08-13</div>
     <div>先核对，再连接；先保留工作，再处理断线。</div>
   </footer>
   </div>
@@ -1362,7 +1392,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
       <span class="brand-name">LeanTTY</span>
     </a>
     <div class="masthead-meta">
-      <span class="edition">USER GUIDE · 1.2.0</span>
+      <span class="edition">USER GUIDE · 1.3.0</span>
       <div class="language-switch" role="group" aria-label="Guide language">
         <label for="language-zh" lang="zh-CN">中文</label>
         <label for="language-en">English</label>
@@ -1416,9 +1446,10 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         <li><a href="#en-trust"><span class="toc-index">03</span><span>Trust &amp; identity</span></a></li>
         <li><a href="#en-workspace"><span class="toc-index">04</span><span>Workspace</span></a></li>
         <li><a href="#en-shortcuts"><span class="toc-index">05</span><span>Shortcuts</span></a></li>
-        <li><a href="#en-commands"><span class="toc-index">06</span><span>Local commands</span></a></li>
-        <li><a href="#en-data"><span class="toc-index">07</span><span>Data &amp; privacy</span></a></li>
-        <li><a href="#en-recovery"><span class="toc-index">08</span><span>Recovery</span></a></li>
+        <li><a href="#en-transfer"><span class="toc-index">06</span><span>Single-file transfer</span></a></li>
+        <li><a href="#en-commands"><span class="toc-index">07</span><span>Local commands</span></a></li>
+        <li><a href="#en-data"><span class="toc-index">08</span><span>Data &amp; privacy</span></a></li>
+        <li><a href="#en-recovery"><span class="toc-index">09</span><span>Recovery</span></a></li>
       </ol>
     </nav>
 
@@ -1624,6 +1655,34 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         </p>
       </section>
 
+      <section id="en-transfer" class="doc-section">
+        <p class="section-kicker">Downloads and SFTP</p>
+        <h2>Transfer one file in the active pane.</h2>
+        <p class="section-intro">
+          <code>put</code> and <code>get</code> reuse the Host, port, Identity, host-key and authentication
+          rules used by <code>ssh</code>. The remote endpoint must provide SFTP.
+        </p>
+
+        <pre><code>put report.pdf user@example.com:/incoming/
+put -p 2222 -i id_work builds/app.bin work:/incoming/app.bin
+get user@example.com:/reports/latest.csv
+get work:/reports/latest.csv reports/</code></pre>
+
+        <p>
+          Local paths are relative to the authorized Downloads tree. Existing subdirectories are allowed,
+          but LeanTTY does not create directories, recurse, expand wildcards or accept multiple sources.
+          A target ending in <code>/</code> must be an existing directory and keeps the source basename;
+          omitting the local <code>get</code> target also keeps the remote basename.
+        </p>
+        <p>
+          LeanTTY never overwrites an existing file. An explicit name conflict fails; when LeanTTY chooses
+          a download name, it commits to the first available <code>name (n).ext</code>. One progress line
+          shows percentage, transferred size, live speed and ETA, and completion reports size and elapsed
+          time. Without a selection, <kbd>Ctrl</kbd>+<kbd>C</kbd> cancels the active transfer; with a selection,
+          it only copies. Normal cancellation and confirmed close clean only this task's temporary file.
+        </p>
+      </section>
+
       <section id="en-commands" class="doc-section">
         <p class="section-kicker">Local command reference</p>
         <h2>Small surface, predictable behavior.</h2>
@@ -1642,6 +1701,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
               <tr><td><code>help &lt;command&gt;</code></td><td>Show concise help for one supported command.</td></tr>
               <tr><td><code>ssh …</code></td><td>Connect directly or through a saved OpenSSH Host.</td></tr>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>Show the supported effective configuration without connecting.</td></tr>
+              <tr><td><code>put …</code></td><td>Upload one Downloads file through SFTP.</td></tr>
+              <tr><td><code>get …</code></td><td>Download one SFTP file into Downloads.</td></tr>
               <tr><td><code>host add|set|list|rm</code></td><td>Manage LeanTTY's section of OpenSSH host configuration.</td></tr>
               <tr><td><code>key list|import|export|rm</code></td><td>Manage verified LeanTTY key pairs.</td></tr>
               <tr><td><code>ssh-keygen …</code></td><td>Generate, inspect or update keys and trusted-host records.</td></tr>
@@ -1652,7 +1713,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         </div>
 
         <p>
-          Use <code>help ssh</code>, <code>help host</code>, <code>help key</code>,
+          Use <code>help ssh</code>, <code>help put</code>, <code>help get</code>,
+          <code>help host</code>, <code>help key</code>,
           <code>help ssh-keygen</code> or <code>&lt;command&gt; --help</code> for exact syntax.
           Unsupported options fail explicitly instead of being silently ignored.
         </p>
@@ -1757,7 +1819,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.2.0</strong> · Offline user guide · Revision 1 · Released 2026-08-08</div>
+    <div><strong>LeanTTY 1.3.0</strong> · Offline user guide · Revision 2 · Development 2026-08-13</div>
     <div>Verify first. Keep work durable. Recover deliberately.</div>
   </footer>
   </div>

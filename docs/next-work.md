@@ -319,7 +319,7 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
 - [ ] 实现与证据闭合后，把 `design/file-transfer.md` 从活动方案更新为完成事实，并同步
   `design/README.md`、中英文离线 User Guide、安全边界和必要的开发文档；删除已失去门禁价值的
   临时探针或只保留受原则约束的持续回归入口。
-- [ ] 将用户可见改动记录到 `CHANGELOG.md`。在功能和依赖稳定、准备保留候选时再按
+- [x] 将用户可见改动记录到 `CHANGELOG.md`。在功能和依赖稳定、准备保留候选时再按
   `versioning.md` 选择并统一推进 `1.3.0` 的所有版本源和 `versionCode`；不能提前把 WIP 描述成
   已发布能力。
 - [ ] 准备正式发布包时才运行 `tools/test-regression.ps1`、`tools/verify-pc.ps1` 和
