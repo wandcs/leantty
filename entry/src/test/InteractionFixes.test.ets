@@ -945,6 +945,7 @@ export default function interactionFixesTest() {
       expect(BridgeProtocol.copyOrInterrupt().serialize()).assertEqual('H2|N2W|CONTROL|copyOrInterrupt|')
       expect(BridgeProtocol.parse('H2|N2W|CONTROL|copyOrInterrupt|unexpected') === null).assertEqual(true)
       expect(BridgeProtocol.searchOpen().serialize()).assertEqual('H2|N2W|CONTROL|searchOpen|')
+      expect(BridgeProtocol.searchClose().serialize()).assertEqual('H2|N2W|CONTROL|searchClose|')
     })
 
     it('preservesDirectionalBridgePayloadsWithoutJsonEncoding', 0, () => {
@@ -992,6 +993,11 @@ export default function interactionFixesTest() {
         expect(searchOpen.payload).assertEqual('')
       }
       expect(BridgeProtocol.parse('H2|N2W|CONTROL|searchOpen|query')).assertEqual(null)
+      expect(BridgeProtocol.parse('H2|N2W|CONTROL|searchClose|query')).assertEqual(null)
+      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchState|open') !== null).assertEqual(true)
+      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchState|composing') !== null).assertEqual(true)
+      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchState|closed') !== null).assertEqual(true)
+      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchState|unknown')).assertEqual(null)
       expect(BridgeProtocol.parse('H2|N2W|CONTROL|inputSecurity|secret')).assertEqual(null)
       expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchOpen|')).assertEqual(null)
       expect(BridgeProtocol.parse('H2|N2W|DATA|searchOpen|')).assertEqual(null)

@@ -199,6 +199,13 @@ export class TerminalBridge {
     this.pumpSearchOpen()
   }
 
+  closeSearch(): void {
+    this.pendingSearchOpen = false
+    if (this.ready) {
+      this.send(BridgeProtocol.searchClose())
+    }
+  }
+
   restoreSnapshot(snapshot: string): void {
     if (snapshot.length === 0) {
       return

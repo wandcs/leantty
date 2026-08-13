@@ -44,20 +44,30 @@ Index exact shortcut router
   → active PaneRuntime.surface.openSearch()
     → current TerminalBridge: N2W CONTROL searchOpen, empty payload
       → this terminal.html DOM: input + SearchAddon + result feedback
+        → W2N CONTROL searchState, payload open/composing/closed only
+
+physical Escape while search owns focus
+  → active PaneRuntime.surface.closeSearch()
+    → current TerminalBridge: N2W CONTROL searchClose, empty payload
+      → this terminal.html closes search and restores xterm focus
 ```
 
 - 每个 `PaneRuntime` 由稳定 `paneId` 标识，独占一个 `SessionViewModel` 和一个
   `TerminalSurfaceController`；每次 ArkWeb 页面 attach 才由该 controller 创建当前
   `TerminalBridge`。因此 `activePaneRuntime()` 足以把打开意图送到唯一当前 Pane。
-- ArkTS 只增加精确 `Ctrl+Alt+F` 路由和 `openSearch()` 直通方法。Bridge 只增加一个
-  N2W CONTROL kind `searchOpen`，payload 必须为空；Native 与 Web 双侧 allowlist 都拒绝
-  错误方向、channel、非空 payload 和未知 kind。
-- 查询文本、组合输入、匹配、当前位置、结果总数、浮层可见性和 addon 实例都只存在于
-  `terminal.html` 当前页面。它们不经过 W2N Bridge，不进入 `SessionViewModel`、
+- ArkTS 只路由精确 `Ctrl+Alt+F`，以及搜索实际占用当前 Surface 时的物理 `Escape`。
+  Bridge 的 N2W `searchOpen/searchClose` payload 必须为空；Web 只以 W2N `searchState`
+  回报 `open/composing/closed`。Native 与 Web 双侧 allowlist 都拒绝错误方向、channel、非法 payload
+  和未知 kind。
+- 查询文本、组合输入、匹配、当前位置、结果总数和 addon 实例都只存在于
+  `terminal.html` 当前页面。除浮层的 `open/closed` 所有权状态外，它们不经过 W2N Bridge，不进入 `SessionViewModel`、
   `SshClient`、SSH Transport、AppStorage、Preferences、日志、终端字节流或 framebuffer
   snapshot。无需新增搜索结果 Bridge kind。
 - 搜索输入获得 DOM focus 后，xterm textarea 不再接收查询按键；精确打开 chord 在
-  ArkUI 被消费。关闭后页面直接调用 `term.focus()`，不需要跨层“关闭完成”回执。远端
+  ArkUI 被消费。HarmonyOS 的物理 Escape 不会稳定进入 ArkWeb DOM，因此只有在当前
+  Surface 已报告搜索打开且未处于输入法组合时，ArkUI 才消费 Escape 并发送 `searchClose`；
+  组合期间的第一个 Escape 仍交给输入法。关闭后页面调用
+  `term.focus()` 并回报 `closed`。远端
   只可能观察既有的终端 focus-out/focus-in 报告，不会收到查询、Enter、Tab 或 Escape。
 
 生命周期固定如下：
@@ -73,10 +83,10 @@ Index exact shortcut router
 - framebuffer capture/restore 只保存终端内容与模式，不保存 DOM、selection decoration
   或查询。恢复完成后搜索仍关闭；持续 SSH 输出继续走既有 binary output/ACK 路径。
 
-这一路径没有跨 Pane 可寻址的搜索消息，也没有 W2N 搜索结果，因此迟到搜索消息不能
+这一路径没有跨 Pane 可寻址的搜索消息，也没有 W2N 查询或搜索结果，因此迟到状态消息不能
 选择另一 Pane、修改 Session 或驱动系统效果。Native 与 Web parser 都在 dispatch 前
-校验 `searchOpen` 的方向、CONTROL channel 和空 payload；协议测试覆盖未知 kind、错误
-方向/channel 和非空 payload。Surface detach 会先关闭旧 port、移除回调并清除排队的
+校验 `searchOpen/searchClose/searchState` 的方向、CONTROL channel 和封闭 payload；协议测试覆盖未知 kind、错误
+方向/channel 和非法 payload。Surface detach 会先关闭旧 port、移除回调、清除搜索所有权并清除排队的
 打开意图，再递增 `PaneRuntime.generation`，旧 WebView 消息不能进入替代 Surface。
 
 ## 已确认交互契约
