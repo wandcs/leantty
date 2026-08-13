@@ -591,8 +591,20 @@ async fn run_channel_writer(
     let mut trace_follow_up_writes = false;
     let mut follow_up_write_count = 0_u32;
     let mut follow_up_byte_count = 0_usize;
+    let mut trace_tick = tokio::time::interval(Duration::from_secs(1));
+    trace_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    trace_tick.tick().await;
     loop {
         tokio::select! {
+          _ = trace_tick.tick(), if trace_follow_up_writes => {
+            send_control(
+              &control_callback,
+              &format!(
+                "OUTPUT_METRICS:{{\"writes\":{},\"writeBytes\":{},\"stage\":\"writer-alive-after-large-input\"}}",
+                follow_up_write_count, follow_up_byte_count,
+              ),
+            );
+          }
           data = write_rx.recv() => {
             match data {
               Some(bytes) => {
@@ -651,7 +663,10 @@ async fn run_channel_writer(
                   Err(error) => send_control(&control_callback, &format!("WRITE_ERROR:{}", error)),
                 }
               }
-              None => break,
+              None => {
+                send_control(&control_callback, "OUTPUT_METRICS:{\"stage\":\"writer-exit-write-closed\"}");
+                break;
+              },
             }
           }
           size = resize_rx.recv() => {
@@ -661,7 +676,10 @@ async fn run_channel_writer(
                   send_control(&control_callback, &format!("RESIZE_ERROR:{}", error));
                 }
               }
-              None => break,
+              None => {
+                send_control(&control_callback, "OUTPUT_METRICS:{\"stage\":\"writer-exit-resize-closed\"}");
+                break;
+              },
             }
           }
         }
