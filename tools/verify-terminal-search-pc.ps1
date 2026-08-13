@@ -415,8 +415,19 @@ function Clear-TerminalSearchQuery {
 }
 
 function Invoke-TerminalSearchPrevious {
-    & $hdc -t $Target shell 'uitest uiInput keyEvent 2047 2054' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to invoke Shift+Enter in terminal search' }
+    $layout = Get-LeanTTYDeviceLayout `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'layout-search-previous-control.json')
+    $previous = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+        [string]$_.attributes.type -eq 'button' -and
+        [string]$_.attributes.originalText -eq 'Previous match, Shift+Enter' -and
+        [string]$_.attributes.visible -eq 'true'
+    })
+    if ($previous.Count -ne 1) {
+        throw '[harness] Previous terminal search control was not uniquely available'
+    }
+    Invoke-LeanTTYLayoutNodeClick -Node $previous[0]
 }
 
 function Invoke-TerminalWorkspaceChord {
