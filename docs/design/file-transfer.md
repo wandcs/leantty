@@ -1025,6 +1025,30 @@ value，离开安全模式时立即清理。Bridge allowlist 只接受 `plain/ma
 全部通过，包括 ArkTS 104/104、Web/指南、PowerShell、WSL Rust fmt/clippy、native/core/fixture
 测试与 SSH fixture E2E；证据为 `build/verification/targeted-regression-1.3-final-2.json`。
 
+### 7.15 2026-08-14 同一保留候选自动 smoke
+
+干净提交 `7b83becfaaafdaaeeee1d9948963458060465e96` 通过正式开发候选门禁并保留了 ARM64
+test-signed HAP；SHA-256 为
+`0d38130f73c39ba772110d7c5c1bec08010222f53a9c9d35a41487c50f919edc`。该同一字节包随后通过：
+
+- SSH transport main path，覆盖 1 MiB 粘贴、连续输出、resize、断开、重连和后续输入；
+- 搜索全部五个物理设备场景，包含 open/close/focus、ASCII 查询导航、Pane/Tab 所有权、warm
+  eviction 与窗口/renderer lifecycle；
+- 131,089 字节 production `GET -> Downloads -> PUT` 往返，双向 SHA-256 一致，并实际经过既有
+  子目录、GET 自动编号、PUT basename、Tab 补全、host-key/password 提示、终端续用和精确清理。
+
+最后一项 GET 为 77 ms、PUT 为 93 ms；证据分别位于
+`build/verification/ssh-1.3-candidate-main-path/`、
+`build/verification/terminal-search-1.3-candidate/` 和
+`build/verification/put-get-1.3-candidate-main-path/`。这些结果闭合了同候选自动化范围，但 HDC
+输入注入不能替代物理键盘或中英文 IME，repository fixture 也不能替代真实远端上的
+tmux/vim/less/Agent TUI。真实选区/复制和 URL 激活同样保留为同候选人工 smoke。
+
+当前测试 PC 的 Downloads 授权会跨重启与覆盖安装保留。设备上的 `aa`、`atm` 和 `bm` 帮助
+没有提供只撤销该目录授权且保留应用数据的受支持入口；`bm clean` 会清应用数据。因此首次
+未授权、拒绝、恢复和双 Pane single-flight 仍必须在可安全重置的隔离应用身份或明确可清理的
+设备状态上完成，不能为制造测试前置条件破坏现有 Hosts、密钥或其他持久资产。
+
 ## 八、后续讨论清单与实现前门禁
 
 本节是后续讨论的权威清单。标记为“待讨论”的条目没有被本文其他详细候选规则自动

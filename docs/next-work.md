@@ -346,6 +346,10 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
 
 - [ ] 从未授权状态执行首条 `put/get`：只出现真实系统 Downloads 权限弹窗；拒绝后终端仍可用，
   再次执行可以恢复；两个 Pane 同时请求时不出现并行授权状态。
+  当前测试 PC 的 Downloads 授权会跨重启和覆盖安装保留；2026-08-14 的 `aa` / `atm` / `bm`
+  设备命令审计没有发现只撤销该目录授权且保留应用数据的受支持入口，`bm clean` 会清除应用
+  数据，因此不得为复现未授权状态破坏现有 Hosts、密钥和其他持久资产。该项必须在可安全重置的
+  隔离应用身份或明确可清理的设备状态上完成。
 - [x] 从 Downloads 根上传并下载空、小、大文件，验证文件管理器可见性、实际保存名称和端到端
   SHA-256；覆盖空格、Unicode、长文件名与已决定的相对子目录规则。
 - [x] 预置远端上传目标、明确本地下载目标，以及省略目标或指向既有目录的 basename，并在
@@ -364,8 +368,13 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
   终端可恢复、错误可执行且已有文件不变；检查 hilog、命令历史和错误快照不含凭据或文件内容。
 - [ ] 在同一个保留候选上完成键盘、IME、Tab/Pane、终端输入输出、搜索、选择/复制、链接、
   tmux/vim/less/Agent TUI、窗口与 SSH 主路径的最小稳定 smoke，证明文件传输没有破坏现有核心
-  终端事件链。大写入诊断门禁已闭合；下一步从干净精确提交重建候选。此前搜索、Pane/Tab、
-  warm eviction 和窗口证据可作为范围依据，但不能替代新候选上的同包 smoke。
+  终端事件链。2026-08-14 已从干净提交 `7b83becfaaafdaaeeee1d9948963458060465e96` 重建并保留
+  SHA-256 为 `0d38130f73c39ba772110d7c5c1bec08010222f53a9c9d35a41487c50f919edc` 的 ARM64 test-signed
+  HAP；同包已经通过 `verify-pc.ps1`、SSH transport main path、搜索全部五个场景（含 Tab/Pane、
+  warm eviction 和窗口/renderer lifecycle），以及 production GET -> Downloads -> PUT 的 131,089
+  字节 SHA-256 往返、补全、冲突命名、认证提示、终端续用和清理。剩余只保留 HDC 不能替代的
+  物理键盘与中英文 IME、真实选区/复制和 URL 激活，以及真实远端上的 tmux/vim/less/Agent TUI
+  最小 smoke；不得用输入注入或 repository fixture 冒充这些结论。
 
 ## 3. 文档、版本与发布
 
@@ -377,8 +386,9 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
   已发布能力。
 - [ ] 准备正式发布包时才运行 `tools/test-regression.ps1`、`tools/verify-pc.ps1` 和
   `release-process.md` 的隔离 production/review 流程；冻结一个精确提交、tree、native 输出、
-  签名 APP/HAP、哈希和同候选物理机证据。当前 `14c1408` / `ba7d21e` 诊断源码和对应开发包
-  不是可保留或发布的 1.3 候选。
+  签名 APP/HAP、哈希和同候选物理机证据。上述 `7b83bec` test-signed HAP 是已保留的开发验收
+  候选，不是 production APP 或 AppGallery 上传物；正式 production/review 隔离构建、版本提交、
+  标签和发布仍必须在全部验收闭合后按流程完成。
 - [ ] 1.2.0 AppGallery 审核已于 2026-08-13 通过并上架。1.3.0 仍须先发布不可变签名标签和
   匹配 GitHub Release，才提交同版本 production APP；不移动标签、不替换 Release。
 
