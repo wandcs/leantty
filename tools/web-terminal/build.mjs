@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,16 +17,33 @@ const assets = [
   ['node_modules/@xterm/addon-webgl/lib/addon-webgl.js', 'addon-webgl.js']
 ];
 
+const webglOpaqueCellBackground =
+  'f=(h>>8&255)/255,g=1,this._addRectangle';
+const webglConfigurableCellBackground =
+  'f=(h>>8&255)/255,g=globalThis.LeanTTYCellBackgroundOpacity??1,this._addRectangle';
+
+function applyLeanTTYPatches(content, outputName) {
+  if (outputName !== 'addon-webgl.js') return content;
+
+  const matches = content.split(webglOpaqueCellBackground).length - 1;
+  if (matches !== 1) {
+    throw new Error(
+      `Expected one xterm WebGL cell-background alpha site, found ${matches}. ` +
+      'Review the pinned addon before updating it.'
+    );
+  }
+  return content.replace(webglOpaqueCellBackground, webglConfigurableCellBackground);
+}
+
 await mkdir(outputDir, { recursive: true });
 
 const manifest = [];
 for (const [sourceRelative, outputName] of assets) {
   const source = resolve(scriptDir, sourceRelative);
   const output = resolve(outputDir, outputName);
-  await copyFile(source, output);
-
-  let content = await readFile(output, 'utf8');
+  let content = await readFile(source, 'utf8');
   content = content.replace(/\n?\/\/# sourceMappingURL=.*\s*$/u, '\n');
+  content = applyLeanTTYPatches(content, outputName);
   await writeFile(output, content, 'utf8');
 
   const bytes = await readFile(output);

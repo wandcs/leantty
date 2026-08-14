@@ -41,6 +41,10 @@
 
 ### Fixed
 
+- Kept ANSI and true-color cell backgrounds consistent with LeanTTY's
+  transparency instead of letting the xterm WebGL renderer force them fully
+  opaque. Dense TUI surfaces such as Codex no longer appear as black blocks;
+  foreground glyphs and the opaque `Off` mode retain their original contrast.
 - Restored ordinary terminal key delivery through ArkWeb after the file-transfer
   keyboard interception change. Left/Right, `Ctrl+P` and other TUI-owned keys
   now reach the remote PTY again, while `Ctrl+C`, Tab, product search and

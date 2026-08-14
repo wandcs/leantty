@@ -235,6 +235,20 @@ assert.match(terminalHtml,
   'terminal padding and leftover cell space must expose the single ArkUI surface background');
 assert.match(terminalHtml, /document\.documentElement\.style\.setProperty\('--terminal-background', themeObj\.background\)/,
   'theme changes must propagate their background to the Web terminal chrome');
+assert.match(terminalHtml,
+  /LeanTTYCellBackgroundOpacity = Number\.isFinite\(requestedCellBackgroundOpacity\)[\s\S]*Math\.max\(0, Math\.min\(1, requestedCellBackgroundOpacity\)\)/,
+  'theme changes must clamp the renderer-only cell-background opacity');
+assert.match(terminalHtml, /delete themeObj\.cellBackgroundOpacity/,
+  'LeanTTY renderer metadata must not leak into the upstream xterm theme');
+const packagedWebglAddon = readFileSync(
+  new URL('../../entry/src/main/resources/rawfile/addon-webgl.js', import.meta.url), 'utf8'
+);
+assert.match(packagedWebglAddon,
+  /globalThis\.LeanTTYCellBackgroundOpacity\?\?1/,
+  'the packaged WebGL renderer must use LeanTTY cell-background opacity');
+assert.doesNotMatch(packagedWebglAddon,
+  /f=\(h>>8&255\)\/255,g=1,this\._addRectangle/,
+  'the pinned WebGL renderer must not force explicit cell backgrounds opaque');
 assert.match(terminalHtml, /themeObj\.overviewRulerBorder = themeObj\.background/,
   'the width-only overview ruler must not draw a contrasting edge line');
 assert.match(terminalHtml,

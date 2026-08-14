@@ -15,7 +15,7 @@ resources actually packaged in the ARM64 release HAP.
 | `addon-search.js` | `@xterm/addon-search 0.16.0` | https://github.com/xtermjs/xterm.js/tree/6.0.0/addons/addon-search | MIT | `BEADC1A87F56C24068389EDCEF219988FADE893B7836C95015157B3C0D812B70` |
 | `addon-web-links.js` | `@xterm/addon-web-links 0.12.0` | https://github.com/xtermjs/xterm.js/tree/6.0.0/addons/addon-web-links | MIT | `E34337F790D1CC817312A1AC1C00C473A7C504F471A70086DB57CA9CD0335CA9` |
 | `addon-serialize.js` | `@xterm/addon-serialize 0.14.0` | https://github.com/xtermjs/xterm.js/tree/6.0.0/addons/addon-serialize | MIT | `7F10D39FE8E1B27996BC7BB66F31409E7943455B04A991FEC2A9DFA15EAF2B98` |
-| `addon-webgl.js` | `@xterm/addon-webgl 0.19.0` | https://github.com/xtermjs/xterm.js/tree/6.0.0/addons/addon-webgl | MIT | `E84BF980D7A5C3D0A69352A31F4C2D92B6EDC3ABEBC722D856C3872573FEA095` |
+| `addon-webgl.js` | `@xterm/addon-webgl 0.19.0` | https://github.com/xtermjs/xterm.js/tree/6.0.0/addons/addon-webgl | MIT | `89810B573976F697517D5F0C350DB000F392E344389417582772312EE152C6F3` |
 
 The copied files match `tools/web-terminal/assets-manifest.json`. Source-map
 references are removed by `tools/web-terminal/build.mjs` before packaging.
