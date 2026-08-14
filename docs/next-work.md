@@ -326,7 +326,7 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
 参数和 Chrome 层级，最后统一命令输出；不得用后续调色掩盖前序根因，也不得在过程中增加主题、
 字体、透明度自定义值或第二套输出模式。
 
-1. [ ] 定位并修复 HSL 中运行 `./run-codex` 以及其他高密度 TUI 时出现的大面积黑色文字背景块。
+1. [x] 定位并修复 HSL 中运行 `./run-codex` 以及其他高密度 TUI 时出现的大面积黑色文字背景块。
    先保留当前真机截图、终端字节/样式和 renderer 状态作为失败基线，沿 SSH → Rust/N-API →
    ArkTS → Bridge → xterm/WebGL/CSS → HarmonyOS 透明窗口链路确定根因，并建立能在修复前失败的
    最小回归。完成条件是同一物理 ARM64 PC 上 Codex TUI 和至少一个非 Codex 复现场景不再出现
