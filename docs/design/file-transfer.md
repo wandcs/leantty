@@ -1049,6 +1049,15 @@ tmux/vim/less/Agent TUI。真实选区/复制和 URL 激活同样保留为同候
 未授权、拒绝、恢复和双 Pane single-flight 仍必须在可安全重置的隔离应用身份或明确可清理的
 设备状态上完成，不能为制造测试前置条件破坏现有 Hosts、密钥或其他持久资产。
 
+2026-08-14 继续检查了本机 DevEco 已配置的 MateBook Pro 虚拟机。该实例能正常启动并通过
+`127.0.0.1:5555` 接入 HDC，系统 API 为 24，但 `const.product.cpu.abilist` 只有 `x86_64`。
+哈希仍为 `0116b6ecf02f7501541acf7ef654beb4c57246833a28d0de7a8f7240e7826c99` 的同一 ARM64
+候选 HAP 在安装阶段得到系统错误 `9568347`：设备 ABI 与模块 C++ 原生库 ABI 不匹配。该结果
+排除了用这台虚拟机验证 LeanTTY 生产授权链的方案；单独做一个 ArkTS 权限样例只能说明通用
+系统弹窗，不能证明 `put/get`、`DownloadsAccessManager`、终端恢复或双 Pane single-flight，
+因此不作为 1.3 验收替代。项目继续只支持物理 ARM64 HarmonyOS PC，不为此门禁增加 x86_64
+原生产物或测试专用第二路径。
+
 ## 八、后续讨论清单与实现前门禁
 
 本节是后续讨论的权威清单。标记为“待讨论”的条目没有被本文其他详细候选规则自动
