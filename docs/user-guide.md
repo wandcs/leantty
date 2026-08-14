@@ -14,7 +14,7 @@ run in the selected execution environment.
 
 ## Product model
 
-- The application starts at a local `L>` prompt: cyan `L`, green `>`.
+- The application starts at a lowercase `ltty>` prompt in the theme's green.
 - A tab owns one or two panes.
 - Each pane owns one independent SSH session and terminal surface.
 - Closing a connected pane disconnects its SSH session.
@@ -29,7 +29,7 @@ part of the product contract.
 
 ## First connection
 
-At `L>`, connect directly with a username and host:
+At `ltty>`, connect directly with a username and host:
 
 ```text
 ssh user@example.com
@@ -160,7 +160,7 @@ existing line. It is a bounded helper, not a general remote file editor.
 
 ## Single-file transfer
 
-At an idle `L>` prompt, transfer one file between the authorized HarmonyOS
+At an idle `ltty>` prompt, transfer one file between the authorized HarmonyOS
 Downloads tree and an SFTP server:
 
 ```text
@@ -222,7 +222,7 @@ fingerprint before accepting it.
 
 ## Current local command reference
 
-At the top-level `L>` prompt, `help`, `?`, `？`, `-h` and `--help` keep the
+At the top-level `ltty>` prompt, `help`, `?`, `？`, `-h` and `--help` keep the
 complete terminal help and append one link to the full offline guide. LeanTTY
 creates or refreshes that file only after the command is entered, at:
 
@@ -327,7 +327,7 @@ record. See [the privacy policy](../PRIVACY.md) for the exact boundary.
 ## Recovery and troubleshooting
 
 - **Connection appears stuck:** press `Ctrl+C`. Connecting and authentication
-  prompts have an explicit cancellation path and return to `L>`.
+  prompts have an explicit cancellation path and return to `ltty>`.
 - **Host key changed:** do not bypass the warning. Verify the change, run the
   exact `ssh-keygen -R` command shown by LeanTTY, reconnect and inspect the new
   fingerprint.

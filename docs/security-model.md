@@ -156,7 +156,7 @@ must not be hidden behind ordinary uninstall wording.
 
 ## Downloads and file-transfer boundary
 
-`put/get` runs only after an explicit local command at an idle `L>` prompt.
+`put/get` runs only after an explicit local command at an idle `ltty>` prompt.
 Local paths are resolved beneath the system-authorized Downloads root; LeanTTY
 does not expose arbitrary local paths, recursive traversal, wildcards or a file
 manager. Tab completion is bounded and does not request permission merely to

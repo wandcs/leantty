@@ -1121,16 +1121,16 @@ export default function interactionFixesTest() {
       line.insert('中文')
       expect(line.moveLeft()).assertEqual(true)
       expect(line.renderForTerminal(LocalCommandOutput.prompt()))
-        .assertEqual('\r\u001b[2K\u001b[36mL\u001b[32m>\u001b[0m 中文' +
-          '\r\u001b[36mL\u001b[32m>\u001b[0m 中')
+        .assertEqual('\r\u001b[2K\u001b[32mltty>\u001b[0m 中文' +
+          '\r\u001b[32mltty>\u001b[0m 中')
       expect(line.backspace() !== null).assertEqual(true)
       expect(line.renderForTerminal(LocalCommandOutput.prompt()))
-        .assertEqual('\r\u001b[2K\u001b[36mL\u001b[32m>\u001b[0m 文' +
-          '\r\u001b[36mL\u001b[32m>\u001b[0m ')
+        .assertEqual('\r\u001b[2K\u001b[32mltty>\u001b[0m 文' +
+          '\r\u001b[32mltty>\u001b[0m ')
     })
 
     it('keepsLocalCommandOutputSemanticAndTextCompleteWithoutColor', 0, () => {
-      expect(LocalCommandOutput.prompt()).assertEqual('\u001b[36mL\u001b[32m>\u001b[0m ')
+      expect(LocalCommandOutput.prompt()).assertEqual('\u001b[32mltty>\u001b[0m ')
       expect(LocalCommandOutput.status('Preparing', 'upload...'))
         .assertEqual('\u001b[36mPreparing\u001b[0m upload...')
       expect(LocalCommandOutput.success('Uploaded file.'))
@@ -1142,13 +1142,13 @@ export default function interactionFixesTest() {
       expect(LocalCommandOutput.cancelled()).assertEqual('\u001b[33mCancelled.\u001b[0m')
       expect(LocalCommandOutput.error('Unknown command "oops".', 'Try: help'))
         .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m Unknown command "oops".\r\n' +
-          '  Try: help\r\n\u001b[36mL\u001b[32m>\u001b[0m ')
+          '  Try: help\r\n\u001b[32mltty>\u001b[0m ')
       expect(LocalCommandOutput.error('Usage: host rm <host-name>'))
         .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m Invalid command syntax.\r\n' +
-          '  Usage: host rm <host-name>\r\n\u001b[36mL\u001b[32m>\u001b[0m ')
+          '  Usage: host rm <host-name>\r\n\u001b[32mltty>\u001b[0m ')
       expect(LocalCommandOutput.error('First line.\r\n\r\nSecond group.'))
         .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m First line.\r\n\r\n' +
-          '  Second group.\r\n\u001b[36mL\u001b[32m>\u001b[0m ')
+          '  Second group.\r\n\u001b[32mltty>\u001b[0m ')
     })
 
     it('confirmsApplicationCloseOnlyForUnsuppressedActiveSessions', 0, () => {

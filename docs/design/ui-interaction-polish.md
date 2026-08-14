@@ -1,6 +1,6 @@
 # 桌面终端界面与交互收敛
 
-> 状态：Verified 1.2；Implementing 1.3 Tab 层级修订
+> 状态：Verified / 1.2–1.3
 >
 > milestone：1.2 基线；1.3 渲染与视觉修订
 >
@@ -124,6 +124,14 @@ Terminal Surface 独占。透明效果不得暴露新的终端内容副本，也
 形状、4vp 间距、文字权重、状态点和焦点环；不增加分隔线、阴影、渐变、主题选项或新状态源。
 完成条件是自动化锁定四级 surface 和 rail alpha 所有权，并用同一物理 PC 的四 Tab
 Off/Medium/Extreme 前后截图证明三层结构稳定可辨。
+
+2026-08-14 已用 ARM64 物理 HAD-W32 闭合本次直接受影响链。深色主题四 Tab 的 rail、非活动 Tab
+和活动 Tab 在 Off、Medium、Extreme 下均保持上述顺序；菜单标签与无菜单画面分别留证，最终恢复
+Medium。hover 使用独立 surface0 且活动态判断优先，自动化锁定三种 Tab 状态映射；原有单/双 Pane、
+活动/非活动窗口证据对应的结构与事件链未改变，不重复执行无关全量矩阵。相同 HAP 还显示了整体
+绿色小写 `ltty>`。HAP SHA-256 为
+`364a82850afbccacacfcffb6330d7f65ddce731a661e6af57451dd317feba7c0`，截图保存在忽略目录
+`build/verification/tab-hierarchy-green-prompt-20260814/`。
 
 ### 2026-08-07 二次走查决定（历史基线，已被五档扩展替代）
 
