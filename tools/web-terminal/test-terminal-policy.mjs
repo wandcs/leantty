@@ -648,8 +648,8 @@ assert.doesNotMatch(sessionViewModel, /ltty> /,
 const localCommandOutput = readFileSync(
   new URL('../../entry/src/main/ets/model/terminal/LocalCommandOutput.ets', import.meta.url), 'utf8');
 assert.match(localCommandOutput,
-  /return CYAN \+ 'L' \+ GREEN \+ '>' \+ RESET \+ ' '/,
-  'the local prompt must use one cyan brand cell and a separately green readiness marker');
+  /return GREEN \+ 'ltty>' \+ RESET \+ ' '/,
+  'the local prompt must use the theme ANSI green for one explicit lowercase local identity');
 assert.match(localCommandOutput,
   /RED \+ 'Error:' \+ RESET[\s\S]*?guidance[\s\S]*?LocalCommandOutput\.prompt\(\)/,
   'errors must color only the semantic label, preserve optional guidance, and return to the standard prompt');
@@ -738,11 +738,11 @@ assert.match(themeConstants,
   /background: string = 'rgba\(0, 0, 0, 0\)'[\s\S]*surfaceBackground: string = '#D1EFF1F5'/,
   'the light xterm renderer must stay transparent behind the content surface owner');
 assert.match(themeConstants,
-  /tabBackground: string = '#00181825'[\s\S]*tabActiveBackground: string = '#CC313244'/,
-  'dark inactive tabs must expose the Chrome rail while the active tab owns one restrained surface');
+  /tabBackground: string = '#E01E1E2E'[\s\S]*tabHoverBackground: string = '#EB313244'[\s\S]*tabActiveBackground: string = '#F245475A'/,
+  'dark tabs must keep stable base, hover, and active surfaces above the dynamic Chrome rail');
 assert.match(themeConstants,
-  /tabBackground: string = '#00E6E9EF'[\s\S]*tabActiveBackground: string = '#CCBCC0CC'/,
-  'light inactive tabs must expose the Chrome rail while the active tab owns one restrained surface');
+  /tabBackground: string = '#E0EFF1F5'[\s\S]*tabHoverBackground: string = '#EBCCD0DA'[\s\S]*tabActiveBackground: string = '#F2BCC0CC'/,
+  'light tabs must reverse luminance while preserving the same stable role hierarchy');
 assert.match(chromeBar,
   /ChromeButton[\s\S]*fontColor\(this\.chromeColors\.statusText\)[\s\S]*opacity\(this\.hovered \|\| this\.focused \? 1 : 0\.72\)/,
   'Chrome controls must remain visible at rest without competing with the active tab');
@@ -955,10 +955,10 @@ assert.doesNotMatch(chromeBar, /chromeBarWidth|\.onAreaChange\(/,
 assert.match(chromeBar, /\.fadingEdge\(this\.tabs\.length > 1\)/,
   'the tab strip must use the platform edge fade without adding width measurement state');
 assert.match(chromeBar,
-  /private surfaceColor\(\): string \{[\s\S]*this\.isActive \|\| this\.hovered[\s\S]*tabActiveBackground[\s\S]*tabBackground/,
-  'tabs must map active and inactive states to explicit palette surfaces');
+  /private surfaceColor\(\): string \{[\s\S]*this\.isActive[\s\S]*tabActiveBackground[\s\S]*this\.hovered[\s\S]*tabHoverBackground[\s\S]*tabBackground/,
+  'tabs must map active, hover, and inactive states to distinct palette surfaces');
 assert.doesNotMatch(chromeBar, /tabInactiveSurfaceOpacity|tabHoverSurfaceOpacity/,
-  'tab separation must not depend on alpha that collapses against the Low chrome surface');
+  'tab separation must not depend on separate opacity state that can drift from the palette surfaces');
 assert.match(chromeBar, /attentionPulseCount[\s\S]*isAnimationReduceEnabledSync[\s\S]*pulseIndex/,
   'tab attention must be finite and respect the system reduced-motion preference');
 assert.match(chromeBar, /indicatorColor\(\): string \{[\s\S]*?if \(this\.hasAttention\) \{[\s\S]*?return this\.chromeColors\.attention/,

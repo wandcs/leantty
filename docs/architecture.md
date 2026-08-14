@@ -75,7 +75,7 @@ persist across application termination.
 ## Connection event chain
 
 ```text
-keyboard input at L>
+keyboard input at ltty>
   → CommandParser / SshConfig resolution
   → SessionViewModel.connect
   → SshClient.connect
@@ -102,7 +102,7 @@ resize. UI estimates are not an authoritative terminal size.
 
 ## File-transfer event chain
 
-At an idle `L>` prompt, `put/get` remains owned by the current Pane and uses
+At an idle `ltty>` prompt, `put/get` remains owned by the current Pane and uses
 an independent, short-lived SFTP Session:
 
 ```text

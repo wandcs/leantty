@@ -24,7 +24,7 @@ milestone 不在这里维护第二份清单。
 继续保持不可变。1.3 的前序 AppGallery 状态门禁已经解除。
 
 1.3 已授权推进一个受约束的单文件交付能力。用户只在尚未连接服务器的当前 Pane 的
-`L>` 中执行 `put` 或 `get`；本地根固定为系统 Downloads，远端通过同一 Host、Identity、
+`ltty>` 中执行 `put` 或 `get`；本地根固定为系统 Downloads，远端通过同一 Host、Identity、
 认证和主机校验模型连接 SFTP。传输前台运行且一次一个文件；文件字节由 Rust 流式处理，
 不经过 ArkTS、WebView Bridge 或终端字节流。任何已有目标都不能被覆盖，失败、取消和并发
 冲突不能把半成品暴露为最终文件。
@@ -79,7 +79,7 @@ Download 子目录中预置同名文件，经 Tab 完成 GET 目录后自动提�
 2026-08-12，当前 Pane 已拥有显式、可测试且不进入 Tab/WebView/全局单例的传输生命周期：
 `PREPARING → TRANSFERRING → FINALIZING → SUCCEEDED/FAILED/CANCELLED → IDLE`。本地 Downloads
 准备阶段也进入同一完成 Promise，`Ctrl+C` 或关闭 Pane 不会在异步准备返回后重新启动 native
-传输；全部终态回到统一 `L>`。错误输出收敛为有限类别并给出可执行下一步，底层 detail、凭据
+传输；全部终态回到统一 `ltty>`。错误输出收敛为有限类别并给出可执行下一步，底层 detail、凭据
 和文件内容不直接回显；本地/远端清理失败有独立警告。SFTP metadata/open/close/rename/remove
 以及本地 flush/sync 均增加 30 秒上界并响应同一取消信号，远端失败清理由独立 30 秒上界兜底。
 解析矩阵还覆盖分词、单双引号、转义、`--`、参数数量/方向、全部拒绝选项、IPv6、Unicode、
@@ -337,7 +337,7 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
    保持完全不透明，档位仍单调、不循环且不增加设置。完成条件是参数来源、Chrome/content 分层
    和 opaque fallback 一致，自动化锁定五档映射，并在物理 PC 的普通 shell、深浅背景 TUI、
    活跃/非活跃窗口中逐档截图比较。
-3. [ ] 对当前固定字体和五档透明度下的整体视觉进行一次产品级审计与优化，重点检查 Chrome、
+3. [x] 对当前固定字体和五档透明度下的整体视觉进行一次产品级审计与优化，重点检查 Chrome、
    Tab bar、活动/非活动 Tab、终端背景、分屏分隔、焦点和状态点的层级。优先解决 Chrome 与
    Tab bar 颜色过近导致的结构不清；只调整已有 token、透明度、边界和必要间距，不增加装饰、
    主题选择器或新的常驻控件。完成条件是每个层级在 Off/Medium/Extreme、活动/非活动窗口和
@@ -346,7 +346,11 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
    相邻 surface 色，Off/Medium/Extreme 下三层仍过近。修订合同固定为 rail 最轻并继续跟随五档
    alpha，非活动 Tab 使用高稳定度 base，hover 使用 surface0，活动 Tab 使用最重的 surface1；
    深浅主题翻转亮度方向但保持相同视觉权重，不增加描边、阴影、设置或新状态源。
-4. [ ] 重新审计并设计全部本地命令的提示符、输入回显、进行中、成功、警告、取消和错误输出，
+   2026-08-14 修订完成：自动化锁定深浅主题的 rail/base/surface0/surface1 所有权与独立 hover；
+   同一物理 HAD-W32 的四 Tab Off/Medium/Extreme 菜单及无菜单截图证明 rail 最轻、非活动 Tab
+   居中、活动 Tab 最重，最终已恢复 Medium。直接受影响链的 HAP 与证据见
+   [`design/ui-interaction-polish.md`](design/ui-interaction-polish.md)。
+4. [x] 重新审计并设计全部本地命令的提示符、输入回显、进行中、成功、警告、取消和错误输出，
    形成一份统一标准后再修改实现。启动提示符采用整体绿色的小写 `ltty>`，并统一未知命令、
    解析错误、Host/key/ssh、`put/get` 等结果的
    文案结构、换行、缩进、颜色和 ASCII/单格图标。颜色只表达有限语义且文字始终自足；错误必须
@@ -367,6 +371,11 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
    2026-08-14 真机复开：青色 `L` 与绿色 `>` 在固定字体和实际观看距离下无法形成有效区分，已由
    用户否决。提示符改为整体绿色的小写 `ltty>`；颜色复用当前主题 ANSI green，深色为 Catppuccin
    Mocha `#A6E3A1`、浅色为 Latte `#40A02B`，不新建品牌 RGB，也不增加 bold。
+
+   2026-08-14 修订完成：单一提示符所有者只输出 `ESC[32mltty>ESC[0mSPACE`；自动化覆盖提示符、
+   宽字符命令行重绘与全部错误回返路径，同一物理 HAD-W32 的启动和四 Tab 三档画面确认文字、
+   绿色、尾随空格与光标对齐。HAP SHA-256 和证据见
+   [`design/local-command-output.md`](design/local-command-output.md)。
 
 ## 2. 自动化与集成门禁
 

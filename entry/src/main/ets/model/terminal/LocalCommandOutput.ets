@@ -6,7 +6,7 @@ const CYAN: string = '\u001b[36m'
 
 export class LocalCommandOutput {
   static prompt(): string {
-    return CYAN + 'L' + GREEN + '>' + RESET + ' '
+    return GREEN + 'ltty>' + RESET + ' '
   }
 
   static status(label: string, detail: string): string {

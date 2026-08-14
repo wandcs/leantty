@@ -20,7 +20,7 @@
 LeanTTY 1.3 已实现一个**最小、命令行式、单文件传输能力**，但不做 SFTP 文件管理器。
 用户命令为 `put` 和 `get`，分别表示上传和下载；内部使用 SSH 的 SFTP 子系统传输。
 
-文件传输只能从当前 Pane 尚未连接服务器时的本地 `L>` 提示符发起，一次只传一个
+文件传输只能从当前 Pane 尚未连接服务器时的本地 `ltty>` 提示符发起，一次只传一个
 文件，完成或失败后立即释放独立传输 Session。`put/get` 复用 OpenSSH SFTP 已有的
 方向认知，但不是完整 SFTP 交互式命令集。
 
@@ -342,7 +342,7 @@ Remote file already exists:
 
 No files were changed.
 Use another remote name, or remove the existing file on the server first.
-L>
+ltty>
 ```
 
 预检查只用于尽早报错，不能替代最终提交时的无覆盖保证；检查与提交之间出现并发
@@ -354,7 +354,7 @@ L>
 ```text
 Uploaded 15.3 MiB
   demo.zip -> prod:/tmp/demo.zip
-L>
+ltty>
 ```
 
 ### 5.3 下载
@@ -470,7 +470,7 @@ Downloaded 15.3 MiB
   Saved to Downloads/app (2).log
 
 Open Files and go to Downloads to view it.
-L>
+ltty>
 ```
 
 如果预检查和最终提交都没有冲突，不显示 `File already exists` 或 `Renamed`，只
@@ -506,7 +506,7 @@ Local file already exists:
 No files were changed.
 Choose another local name:
   get prod:/var/log/app.log latest-2.log
-L>
+ltty>
 ```
 
 错误必须包含冲突路径和一条可以直接修改后重试的完整命令。预检查之后、最终提交
@@ -518,7 +518,7 @@ L>
 权限只在用户执行首条 `put` 或 `get` 时申请，不在应用启动时申请。拒绝后：
 
 - 取消本次传输。
-- 回到 `L>`。
+- 回到 `ltty>`。
 - SSH 终端其他功能保持可用。
 - 不循环弹窗。
 - 用户再次执行 `put` 或 `get` 时可以重新尝试，并显示申请原因。
@@ -527,7 +527,7 @@ L>
 
 ### 6.1 Pane 与 Session
 
-只能从当前 Pane 的本地 `L>` 提示符发起。其他 Tab 或 Pane 可以保持已连接；
+只能从当前 Pane 的本地 `ltty>` 提示符发起。其他 Tab 或 Pane 可以保持已连接；
 “未连接”不表示整个应用必须断开。
 
 当前 Pane 在传输期间进入独占状态：

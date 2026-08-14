@@ -220,8 +220,11 @@ struct ChromeTab {
   }
 
   private surfaceColor(): string {
-    if (this.isActive || this.hovered) {
+    if (this.isActive) {
       return this.chromeColors.tabActiveBackground
+    }
+    if (this.hovered) {
+      return this.chromeColors.tabHoverBackground
     }
     return this.chromeColors.tabBackground
   }

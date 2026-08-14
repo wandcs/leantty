@@ -79,7 +79,7 @@ Mosh Session 是独立生命周期，因为它拥有 UDP、加密状态、序列
   下保持可诊断。
 - HSL 是否允许 UDP loopback Mosh 没有优先价值；本 milestone 主要针对远端弱网环境，
   不能为了复用而和 HSL 入口合并。
-- Mosh Session 与现有断线后 `L>`、重连、终端内容保留语义如何区分。
+- Mosh Session 与现有断线后 `ltty>`、重连、终端内容保留语义如何区分。
 - ProxyJump 后的 Mosh bootstrap/UDP 可达性不是首版默认组合，需独立证明才讨论。
 
 ## 验证门禁
