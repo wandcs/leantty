@@ -25,7 +25,7 @@
 | 工作区键盘导航 | Implementing（Tab）；WIP（Pane 前置门禁） | 1.1 | [`workspace-navigation.md`](workspace-navigation.md) |
 | 终端 scrollback 搜索 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`terminal-search.md`](terminal-search.md) |
 | 桌面终端界面与交互收敛 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`ui-interaction-polish.md`](ui-interaction-polish.md) |
-| 最小单文件传输 | Implementing / 功能矩阵与候选自动 smoke 已闭合，待首授权与同候选人工 smoke | 1.3 | [`file-transfer.md`](file-transfer.md) |
+| 最小单文件传输 | Verified / 产品实现与适用功能矩阵已闭合；候选级核心终端人工回归仍由 `next-work.md` 管理 | 1.3 | [`file-transfer.md`](file-transfer.md) |
 | 终端输入调度与大粘贴连续可用性 | Verified / 实现与同一保留候选主路径已闭合 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
 | HSL 本地执行环境入口 | WIP / 未授权实现 | 拟议 1.4 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
 | OpenSSH ProxyJump | WIP / 未授权实现 | 拟议 1.5 | [`proxy-jump.md`](proxy-jump.md) |

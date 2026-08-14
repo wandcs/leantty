@@ -139,8 +139,11 @@
   occupied contents. An in-flight 8 MiB GET also survives real system suspend,
   wake and unlock in the same process, then completes PUT and exact cleanup.
   With a selection Ctrl+C copies without cancelling the transfer; without a
-  selection it still sends ETX. First-permission acceptance remains pending on
-  a genuinely unprivileged installation state.
+  selection it still sends ETX. The difficult-to-recreate first-permission
+  matrix is no longer a 1.3 release gate: current production ownership and
+  recovery paths remain covered, while a fresh denial/retry/single-flight pass
+  is reopened only for a real user failure, a material platform-permission
+  change, a security/data-integrity risk or direct candidate counter-evidence.
 
 ## [1.2.0] - 2026-08-08
 
