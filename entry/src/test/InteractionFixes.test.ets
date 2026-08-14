@@ -19,6 +19,7 @@ import {
   TerminalInputParser
 } from '../main/ets/model/terminal/TerminalInputParser'
 import { LocalCommandLine } from '../main/ets/model/terminal/LocalCommandLine'
+import { LocalCommandOutput } from '../main/ets/model/terminal/LocalCommandOutput'
 import { SessionViewModel } from '../main/ets/viewmodel/SessionViewModel'
 import { FileTransferLifecycle, FileTransferPhase } from '../main/ets/model/transfer/FileTransferLifecycle'
 import {
@@ -502,6 +503,7 @@ export default function interactionFixesTest() {
       let unknown = FileTransferFailurePresenter.describe('bad\u001b[2Jcode', 'private detail', 'put')
       expect(permission.kind).assertEqual(FileTransferFailureKind.PERMISSION)
       expect(permission.message.includes('remote target directory')).assertEqual(true)
+      expect(permission.message.includes('\r\n')).assertEqual(true)
       expect(permission.message.includes('secret')).assertEqual(false)
       expect(space.kind).assertEqual(FileTransferFailureKind.SPACE)
       expect(space.message.includes('Downloads')).assertEqual(true)
@@ -532,6 +534,7 @@ export default function interactionFixesTest() {
       expect(remoteCleanup.kind).assertEqual(FileTransferFailureKind.CLEANUP)
       expect(remoteCleanup.message.includes('remote temporary file')).assertEqual(true)
       expect(remoteCleanup.message.includes('.leantty-*.part')).assertEqual(true)
+      expect(remoteCleanup.message.includes('\r\n')).assertEqual(true)
       let disconnectedGet: FileTransferFailureInfo =
         FileTransferFailurePresenter.describe('SOURCE_CHANGED', '', 'get')
       expect(disconnectedGet.kind).assertEqual(FileTransferFailureKind.NETWORK)
@@ -1117,11 +1120,35 @@ export default function interactionFixesTest() {
       let line: LocalCommandLine = new LocalCommandLine()
       line.insert('中文')
       expect(line.moveLeft()).assertEqual(true)
-      expect(line.renderForTerminal('ltty> '))
-        .assertEqual('\r\u001b[2Kltty> 中文\rltty> 中')
+      expect(line.renderForTerminal(LocalCommandOutput.prompt()))
+        .assertEqual('\r\u001b[2K\u001b[36mL\u001b[32m>\u001b[0m 中文' +
+          '\r\u001b[36mL\u001b[32m>\u001b[0m 中')
       expect(line.backspace() !== null).assertEqual(true)
-      expect(line.renderForTerminal('ltty> '))
-        .assertEqual('\r\u001b[2Kltty> 文\rltty> ')
+      expect(line.renderForTerminal(LocalCommandOutput.prompt()))
+        .assertEqual('\r\u001b[2K\u001b[36mL\u001b[32m>\u001b[0m 文' +
+          '\r\u001b[36mL\u001b[32m>\u001b[0m ')
+    })
+
+    it('keepsLocalCommandOutputSemanticAndTextCompleteWithoutColor', 0, () => {
+      expect(LocalCommandOutput.prompt()).assertEqual('\u001b[36mL\u001b[32m>\u001b[0m ')
+      expect(LocalCommandOutput.status('Preparing', 'upload...'))
+        .assertEqual('\u001b[36mPreparing\u001b[0m upload...')
+      expect(LocalCommandOutput.success('Uploaded file.'))
+        .assertEqual('\u001b[32m●\u001b[0m Uploaded file.')
+      expect(LocalCommandOutput.warning('A unique name will be used.'))
+        .assertEqual('\u001b[33mWarning:\u001b[0m A unique name will be used.')
+      expect(LocalCommandOutput.note('"alias" is deprecated.'))
+        .assertEqual('\u001b[36mNote:\u001b[0m "alias" is deprecated.')
+      expect(LocalCommandOutput.cancelled()).assertEqual('\u001b[33mCancelled.\u001b[0m')
+      expect(LocalCommandOutput.error('Unknown command "oops".', 'Try: help'))
+        .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m Unknown command "oops".\r\n' +
+          '  Try: help\r\n\u001b[36mL\u001b[32m>\u001b[0m ')
+      expect(LocalCommandOutput.error('Usage: host rm <host-name>'))
+        .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m Invalid command syntax.\r\n' +
+          '  Usage: host rm <host-name>\r\n\u001b[36mL\u001b[32m>\u001b[0m ')
+      expect(LocalCommandOutput.error('First line.\r\n\r\nSecond group.'))
+        .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m First line.\r\n\r\n' +
+          '  Second group.\r\n\u001b[36mL\u001b[32m>\u001b[0m ')
     })
 
     it('confirmsApplicationCloseOnlyForUnsuppressedActiveSessions', 0, () => {

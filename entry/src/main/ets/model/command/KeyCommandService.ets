@@ -5,6 +5,8 @@ import { KeyCommandResult, KeyCommandKind } from './CommandParser'
 import { SshConfig } from '../ssh/SshConfig'
 import { Logger } from '../../common/logger/Logger'
 import { KnownHostQueryResult, KnownHostRemovalResult, KnownHostsManager } from '../ssh/KnownHostsManager'
+import { LocalCommandOutput } from '../terminal/LocalCommandOutput'
+import { TerminalTextPolicy } from '../../common/security/TerminalTextPolicy'
 
 const logger: Logger = new Logger('KeyCommandService')
 const HELP_TEXT: string =
@@ -46,29 +48,29 @@ const HELP_TEXT: string =
 
 const SSH_HELP: string = '\r\nUsage: ssh [-p <port>] [-i <identity>] <user>@<host>\r\n' +
   '       ssh [-p <port>] [-i <identity>] <host-name>\r\n\r\n' +
-  'Host settings come from ~/.ssh/config; command options take precedence.\r\nltty> '
+  'Host settings come from ~/.ssh/config; command options take precedence.\r\n'
 const KEYGEN_HELP: string = '\r\nUsage: ssh-keygen [-t <ed25519|rsa>] [-f <key-name>] [-C <comment>]\r\n' +
   '       ssh-keygen -y -f <identity>\r\n       ssh-keygen -l -f <identity>[.pub]\r\n' +
   '       ssh-keygen -p -f <identity>\r\n' +
   '       ssh-keygen -F <host>|[<host>]:<port>\r\n' +
   '       ssh-keygen -R <host>|[<host>]:<port>\r\n\r\n' +
-  'Creates, inspects or updates keys, and finds or removes trusted host records in LeanTTY ~/.ssh.\r\nltty> '
+  'Creates, inspects or updates keys, and finds or removes trusted host records in LeanTTY ~/.ssh.\r\n'
 const COPY_ID_HELP: string = '\r\nUsage: ssh-copy-id -i <key-name> [-p <port>] <user>@<host>\r\n\r\n' +
-  'Installs the public key once; an existing identical line is not duplicated.\r\nltty> '
+  'Installs the public key once; an existing identical line is not duplicated.\r\n'
 const KEY_HELP: string =
   '\r\nUsage: key list | key import <path> [<key-name>] | ' +
   'key export <key-name> [<file-name>] | key rm <key-name>\r\n\r\n' +
   '<key-name> is the name shown by "key list". <file-name> is the optional Downloads basename; ' +
-  'it defaults to <key-name>. The private key and .pub file are never overwritten.\r\nltty> '
+  'it defaults to <key-name>. The private key and .pub file are never overwritten.\r\n'
 const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>]\r\n' +
-  '       host rm <host-name>\r\n       host list\r\n\r\nLegacy alias commands remain temporarily supported.\r\nltty> '
+  '       host rm <host-name>\r\n       host list\r\n\r\nLegacy alias commands remain temporarily supported.\r\n'
 const TRANSFER_HELP: string =
   '\r\nUsage: put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
   '       get [-p <port>] [-i <identity>] [--] <host>:<remote-file> [local-path]\r\n\r\n' +
   'Local paths stay in Downloads; existing subdirectories are allowed but never created.\r\n' +
   'End a target directory with /. GET chooses the remote basename when local-path is omitted or a directory.\r\n' +
   'Existing local and remote files are never overwritten. Tab completes local paths and Host names, not remote paths.\r\n' +
-  'Use put/get instead of scp.\r\nltty> '
+  'Use put/get instead of scp.\r\n'
 
 export interface KeyCommandContext {
   context: common.Context
@@ -84,10 +86,15 @@ export interface KeyCommandContext {
 
 export class KeyCommandService {
   static execute(result: KeyCommandResult, ctx: KeyCommandContext): void {
-    if (result.errorMessage.length > 0) { ctx.writeError(result.errorMessage); return }
+    if (result.errorMessage.length > 0) {
+      ctx.writeError(result.errorMessage +
+        (result.errorMessage.startsWith('Usage: ') ? '' : '\r\nTry: help'))
+      return
+    }
     if (result.kind === KeyCommandKind.HELP) { KeyCommandService.executeHelp(result, ctx); return }
     if (result.legacySyntax) {
-      ctx.writeOutput('\r\nNote: "alias" is deprecated; use "host" instead.\r\n')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.note(
+        '"alias" is deprecated; use "host" instead.') + '\r\n')
     }
 
     if (result.kind === KeyCommandKind.KEYS) { KeyCommandService.executeKeys(ctx); return }
@@ -120,19 +127,22 @@ export class KeyCommandService {
   private static executeHelp(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let topic: string = result.keyName.toLowerCase()
     if (topic.length === 0) { ctx.showTopLevelHelp(HELP_TEXT); return }
-    if (topic === 'ssh') { ctx.writeOutput(SSH_HELP); return }
-    if (topic === 'ssh-keygen') { ctx.writeOutput(KEYGEN_HELP); return }
-    if (topic === 'ssh-copy-id') { ctx.writeOutput(COPY_ID_HELP); return }
-    if (topic === 'key' || topic === 'keys') { ctx.writeOutput(KEY_HELP); return }
-    if (topic === 'host' || topic === 'alias') { ctx.writeOutput(HOST_HELP); return }
-    if (topic === 'put' || topic === 'get' || topic === 'scp') { ctx.writeOutput(TRANSFER_HELP); return }
-    ctx.writeError('Unknown help topic: ' + result.keyName)
+    if (topic === 'ssh') { ctx.writeOutput(SSH_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'ssh-keygen') { ctx.writeOutput(KEYGEN_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'ssh-copy-id') { ctx.writeOutput(COPY_ID_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'key' || topic === 'keys') { ctx.writeOutput(KEY_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'host' || topic === 'alias') { ctx.writeOutput(HOST_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'put' || topic === 'get' || topic === 'scp') {
+      ctx.writeOutput(TRANSFER_HELP + LocalCommandOutput.prompt()); return
+    }
+    ctx.writeError('Unknown help topic: ' + KeyCommandService.safeText(result.keyName) +
+      '.\r\nTry: help')
   }
 
   private static executeKeys(ctx: KeyCommandContext): void {
     let keys: KeyPairInfo[] = SshKeyManager.listKeys(ctx.context)
     if (keys.length === 0) {
-      ctx.writeOutput('\r\nNo keys found. Use ssh-keygen to create one.\r\nltty> ')
+      ctx.writeOutput('\r\nNo keys found.\r\n  Try: ssh-keygen\r\n' + LocalCommandOutput.prompt())
       return
     }
     ctx.writeOutput('\r\n  NAME          TYPE      FINGERPRINT\r\n')
@@ -140,9 +150,10 @@ export class KeyCommandService {
     for (let i = 0; i < keys.length; i++) {
       let name: string = KeyCommandService.fileName(keys[i].filePath)
       let algo: string = keys[i].algorithm === 0 ? 'ed25519' : 'rsa'
-      ctx.writeOutput('  ' + name.padEnd(14, ' ') + algo.padEnd(10, ' ') + keys[i].fingerprint + '\r\n')
+      ctx.writeOutput('  ' + KeyCommandService.safeText(name).padEnd(14, ' ') + algo.padEnd(10, ' ') +
+        KeyCommandService.safeText(keys[i].fingerprint) + '\r\n')
     }
-    ctx.writeOutput('ltty> ')
+    ctx.writeOutput(LocalCommandOutput.prompt())
   }
 
   private static async executeKeygen(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
@@ -150,58 +161,69 @@ export class KeyCommandService {
       let genResult = await SshKeyManager.generateKeyPair(ctx.context, result.algorithm, '', result.keyName,
         result.sourcePath)
       let name: string = KeyCommandService.fileName(genResult.privateKey.filePath)
-      ctx.writeOutput('\r\nGenerated: ' + name + '\r\n')
-      ctx.writeOutput('Fingerprint: ' + genResult.privateKey.fingerprint + '\r\n')
-      ctx.writeOutput('Public key:\r\n' + genResult.privateKey.publicKeyText + '\r\n')
-      ctx.writeOutput('Use "key list" to view stored key fingerprints.\r\nltty> ')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Generated key ' +
+        KeyCommandService.safeText(name) + '.') + '\r\n')
+      ctx.writeOutput('  Fingerprint: ' + KeyCommandService.safeText(genResult.privateKey.fingerprint) + '\r\n')
+      ctx.writeOutput('Public key:\r\n' + KeyCommandService.safeMultilineText(
+        genResult.privateKey.publicKeyText) + '\r\n')
+      ctx.writeOutput('  Try: key list\r\n' + LocalCommandOutput.prompt())
       logger.info('Key generated: ' + genResult.privateKey.fingerprint)
     } catch (e) {
-      ctx.writeError('Key generation failed: ' + e)
+      logger.warn('Key generation failed: ' + e)
+      ctx.writeError('The key could not be generated.\r\nCheck the key name and try again.')
     }
   }
 
   private static async executeKeyimport(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
     try {
       let key: KeyPairInfo = await SshKeyManager.importKey(ctx.context, result.sourcePath, result.keyName)
-      ctx.writeOutput('\r\nImported: ' + key.filePath + '\r\n')
-      ctx.writeOutput('Fingerprint: ' + key.fingerprint + '\r\n')
-      ctx.writeOutput('ltty> ')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Imported key ' +
+        KeyCommandService.safeText(key.filePath) + '.') + '\r\n')
+      ctx.writeOutput('  Fingerprint: ' + KeyCommandService.safeText(key.fingerprint) + '\r\n')
+      ctx.writeOutput(LocalCommandOutput.prompt())
     } catch (e) {
-      ctx.writeError('Key import failed: ' + e)
+      logger.warn('Key import failed: ' + e)
+      ctx.writeError('The key could not be imported.\r\nCheck the Downloads path and key format, then try again.')
     }
   }
 
   private static executeKeypub(result: KeyCommandResult, ctx: KeyCommandContext): void {
     if (result.sourcePath === 'legacy-key-show') {
-      ctx.writeOutput('\r\nNote: "key show" is deprecated; use ssh-keygen -y -f <identity>.\r\n')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.note(
+        '"key show" is deprecated; use ssh-keygen -y -f <identity>.') + '\r\n')
     }
     let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
     if (key === null) {
-      ctx.writeError('Key not found: ' + result.keyName + '. Use key list to see available names.')
+      ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
       return
     }
     let pubText: string = key.publicKeyText
     if (pubText.length === 0) {
       pubText = SshKeyManager.readPublicKeyText(ctx.context, result.keyName)
     }
-    ctx.writeOutput('\r\n' + pubText + '\r\nltty> ')
+    ctx.writeOutput('\r\n' + KeyCommandService.safeMultilineText(pubText) + '\r\n' +
+      LocalCommandOutput.prompt())
   }
 
   private static executeKeyinfo(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
     if (key === null) {
-      ctx.writeError('Key not found: ' + result.keyName + '. Use key list to see available names.')
+      ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
       return
     }
     let name: string = KeyCommandService.fileName(key.filePath)
     let algo: string = key.algorithm === 0 ? 'ED25519' : 'RSA'
-    ctx.writeOutput('\r\n' + key.fingerprint + ' ' + name + ' (' + algo + ')\r\nltty> ')
+    ctx.writeOutput('\r\n' + KeyCommandService.safeText(key.fingerprint) + ' ' +
+      KeyCommandService.safeText(name) + ' (' + algo + ')\r\n' + LocalCommandOutput.prompt())
   }
 
   private static executeKeyPassphraseChange(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
     if (key === null) {
-      ctx.writeError('Key not found: ' + result.keyName + '. Use key list to see available names.')
+      ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
       return
     }
     ctx.beginKeyPassphraseChange(KeyCommandService.fileName(key.filePath))
@@ -210,15 +232,17 @@ export class KeyCommandService {
   private static executeKeyrm(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
     if (key === null) {
-      ctx.writeError('Key not found: ' + result.keyName + '. Use key list to see available names.')
+      ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
       return
     }
     let keyName: string = result.keyName
     ctx.confirmKeyDelete(keyName, key.fingerprint, () => {
       SshKeyManager.deleteKey(ctx.context, keyName)
       logger.info('KEY_DELETE result=success')
-      ctx.writeOutput('\r\nDeleted: ' + keyName + '\r\nltty> ')
-    }, () => { ctx.writeOutput('ltty> ') })
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Deleted key ' +
+        KeyCommandService.safeText(keyName) + '.') + '\r\n' + LocalCommandOutput.prompt())
+    }, () => { ctx.writeOutput(LocalCommandOutput.prompt()) })
   }
 
   private static executeHostKeyRemove(result: KeyCommandResult, ctx: KeyCommandContext): void {
@@ -226,14 +250,17 @@ export class KeyCommandService {
       let removal: KnownHostRemovalResult =
         KnownHostsManager.remove(ctx.context, result.sshHost, result.sshPort)
       if (removal.removed === 0) {
-        ctx.writeOutput('\r\nNo host key found for ' + removal.target + '.\r\nltty> ')
+        ctx.writeOutput('\r\nNo host key found for ' + KeyCommandService.safeText(removal.target) +
+          '.\r\n' + LocalCommandOutput.prompt())
         return
       }
       let noun: string = removal.removed === 1 ? 'entry' : 'entries'
-      ctx.writeOutput('\r\nRemoved ' + removal.removed.toString() + ' host key ' + noun +
-        ' for ' + removal.target + '.\r\nReconnect to verify and trust the new host key.\r\nltty> ')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Removed ' + removal.removed.toString() +
+        ' host key ' + noun + ' for ' + KeyCommandService.safeText(removal.target) + '.') +
+        '\r\n  Reconnect to verify and trust the new host key.\r\n' + LocalCommandOutput.prompt())
     } catch (e) {
-      ctx.writeError('Failed to remove host key: ' + e)
+      logger.warn('Failed to remove host key: ' + e)
+      ctx.writeError('The host key could not be removed.\r\nCheck the Host target and try again.')
     }
   }
 
@@ -241,36 +268,43 @@ export class KeyCommandService {
     try {
       let query: KnownHostQueryResult = KnownHostsManager.find(result.sshHost, result.sshPort)
       if (query.found === 0) {
-        ctx.writeOutput('\r\nNo host key found for ' + query.target + '.\r\nltty> ')
+        ctx.writeOutput('\r\nNo host key found for ' + KeyCommandService.safeText(query.target) +
+          '.\r\n' + LocalCommandOutput.prompt())
         return
       }
-      ctx.writeOutput('\r\n' + query.output.replace(/\n/g, '\r\n') + 'ltty> ')
+      ctx.writeOutput('\r\n' + KeyCommandService.safeMultilineText(query.output) +
+        LocalCommandOutput.prompt())
     } catch (e) {
-      ctx.writeError('Failed to find host key: ' + e)
+      logger.warn('Failed to find host key: ' + e)
+      ctx.writeError('The host key could not be read.\r\nCheck the Host target and try again.')
     }
   }
 
   private static async executeKeyexport(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
     let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
     if (key === null) {
-      ctx.writeError('Key not found: ' + result.keyName + '. Use key list to see available names.')
+      ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
       return
     }
     let keyName: string = KeyCommandService.fileName(key.filePath)
     let exportFileName: string = result.destinationName.length > 0 ? result.destinationName : keyName
     try {
       await SshKeyManager.exportKeyPair(ctx.context, keyName, exportFileName)
-      ctx.writeOutput('\r\nExported to Downloads:\r\n  ' + exportFileName + '\r\n  ' +
-        exportFileName + '.pub\r\nltty> ')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Exported key pair to Downloads.') +
+        '\r\n  ' + KeyCommandService.safeText(exportFileName) + '\r\n  ' +
+        KeyCommandService.safeText(exportFileName + '.pub') + '\r\n' + LocalCommandOutput.prompt())
     } catch (e) {
-      ctx.writeError('Key export failed: ' + e)
+      logger.warn('Key export failed: ' + e)
+      ctx.writeError('The key pair could not be exported.\r\nCheck Downloads access and the file name, then try again.')
     }
   }
 
   private static executeAliasAdd(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let config: SshConfig = ctx.sshConfig
     if (!result.legacySyntax && config.findHost(result.keyName) !== null) {
-      ctx.writeError('Host already exists: ' + result.keyName + '. Use host set to update it.')
+      ctx.writeError('Host already exists: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: host set ' + KeyCommandService.safeText(result.keyName) + ' ...')
       return
     }
     let updated: boolean = config.findHost(result.keyName) !== null
@@ -279,7 +313,8 @@ export class KeyCommandService {
 
   private static executeHostSet(result: KeyCommandResult, ctx: KeyCommandContext): void {
     if (ctx.sshConfig.findHost(result.keyName) === null) {
-      ctx.writeError('Host not found: ' + result.keyName + '. Use host add to create it.')
+      ctx.writeError('Host not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: host add ' + KeyCommandService.safeText(result.keyName) + ' ...')
       return
     }
     KeyCommandService.saveHost(result, ctx, true)
@@ -289,45 +324,52 @@ export class KeyCommandService {
     let config: SshConfig = ctx.sshConfig
     let current = config.resolveHost(result.keyName)
     if (current.errorMessage.length > 0) {
-      ctx.writeError(current.errorMessage)
+      ctx.writeError(current.errorMessage + '\r\nCheck the matching Host entry in ~/.ssh/config.')
       return
     }
     config.addAlias(result.keyName, result.sshHost, result.sshPort, result.sshUser)
     config.saveConfig(ctx.context)
     let info: string = result.keyName + ' -> ' + result.sshUser + '@' + result.sshHost
     if (result.sshPort !== 22) { info += ':' + result.sshPort.toString() }
-    ctx.writeOutput('\r\nHost ' + (updated ? 'updated: ' : 'added: ') + info + '\r\nltty> ')
+    ctx.writeOutput('\r\n' + LocalCommandOutput.success('Host ' +
+      (updated ? 'updated: ' : 'added: ') + KeyCommandService.safeText(info) + '.') +
+      '\r\n' + LocalCommandOutput.prompt())
     logger.info('Host added: ' + info)
   }
 
   private static executeSshConfig(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let host = ctx.sshConfig.resolveHost(result.keyName)
     if (host.errorMessage.length > 0) {
-      ctx.writeError(host.errorMessage)
+      ctx.writeError(host.errorMessage + '\r\nCheck the matching Host entry in ~/.ssh/config.')
       return
     }
-    ctx.writeOutput('\r\nhost ' + result.keyName + '\r\n')
-    ctx.writeOutput('hostname ' + host.hostname + '\r\n')
-    if (host.user.length > 0) { ctx.writeOutput('user ' + host.user + '\r\n') }
+    ctx.writeOutput('\r\nhost ' + KeyCommandService.safeText(result.keyName) + '\r\n')
+    ctx.writeOutput('hostname ' + KeyCommandService.safeText(host.hostname) + '\r\n')
+    if (host.user.length > 0) { ctx.writeOutput('user ' + KeyCommandService.safeText(host.user) + '\r\n') }
     ctx.writeOutput('port ' + host.port.toString() + '\r\n')
-    if (host.identityFile.length > 0) { ctx.writeOutput('identityfile ' + host.identityFile + '\r\n') }
-    ctx.writeOutput('ltty> ')
+    if (host.identityFile.length > 0) {
+      ctx.writeOutput('identityfile ' + KeyCommandService.safeText(host.identityFile) + '\r\n')
+    }
+    ctx.writeOutput(LocalCommandOutput.prompt())
   }
 
   private static executeAliasRm(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let config: SshConfig = ctx.sshConfig
     if (config.removeAlias(result.keyName)) {
       config.saveConfig(ctx.context)
-      ctx.writeOutput('\r\nHost removed: ' + result.keyName + '\r\nltty> ')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Host removed: ' +
+        KeyCommandService.safeText(result.keyName) + '.') + '\r\n' + LocalCommandOutput.prompt())
     } else {
-      ctx.writeError('Host not found: ' + result.keyName)
+      ctx.writeError('Host not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: host list')
     }
   }
 
   private static executeAliasList(ctx: KeyCommandContext): void {
     let hosts = ctx.sshConfig.getHosts()
     if (hosts.length === 0) {
-      ctx.writeOutput('\r\nNo hosts configured. Use host add to create one.\r\nltty> ')
+      ctx.writeOutput('\r\nNo hosts configured.\r\n  Try: host add <host-name> <user>@<host>\r\n' +
+        LocalCommandOutput.prompt())
       return
     }
     ctx.writeOutput('\r\n  HOST        USER@HOST\r\n')
@@ -336,15 +378,17 @@ export class KeyCommandService {
       let h = hosts[i]
       let target: string = h.user + '@' + h.hostname
       if (h.port !== 22) { target += ':' + h.port.toString() }
-      ctx.writeOutput('  ' + h.alias.padEnd(12, ' ') + target + '\r\n')
+      ctx.writeOutput('  ' + KeyCommandService.safeText(h.alias).padEnd(12, ' ') +
+        KeyCommandService.safeText(target) + '\r\n')
     }
-    ctx.writeOutput('ltty> ')
+    ctx.writeOutput(LocalCommandOutput.prompt())
   }
 
   static executeKeypush(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
     if (key === null) {
-      ctx.writeError('Key not found: ' + result.keyName + '. Use key list to see available names.')
+      ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
       return
     }
     let pubText: string = key.publicKeyText
@@ -352,7 +396,8 @@ export class KeyCommandService {
       pubText = SshKeyManager.readPublicKeyText(ctx.context, result.keyName)
     }
     if (pubText.length === 0) {
-      ctx.writeError('Cannot read public key for: ' + result.keyName)
+      ctx.writeError('The public key could not be read: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
       return
     }
     ctx.setPendingKeypush(result.keyName, pubText)
@@ -362,5 +407,20 @@ export class KeyCommandService {
   private static fileName(filePath: string): string {
     let lastSlash: number = filePath.lastIndexOf('/')
     return lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath
+  }
+
+  private static safeText(value: string): string {
+    return TerminalTextPolicy.escape(value)
+  }
+
+  private static safeMultilineText(value: string): string {
+    let normalized: string = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    let lines: string[] = normalized.split('\n')
+    let safe: string = ''
+    for (let index: number = 0; index < lines.length; index++) {
+      if (index > 0) { safe += '\r\n' }
+      safe += TerminalTextPolicy.escape(lines[index])
+    }
+    return safe
   }
 }
