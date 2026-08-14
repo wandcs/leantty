@@ -100,6 +100,32 @@ Resize starts with the dimensions measured by xterm. The result crosses the
 validated Bridge, is routed to the owning Session, and becomes an SSH PTY
 resize. UI estimates are not an authoritative terminal size.
 
+## File-transfer event chain
+
+At an idle `ltty>` prompt, `put/get` remains owned by the current Pane and uses
+an independent, short-lived SFTP Session:
+
+```text
+local put/get command
+  → CommandParser / Host and Identity resolution
+  → Pane-owned transfer lifecycle
+  → DownloadsAccessManager resolves system access
+  → TransferFileManager opens and owns a bounded local file descriptor
+  → FileTransferClient / N-API
+  → Rust SFTP session and native byte stream
+  → task-owned temporary file
+  → no-overwrite final commit
+  → structured progress/final result to the owning Pane
+```
+
+File bytes move only between the local descriptor and Rust/SFTP; they do not
+cross ArkTS, the WebView Bridge or terminal output. Local paths stay beneath
+the authorized Downloads root and use no-follow descriptor ownership. A
+transfer never reuses the interactive PTY Session, and transfer, Pane and
+generation identifiers reject late events after cancellation or teardown.
+Temporary files are exclusive and task-owned; only an observed task may clean
+its own partial object.
+
 ## Host-key and authentication boundaries
 
 Rust performs SSH transport and reports the received host-key state. The

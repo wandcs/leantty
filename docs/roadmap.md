@@ -205,7 +205,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 - 复用唯一 Host/Identity、认证、主机指纹、取消和错误模型。
 - 前台、当前 Pane、短生命周期传输；无覆盖提交，失败和取消清理本任务临时文件。
 
-### 当前实现前门禁
+### 已闭合的可靠性边界
 
 - 公共 Downloads 的原子无覆盖提交在物理 HarmonyOS PC 上成立。
 - 远端排他临时文件、标准 rename、并发冲突和服务器差异有受控互操作证据。
@@ -219,10 +219,10 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 目录浏览、递归、多源、同步、后台队列、覆盖选项、文件预览/打开、任意本地路径和
 第二套 Host/Identity 均不进入范围。
 
-活动方案：[`design/file-transfer.md`](design/file-transfer.md)。1.3 已于 2026-08-08 在
-1.2.0 提交 AppGallery 审核后进入活动开发；先闭合本节可靠性门禁，再按
-[`next-work.md`](next-work.md) 的依赖顺序实现。门禁失败时取消或推迟本 milestone，不能
-扩大为文件管理器补救。
+完成方案：[`design/file-transfer.md`](design/file-transfer.md)。1.3 已于 2026-08-08 在
+1.2.0 提交 AppGallery 审核后进入活动开发；到 2026-08-14，产品实现和适用功能矩阵已经
+闭合。剩余候选回归、版本和发布步骤只按 [`next-work.md`](next-work.md) 执行；后续若核心
+可靠性出现直接反证，仍应停止发布，而不是扩大为文件管理器补救。
 
 ## 拟议 milestone：1.4 — HSL 本地执行环境入口
 

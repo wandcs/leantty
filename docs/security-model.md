@@ -154,6 +154,28 @@ must not be hidden behind ordinary uninstall wording.
 | Bell/attention | Becomes bounded UI attention state, not repeated cross-layer events |
 | Terminal checkpoint | Serializes framebuffer state but excludes title, clipboard and bell side effects |
 
+## Downloads and file-transfer boundary
+
+`put/get` runs only after an explicit local command at an idle `ltty>` prompt.
+Local paths are resolved beneath the system-authorized Downloads root; LeanTTY
+does not expose arbitrary local paths, recursive traversal, wildcards or a file
+manager. Tab completion is bounded and does not request permission merely to
+enumerate an unauthorized root.
+
+Local sources are opened without following symlinks and are revalidated by
+their native descriptor. File bytes stream directly between that descriptor
+and the Rust SFTP client; ArkTS, ArkWeb, terminal output, command history and
+logs do not carry file contents. Remote paths, names and server errors remain
+untrusted input and are normalized into bounded terminal-safe results.
+
+Final files are never overwritten. Downloads commits use an exclusive
+task-owned temporary object and a no-replace final commit; uploads use an
+exclusive random temporary name followed by standard SFTP rename only when the
+server can preserve the same guarantee. Observed failure and cancellation clean
+only the current task's temporary object. Forced process termination can leave
+an identifiable `.part` file, but LeanTTY does not claim it as complete or
+delete a partial file owned by an earlier process.
+
 ## Logging boundary
 
 Current logs are on-device and are not uploaded by LeanTTY. They intentionally

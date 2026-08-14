@@ -33,7 +33,7 @@ OpenSSH Unix 工具箱：
 | `ssh-copy-id` | 必须做受控子集 | 将一个明确公钥安全部署到目标账户 |
 | `host` | 必须做 | 管理唯一 OpenSSH Host 配置，不建立 GUI 主机数据库 |
 | `key` | 必须做 | 管理 HarmonyOS 中的 LeanTTY 私有密钥资产 |
-| `put/get` | 待证实，条件 1.3 | 受限单文件交付；内部使用 SFTP，不冒充 `scp/sftp` |
+| `put/get` | 已采纳，1.3 | 受限单文件交付；内部使用 SFTP，不冒充 `scp/sftp` |
 | `mosh` | 应该做，WIP 1.6 | SSH bootstrap 后的交互式弱网 TTY Session |
 | `scp`、`sftp` | 不做用户命令 | 标准语义超出受限单文件和 TTY 入口边界 |
 | `ssh-agent`、`ssh-add` | 不做 | 没有 Unix agent socket、子进程和环境变量模型 |
@@ -219,7 +219,7 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 
 | 上游能力 | 决策 | 理由与去向 |
 | --- | --- | --- |
-| `scp` | 不做用户命令 | 完整语义包含多源、递归、远端路径和兼容行为；1.3 只候选 `put/get` |
+| `scp` | 不做用户命令 | 完整语义包含多源、递归、远端路径和兼容行为；1.3 只提供受限 `put/get` |
 | `sftp` | 不做用户命令 | 交互/批处理文件管理超出范围；协议仅可作 1.3 内部能力 |
 | `ssh-agent` | 不做 | 依赖 Unix 进程、socket 和环境变量；LeanTTY key store 不是 agent |
 | `ssh-add` | 不做 | 没有 agent 时同名命令会制造虚假兼容 |
@@ -229,7 +229,7 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 | PKCS#11/FIDO helper | 内部/待证实 | 只有系统硬件能力成立后评估，不暴露 helper 命令 |
 | `sshd`、`sftp-server` | 不做 | LeanTTY 是执行环境入口，不建设执行环境或服务端 |
 
-条件 1.3 的 `put/get` 只表达“单文件、同一 Host/Identity/认证、受控 Downloads、无覆盖
+1.3 的 `put/get` 只表达“单文件、同一 Host/Identity/认证、受控 Downloads、无覆盖
 提交”；具体边界由 [`file-transfer.md`](file-transfer.md) 负责。
 
 ## 九、Mosh 命令体系
@@ -299,7 +299,7 @@ ProxyJump 最多帮助 Mosh 的 SSH bootstrap；它不转发 UDP。只有目标 
 | --- | --- |
 | 1.1 | keyboard-interactive/多方法认证；`ssh-keygen -p/-F`；未知 option/config 的明确失败；现有 `ssh`、`ssh-keygen`、`ssh-copy-id`、`host/key` help/test 边界 |
 | 1.2 | 不强行加入命令能力；保持终端搜索的单一主题 |
-| 1.3 | 条件 `put/get`；SFTP 只作内部 subsystem，不开放 `scp/sftp` |
+| 1.3 | 已采纳 `put/get`；SFTP 只作内部 subsystem，不开放 `scp/sftp` |
 | 1.4 | HSL 复用现有 SSH 命令、Host、认证和主机信任，不建立 Local Transport |
 | 1.5 | `ProxyJump` 配置与标准 `-J`；首版单跳，跳板/目标双重信任与认证 |
 | 1.6 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
