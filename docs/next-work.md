@@ -24,7 +24,7 @@ milestone 不在这里维护第二份清单。
 继续保持不可变。1.3 的前序 AppGallery 状态门禁已经解除。
 
 1.3 已授权推进一个受约束的单文件交付能力。用户只在尚未连接服务器的当前 Pane 的
-`ltty>` 中执行 `put` 或 `get`；本地根固定为系统 Downloads，远端通过同一 Host、Identity、
+`L>` 中执行 `put` 或 `get`；本地根固定为系统 Downloads，远端通过同一 Host、Identity、
 认证和主机校验模型连接 SFTP。传输前台运行且一次一个文件；文件字节由 Rust 流式处理，
 不经过 ArkTS、WebView Bridge 或终端字节流。任何已有目标都不能被覆盖，失败、取消和并发
 冲突不能把半成品暴露为最终文件。
@@ -79,7 +79,7 @@ Download 子目录中预置同名文件，经 Tab 完成 GET 目录后自动提�
 2026-08-12，当前 Pane 已拥有显式、可测试且不进入 Tab/WebView/全局单例的传输生命周期：
 `PREPARING → TRANSFERRING → FINALIZING → SUCCEEDED/FAILED/CANCELLED → IDLE`。本地 Downloads
 准备阶段也进入同一完成 Promise，`Ctrl+C` 或关闭 Pane 不会在异步准备返回后重新启动 native
-传输；全部终态回到原 `ltty>`。错误输出收敛为有限类别并给出可执行下一步，底层 detail、凭据
+传输；全部终态回到统一 `L>`。错误输出收敛为有限类别并给出可执行下一步，底层 detail、凭据
 和文件内容不直接回显；本地/远端清理失败有独立警告。SFTP metadata/open/close/rename/remove
 以及本地 flush/sync 均增加 30 秒上界并响应同一取消信号，远端失败清理由独立 30 秒上界兜底。
 解析矩阵还覆盖分词、单双引号、转义、`--`、参数数量/方向、全部拒绝选项、IPv6、Unicode、
@@ -342,9 +342,9 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
    Tab bar 颜色过近导致的结构不清；只调整已有 token、透明度、边界和必要间距，不增加装饰、
    主题选择器或新的常驻控件。完成条件是每个层级在 Off/Medium/Extreme、活动/非活动窗口和
    单/双 Pane 下可辨，同时保持界面安静、紧凑并符合键盘优先原则。
-4. [ ] 重新审计并设计全部本地命令的提示符、输入回显、进行中、成功、警告、取消和错误输出，
-   形成一份统一标准后再修改实现。重点评估启动提示符是否由 `ltty>` 收敛为固定字体下的一格
-   青色 LeanTTY 标记加绿色 `>`，并统一未知命令、解析错误、Host/key/ssh、`put/get` 等结果的
+4. [x] 重新审计并设计全部本地命令的提示符、输入回显、进行中、成功、警告、取消和错误输出，
+   形成一份统一标准后再修改实现。启动提示符由 `ltty>` 收敛为固定字体下的一格青色 LeanTTY
+   标记加绿色 `>`，并统一未知命令、解析错误、Host/key/ssh、`put/get` 等结果的
    文案结构、换行、缩进、颜色和 ASCII/单格图标。颜色只表达有限语义且文字始终自足；错误必须
    清楚说明“发生了什么”和“下一步怎么做”，不泄露秘密或远端不可信内容。完成条件是建立命令
    输出清单和 token/格式规范，覆盖所有命令与状态的自动化，并在固定字体真机截图中保持对齐、
@@ -353,6 +353,12 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
    2026-08-14 对齐：[`design/local-command-output.md`](design/local-command-output.md) 已冻结并
    获得实现授权。固定采用青色 `L` + 绿色 `>`、已提交写操作的成功绿点、`Error: 事实` + 可选
    `Try:/Usage:` 两段式错误，以及黄色警告/取消、青色进行中/说明；按该规范执行本项。
+
+   2026-08-14 完成：Host/key/SSH/帮助和 `put/get` 已共享单一 token/提示符所有者，动态正文经过
+   终端安全边界，自动化、ARM64 debug HAP 与固定字体真机代表场景通过。8 MiB GET 取消只产生
+   一个终态并完整清理；用户指定的 118,349,760 字节安装包完成 GET → PUT 字节精确链，实时
+   速度、ETA、耗时和平均速度可见，最终文件与临时 fixture 数据均按验证器合同清理。长期规范与
+   精确证据见 [`design/local-command-output.md`](design/local-command-output.md)。
 
 ## 2. 自动化与集成门禁
 

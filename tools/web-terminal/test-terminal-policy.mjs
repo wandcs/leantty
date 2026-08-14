@@ -637,8 +637,36 @@ assert.match(sessionViewModel,
   /private onSshClose[\s\S]*?releaseDisconnectedFlowControl\(\)[\s\S]*?writeTerminal\([\s\S]*?writePrompt\(\)/,
   'disconnect cleanup must release output flow control before appending the local close message and prompt');
 assert.match(sessionViewModel,
-  /if \(parsed === null\) \{\s*this\.writeError\("Unknown command\. Type 'help' for commands, or use: ssh user@host"\)/,
-  'unknown idle commands must point to both local help and the direct SSH path');
+  /if \(parsed === null\) \{[\s\S]*?this\.writeError\('Unknown command "' \+ summary \+ '"\.',\s*'Try: help, or ssh user@host to connect\.'\)/,
+  'unknown idle commands must identify a bounded input and put both next steps on a second line');
+assert.match(sessionViewModel,
+  /writeError\(msg: string, guidance: string = ''\)[\s\S]*?LocalCommandOutput\.error\([\s\S]*?terminalSafeMultilineText\(msg\)/,
+  'local diagnostics must preserve a bounded multiline structure while escaping terminal control text');
+assert.doesNotMatch(sessionViewModel, /ltty> /,
+  'the old wordmark prompt must not remain hard-coded in the session output path');
+
+const localCommandOutput = readFileSync(
+  new URL('../../entry/src/main/ets/model/terminal/LocalCommandOutput.ets', import.meta.url), 'utf8');
+assert.match(localCommandOutput,
+  /return CYAN \+ 'L' \+ GREEN \+ '>' \+ RESET \+ ' '/,
+  'the local prompt must use one cyan brand cell and a separately green readiness marker');
+assert.match(localCommandOutput,
+  /RED \+ 'Error:' \+ RESET[\s\S]*?guidance[\s\S]*?LocalCommandOutput\.prompt\(\)/,
+  'errors must color only the semantic label, preserve optional guidance, and return to the standard prompt');
+assert.match(sessionViewModel,
+  /LocalCommandOutput\.status\('Cancelling', 'file transfer\.\.\.'\)/,
+  'file-transfer cancellation in progress must remain distinct from its yellow terminal result');
+assert.match(sessionViewModel,
+  /HOST_KEY_CHANGED[\s\S]*?LocalCommandOutput\.warning\([\s\S]*?terminalSafeMultilineText/,
+  'changed transfer host keys must use the warning token after terminal-text sanitization');
+
+const keyCommandService = readFileSync(
+  new URL('../../entry/src/main/ets/model/command/KeyCommandService.ets', import.meta.url), 'utf8');
+assert.doesNotMatch(keyCommandService, /ltty> /,
+  'Host and key commands must reuse the single local prompt owner');
+assert.match(keyCommandService,
+  /safeMultilineText\(query\.output\)[\s\S]*?LocalCommandOutput\.prompt\(\)/,
+  'known-host query output must be control-safe before returning to the prompt');
 assert.match(sessionViewModel,
   /private setMode[\s\S]*setInputMasked\(SessionViewModel\.isSecretInputMode\(newMode\)\)[\s\S]*PASSWORD_INPUT[\s\S]*KEY_PASSPHRASE_INPUT[\s\S]*AUTH_CHALLENGE_INPUT[\s\S]*KEY_PASSPHRASE_CHANGE_INPUT/,
   'only local secret-entry modes may mask the xterm helper input');

@@ -41,6 +41,12 @@
 
 ### Fixed
 
+- Unified disconnected local-command output around a two-cell cyan `L` and
+  green `>` prompt, restrained semantic status colors, a one-cell green dot for
+  committed writes, quiet query results, and compact two-line errors with
+  actionable next steps. Host, key, SSH and file-transfer output now share one
+  token owner and sanitize dynamic terminal text without exposing raw exception
+  details.
 - Clarified the terminal workspace hierarchy: inactive tabs now recede into the
   Chrome rail, the active tab uses a distinct restrained surface, resting
   Chrome controls remain discoverable, and the one-pixel split boundary stays
