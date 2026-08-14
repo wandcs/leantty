@@ -183,7 +183,7 @@ struct Index {
                 .width(1)
                 .height('100%')
                 .backgroundColor(this.chromeColors.divider)
-                .opacity(0.50)
+                .opacity(0.64)
                 .hitTestBehavior(HitTestMode.None)
               if (this.splitPaneNeedsAttention(false)) {
                 Circle()
