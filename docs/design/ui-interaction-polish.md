@@ -1,16 +1,17 @@
 # 桌面终端界面与交互收敛
 
-> 状态：Verified；GitHub/AppGallery 已发布
+> 状态：Verified；1.2 已发布，1.3 渲染与视觉参数修订已完成真机定向验证
 >
-> milestone：1.2
+> milestone：1.2 基线；1.3 渲染与视觉修订
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
 > 实现授权：[`next-work.md`](../next-work.md)
 >
-> 最近更新：2026-08-13
+> 最近更新：2026-08-14
 
-本文冻结 LeanTTY 1.2 的桌面终端界面与交互收敛方案。它解决现有界面在多 Tab、BEL
+本文冻结 LeanTTY 1.2 的桌面终端界面与交互收敛方案，并记录 1.3 对透明 TUI 渲染、五档
+参数和 Chrome 层级的兼容修订。它解决现有界面在多 Tab、BEL
 提醒、内容层次、搜索密度和分屏反馈上的一致性问题，不改变 Tab → Pane → Session
 所有权，只增加一个受控的五档全窗口透明度选择，不扩展为通用外观设置或设计框架。
 唯一活动执行顺序与验收项仍以 `docs/next-work.md` 为准，本文不维护第二份 checkbox。
@@ -84,8 +85,8 @@ Terminal Surface 独占。透明效果不得暴露新的终端内容副本，也
 
 - 活动窗口使用自定义 40vp Chrome；Tab 固定 172vp，Tab 间距 4vp，Tab 区横向滚动，
   `+` 位于滚动区外，标题栏保留至少 96vp 拖拽区域和约 140vp 系统按钮区域。
-- 非活动 Tab 的原基线返回透明表面色；当前实现让 Chrome 轨道、非活动 Tab、活动/hover Tab
-  分别使用 Catppuccin `crust → mantle → base`，只通过既有 4vp 间距显示相邻边界。
+- 当前实现让 Chrome 轨道使用 Catppuccin crust，非活动 Tab 直接露出轨道，活动/hover Tab
+  使用一层 80% surface0；只通过既有 4vp 间距和活动表面显示层级，不增加相邻分隔线。
 - `needsAttention` 的原基线在 Pane 四周绘制 2px 黄色边框；当前实现已改为有限 Tab 强调、
   复用 Tab 前导状态点的静态标记，以及分屏来源侧的局部标记。
 - 搜索条原基线固定约 420px；当前实现收敛为 344px，并固定结果区和三个操作按钮宽度。
@@ -161,10 +162,10 @@ Terminal Surface 独占。透明效果不得暴露新的终端内容副本，也
 | 档位 | 内容背景不透明度 | 内容透光量 | Chrome 背景不透明度 | Chrome 透光量 | 角色 |
 | --- | ---: | ---: | ---: | ---: | --- |
 | 关 Off | `1.00` | `0%` | `1.00` | `0%` | 完全不透明基线与最终回退 |
-| 低 Low | `0.90` | `10%` | `0.94` | `6%` | 对齐上一轮可感知的 Medium，避免与 Off 无区别 |
-| 中 Medium | `0.82` | `18%` | `0.88` | `12%` | 推荐默认；桌面可感知但终端内容仍主导 |
-| 高 High | `0.72` | `28%` | `0.80` | `20%` | 明显材质感，适合持续使用前自行确认可读性 |
-| 极限 Extreme | `0.60` | `40%` | `0.70` | `30%` | 明确的用户主动选择，不作为产品展示默认 |
+| 低 Low | `0.82` | `18%` | `0.88` | `12%` | 采用旧 Medium 基线，避免与 Off 差异过小 |
+| 中 Medium | `0.72` | `28%` | `0.80` | `20%` | 推荐默认；透明清楚可感知但终端内容仍主导 |
+| 高 High | `0.60` | `40%` | `0.70` | `30%` | 采用旧 Extreme 基线，提供明显材质感 |
+| 极限 Extreme | `0.45` | `55%` | `0.55` | `45%` | 更激进的主动选择；文字、焦点和 TUI 仍须可读 |
 
 推荐默认保持“中”，避免改变已经确认的默认语义；新装、偏好缺失或非法值都回到中档。
 现有 Low/Medium/High 偏好按语义原位迁移，不按旧 alpha 猜测用户意图；新增 Off 和 Extreme。
@@ -175,8 +176,8 @@ kitty 的正式默认都保持完全不透明，说明可靠阅读仍应是基�
 几乎无差异，因此最终把 Low 对齐到上一轮 Medium 的 `0.90`，其余档位按相同可感知跨度
 展开，并把 `0.60` 单独命名为 Extreme，而不伪装成普通默认。
 
-Chrome 不是独立设置。它由同一个语义档位派生，并且透明程度始终约为内容区的一半；档位
-越强，Chrome 与内容的差距越大。这能让 Tab、拖拽区、四点菜单和系统按钮保持稳定结构，
+Chrome 不是独立设置。它由同一个语义档位派生，并且始终比内容区更实；档位
+越强，两区仍保留明确差值。这能让 Tab、拖拽区、四点菜单和系统按钮保持稳定结构，
 同时避免顶部形成一条与内容区割裂的不透明横条。活动 Tab、hover、pressed、focus、BEL
 标记继续使用现有表面和状态 token，不再叠加第二个区域 alpha。
 
@@ -280,8 +281,8 @@ Extreme 也必须在系统材质不可用的无 blur 回退下保持终端字形
 2026-08-08 已确认以下整组结论，不拆成多个长期设置：
 
 1. 菜单采用 `[−] 当前档位 [+]`，边界禁用、不循环、菜单保持打开。
-2. 五档采用内容 `1.00 / 0.90 / 0.82 / 0.72 / 0.60`，默认 Medium。
-3. Chrome 由同档位派生 `1.00 / 0.94 / 0.88 / 0.80 / 0.70`，不允许独立调节。
+2. 五档采用内容 `1.00 / 0.82 / 0.72 / 0.60 / 0.45`，默认 Medium。
+3. Chrome 由同档位派生 `1.00 / 0.88 / 0.80 / 0.70 / 0.55`，不允许独立调节。
 4. 非 Off 固定系统 `BACKGROUND_REGULAR` 材质；Off 或透明能力失败时使用 None/不透明回退。
 5. 不采用自定义 Gaussian、CSS/WebGL blur、逐 Pane 动态 blur、截图背景或模糊强度设置。
 
@@ -294,16 +295,18 @@ Extreme 也必须在系统材质不可用的无 blur 回退下保持终端字形
 三层都使用现有主题色，不新增品牌渐变或高饱和装饰。
 
 透明度使用关/低/中/高/极限五档固定值。内容背景不透明度为
-`1.00/0.90/0.82/0.72/0.60`，Chrome 为 `1.00/0.94/0.88/0.80/0.70`，默认中档。
+`1.00/0.82/0.72/0.60/0.45`，Chrome 为 `1.00/0.88/0.80/0.70/0.55`，默认中档。
 两区共用同一语义档位但持有不重叠的派生 alpha；搜索浮层、链接菜单和明确设置背景的
-  TUI 单元格保持稳定。窗口根仅使用一次系统 Regular 材质，不形成互相叠加的玻璃层。
+TUI 单元格保持稳定。显式 ANSI/TrueColor 单元格背景另用 `1.00/0.20/0.16/0.12/0.08`
+的 renderer-only alpha，避免它们在透明窗口上形成实黑矩形；文字始终保持不透明。窗口根
+仅使用一次系统 Regular 材质，不形成互相叠加的玻璃层。
 
 ### 颜色与字体
 
 - 继续使用现有 Catppuccin 深浅色 token，不新增第二套 palette。
 - Chrome 轨道使用深色 `#11111B` / 浅色 `#DCE0E8` crust，并继续承载五档区域 alpha；
-  非活动 Tab 使用不透明 mantle `#181825` / `#E6E9EF`，活动与 hover 使用不透明 base
-  `#1E1E2E` / `#EFF1F5`。Tab 不再依赖容易在 Low 档塌缩的局部 opacity 表达层级。
+  非活动 Tab 不再叠加几乎同色的表面，直接露出轨道；活动与 hover 使用 80% surface0
+  `#313244` / `#BCC0CC`。Tab 不依赖会随档位塌缩的局部整体 opacity 表达层级。
 - 结构边界优先使用 divider token 的低对比度变体；活动、hover、pressed 和键盘焦点
   逐级增强，但不使用纯白描边。
 - attention 使用现有琥珀色 token；静态标记同时保留形状，不能只靠色相表达状态。
@@ -326,7 +329,7 @@ Tab 多于可视宽度时仍横向滚动；边缘只在确实还有不可见 Tab
 ### Tab 与溢出
 
 - Tab 宽度保持 172vp，不做自适应压缩、最小/最大宽度算法或用户设置。
-- 非活动 Tab 使用 mantle，活动与 hover 使用 base；相邻 Tab 只通过 4vp crust 轨道间距与
+- 非活动 Tab 露出轨道，活动与 hover 使用 surface0；相邻 Tab 只通过 4vp crust 轨道间距与
   active/inactive/hover 表面差异区分，不绘制竖线。所有 Tab 表面延伸到内容区基线且底角
   不再圆角，活动 Tab 与 Terminal 形成连续层次，不增加完整外框。
 - 关闭按钮默认低权重，hover、pressed 和键盘焦点时明确；不能因缩小标题空间而遮住
@@ -362,9 +365,9 @@ BEL 是本轮唯一允许具有明显运动的元素。
 - 原生窗口在页面加载后设置透明背景；PC 容器只把活动态设为透明，非活动态按 HarmonyOS
   限制保持主题不透明色。平台拒绝透明设置时，能力标记保持 false，ArkUI 根 Surface
   自动使用完全不透明的主题背景，启动与终端功能不受影响。
-- Chrome 与 Content 两个不重叠兄弟 Surface 是各自区域 alpha 的唯一所有者；共同祖先、
-  Pane/Web 组件、HTML/body、xterm background 与 WebGL renderer 全部透明透传。任何下层
-  再次持有相同 alpha 都会造成复合透明，不得用重复透明层、亮度变化或叠加 hack 模拟。
+- Chrome 与 Content 两个不重叠兄弟 Surface 是区域 alpha 的唯一所有者；共同祖先、
+  Pane/Web 组件、HTML/body 与 xterm 默认背景全部透明透传。xterm WebGL 只对显式单元格
+  背景使用独立低 alpha，不得把该值应用到字形或再叠加完整区域 alpha。
 - Shell、tmux、vim、less 和主流 Agent TUI 显式设置的 cell/background 必须保持正确；
   不得出现块状漏底、文字对比不足、selection/search decoration 异常或残影。
 - 大持续输出、滚动、窗口缩放、主题切换、最小化/恢复、renderer 退出与重建不能出现
@@ -462,7 +465,7 @@ AttentionService 或 SurfaceEffect 抽象。无引用旧组件的删除必须独
   渲染；持久提醒复用 Tab 前导状态点，避免标题尾部在溢出时被裁掉；分屏来源只在分隔线
   一侧显示小点。旧的整 Pane 黄色边框已移除。
 - 已实现 Off/Low/Medium/High/Extreme 五档非循环步进器，内容背景不透明度为
-  `1.00/0.90/0.82/0.72/0.60`，Chrome 为 `1.00/0.94/0.88/0.80/0.70`，默认 Medium。
+  `1.00/0.82/0.72/0.60/0.45`，Chrome 为 `1.00/0.88/0.80/0.70/0.55`，默认 Medium。
   页面加载后把活动态 PC 容器和原生内容窗口设为透明，非活动态容器保持主题不透明色；
   Chrome 与 Content 两个不重叠 ArkUI Surface 分别独占区域 alpha，ArkWeb/HTML/xterm WebGL
   全透明透传，`allowTransparency` 在 `term.open` 前启用。切换复用既有主题桥且不重建
@@ -471,7 +474,7 @@ AttentionService 或 SurfaceEffect 抽象。无引用旧组件的删除必须独
   不存在材质设置、持久化材质状态或逐 Pane 模糊。
 - Tab 间竖线已移除，所有 Tab 表面接到内容区基线；搜索条仍为 344px，结果区改为 48px，
   空查询和无结果都显示 `0/0`，右侧安全间距增加到 54px；HarmonyOS 2×2 四点菜单已恢复，
-  并包含正式 Search、Transparency/Font Size 两个复合步进器；全高分屏线静态 opacity 降为 0.50。
+  并包含正式 Search、Transparency/Font Size 两个复合步进器；全高分屏线静态 opacity 为 0.64。
 - 字号步进器沿用 `Ctrl+-` / `Ctrl+=`，透明度步进器新增 `Ctrl+Alt+-` / `Ctrl+Alt+=`；四个
   全局快捷键在菜单打开或关闭时都由工作区优先处理。四个按钮使用 300ms 延迟的原生
   `bindTips`，鼠标悬停时显示对应键位；没有引入自定义 Tooltip、计时器或覆盖层框架。
@@ -504,6 +507,33 @@ Search、Transparency/Font Size 两个步进器、Medium→Extreme→Medium、16
 
 这些是实现与定向验收证据。后续正式候选结果见下一节；历史调试 HAP 不因最终候选通过而
 改写为发布证据。
+
+## 2026-08-14 1.3 渲染与视觉修订
+
+用户在 HSL 中运行 Codex 和其他 TUI 时观察到大面积黑色背景块。真机失败截图证明默认
+Terminal 背景仍然透明，只有应用通过 ANSI 或 TrueColor 明确设置背景色的单元格变成全黑。
+锁定的 `@xterm/addon-webgl 0.19.0` 源码进一步把根因定位到 `RectangleRenderer`：默认背景
+保留主题 alpha，但显式单元格矩形把 alpha 写死为 `1`。这排除了字体、SSH 字节、ArkTS、
+Bridge 和窗口材质作为根因。
+
+LeanTTY 在固定版本的 WebGL 资产生成步骤中只替换这一处 alpha 来源，并要求精确匹配一次；
+若升级 xterm 后代码位置变化，构建会失败并要求重新审计。主题桥传入五档派生的
+`cellBackgroundOpacity`，Web 侧先限制到 `0..1`，从传给上游 xterm 的主题对象中删除该元数据，
+再刷新现有行。前景字形、光标、selection、默认背景和 Off 档不变。用户在同一物理 PC 的
+Codex 页面确认黑块消失；五档同页截图位于
+`build/verification/transparency-ladder-20260814/`，普通 shell、Codex 深浅显式表面、文字和
+状态行从 Off 到 Extreme 均保持正确。
+
+同轮按用户决定把透明参数整体前移一档，并新设更激进 Extreme。之后对单 Tab、多 Tab、双
+Pane、活动/非活动窗口与 Off/Medium/Extreme 做走查。结论是不增加装饰或新状态：非活动 Tab
+直接露出 Chrome rail，活动/hover Tab 使用 80% surface0；`+` 和四点菜单的静止态从 placeholder
+提升到 status text 的 72%，全高一像素分屏线从 50% 提到 64%。真机截图位于
+`build/verification/visual-hierarchy-20260814/`；活动 Tab、非活动 Tab、Chrome、内容、焦点 Pane、
+非焦点 Pane 和分屏边界在四种场景均可辨，测试结束后设备恢复 Medium 和应用焦点。
+
+定向门禁包括 Web terminal policy、104/104 ArkTS 单元测试、干净 ARM64 debug HAP 构建、
+测试签名、安装和启动。生成截图是本地忽略证据，不进入发布包；本节不把 1.2 历史候选的
+旧 alpha、性能分布或签名哈希改写成 1.3 正式候选证据。
 
 ## 2026-08-08 1.2 保留候选验收
 

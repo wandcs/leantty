@@ -709,6 +709,18 @@ assert.match(themeConstants,
 assert.match(themeConstants,
   /background: string = 'rgba\(0, 0, 0, 0\)'[\s\S]*surfaceBackground: string = '#D1EFF1F5'/,
   'the light xterm renderer must stay transparent behind the content surface owner');
+assert.match(themeConstants,
+  /tabBackground: string = '#00181825'[\s\S]*tabActiveBackground: string = '#CC313244'/,
+  'dark inactive tabs must expose the Chrome rail while the active tab owns one restrained surface');
+assert.match(themeConstants,
+  /tabBackground: string = '#00E6E9EF'[\s\S]*tabActiveBackground: string = '#CCBCC0CC'/,
+  'light inactive tabs must expose the Chrome rail while the active tab owns one restrained surface');
+assert.match(chromeBar,
+  /ChromeButton[\s\S]*fontColor\(this\.chromeColors\.statusText\)[\s\S]*opacity\(this\.hovered \|\| this\.focused \? 1 : 0\.72\)/,
+  'Chrome controls must remain visible at rest without competing with the active tab');
+assert.match(indexPage,
+  /activeTabIsSplit\(\)[\s\S]*backgroundColor\(this\.chromeColors\.divider\)[\s\S]*opacity\(0\.64\)/,
+  'the one-pixel split boundary must remain visible across transparent presets');
 assert.match(themeManager,
   /HIGH = 0[\s\S]*MEDIUM = 1[\s\S]*LOW = 2[\s\S]*OFF = 3[\s\S]*EXTREME = 4/,
   'the five-mode model must preserve the three existing semantic preference values');

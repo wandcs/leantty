@@ -41,6 +41,10 @@
 
 ### Fixed
 
+- Clarified the terminal workspace hierarchy: inactive tabs now recede into the
+  Chrome rail, the active tab uses a distinct restrained surface, resting
+  Chrome controls remain discoverable, and the one-pixel split boundary stays
+  visible across transparent presets.
 - Shifted each non-off transparency preset one step clearer: Low now matches
   the former Medium baseline, Medium matches former High, High matches former
   Extreme, and the new Extreme uses a more aggressive 45% content / 55% Chrome
