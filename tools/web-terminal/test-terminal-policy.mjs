@@ -713,10 +713,10 @@ assert.match(themeManager,
   /HIGH = 0[\s\S]*MEDIUM = 1[\s\S]*LOW = 2[\s\S]*OFF = 3[\s\S]*EXTREME = 4/,
   'the five-mode model must preserve the three existing semantic preference values');
 assert.match(themeManager,
-  /contentOpacity[\s\S]*1\.00[\s\S]*0\.72[\s\S]*0\.90[\s\S]*0\.60[\s\S]*0\.82/,
+  /contentOpacity[\s\S]*1\.00[\s\S]*0\.60[\s\S]*0\.82[\s\S]*0\.45[\s\S]*0\.72/,
   'theme authority must own all five approved content opacity values');
 assert.match(themeManager,
-  /chromeOpacity[\s\S]*1\.00[\s\S]*0\.80[\s\S]*0\.94[\s\S]*0\.70[\s\S]*0\.88/,
+  /chromeOpacity[\s\S]*1\.00[\s\S]*0\.70[\s\S]*0\.88[\s\S]*0\.55[\s\S]*0\.80/,
   'theme authority must own all five derived Chrome opacity values');
 assert.match(userPreferences,
   /TERMINAL_TRANSPARENCY_MODE_KEY[\s\S]*loadTransparencyMode\(\)[\s\S]*saveTransparencyMode\(value: number\)/,

@@ -41,6 +41,10 @@
 
 ### Fixed
 
+- Shifted each non-off transparency preset one step clearer: Low now matches
+  the former Medium baseline, Medium matches former High, High matches former
+  Extreme, and the new Extreme uses a more aggressive 45% content / 55% Chrome
+  surface while keeping glyphs opaque and semantic ordering stable.
 - Kept ANSI and true-color cell backgrounds consistent with LeanTTY's
   transparency instead of letting the xterm WebGL renderer force them fully
   opaque. Dense TUI surfaces such as Codex no longer appear as black blocks;

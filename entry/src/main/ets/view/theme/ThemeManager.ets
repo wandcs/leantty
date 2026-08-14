@@ -60,26 +60,26 @@ export class TransparencyPolicy {
 
   static contentOpacity(mode: TransparencyMode): number {
     if (mode === TransparencyMode.OFF) return 1.00
-    if (mode === TransparencyMode.HIGH) return 0.72
-    if (mode === TransparencyMode.LOW) return 0.90
-    if (mode === TransparencyMode.EXTREME) return 0.60
-    return 0.82
+    if (mode === TransparencyMode.HIGH) return 0.60
+    if (mode === TransparencyMode.LOW) return 0.82
+    if (mode === TransparencyMode.EXTREME) return 0.45
+    return 0.72
   }
 
   static chromeOpacity(mode: TransparencyMode): number {
     if (mode === TransparencyMode.OFF) return 1.00
-    if (mode === TransparencyMode.HIGH) return 0.80
-    if (mode === TransparencyMode.LOW) return 0.94
-    if (mode === TransparencyMode.EXTREME) return 0.70
-    return 0.88
+    if (mode === TransparencyMode.HIGH) return 0.70
+    if (mode === TransparencyMode.LOW) return 0.88
+    if (mode === TransparencyMode.EXTREME) return 0.55
+    return 0.80
   }
 
   static cellBackgroundOpacity(mode: TransparencyMode): number {
     if (mode === TransparencyMode.OFF) return 1.00
-    if (mode === TransparencyMode.HIGH) return 0.16
-    if (mode === TransparencyMode.LOW) return 0.25
-    if (mode === TransparencyMode.EXTREME) return 0.12
-    return 0.20
+    if (mode === TransparencyMode.HIGH) return 0.12
+    if (mode === TransparencyMode.LOW) return 0.20
+    if (mode === TransparencyMode.EXTREME) return 0.08
+    return 0.16
   }
 
   static terminalBackground(mode: TransparencyMode, isLight: boolean): string {
@@ -89,19 +89,19 @@ export class TransparencyPolicy {
   static surfaceBackground(mode: TransparencyMode, isLight: boolean): string {
     let rgb: string = isLight ? 'EFF1F5' : '1E1E2E'
     if (mode === TransparencyMode.OFF) return '#FF' + rgb
-    if (mode === TransparencyMode.HIGH) return '#B8' + rgb
-    if (mode === TransparencyMode.LOW) return '#E6' + rgb
-    if (mode === TransparencyMode.EXTREME) return '#99' + rgb
-    return '#D1' + rgb
+    if (mode === TransparencyMode.HIGH) return '#99' + rgb
+    if (mode === TransparencyMode.LOW) return '#D1' + rgb
+    if (mode === TransparencyMode.EXTREME) return '#73' + rgb
+    return '#B8' + rgb
   }
 
   static chromeSurfaceBackground(mode: TransparencyMode, isLight: boolean): string {
     let rgb: string = isLight ? 'DCE0E8' : '11111B'
     if (mode === TransparencyMode.OFF) return '#FF' + rgb
-    if (mode === TransparencyMode.HIGH) return '#CC' + rgb
-    if (mode === TransparencyMode.LOW) return '#F0' + rgb
-    if (mode === TransparencyMode.EXTREME) return '#B3' + rgb
-    return '#E0' + rgb
+    if (mode === TransparencyMode.HIGH) return '#B3' + rgb
+    if (mode === TransparencyMode.LOW) return '#E0' + rgb
+    if (mode === TransparencyMode.EXTREME) return '#8C' + rgb
+    return '#CC' + rgb
   }
 
   static opaqueSurfaceBackground(isLight: boolean): string {
