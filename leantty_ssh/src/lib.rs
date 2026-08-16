@@ -525,19 +525,86 @@ struct SessionReceivers {
     output_pause_rx: tokio::sync::mpsc::Receiver<bool>,
 }
 
-async fn run_channel_writer(
+const INPUT_WRITE_CHUNK_BYTES: usize = 32 * 1024;
+
+async fn send_scheduled_input<S, SF, R, RF, E>(
+    bytes: Vec<u8>,
+    resize_rx: &mut tokio::sync::mpsc::Receiver<(u32, u32)>,
+    mut send_chunk: S,
+    mut send_resize: R,
+) -> (std::result::Result<(), E>, Vec<E>)
+where
+    S: FnMut(Vec<u8>) -> SF,
+    SF: Future<Output = std::result::Result<(), E>>,
+    R: FnMut((u32, u32)) -> RF,
+    RF: Future<Output = std::result::Result<(), E>>,
+{
+    if bytes.is_empty() {
+        return (send_chunk(bytes).await, Vec::new());
+    }
+
+    let mut resize_errors = Vec::new();
+    let mut resize_open = true;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let end = (offset + INPUT_WRITE_CHUNK_BYTES).min(bytes.len());
+        let mut sending = Box::pin(send_chunk(bytes[offset..end].to_vec()));
+        let write_result = loop {
+            if !resize_open {
+                break sending.as_mut().await;
+            }
+            tokio::select! {
+              size = resize_rx.recv() => {
+                match size {
+                  Some(mut latest) => {
+                    while let Ok(next) = resize_rx.try_recv() {
+                      latest = next;
+                    }
+                    if let Err(error) = send_resize(latest).await {
+                      resize_errors.push(error);
+                    }
+                  }
+                  None => resize_open = false,
+                }
+              }
+              result = sending.as_mut() => break result,
+            }
+        };
+        if let Err(error) = write_result {
+            return (Err(error), resize_errors);
+        }
+        offset = end;
+        if offset < bytes.len() {
+            tokio::task::yield_now().await;
+        }
+    }
+    (Ok(()), resize_errors)
+}
+
+async fn run_channel_writer_core<R>(
     channel: russh::ChannelWriteHalf<russh::client::Msg>,
     mut write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     mut resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
-    control_callback: JsCallback,
-) {
+    mut report: R,
+) where
+    R: FnMut(String),
+{
     loop {
         tokio::select! {
           data = write_rx.recv() => {
             match data {
               Some(bytes) => {
-                if let Err(error) = channel.data(&bytes[..]).await {
-                  send_control(&control_callback, &format!("WRITE_ERROR:{}", error));
+                let (write_result, resize_errors) = send_scheduled_input(
+                  bytes,
+                  &mut resize_rx,
+                  |chunk| channel.data_bytes(chunk),
+                  |(cols, rows)| channel.window_change(cols, rows, 0, 0),
+                ).await;
+                for error in resize_errors {
+                  report(format!("RESIZE_ERROR:{}", error));
+                }
+                if let Err(error) = write_result {
+                  report(format!("WRITE_ERROR:{}", error));
                 }
               }
               None => break,
@@ -547,13 +614,32 @@ async fn run_channel_writer(
             match size {
               Some((cols, rows)) => {
                 if let Err(error) = channel.window_change(cols, rows, 0, 0).await {
-                  send_control(&control_callback, &format!("RESIZE_ERROR:{}", error));
+                  report(format!("RESIZE_ERROR:{}", error));
                 }
               }
               None => break,
             }
           }
         }
+    }
+}
+
+async fn run_channel_writer(
+    channel: russh::ChannelWriteHalf<russh::client::Msg>,
+    write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
+    control_callback: JsCallback,
+) {
+    run_channel_writer_core(channel, write_rx, resize_rx, |event| {
+        send_control(&control_callback, &event);
+    })
+    .await;
+}
+
+fn channel_writer_exit_message(result: std::result::Result<(), tokio::task::JoinError>) -> String {
+    match result {
+        Ok(()) => "SSH channel writer stopped unexpectedly".to_string(),
+        Err(error) => format!("SSH channel writer task failed: {error}"),
     }
 }
 
@@ -1146,12 +1232,13 @@ async fn run_session(
     send_control(&control_callback, "CONNECTED");
 
     let (mut channel_read, channel_write) = channel.split();
-    let channel_writer = tokio::spawn(run_channel_writer(
+    let mut channel_writer = tokio::spawn(run_channel_writer(
         channel_write,
         receivers.write_rx,
         receivers.resize_rx,
         control_callback.clone(),
     ));
+    let mut channel_writer_active = true;
 
     let mut pending_output: Vec<u8> = Vec::new();
     let mut output_tick = tokio::time::interval(Duration::from_millis(16));
@@ -1225,11 +1312,21 @@ async fn run_session(
             connection_task_result = Some(result);
             break;
           }
+          result = &mut channel_writer, if channel_writer_active => {
+            channel_writer_active = false;
+            send_control(
+              &control_callback,
+              &format!("WRITE_ERROR:{}", channel_writer_exit_message(result)),
+            );
+            break;
+          }
         }
     }
 
-    channel_writer.abort();
-    let _ = channel_writer.await;
+    if channel_writer_active {
+        channel_writer.abort();
+        let _ = channel_writer.await;
+    }
     if local_disconnect_requested {
         let _ = tokio::time::timeout(
             Duration::from_secs(1),
@@ -2103,15 +2200,286 @@ pub fn ssh_protect_private_key(key_path: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_client_config, is_current_auth_generation, should_flush_immediately,
+        build_client_config, channel_writer_exit_message, is_current_auth_generation,
+        run_channel_writer_core, send_scheduled_input, should_flush_immediately,
         wait_for_auth_command, wait_for_auth_exchange, wait_for_connect, AuthExchangeResult,
         AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult, FileTransferEvent,
         OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
-        SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
+        INPUT_WRITE_CHUNK_BYTES, SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
     };
     use napi_ohos::Status;
+    use russh::client;
+    use russh::keys::{Algorithm, PrivateKey, PrivateKeyWithHashAlg, PublicKey};
+    use russh::server::{self, Auth, Handler, Msg, Server as _, Session};
+    use russh::{Channel, ChannelMsg, Disconnect};
     use std::future::pending;
+    use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tokio::net::TcpListener;
+    use tokio::sync::{mpsc, Notify};
+
+    const ACTOR_TEST_WINDOW_BYTES: usize = 16 * 1024;
+
+    #[derive(Debug)]
+    enum ActorServerEvent {
+        Data(Vec<u8>),
+        Resize(u32, u32),
+    }
+
+    #[derive(Clone)]
+    struct ActorServer {
+        event_tx: mpsc::UnboundedSender<ActorServerEvent>,
+    }
+
+    impl server::Server for ActorServer {
+        type Handler = Self;
+
+        fn new_client(&mut self, _: Option<SocketAddr>) -> Self::Handler {
+            self.clone()
+        }
+    }
+
+    impl Handler for ActorServer {
+        type Error = russh::Error;
+
+        async fn auth_publickey(&mut self, _: &str, _: &PublicKey) -> Result<Auth, Self::Error> {
+            Ok(Auth::Accept)
+        }
+
+        async fn channel_open_session(
+            &mut self,
+            mut channel: Channel<Msg>,
+            reply: server::ChannelOpenHandle,
+            _: &mut Session,
+        ) -> Result<(), Self::Error> {
+            let event_tx = self.event_tx.clone();
+            reply.accept().await;
+            tokio::spawn(async move {
+                while let Some(message) = channel.wait().await {
+                    let event = match message {
+                        ChannelMsg::Data { data } => ActorServerEvent::Data(data.to_vec()),
+                        ChannelMsg::WindowChange {
+                            col_width,
+                            row_height,
+                            ..
+                        } => ActorServerEvent::Resize(col_width, row_height),
+                        ChannelMsg::Eof | ChannelMsg::Close => return,
+                        _ => continue,
+                    };
+                    if event_tx.send(event).is_err() {
+                        return;
+                    }
+                }
+            });
+            Ok(())
+        }
+    }
+
+    struct ActorClient;
+
+    impl client::Handler for ActorClient {
+        type Error = russh::Error;
+
+        async fn check_server_key(&mut self, _: &PublicKey) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn product_writer_actor_preserves_follow_up_after_one_mebibyte() {
+        let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let mut server = ActorServer { event_tx };
+        let config = Arc::new(server::Config {
+            keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap()],
+            window_size: ACTOR_TEST_WINDOW_BYTES as u32,
+            channel_buffer_size: 1,
+            ..Default::default()
+        });
+        let running = server.run_on_socket(config, &socket);
+        let server_handle = running.handle();
+
+        let client = async move {
+            let config = Arc::new(client::Config {
+                window_size: ACTOR_TEST_WINDOW_BYTES as u32,
+                channel_buffer_size: 1,
+                ..Default::default()
+            });
+            let key = Arc::new(PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap());
+            let mut session = client::connect(config, address, ActorClient).await.unwrap();
+            let hash = session.best_supported_rsa_hash().await.unwrap().flatten();
+            assert!(session
+                .authenticate_publickey("user", PrivateKeyWithHashAlg::new(key, hash))
+                .await
+                .unwrap()
+                .success());
+            let channel = session.channel_open_session().await.unwrap();
+            let (_read_half, write_half) = channel.split();
+            let (write_tx, write_rx) = mpsc::channel(4096);
+            let (resize_tx, resize_rx) = mpsc::channel(8);
+            let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+            let reported_errors = Arc::clone(&errors);
+            let writer = tokio::spawn(run_channel_writer_core(
+                write_half,
+                write_rx,
+                resize_rx,
+                move |error| reported_errors.lock().unwrap().push(error),
+            ));
+
+            let payload = (0..(1024 * 1024 + 17))
+                .map(|index| (index % 251) as u8)
+                .collect::<Vec<_>>();
+            let follow_up = b"ltty-input-check actor\r";
+            write_tx.send(payload.clone()).await.unwrap();
+            resize_tx.send((181, 49)).await.unwrap();
+            for byte in follow_up {
+                write_tx.send(vec![*byte]).await.unwrap();
+            }
+
+            let mut received = Vec::with_capacity(payload.len() + follow_up.len());
+            let mut resize_seen = false;
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while received.len() < payload.len() + follow_up.len() || !resize_seen {
+                    match event_rx.recv().await {
+                        Some(ActorServerEvent::Data(data)) => received.extend_from_slice(&data),
+                        Some(ActorServerEvent::Resize(cols, rows)) => {
+                            resize_seen = cols == 181 && rows == 49;
+                        }
+                        None => break,
+                    }
+                }
+            })
+            .await
+            .expect("product writer actor did not deliver input and resize");
+
+            assert_eq!(&received[..payload.len()], payload);
+            assert_eq!(&received[payload.len()..], follow_up);
+            assert!(resize_seen);
+            assert!(errors.lock().unwrap().is_empty());
+            assert!(
+                !writer.is_finished(),
+                "product writer actor stopped unexpectedly"
+            );
+            writer.abort();
+            assert!(writer.await.unwrap_err().is_cancelled());
+            session
+                .disconnect(Disconnect::ByApplication, "test complete", "")
+                .await
+                .unwrap();
+        };
+
+        let managed_client = async move {
+            let result = tokio::time::timeout(Duration::from_secs(15), client).await;
+            server_handle.shutdown("test complete".to_string());
+            result.expect("product writer actor test timed out");
+        };
+        let (server_result, ()) = tokio::join!(running, managed_client);
+        server_result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn channel_writer_panic_becomes_an_observable_error() {
+        let writer = tokio::spawn(async {
+            panic!("writer-test-panic");
+        });
+        let message = channel_writer_exit_message(writer.await);
+
+        assert!(message.starts_with("SSH channel writer task failed:"));
+        assert!(message.contains("panicked"));
+    }
+
+    #[tokio::test]
+    async fn scheduled_input_is_bounded_and_services_resize_during_backpressure() {
+        let payload = (0..(1024 * 1024 + 17))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let expected = payload.clone();
+        let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let resize_seen = Arc::new(AtomicBool::new(false));
+        let first_send_gate = Arc::new(Notify::new());
+        let (resize_tx, mut resize_rx) = mpsc::channel(1);
+        resize_tx.send((181, 49)).await.unwrap();
+
+        let sent_chunks = Arc::clone(&chunks);
+        let sent_count = Arc::clone(&send_count);
+        let send_gate = Arc::clone(&first_send_gate);
+        let observed_resize = Arc::clone(&resize_seen);
+        let resize_gate = Arc::clone(&first_send_gate);
+        let (write_result, resize_errors) = tokio::time::timeout(
+            Duration::from_secs(1),
+            send_scheduled_input(
+                payload,
+                &mut resize_rx,
+                move |chunk| {
+                    let chunks = Arc::clone(&sent_chunks);
+                    let gate = Arc::clone(&send_gate);
+                    let call = sent_count.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        if call == 0 {
+                            tokio::time::timeout(Duration::from_millis(100), gate.notified())
+                                .await
+                                .map_err(|_| "resize was starved by backpressured input")?;
+                        }
+                        chunks.lock().unwrap().push(chunk);
+                        Ok::<(), &'static str>(())
+                    }
+                },
+                move |size| {
+                    let resize_seen = Arc::clone(&observed_resize);
+                    let gate = Arc::clone(&resize_gate);
+                    async move {
+                        assert_eq!(size, (181, 49));
+                        resize_seen.store(true, Ordering::SeqCst);
+                        gate.notify_one();
+                        Ok::<(), &'static str>(())
+                    }
+                },
+            ),
+        )
+        .await
+        .expect("scheduled input did not finish");
+
+        assert_eq!(write_result, Ok(()));
+        assert!(resize_errors.is_empty());
+        assert!(resize_seen.load(Ordering::SeqCst));
+        let chunks = chunks.lock().unwrap();
+        assert!(chunks.len() > 1);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.len() <= INPUT_WRITE_CHUNK_BYTES));
+        assert_eq!(chunks.concat(), expected);
+    }
+
+    #[tokio::test]
+    async fn scheduled_input_keeps_small_writes_on_the_direct_path() {
+        let payload = b"ordinary terminal input\r".to_vec();
+        let expected = payload.clone();
+        let chunks = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let sent_chunks = Arc::clone(&chunks);
+        let (_resize_tx, mut resize_rx) = mpsc::channel(1);
+
+        let (write_result, resize_errors) = send_scheduled_input(
+            payload,
+            &mut resize_rx,
+            move |chunk| {
+                let chunks = Arc::clone(&sent_chunks);
+                async move {
+                    chunks.lock().unwrap().push(chunk);
+                    Ok::<(), &'static str>(())
+                }
+            },
+            |_| async { Ok::<(), &'static str>(()) },
+        )
+        .await;
+
+        assert_eq!(write_result, Ok(()));
+        assert!(resize_errors.is_empty());
+        assert_eq!(chunks.lock().unwrap().as_slice(), &[expected]);
+    }
 
     #[test]
     fn interactive_small_packets_flush_immediately() {

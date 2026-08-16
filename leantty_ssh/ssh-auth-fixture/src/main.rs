@@ -38,10 +38,11 @@ const PERF_MAX_LINE_WIDTH: usize = 160;
 const PERF_OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
 const PASTE_PREPARE_COMMAND: &str = "ltty-paste-prepare";
 const INPUT_CHECK_COMMAND: &str = "ltty-input-check";
+const EXIT_COMMAND: &str = "ltty-exit";
 const BELL_COMMAND: &str = "ltty-bell";
 const BELL_MIN_DELAY_MS: u64 = 100;
 const BELL_MAX_DELAY_MS: u64 = 5_000;
-const PASTE_MAX_BYTES: usize = 512 * 1024;
+const PASTE_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone)]
 struct Credentials {
@@ -174,7 +175,7 @@ struct FixtureServer {
     shell_input: Vec<u8>,
     pending_perf_request: Option<PerfStreamRequest>,
     pending_paste: Option<PasteTransfer>,
-    channels: Arc<Mutex<HashMap<ChannelId, Channel<Msg>>>>,
+    channels: Arc<Mutex<HashMap<ChannelId, Option<Channel<Msg>>>>>,
     sftp_root: Arc<PathBuf>,
     sftp_delay: Duration,
     sftp_fault: SftpFault,
@@ -227,6 +228,12 @@ impl FixtureServer {
             if matches!(*byte, b'\r' | b'\n') {
                 if command.is_none() {
                     command = parse_fixture_command_line(&self.shell_input);
+                    if command.is_none() && !self.shell_input.is_empty() {
+                        eprintln!(
+                            "fixture command bytes={} result=unrecognized",
+                            format_input_hex(&self.shell_input)
+                        );
+                    }
                 }
                 self.shell_input.clear();
             } else if byte.is_ascii() && !byte.is_ascii_control() {
@@ -499,7 +506,10 @@ impl Handler for FixtureServer {
             "channel open scenario={:?} result=accept",
             self.session_scenario
         );
-        self.channels.lock().await.insert(channel.id(), channel);
+        self.channels
+            .lock()
+            .await
+            .insert(channel.id(), Some(channel));
         reply.accept().await;
         Ok(())
     }
@@ -520,7 +530,7 @@ impl Handler for FixtureServer {
             eprintln!("channel subsystem=sftp result=unavailable");
             return Ok(());
         }
-        let Some(channel) = self.channels.lock().await.remove(&channel_id) else {
+        let Some(Some(channel)) = self.channels.lock().await.remove(&channel_id) else {
             session.channel_failure(channel_id)?;
             return Ok(());
         };
@@ -559,6 +569,20 @@ impl Handler for FixtureServer {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        let shell_channel = self
+            .channels
+            .lock()
+            .await
+            .get_mut(&channel)
+            .and_then(Option::take);
+        let Some(mut shell_channel) = shell_channel else {
+            session.channel_failure(channel)?;
+            return Ok(());
+        };
+        // russh delivers each incoming channel message to this receiver before
+        // invoking Handler::data. Leaving it unread fills the default 100-item
+        // buffer and blocks the fixture session even though Handler::data is in use.
+        tokio::spawn(async move { while shell_channel.wait().await.is_some() {} });
         session.channel_success(channel)?;
         session.data(channel, b"LEANTTY_AUTH_FIXTURE_OK\r\nfixture> ".as_slice())?;
         Ok(())
@@ -599,6 +623,12 @@ impl Handler for FixtureServer {
                 return Ok(());
             }
             transfer.received += accepted;
+            eprintln!(
+                "paste case={} received={} total={} state=progress",
+                transfer.case_id,
+                transfer.received,
+                transfer.payload.len()
+            );
             if transfer.received == transfer.payload.len() {
                 let marker = format!(
                     "\r\nLTTY_PASTE_OK:{}:{}\r\nfixture> ",
@@ -691,6 +721,13 @@ impl Handler for FixtureServer {
                 let response = format!("\r\nLTTY_INPUT_OK:{case_id}\r\nfixture> ");
                 session.data(channel, response.into_bytes())?;
             }
+            Some(FixtureCommand::Exit) => {
+                eprintln!("shell command=exit result=closed");
+                session.data(channel, b"logout\r\n".as_slice())?;
+                session.exit_status_request(channel, 0)?;
+                session.eof(channel)?;
+                session.close(channel)?;
+            }
             Some(FixtureCommand::Bell(request)) => {
                 eprintln!(
                     "bell case={} delay_ms={} state=scheduled",
@@ -764,6 +801,7 @@ enum FixtureCommand {
     Perf(PerfCommand),
     Paste(PasteRequest),
     InputCheck(String),
+    Exit,
     Bell(BellRequest),
 }
 
@@ -774,6 +812,9 @@ fn parse_fixture_command(input: &[u8]) -> Option<FixtureCommand> {
     let command = std::str::from_utf8(input).ok()?;
     let mut parts = command.split_ascii_whitespace();
     let kind = parts.next()?;
+    if kind == EXIT_COMMAND {
+        return parts.next().is_none().then_some(FixtureCommand::Exit);
+    }
     let case_id = parts.next()?;
     if kind == INPUT_CHECK_COMMAND {
         return (parts.next().is_none() && is_valid_perf_case_id(case_id))
@@ -1446,11 +1487,11 @@ mod tests {
             bytes: PASTE_MAX_BYTES,
         };
         assert_eq!(
-            parse_fixture_command(b"ltty-paste-prepare paste01 524288"),
+            parse_fixture_command(b"ltty-paste-prepare paste01 1048576"),
             Some(FixtureCommand::Paste(request.clone()))
         );
         assert_eq!(
-            parse_fixture_command(b"ltty-paste-prepare paste01 524289"),
+            parse_fixture_command(b"ltty-paste-prepare paste01 1048577"),
             None
         );
         assert_eq!(
@@ -1465,6 +1506,10 @@ mod tests {
             Some(FixtureCommand::InputCheck("input01".to_string()))
         );
         assert_eq!(parse_fixture_command(b"ltty-input-check bad:id"), None);
+        assert_eq!(
+            parse_fixture_command(b"ltty-exit"),
+            Some(FixtureCommand::Exit)
+        );
         assert_eq!(
             parse_fixture_command_line(b"[Oltty-input-check input01"),
             Some(FixtureCommand::InputCheck("input01".to_string()))
@@ -1644,6 +1689,84 @@ mod tests {
         assert!(fixture.path("/inbox/../source.bin").is_err());
         assert!(fixture.path("/inbox//source.bin").is_err());
         assert!(fixture.path("/inbox\\source.bin").is_err());
+    }
+
+    #[tokio::test]
+    async fn shell_channel_consumes_more_than_the_default_message_buffer() -> AsyncTestResult {
+        let socket = TcpListener::bind("127.0.0.1:0").await?;
+        let address = socket.local_addr()?;
+        let config = Arc::new(russh::server::Config {
+            keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)?],
+            ..Default::default()
+        });
+        let mut fixture = FixtureServer::new(credentials());
+        let running = fixture.run_on_socket(config, &socket);
+        let server_handle = running.handle();
+
+        let client = async move {
+            let mut ssh =
+                client::connect(Arc::new(client::Config::default()), address, SftpTestClient)
+                    .await?;
+            if !ssh
+                .authenticate_password(USER_PASSWORD, "password-value")
+                .await?
+                .success()
+            {
+                return Err(io::Error::other("shell fixture password was rejected").into());
+            }
+            let channel = ssh.channel_open_session().await?;
+            channel.request_shell(true).await?;
+            let (mut read_half, write_half) = channel.split();
+            let reader = tokio::spawn(async move {
+                let mut output = Vec::new();
+                while output.len() < 4096 {
+                    match read_half.wait().await {
+                        Some(russh::ChannelMsg::Data { data }) => {
+                            output.extend_from_slice(&data);
+                            if output
+                                .windows(b"LTTY_INPUT_OK:drain".len())
+                                .any(|window| window == b"LTTY_INPUT_OK:drain")
+                            {
+                                return true;
+                            }
+                        }
+                        Some(russh::ChannelMsg::Close) | None => return false,
+                        Some(_) => {}
+                    }
+                }
+                false
+            });
+
+            for _ in 0..120 {
+                write_half.data_bytes(vec![b'x']).await?;
+            }
+            write_half.data_bytes(vec![b'\r']).await?;
+            for byte in b"ltty-input-check drain\r" {
+                write_half.data_bytes(vec![*byte]).await?;
+            }
+            if !timeout(Duration::from_secs(5), reader).await?? {
+                return Err(io::Error::other(
+                    "shell fixture did not process input after 100 messages",
+                )
+                .into());
+            }
+            ssh.disconnect(russh::Disconnect::ByApplication, "test complete", "")
+                .await?;
+            Ok::<(), Box<dyn Error + Send + Sync>>(())
+        };
+
+        let managed_client = async move {
+            let result = timeout(Duration::from_secs(15), client).await;
+            server_handle.shutdown("test complete".to_string());
+            match result {
+                Ok(result) => result,
+                Err(error) => Err(error.into()),
+            }
+        };
+        let (server_result, client_result) = tokio::join!(running, managed_client);
+        server_result
+            .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })
+            .and(client_result)
     }
 
     #[tokio::test]

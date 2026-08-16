@@ -459,24 +459,33 @@ function Submit-AuthValue {
 function Focus-ActiveCommandInput {
     param([Parameter(Mandatory = $true)][string]$LayoutName)
     Activate-RegressionWindow
-    $layout = Get-LeanTTYDeviceLayout `
-        -Hdc $hdc `
-        -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory $LayoutName)
-    $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
-    $focusedNodes = @($nodes | Where-Object { [string]$_.attributes.focused -eq 'true' })
-    if ($focusedNodes.Count -eq 1) {
-        $inputNode = $focusedNodes[0]
-    } elseif ($nodes.Count -eq 1) {
-        $inputNode = $nodes[0]
-    } else {
+    $layoutPath = Join-Path $EvidenceDirectory $LayoutName
+    $inputNode = $null
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $layout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc `
+            -Target $Target `
+            -LocalPath $layoutPath
+        $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
+        $focusedNodes = @($nodes | Where-Object { [string]$_.attributes.focused -eq 'true' })
+        if ($focusedNodes.Count -eq 1) {
+            $inputNode = $focusedNodes[0]
+        } elseif ($nodes.Count -eq 1) {
+            $inputNode = $nodes[0]
+        }
+        if ($null -eq $inputNode -and $stopwatch.Elapsed.TotalSeconds -lt 10) {
+            Start-Sleep -Milliseconds 200
+        }
+    } while ($null -eq $inputNode -and $stopwatch.Elapsed.TotalSeconds -lt 10)
+    if ($null -eq $inputNode) {
         throw '[environment] Unable to identify the active terminal input before command submission'
     }
     Set-LeanTTYTerminalInputFocus `
         -Hdc $hdc `
         -Target $Target `
         -InputNode $inputNode `
-        -LocalPath (Join-Path $EvidenceDirectory $LayoutName) `
+        -LocalPath $layoutPath `
         -TimeoutSeconds 10 | Out-Null
 }
 
@@ -485,13 +494,15 @@ function Submit-FocusedDeviceCommand {
         [Parameter(Mandatory = $true)][string]$Command,
         [Parameter(Mandatory = $true)][string]$LayoutName
     )
+    $submittedCommandPattern =
+        'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
     for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
         Focus-ActiveCommandInput -LayoutName $LayoutName
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         try {
-            Wait-AuthLog -Pattern 'ACCEPTANCE_INPUT_SUBMIT.*kind=command' -TimeoutSeconds 10
+            Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
             return
         } catch {
             if ($commandAttempt -ge 3) {
@@ -534,8 +545,19 @@ function Start-AuthCommand {
 }
 
 function Close-FixtureShell {
-    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-LeanTTYDeviceCtrlD -Hdc $hdc -Target $Target
+    for ($exitAttempt = 1; $exitAttempt -le 3; $exitAttempt++) {
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Submit-ConnectedInput -Text 'ltty-exit'
+        try {
+            Wait-FixtureLog -Pattern 'shell command=exit result=closed' -TimeoutSeconds 10 | Out-Null
+            break
+        } catch {
+            if ($exitAttempt -ge 3) {
+                throw '[harness] Device did not submit the fixture exit command after three attempts'
+            }
+            Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+        }
+    }
     Wait-AuthLog -Pattern 'SSH closed, exitCode=0'
 }
 
@@ -551,6 +573,11 @@ function Invoke-LeanTTYPasteShortcut {
     # the system UI injector to deliver the complete browser key event.
     & $hdc -t $Target shell 'uitest uiInput keyEvent 2072 2045 2038' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to invoke LeanTTY paste shortcut' }
+    # The uitest chord can leave synthetic modifiers latched after ArkWeb has
+    # accepted the trusted paste event. Release every member explicitly so the
+    # next device-paced command is ordinary terminal input.
+    & $hdc -t $Target shell 'uinput -K -u 2038 -u 2045 -u 2072' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to release LeanTTY paste shortcut modifiers' }
 }
 
 function Save-SafeDiagnosticText {
@@ -776,7 +803,6 @@ function Invoke-AuthPerfSample {
     for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
         $preparedPattern = 'perf case=' + [regex]::Escape($CaseId) + ' bytes=\d+ state=prepared'
         $preparedCount = Get-FixtureLogMatchCount -Pattern $preparedPattern
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Submit-ConnectedInput -Text "ltty-perf-prepare $CaseId 12000 80"
         try {
             Wait-FixtureLogMatchCount `
@@ -1285,13 +1311,14 @@ try {
     Wait-FixtureLog -Pattern 'input case=russhmain result=matched' | Out-Null
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 524288'
-    Wait-AuthLog -Pattern 'OSC 52 clipboard write success=true,length=524288' -TimeoutSeconds 30
+    Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'
+    Wait-AuthLog -Pattern 'OSC 52 clipboard write success=true,length=1048576' -TimeoutSeconds 30
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-LeanTTYPasteShortcut
-    Wait-AuthLog -Pattern 'Clipboard paste ok,524288' -TimeoutSeconds 30
+    Wait-AuthLog -Pattern 'Clipboard paste ok,1048576' -TimeoutSeconds 30
+    Wait-AuthLog -Pattern 'D: 1048576 chars' -TimeoutSeconds 30
     Wait-FixtureLog `
-        -Pattern 'paste case=russhmain bytes=524288 result=matched' `
+        -Pattern 'paste case=russhmain bytes=1048576 result=matched' `
         -TimeoutSeconds 30 | Out-Null
 
     Invoke-AuthPerfSample -CaseId 'russhmain' | Out-Null
@@ -1303,15 +1330,21 @@ try {
         -GreaterThan $resizeCount `
         -TimeoutSeconds 30 | Out-Null
     Focus-AuthPane -Side 'left' -LayoutName 'layout-transport-left-connected.json'
-    Close-FixtureShell
-    Focus-AuthPane -Side 'right' -LayoutName 'layout-transport-right-idle.json'
-    Invoke-ActivePaneCloseButton -LayoutName 'layout-transport-close-right.json'
+    Submit-ConnectedInput -Text 'ltty-input-check afterperf'
+    Wait-FixtureLog -Pattern 'input case=afterperf result=matched' | Out-Null
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Invoke-ActivePaneCloseButton -LayoutName 'layout-transport-close-connected.json'
+    Invoke-ClosePaneDialog -LayoutName 'layout-transport-close-connected-dialog.json'
+    Wait-AuthLog -Pattern 'SSH closed, exitCode=-1'
     Wait-AuthPaneCount -Count 1 -LayoutName 'layout-transport-single-pane.json' | Out-Null
 
     Start-AuthCommand -User 'password'
     Wait-AuthLog -Pattern 'native auth event kind=password'
     Submit-AuthValue -Value $credentials.password -LayoutName 'layout-transport-reconnect-password.json'
     Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInput -Text 'ltty-input-check reconnect'
+    Wait-FixtureLog -Pattern 'input case=reconnect result=matched' | Out-Null
     Close-FixtureShell
     Complete-AuthStage -Name 'transport-main-path'
     }

@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.3 — 受约束的单文件交付`](roadmap.md)
 >
-> 当前阶段：实现与定向集成验证
+> 当前阶段：实现收尾；先闭合 SSH 大写入连续可用性，再冻结 1.3 正式候选
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -270,13 +270,66 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
 回归：ArkTS 104/104、Web/固定字体/指南、PowerShell、WSL Rust fmt/clippy/native/core/fixture
 测试及 SSH fixture E2E；证据为 `build/verification/targeted-regression-1.3-final-2.json`。
 
+2026-08-13 收尾时，物理 PC 的终端搜索 `Escape` 已改为由 Web 只上报
+`open/composing/closed` 所有权状态，ArkTS 只在搜索已打开且不处于 IME composition 时拦截物理
+`Escape`；HAD-W32 已验证搜索关闭并恢复终端焦点，普通终端 `Escape` 不受影响。终端搜索的
+ASCII 查询、正反向导航、Pane/Tab 所有权、warm eviction 和窗口 renderer lifecycle 也已由同一
+保留候选闭合。随后在 SSH 主路径 smoke 中发现 512 KiB 终端粘贴使用 russh 通用
+`AsyncRead/copy` 路径时以 8 KiB 分块，30 秒只到 278,528 字节；切换到拥有型、窗口感知的
+`data_bytes` 后，fixture 在时限内按 32 KiB 分块收到完整 524,288 字节且内容匹配，但该次大写入
+之后的 37 字节 PERF 命令只进入 ArkTS/native 队列，没有到达 fixture。因此在该诊断阶段，1.3
+尚不能冻结正式候选，也不能把“大粘贴连续可用”记为通过。
+
+2026-08-13 又把受控样本提高到 OSC52 安全上界的 1 MiB：32 KiB 有界分块能逐字节完整到达
+fixture；仅 `yield_now` 和额外 10 ms 固定节奏都未让随后命令到达。失败现场连续观察到后续
+37 个单字符事件进入 ArkTS，native 同步入队调用没有报告拒绝；fixture 在粘贴完成后没有收到
+任何后续字节。一次性 control-callback 探针曾观察到大写入完成，但没有给出稳定可复核的后续
+writer/resize 边界，因此不能据此宣称 native writer 已完成后续写入，也不能继续靠调整块大小或
+睡眠碰运气。10 ms 节流和一次性探针已从保留实现中删除。
+
+当时确定的下一步是在 WSL 中建立覆盖“产品 mpsc writer actor + russh channel + 1 MiB +
+紧随短命令”的最小回归，复现真机的任务唤醒/控制分支行为；再决定是让 pending data/resize future 共同受 select
+调度，还是用已验证的 russh 修复版本替换当前实现。仍保持单 writer/FIFO、字节顺序和 SSH
+window 背压，不引入第二套输入通道。完整上下文、竞品调研、实现边界和版本决定见
+[`design/terminal-input-scheduling.md`](design/terminal-input-scheduling.md)。当前诊断提交和 HAP
+都不是可保留或发布的 1.3 候选；完成后删除一次性探针，或仅在其仍满足有界、无内容、低噪声的
+持续诊断价值时保留。
+
+2026-08-14 已闭合该诊断。完整产品 writer actor 回归没有复现真机停顿；结合 russh server 的
+channel 消息顺序，根因是仓库专用 fixture 在使用 `Handler::data` 时未消费 shell `Channel` 的
+receiver。默认 100 项缓冲区在 27 个输入检查消息、37 个粘贴准备消息和 32 个数据块后剩 4 项，
+恰好解释后续命令第 5 个字符前阻塞。fixture 现已持续排空 shell receiver，并以超过 100 条消息的
+回归锁定；产品保留单 writer/FIFO、32 KiB `data_bytes` 有界推进，并增加完整 actor 回归和 writer
+异常退出监督，没有引入固定睡眠、第二输入通道或 russh 升级。
+
+同一 diagnostic HAP（SHA-256
+`d0f9b20fffc2eb3cf0146629c875045908038b7445707a46511fdc136b81941d`）随后在物理 HAD-W32
+通过 1 MiB 精确匹配、648,000 字节持续输出、分屏 resize、输出后普通输入、Pane 显式断开、重连、
+重连后普通输入和远端正常结束；attempt 为 `0fb3bbbbbc8d4d299b52a2612792e038`，证据位于
+`build/verification/ssh-large-input-main-path-final/`。Ctrl+D 仍按标准作为远端 TTY 输入，不作为
+LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式远端 exit。该 diagnostic HAP
+没有晋升为可发布候选。
+
 完成 1.3 必须满足：实现前门禁均有可复现证据；`put/get` 的解析、所有权、取消、冲突和
 清理通过自动化；干净 ARM64 构建通过；同一个保留候选完成全部适用的物理 HarmonyOS PC
 矩阵；文档、版本、签名、归档、GitHub Release 和 AppGallery 记录可追溯。SDK 声明、构建、
 安装或启动不能替代真实行为验收。
 
+本问题的版本归属已经确定：1.3.0 只闭合终端输入 writer 的连续可用性及其回归，不新增大粘贴
+弹窗、slow paste、块大小/延迟设置或固定完成时限。危险多行/控制字符粘贴确认只作为未来 MINOR
+尚未排期的评估议题，不自动进入既定 1.4 HSL milestone，也不授权实现；仅按字节数弹窗和可调
+节流当前不分配版本。若以后出现持续用户证据，必须重新按产品原则评审并先提升到本文件。
+
 ## 1. 自动化与集成门禁
 
+- [x] 闭合 SSH 大写入后的连续可用性：在现有单 writer/FIFO 内有界推进较大输入，在块之间恢复
+  后续输入和控制事件的调度机会；保持写入顺序、SSH window 背压、resize 和取消/断开有界，
+  不先引入固定睡眠或第二套输入通道。新增覆盖产品 writer 的回归，并通过 WSL Rust fmt、clippy、
+  native/core/fixture tests、fixture E2E、相关 PowerShell helper tests 和 `git diff --check`。
+  完成条件是压力样本逐字节匹配后，同一 Session 的 PERF/普通命令获得 fixture 可观察响应，
+  分屏 resize、断开和重连均通过；场景超时只防止测试无界等待，不形成 512 KiB/30 秒产品 SLA。
+  产品 actor、fixture 超过 100 条消息回归和物理 HAD-W32 主路径均已通过；根因、竞品取舍、
+  Ctrl+D/显式断开边界和最终证据见 `design/terminal-input-scheduling.md`。
 - [x] 覆盖 Downloads 边界、no-follow、FD 所有权、目标预存在、提交期并发抢占、自动编号、
   后缀/隐藏文件/Unicode/序号耗尽、既有多级子目录、中间 symlink、目录意图、临时文件同目录
   可见性与精确清理；每个冲突用例验证已有内容哈希不变。
@@ -293,6 +346,10 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
 
 - [ ] 从未授权状态执行首条 `put/get`：只出现真实系统 Downloads 权限弹窗；拒绝后终端仍可用，
   再次执行可以恢复；两个 Pane 同时请求时不出现并行授权状态。
+  当前测试 PC 的 Downloads 授权会跨重启和覆盖安装保留；2026-08-14 的 `aa` / `atm` / `bm`
+  设备命令审计没有发现只撤销该目录授权且保留应用数据的受支持入口，`bm clean` 会清除应用
+  数据，因此不得为复现未授权状态破坏现有 Hosts、密钥和其他持久资产。该项必须在可安全重置的
+  隔离应用身份或明确可清理的设备状态上完成。
 - [x] 从 Downloads 根上传并下载空、小、大文件，验证文件管理器可见性、实际保存名称和端到端
   SHA-256；覆盖空格、Unicode、长文件名与已决定的相对子目录规则。
 - [x] 预置远端上传目标、明确本地下载目标，以及省略目标或指向既有目录的 basename，并在
@@ -311,7 +368,13 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
   终端可恢复、错误可执行且已有文件不变；检查 hilog、命令历史和错误快照不含凭据或文件内容。
 - [ ] 在同一个保留候选上完成键盘、IME、Tab/Pane、终端输入输出、搜索、选择/复制、链接、
   tmux/vim/less/Agent TUI、窗口与 SSH 主路径的最小稳定 smoke，证明文件传输没有破坏现有核心
-  终端事件链。
+  终端事件链。2026-08-14 已从干净提交 `7b83becfaaafdaaeeee1d9948963458060465e96` 重建并保留
+  SHA-256 为 `0d38130f73c39ba772110d7c5c1bec08010222f53a9c9d35a41487c50f919edc` 的 ARM64 test-signed
+  HAP；同包已经通过 `verify-pc.ps1`、SSH transport main path、搜索全部五个场景（含 Tab/Pane、
+  warm eviction 和窗口/renderer lifecycle），以及 production GET -> Downloads -> PUT 的 131,089
+  字节 SHA-256 往返、补全、冲突命名、认证提示、终端续用和清理。剩余只保留 HDC 不能替代的
+  物理键盘与中英文 IME、真实选区/复制和 URL 激活，以及真实远端上的 tmux/vim/less/Agent TUI
+  最小 smoke；不得用输入注入或 repository fixture 冒充这些结论。
 
 ## 3. 文档、版本与发布
 
@@ -323,7 +386,9 @@ GET 经 `FINALIZING` 提交完整文件，同一 Pane 继续完成 PUT、SHA-256
   已发布能力。
 - [ ] 准备正式发布包时才运行 `tools/test-regression.ps1`、`tools/verify-pc.ps1` 和
   `release-process.md` 的隔离 production/review 流程；冻结一个精确提交、tree、native 输出、
-  签名 APP/HAP、哈希和同候选物理机证据。
+  签名 APP/HAP、哈希和同候选物理机证据。上述 `7b83bec` test-signed HAP 是已保留的开发验收
+  候选，不是 production APP 或 AppGallery 上传物；正式 production/review 隔离构建、版本提交、
+  标签和发布仍必须在全部验收闭合后按流程完成。
 - [ ] 1.2.0 AppGallery 审核已于 2026-08-13 通过并上架。1.3.0 仍须先发布不可变签名标签和
   匹配 GitHub Release，才提交同版本 production APP；不移动标签、不替换 Release。
 

@@ -406,6 +406,9 @@ foreach ($scriptName in @(
             -not $content.Contains("SessionViewModel: D: 1 chars, mode=") -and
             $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
+            $content.Contains('[regex]::Escape($Command)') -and
+            $content.Contains("'ltty-exit'") -and
+            $content.Contains("'shell command=exit result=closed'") -and
             $content.Contains('Assert-AuthCommandLoopbackTarget') -and
             $content.Contains("'[environment] Device key injection changed the SSH command target'") -and
             $content.Contains('Activate-RegressionWindow') -and
@@ -474,12 +477,22 @@ foreach ($scriptName in @(
         Assert-True (
             $content.Contains("'transport-main-path'") -and
             $content.Contains("'ltty-input-check russhmain'") -and
-            $content.Contains("'ltty-paste-prepare russhmain 524288'") -and
-            $content.Contains("'Clipboard paste ok,524288'") -and
+            $content.Contains("'ltty-paste-prepare russhmain 1048576'") -and
+            $content.Contains("'Clipboard paste ok,1048576'") -and
+            $content.Contains("'D: 1048576 chars'") -and
+            $content.Contains("'paste case=russhmain bytes=1048576 result=matched'") -and
             $content.Contains("'uitest uiInput keyEvent 2072 2045 2038'") -and
+            $content.Contains("'uinput -K -u 2038 -u 2045 -u 2072'") -and
             $content.Contains("Invoke-AuthPerfSample -CaseId 'russhmain'") -and
             $content.Contains('"completenessPercent":100') -and
             $content.Contains("'resize cols=\d+ rows=\d+'") -and
+            $content.Contains("'ltty-input-check afterperf'") -and
+            $content.Contains("'input case=afterperf result=matched'") -and
+            $content.Contains("'layout-transport-close-connected.json'") -and
+            $content.Contains("'layout-transport-close-connected-dialog.json'") -and
+            $content.Contains("'SSH closed, exitCode=-1'") -and
+            $content.Contains("'ltty-input-check reconnect'") -and
+            $content.Contains("'input case=reconnect result=matched'") -and
             $content.Contains('Wait-AuthPaneCount -Count 1')
         ) 'SSH transport main-path coverage is incomplete'
         Assert-True (
