@@ -8,7 +8,7 @@ export enum LocalCompletionUpdateKind {
   NONE = 0,
   COMPLETED = 1,
   LISTED = 2,
-  PREVIEWED = 3,
+  SELECTED = 3,
   ACCEPTED = 4,
   CANCELLED = 5
 }
@@ -38,7 +38,7 @@ enum LocalCompletionPhase {
 
 export class LocalCompletionEngine {
   private phase: LocalCompletionPhase = LocalCompletionPhase.NONE
-  private baseInput: string = ''
+  private rollbackInput: string = ''
   private candidates: string[] = []
   private displayValues: string[] = []
   private truncated: boolean = false
@@ -54,19 +54,11 @@ export class LocalCompletionEngine {
       this.reset()
       return new LocalCompletionUpdate(LocalCompletionUpdateKind.COMPLETED, completed)
     }
-    if (this.phase === LocalCompletionPhase.LISTED && this.baseInput === input &&
+    if (this.phase === LocalCompletionPhase.LISTED && this.rollbackInput === input &&
       LocalCompletionEngine.sameCandidates(this.candidates, set.replacements)) {
       this.phase = LocalCompletionPhase.MENU
       this.selectedIndex = direction < 0 ? this.candidates.length - 1 : 0
-      return this.snapshot(LocalCompletionUpdateKind.PREVIEWED, this.candidates[this.selectedIndex])
-    }
-    return this.storeListed(input, set)
-  }
-
-  refresh(input: string, set: LocalCompletionSet): LocalCompletionUpdate {
-    if (set.replacements.length === 0) {
-      this.reset()
-      return new LocalCompletionUpdate(LocalCompletionUpdateKind.NONE, input)
+      return this.snapshot(LocalCompletionUpdateKind.SELECTED, this.candidates[this.selectedIndex])
     }
     return this.storeListed(input, set)
   }
@@ -82,24 +74,24 @@ export class LocalCompletionEngine {
 
   cycle(direction: number): LocalCompletionUpdate {
     if (!this.isMenuActive()) {
-      return new LocalCompletionUpdate(LocalCompletionUpdateKind.NONE, this.baseInput)
+      return new LocalCompletionUpdate(LocalCompletionUpdateKind.NONE, this.rollbackInput)
     }
     let count: number = this.candidates.length
     this.selectedIndex = (this.selectedIndex + (direction < 0 ? -1 : 1) + count) % count
-    return this.snapshot(LocalCompletionUpdateKind.PREVIEWED, this.candidates[this.selectedIndex])
+    return this.snapshot(LocalCompletionUpdateKind.SELECTED, this.candidates[this.selectedIndex])
   }
 
   select(index: number): LocalCompletionUpdate {
     if (!this.isMenuActive() || index < 0 || index >= this.candidates.length) {
-      return this.snapshot(LocalCompletionUpdateKind.NONE, this.baseInput)
+      return this.snapshot(LocalCompletionUpdateKind.NONE, this.rollbackInput)
     }
     this.selectedIndex = index
-    return this.snapshot(LocalCompletionUpdateKind.PREVIEWED, this.candidates[this.selectedIndex])
+    return this.snapshot(LocalCompletionUpdateKind.SELECTED, this.candidates[this.selectedIndex])
   }
 
   accept(): LocalCompletionUpdate {
     if (!this.isMenuActive()) {
-      return new LocalCompletionUpdate(LocalCompletionUpdateKind.NONE, this.baseInput)
+      return new LocalCompletionUpdate(LocalCompletionUpdateKind.NONE, this.rollbackInput)
     }
     let accepted: string = LocalCompletionEngine.acceptedText(this.candidates[this.selectedIndex])
     this.reset()
@@ -107,15 +99,15 @@ export class LocalCompletionEngine {
   }
 
   cancel(): LocalCompletionUpdate {
-    let restored: string = this.baseInput
+    let restored: string = this.rollbackInput
     this.reset()
     return new LocalCompletionUpdate(LocalCompletionUpdateKind.CANCELLED, restored)
   }
 
   editingText(): string {
-    let restored: string = this.baseInput
+    let currentText: string = this.isMenuActive() ? this.candidates[this.selectedIndex] : this.rollbackInput
     this.reset()
-    return restored
+    return currentText
   }
 
   selectedCandidate(): string {
@@ -125,10 +117,10 @@ export class LocalCompletionEngine {
 
   current(): LocalCompletionUpdate {
     if (this.phase === LocalCompletionPhase.MENU && this.isMenuActive()) {
-      return this.snapshot(LocalCompletionUpdateKind.PREVIEWED, this.candidates[this.selectedIndex])
+      return this.snapshot(LocalCompletionUpdateKind.SELECTED, this.candidates[this.selectedIndex])
     }
     if (this.phase === LocalCompletionPhase.LISTED) {
-      return this.snapshot(LocalCompletionUpdateKind.LISTED, this.baseInput)
+      return this.snapshot(LocalCompletionUpdateKind.LISTED, this.rollbackInput)
     }
     return new LocalCompletionUpdate(LocalCompletionUpdateKind.NONE, '')
   }
@@ -139,7 +131,7 @@ export class LocalCompletionEngine {
 
   private reset(): void {
     this.phase = LocalCompletionPhase.NONE
-    this.baseInput = ''
+    this.rollbackInput = ''
     this.candidates = []
     this.displayValues = []
     this.truncated = false
@@ -148,7 +140,7 @@ export class LocalCompletionEngine {
 
   private storeListed(input: string, set: LocalCompletionSet): LocalCompletionUpdate {
     this.phase = LocalCompletionPhase.LISTED
-    this.baseInput = input
+    this.rollbackInput = input
     this.candidates = set.replacements.slice()
     this.displayValues = set.displayValues.slice()
     this.truncated = set.truncated

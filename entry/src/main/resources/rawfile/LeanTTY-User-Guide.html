@@ -1219,13 +1219,14 @@ get work:/reports/latest.csv reports/</code></pre>
           通配符，也不接受多个源。目标以 <code>/</code> 结尾时必须是既有目录，并自动沿用源文件名；
           <code>get</code> 省略本地目标时也沿用远端文件名。
         </p>
-        <p>
-          输入本地路径时可按 <kbd>Tab</kbd> 补全。<code>./</code> 表示 Downloads 根目录；文件夹
-          候选会以 <code>/</code> 结尾。多个候选时，第一次 <kbd>Tab</kbd> 列出当前目录的匹配项，
-          第二次进入选择；之后用 <kbd>Tab</kbd>/<kbd>Shift</kbd>+<kbd>Tab</kbd> 或四个方向键切换。
-          <kbd>Enter</kbd> 只接受当前候选，再按一次才会执行命令；<kbd>Esc</kbd> 恢复选择前的输入。
-          选中文件夹后可以继续输入下一层名称，或再次按 <kbd>Tab</kbd> 查看下一层。
-        </p>
+        <div class="callout">
+          <p><strong>用 <kbd>Tab</kbd> 补全本地路径</strong></p>
+          <ul>
+            <li>输入 <code>put</code> 或 <code>get</code> 的本地路径时按 <kbd>Tab</kbd>。<code>./</code> 表示 Downloads 根目录，文件夹以 <code>/</code> 结尾。</li>
+            <li>有多个匹配项时，第一次 <kbd>Tab</kbd> 显示候选，第二次开始选择；用 <kbd>Tab</kbd>、<kbd>Shift</kbd>+<kbd>Tab</kbd> 或方向键切换。</li>
+            <li>选中项就是当前输入，可以直接继续输入、按空格或删除。<kbd>Enter</kbd> 只确认候选，<kbd>Esc</kbd> 撤销选择；进入文件夹后再按 <kbd>Tab</kbd> 补全下一层。</li>
+          </ul>
+        </div>
         <p>
           LeanTTY 从不覆盖已有文件。明确文件名冲突会失败；由 LeanTTY 选择下载名称时，会提交到
           第一个可用的 <code>name (n).ext</code>。进度在单行显示百分比、已传输量、实时速度与 ETA，
@@ -1691,14 +1692,14 @@ get work:/reports/latest.csv reports/</code></pre>
           A target ending in <code>/</code> must be an existing directory and keeps the source basename;
           omitting the local <code>get</code> target also keeps the remote basename.
         </p>
-        <p>
-          Press <kbd>Tab</kbd> to complete local paths. <code>./</code> explicitly names the Downloads root,
-          and directory candidates end in <code>/</code>. With multiple matches, the first <kbd>Tab</kbd>
-          lists the current directory and the second enters selection. Navigate with <kbd>Tab</kbd>,
-          <kbd>Shift</kbd>+<kbd>Tab</kbd> or all four arrow keys. <kbd>Enter</kbd> accepts the preview without running the
-          command; press it again to run. <kbd>Esc</kbd> restores the original prefix. After accepting a
-          directory, type the next prefix or press <kbd>Tab</kbd> again to complete the next level.
-        </p>
+        <div class="callout">
+          <p><strong>Complete local paths with <kbd>Tab</kbd></strong></p>
+          <ul>
+            <li>Press <kbd>Tab</kbd> while entering a local path for <code>put</code> or <code>get</code>. <code>./</code> names the Downloads root, and directories end in <code>/</code>.</li>
+            <li>With multiple matches, the first <kbd>Tab</kbd> shows the list and the second starts selection. Move with <kbd>Tab</kbd>, <kbd>Shift</kbd>+<kbd>Tab</kbd> or the arrow keys.</li>
+            <li>The selected match is now your input, so you can keep typing, add a space or delete text. <kbd>Enter</kbd> confirms it without running the command; <kbd>Esc</kbd> undoes the selection. Press <kbd>Tab</kbd> again inside a directory to complete the next level.</li>
+          </ul>
+        </div>
         <p>
           LeanTTY never overwrites an existing file. An explicit name conflict fails; when LeanTTY chooses
           a download name, it commits to the first available <code>name (n).ext</code>. One progress line

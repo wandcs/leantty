@@ -4,7 +4,7 @@
 >
 > milestone：1.3
 >
-> 更新日期：2026-08-15
+> 更新日期：2026-08-16
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
@@ -18,10 +18,14 @@ LeanTTY 在未连接服务器时提供少量本地命令，其中 `put/get` 需�
 进入选择后，命令行虽然预览了候选，列表中却没有同步高亮当前项。编辑输入还会直接结束补全，
 无法让已经打开的候选区随前缀变化。
 
+2026-08-16 的实际使用又发现，选择态候选虽然显示在命令行中，普通编辑仍会先恢复 Tab 前的
+前缀；高亮文件后按空格会让文件名消失，Backspace、Delete 和普通文字共享同一错误语义，目录
+`/` 只是绕过它的独立特例。
+
 目标是把它收敛为一个短生命周期、键盘优先、行为接近成熟 Shell 行编辑器的本地补全区域：
 
 - 候选始终位于当前命令行下方，并且只有一个可重绘区域；
-- 用户真实输入、候选集合、当前选择和命令行预览保持一致；
+- 命令行始终是唯一真实输入；选中的候选一旦显示在命令行中，普通编辑就直接作用于它；
 - 目录可以逐层下钻，接受候选不会误执行整条命令；
 - 候选生成继续保持本地、有界、无网络、无额外授权和无递归枚举；
 - 不把补全扩大为 Shell、文件管理器、模糊搜索器或通用命令面板。
@@ -88,7 +92,7 @@ pager 与其 reader、screen 和 highlight 系统耦合；Bash completion recipe
 ### 列表、选择和高亮
 
 - 首次列表态没有当前选择，因此不伪造高亮。进入菜单选择后必须且只能有一个高亮项。
-- 命令行中的候选预览和候选区高亮使用同一个 `selectedIndex`；两者不能分别推进。
+- 命令行中的已选候选和候选区高亮使用同一个 `selectedIndex`；两者不能分别推进。
 - 当前项使用主题安全的反显或等价中性背景，不引入蓝色、图标、bold 或新的语义色。文字和目录
   尾随 `/` 在深浅主题、五档透明度和固定字体下都必须可辨。
 - Tab/Shift+Tab 按候选顺序正反向循环；候选按列从上到下排列，再进入下一列，使连续 Tab 的
@@ -97,19 +101,18 @@ pager 与其 reader、screen 和 highlight 系统耦合；Bash completion recipe
   执行原有光标或历史行为并关闭候选区，不能在无选择状态下暗中改写命令。
 - Enter 只接受当前候选并退出菜单，不执行整条 `put/get`。列表态没有选择时按 Enter 先清除
   候选区，再按普通命令提交处理。
-- Esc 在列表态只关闭列表并保留当前真实输入；在选择态取消候选预览、恢复最近一次真实输入并
+- Esc 在列表态只关闭列表并保留当前真实输入；在选择态取消当前选择、恢复进入选择前的输入并
   关闭列表。
 
-### 输入变化和实时更新
+### 输入变化和菜单关闭
 
-- 候选区打开后，普通文字、Backspace 或 Delete 先取消当前候选预览，再作用于最近一次真实
-  输入；随后用新前缀重新生成候选并原地更新区域。
-- 普通文字不能隐式接受高亮候选。用户输入 `D` 是改变真实前缀，不是把当前预览目录提交后再
-  向该目录写入 `D`。
-- 更新后有多个或一个候选时均可继续显示，但普通输入本身不自动完成唯一候选；用户仍通过 Tab
-  或明确接受动作提交。更新后没有候选、上下文不再可补全或光标离开当前操作数时关闭区域。
-- 候选刷新只做当前目录一层的原始大小写和 Unicode 前缀匹配，不引入模糊、子串、大小写折叠
-  或始终开启的搜索框。fish/Zsh 的独立 pager 搜索模式不进入 1.3。
+- 列表态还没有选择项；普通文字、Backspace 或 Delete 关闭列表后，直接编辑原命令行。
+- 选择态候选已经写入真实命令行；普通文字、空格、Backspace 或 Delete 接受当前可见文本、关闭
+  列表，再执行普通编辑，不得恢复到 Tab 前的前缀。
+- 普通编辑后不维持菜单或自动重新枚举。用户需要继续补全时再次按 Tab；这样保持 Bash/Zsh 老用户
+  熟悉的“编辑当前行，再按 Tab 补全”主路径，并避免常驻筛选模式、过期候选和隐藏状态。
+- 重新按 Tab 时仍只做当前目录一层的原始大小写和 Unicode 前缀匹配，不引入模糊、子串、大小写
+  折叠或搜索框。fish/Zsh 的独立 pager 搜索模式不进入 1.3。
 
 ### 目录接受和逐层下钻
 
@@ -117,10 +120,10 @@ pager 与其 reader、screen 和 highlight 系统耦合；Bash completion recipe
   分隔符。
 - 所有目录候选和接受结果统一以 `/` 结尾。Enter 接受目录后，用户可以继续输入下一层前缀或
   再按 Tab 打开下一层候选。
-- 选择态高亮目录时，按 `/` 作为快捷下钻：接受当前目录并立即生成下一层候选；候选已经带 `/`
-  时不得产生 `//`。没有下一层候选时保留已接受的目录文本并关闭候选区，不把“空目录”当错误。
-- `/` 只在当前高亮项被可靠识别为目录时承担快捷下钻；高亮文件或不在菜单选择时，继续按普通
-  输入和既有转义/路径规则处理。
+- 选择态目录已经包含自动附加的 `/`；用户再次输入 `/` 时接受当前文本并关闭菜单，只保留一个
+  `/`，不隐式枚举或打开下一层。用户需要下一层候选时再次按 Tab。
+- 不复制 Zsh 的完整自动后缀移除系统。1.3 只处理目录候选已经自动附加 `/` 时的重复输入；
+  其他字符继续走普通命令行编辑。
 
 ## 候选布局与有界行为
 
@@ -140,15 +143,15 @@ pager 与其 reader、screen 和 highlight 系统耦合；Bash completion recipe
 TerminalInputParser keyboard action
   → current Pane SessionViewModel local input owner
     → CommandBarViewModel completion provider
-      → safe LocalCompletionSet (replacement + display value + directory kind)
+      → safe LocalCompletionSet (replacement + display value)
     → one LocalCompletionSession
-      → real input + candidates + phase + selected index + preview
+      → rollback input + candidates + phase + selected index
     → one transient terminal completion renderer below the command line
 ```
 
 - `CommandBarViewModel` 继续只负责判断补全上下文和生成安全候选，不拥有 Tab 次数、选择、颜色、
   光标移动或终端行。
-- 当前 Pane 的本地输入所有者独占一个补全会话。真实输入、预览、阶段、候选、目录类型和当前项
+- 当前 Pane 的本地输入所有者独占一个补全会话。回滚输入、阶段、候选和当前项
   必须来自该会话，不能由 formatter、命令行缓冲和按键分支各存一份隐式状态。
 - 显示层只根据补全会话快照重绘并记录自己占用的可见行，不从已写入终端的文字反推状态。
 - 补全不进入 SSH Transport，不发网络请求，不触发连接、认证、主机校验或 Downloads 授权弹窗。
@@ -165,8 +168,8 @@ TerminalInputParser keyboard action
 
 旧证据不证明本文新增合同，也不能作为 1.3 release candidate。
 
-2026-08-15 已按本文合同完成重新实现：当前 Pane 独占补全会话，真实输入、列表/选择阶段、候选、
-`selectedIndex` 和命令行预览来自同一状态；独立 transient renderer 在命令下方清除并重绘唯一
+2026-08-15 曾按旧合同完成重新实现：当前 Pane 独占补全会话，真实输入、列表/选择阶段、候选、
+`selectedIndex` 和命令行候选来自同一状态；独立 transient renderer 在命令下方清除并重绘唯一
 候选区域，按固定字体终端 cell 宽度进行列布局、有界分页、长名称截断和 resize 重排。普通输入、
 Backspace/Delete 从真实输入重新匹配；Tab/Shift+Tab、四方向、Enter、Esc 和目录 `/` 下钻均进入
 同一状态机。候选只显示当前层 basename，接受值仍保留完整且安全转义的路径。
@@ -180,6 +183,20 @@ HAD-W32 上的 `TabCompletionMatrix` 使用真实终端 key dispatch 闭合首 T
 `c43d3e9ee303cd38fb2bb2da21f82d782dfe4e1041aa72c3fb8d4161901d2efa`。验收结束后已重新构建、
 安装并启动不含夹具的正常开发包。
 
+2026-08-16 的实际使用推翻了上述“选择项仍可回滚为旧前缀”的编辑合同。修订实现将
+`PREVIEWED/baseInput` 改为 `SELECTED/rollbackInput`：列表态普通编辑保留原命令行，选择态普通
+编辑保留当前可见候选，二者都关闭菜单且不自动重新枚举；只有 Esc 恢复回滚输入。重复目录 `/`
+只保留一个分隔符并关闭菜单，下一层由用户再次按 Tab 明确发起，没有引入完整 Zsh suffix 系统。
+
+修订后的 ArkTS 为 114/114；验收源码、构建工作流、离线指南、公开源码与文本检查通过，ARM64
+debug HAP 完成构建、签名、USB 安装和启动。首轮物理矩阵在新增空格、Backspace 和重复 `/` 路径
+通过后，于隐藏文件输入阶段由 HDC 丢失一个 `n` 而停止；未修改生产代码，完整复跑随后通过。
+最终 `device-tab-completion.json` 记录 `result=passed`，实体空格和 Backspace 均关闭菜单并编辑已选
+文件名而不恢复旧前缀，重复 `/` 后再次 Tab 才完成子层；Enter/Esc、二维导航、空格/引号/Unicode/
+隐藏项、控制字符过滤和无权限/认证/网络/传输副作用也由同一 HAP 闭合。证据位于
+`build/verification/tab-completion-selected-editing-rerun-20260816/`，HAP SHA-256 为
+`9e490794b665d61073f29e0fe52a2c15d0c1f57a3ff45144527fc5096ce7436a`。
+
 上述证据证明实现和核心设备事件链，不把当前 dirty-tree test-signed HAP 宣称为 release candidate。
 深浅桌面背景、Off/Medium/Extreme、窄/宽窗口、屏幕底部和实体键盘体感继续保留到从精确 release
 commit 冻结的最终候选人工视觉 smoke；它们不再阻塞本实现项关闭，但任一可见错误仍会阻止 1.3
@@ -189,11 +206,11 @@ commit 冻结的最终候选人工视觉 smoke；它们不再阻塞本实现项�
 
 ### 纯逻辑与 ArkTS 自动化
 
-- 覆盖关闭、列表、选择三个阶段，以及真实输入、预览、候选和当前项的单一状态转换。
+- 覆盖关闭、列表、选择三个阶段，以及回滚输入、真实命令行、候选和当前项的单一状态转换。
 - 覆盖无/一/多候选、首 Tab、二次 Tab、Shift+Tab、四方向循环、Enter、Esc、普通输入、
-  Backspace/Delete、`/` 下钻和空目录。
-- 覆盖旧候选区域清除、同一区域重绘、列表缩短/增高、单行/多行候选、终端 resize 和命令行换行；
-  断言连续更新不会增加第二个候选区或留下旧项。
+  空格、Backspace/Delete、重复 `/` 和再次 Tab 进入下一层。
+- 覆盖旧候选区域清除、单行/多行候选、终端 resize 和命令行换行；断言普通编辑关闭区域且不会
+  留下旧项。
 - 覆盖空格、引号、隐藏项、CJK/Unicode、宽字符、控制字符净化、长文件名、候选上限和窄终端。
 - 证明补全不触发网络、认证、传输、权限请求，不改变 Host、Identity、命令名和已连接 SSH 的
   Tab 透传。
@@ -201,8 +218,8 @@ commit 冻结的最终候选人工视觉 smoke；它们不再阻塞本实现项�
 ### ARM64 与物理 HarmonyOS PC
 
 - 只在受影响检查通过后运行日常 `tools/dev-pc.ps1`，构建并部署新的 ARM64 test-signed HAP。
-- 使用真实物理键盘验证候选在命令下方、连续筛选不叠加、选择项高亮同步、Tab/Shift+Tab、
-  四方向、Enter、Esc、Backspace 和 `/` 目录下钻。
+- 使用真实物理键盘验证候选在命令下方、选择项高亮同步、Tab/Shift+Tab、四方向、Enter、Esc、
+  选择后的空格与 Backspace，以及重复 `/` 后再次 Tab 进入下一层。
 - 在固定字体、深浅桌面背景、至少 Off/Medium/Extreme、窄/宽窗口和命令靠近屏幕底部时观察
   对齐、反显、滚动和清除；安装/启动或单张截图不能替代完整事件链。
 - 验证候选关闭后命令输出、scrollback、连接、Pane 切换和后续本地命令仍正常，没有旧候选复现。

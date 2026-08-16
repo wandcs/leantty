@@ -894,14 +894,10 @@ function Add-LeanTTYAcceptanceSource {
         $text.session $idleActionAnchor $idleActionReplacement
     $idleResultAnchor = @'
       } else if (action.kind === TerminalInputActionKind.TEXT) {
-        if (!this.descendSelectedDirectory(action.text)) {
-          let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+        if (!this.consumeRepeatedDirectorySeparator(action.text)) {
+          this.finishCompletionForEditing()
           this.commandLine.insert(action.text)
-          if (completionWasActive) {
-            this.refreshCompletionAfterEdit()
-          } else {
-            this.redrawLocalCommandLine()
-          }
+          this.redrawLocalCommandLine()
         }
       }
     }
@@ -911,14 +907,10 @@ function Add-LeanTTYAcceptanceSource {
 '@
     $idleResultReplacement = @'
       } else if (action.kind === TerminalInputActionKind.TEXT) {
-        if (!this.descendSelectedDirectory(action.text)) {
-          let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+        if (!this.consumeRepeatedDirectorySeparator(action.text)) {
+          this.finishCompletionForEditing()
           this.commandLine.insert(action.text)
-          if (completionWasActive) {
-            this.refreshCompletionAfterEdit()
-          } else {
-            this.redrawLocalCommandLine()
-          }
+          this.redrawLocalCommandLine()
         }
       }
       if (ACCEPTANCE_TESTS) {

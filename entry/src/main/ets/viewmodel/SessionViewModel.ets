@@ -721,24 +721,22 @@ export class SessionViewModel {
         this.writeTerminal('^C\r\n')
         this.writePrompt()
       } else if (action.kind === TerminalInputActionKind.BACKSPACE) {
-        if (this.commandLine.getCursor() === 0) { continue }
-        let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+        let completionWasActive: boolean = this.finishCompletionForEditing()
+        if (this.commandLine.getCursor() === 0) {
+          if (completionWasActive) { this.redrawLocalCommandLine() }
+          continue
+        }
         if (this.commandLine.backspace() !== null) {
-          if (completionWasActive) {
-            this.refreshCompletionAfterEdit()
-          } else {
-            this.redrawLocalCommandLine()
-          }
+          this.redrawLocalCommandLine()
         }
       } else if (action.kind === TerminalInputActionKind.DELETE) {
-        if (this.commandLine.getCursor() === this.commandLine.getText().length) { continue }
-        let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+        let completionWasActive: boolean = this.finishCompletionForEditing()
+        if (this.commandLine.getCursor() === this.commandLine.getText().length) {
+          if (completionWasActive) { this.redrawLocalCommandLine() }
+          continue
+        }
         if (this.commandLine.delete() !== null) {
-          if (completionWasActive) {
-            this.refreshCompletionAfterEdit()
-          } else {
-            this.redrawLocalCommandLine()
-          }
+          this.redrawLocalCommandLine()
         }
       } else if (action.kind === TerminalInputActionKind.TAB) {
         this.tabComplete(1)
@@ -779,14 +777,10 @@ export class SessionViewModel {
           }
         }
       } else if (action.kind === TerminalInputActionKind.TEXT) {
-        if (!this.descendSelectedDirectory(action.text)) {
-          let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+        if (!this.consumeRepeatedDirectorySeparator(action.text)) {
+          this.finishCompletionForEditing()
           this.commandLine.insert(action.text)
-          if (completionWasActive) {
-            this.refreshCompletionAfterEdit()
-          } else {
-            this.redrawLocalCommandLine()
-          }
+          this.redrawLocalCommandLine()
         }
       }
     }
@@ -1529,7 +1523,7 @@ export class SessionViewModel {
     let set: LocalCompletionSet = this.commandBarVm.completionSet()
     let update: LocalCompletionUpdate = this.completionEngine.complete(input, set, direction)
     if (update.kind === LocalCompletionUpdateKind.COMPLETED ||
-      update.kind === LocalCompletionUpdateKind.PREVIEWED) {
+      update.kind === LocalCompletionUpdateKind.SELECTED) {
       this.commandLine.setText(update.text)
       this.redrawLocalCommandLine()
     } else if (update.kind === LocalCompletionUpdateKind.LISTED) {
@@ -1551,34 +1545,24 @@ export class SessionViewModel {
       current.selectedIndex, direction, current.displayValues.length,
       this.completionRenderer.getLastLayout())
     let update: LocalCompletionUpdate = this.completionEngine.select(nextIndex)
-    if (update.kind === LocalCompletionUpdateKind.PREVIEWED) {
+    if (update.kind === LocalCompletionUpdateKind.SELECTED) {
       this.commandLine.setText(update.text)
       this.redrawLocalCommandLine()
     }
   }
 
-  private restoreCompletionBaseForEditing(): boolean {
+  private finishCompletionForEditing(): boolean {
     if (!this.completionEngine.isActive()) { return false }
     this.commandLine.setText(this.completionEngine.editingText())
     return true
   }
 
-  private refreshCompletionAfterEdit(): void {
-    let input: string = this.commandLine.getText()
-    this.commandBarVm.setInputText(input)
-    this.completionEngine.refresh(input, this.commandBarVm.completionSet())
-    this.redrawLocalCommandLine()
-  }
-
-  private descendSelectedDirectory(text: string): boolean {
+  private consumeRepeatedDirectorySeparator(text: string): boolean {
     if (text !== '/' || !this.completionEngine.isMenuActive() ||
       !this.completionEngine.selectedCandidate().endsWith('/')) {
       return false
     }
-    this.commandLine.setText(this.completionEngine.accept().text)
-    let input: string = this.commandLine.getText()
-    this.commandBarVm.setInputText(input)
-    this.completionEngine.refresh(input, this.commandBarVm.completionSet())
+    this.commandLine.setText(this.completionEngine.editingText())
     this.redrawLocalCommandLine()
     return true
   }

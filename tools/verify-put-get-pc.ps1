@@ -1536,28 +1536,46 @@ try {
             -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-cancelled.json')
         Reset-TerminalInput -LayoutName 'tab-ambiguous-cancel-reset'
 
-        Focus-TerminalInput -Name 'tab-live-filter-focus'
+        Focus-TerminalInput -Name 'tab-selected-space-focus'
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $ambiguousPrefix
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
         Wait-LocalCompletionInputState `
-            -ExpectedInput $ambiguousPrefix -Stage 'live filter list setup' `
+            -ExpectedInput $ambiguousPrefix -Stage 'selected space list setup' `
             -CompletionActive $true -MenuActive $false | Out-Null
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text '\ a'
-        $filteredInput = $ambiguousPrefix + '\ a'
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
         Wait-LocalCompletionInputState `
-            -ExpectedInput $filteredInput -Stage 'typed prefix refilter' `
-            -CompletionActive $true -MenuActive $false | Out-Null
+            -ExpectedInput $firstCandidate -Stage 'selected space menu setup' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2050
+        Wait-LocalCompletionInputState `
+            -ExpectedInput ($firstCandidate + ' ') -Stage 'selected file keeps name before Space' `
+            -CompletionActive $false -MenuActive $false | Out-Null
         Save-LeanTTYDeviceScreenshot `
             -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory 'tab-live-filter.png')
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-selected-space.png')
+        Reset-TerminalInput -LayoutName 'tab-selected-space-reset'
+
+        Focus-TerminalInput -Name 'tab-selected-backspace-focus'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $ambiguousPrefix
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $ambiguousPrefix -Stage 'selected Backspace list setup' `
+            -CompletionActive $true -MenuActive $false | Out-Null
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $firstCandidate -Stage 'selected Backspace menu setup' `
+            -CompletionActive $true -MenuActive $true | Out-Null
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2055
         Wait-LocalCompletionInputState `
-            -ExpectedInput ($ambiguousPrefix + '\ ') -Stage 'Backspace refilter' `
-            -CompletionActive $true -MenuActive $false | Out-Null
-        Reset-TerminalInput -LayoutName 'tab-live-filter-reset'
+            -ExpectedInput $firstCandidate.Substring(0, $firstCandidate.Length - 1) `
+            -Stage 'selected file Backspace edits visible name' `
+            -CompletionActive $false -MenuActive $false | Out-Null
+        Reset-TerminalInput -LayoutName 'tab-selected-backspace-reset'
 
         $nestedPrefix = 'put .leantty-transfer-fixture/nested'
         $nestedDirectory = 'put .leantty-transfer-fixture/nested\ alpha/'
@@ -1569,7 +1587,7 @@ try {
             Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
             try {
                 Wait-LocalCompletionInputState `
-                    -ExpectedInput $nestedPrefix -Stage ('slash descent list setup attempt ' + $attempt.ToString()) `
+                    -ExpectedInput $nestedPrefix -Stage ('repeated slash list setup attempt ' + $attempt.ToString()) `
                     -CompletionActive $true -MenuActive $false | Out-Null
                 $nestedListReady = $true
                 break
@@ -1585,22 +1603,22 @@ try {
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
         Wait-LocalCompletionInputState `
-            -ExpectedInput $nestedDirectory -Stage 'slash descent menu setup' `
+            -ExpectedInput $nestedDirectory -Stage 'repeated slash menu setup' `
             -CompletionActive $true -MenuActive $true | Out-Null
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2064
         Wait-LocalCompletionInputState `
-            -ExpectedInput $nestedDirectory -Stage 'slash descent child list' `
-            -CompletionActive $true -MenuActive $false | Out-Null
+            -ExpectedInput $nestedDirectory -Stage 'repeated slash keeps one separator and closes menu' `
+            -CompletionActive $false -MenuActive $false | Out-Null
         Save-LeanTTYDeviceScreenshot `
             -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory 'tab-slash-descent.png')
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-repeated-slash.png')
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
         Wait-LocalCompletionInputState `
-            -ExpectedInput ($nestedDirectory + 'child.txt ') -Stage 'slash descent child accept' `
+            -ExpectedInput ($nestedDirectory + 'child.txt ') -Stage 'next Tab explicitly completes child' `
             -CompletionActive $false -MenuActive $false | Out-Null
-        Reset-TerminalInput -LayoutName 'tab-slash-descent-reset'
+        Reset-TerminalInput -LayoutName 'tab-repeated-slash-reset'
 
         $directoryPrefix = 'put ./.leantty-transfer-f'
         $completedDirectory = 'put ./.leantty-transfer-fixture/'
@@ -1682,8 +1700,8 @@ try {
             fixedFont = 'packaged HarmonyOS Sans Mono'
             unique = @('directory', './ Downloads root', 'space', 'quoted input canonicalized', 'Unicode', 'hidden item')
             ambiguous = 'first Tab listed; second entered menu; Tab and Shift+Tab cycled; two-dimensional arrows followed displayed rows and columns; Enter accepted and Esc restored without execution'
-            liveFilter = 'typed prefix and Backspace regenerated the same active candidate region from the real input'
-            directoryDescent = './ root completion and selected-directory slash shortcut listed exactly the next layer without recursion or a duplicate slash'
+            selectedEditing = 'Space and Backspace closed the menu and edited the selected visible file name without restoring the old prefix'
+            directoryDescent = './ root completion remained explicit; repeated slash kept one separator and the next Tab completed the child without recursion'
             unsafe = 'Unicode format-control candidate was excluded before terminal rendering'
             sideEffects = 'no permission request, transfer state or remote authentication observed'
             sourceDirty = (@(git -C $repoRoot status --short).Count -gt 0)
