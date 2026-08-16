@@ -738,11 +738,11 @@ assert.match(themeConstants,
   /background: string = 'rgba\(0, 0, 0, 0\)'[\s\S]*surfaceBackground: string = '#D1EFF1F5'/,
   'the light xterm renderer must stay transparent behind the content surface owner');
 assert.match(themeConstants,
-  /tabBackground: string = '#E01E1E2E'[\s\S]*tabHoverBackground: string = '#EB313244'[\s\S]*tabActiveBackground: string = '#F245475A'/,
-  'dark tabs must keep stable base, hover, and active surfaces above the dynamic Chrome rail');
+  /tabBackground: string = '#F02D2E40'[\s\S]*tabHoverBackground: string = '#F0343547'[\s\S]*tabActiveBackground: string = '#F0393A4D'/,
+  'default dark tabs must keep the Low/Medium rail separation without returning to surface1');
 assert.match(themeConstants,
-  /tabBackground: string = '#E0EFF1F5'[\s\S]*tabHoverBackground: string = '#EBCCD0DA'[\s\S]*tabActiveBackground: string = '#F2BCC0CC'/,
-  'light tabs must reverse luminance while preserving the same stable role hierarchy');
+  /tabBackground: string = '#F0D3D7DF'[\s\S]*tabHoverBackground: string = '#F0CACED8'[\s\S]*tabActiveBackground: string = '#F0C6CAD4'/,
+  'default light tabs must reverse luminance while preserving the Low/Medium rail separation');
 assert.match(chromeBar,
   /ChromeButton[\s\S]*fontColor\(this\.chromeColors\.statusText\)[\s\S]*opacity\(this\.hovered \|\| this\.focused \? 1 : 0\.72\)/,
   'Chrome controls must remain visible at rest without competing with the active tab');
@@ -756,8 +756,11 @@ assert.match(themeManager,
   /contentOpacity[\s\S]*1\.00[\s\S]*0\.60[\s\S]*0\.82[\s\S]*0\.45[\s\S]*0\.72/,
   'theme authority must own all five approved content opacity values');
 assert.match(themeManager,
-  /chromeOpacity[\s\S]*1\.00[\s\S]*0\.70[\s\S]*0\.88[\s\S]*0\.55[\s\S]*0\.80/,
-  'theme authority must own all five derived Chrome opacity values');
+  /cellBackgroundOpacity[\s\S]*OFF\) return 0\.24[\s\S]*HIGH\) return 0\.12[\s\S]*LOW\) return 0\.20[\s\S]*EXTREME\) return 0\.08[\s\S]*return 0\.16/,
+  'explicit cell backgrounds must keep a bounded monotonic renderer alpha even when window transparency is Off');
+assert.match(themeManager,
+  /chromeOpacity[\s\S]*OFF\) return 1\.00[\s\S]*LOW \|\| mode === TransparencyMode\.MEDIUM\) return 0\.94[\s\S]*return 0\.86/,
+  'theme authority must map the five transparency presets onto the approved three Chrome modes');
 assert.match(userPreferences,
   /TERMINAL_TRANSPARENCY_MODE_KEY[\s\S]*loadTransparencyMode\(\)[\s\S]*saveTransparencyMode\(value: number\)/,
   'the semantic transparency mode must persist in the existing local preferences projection');
