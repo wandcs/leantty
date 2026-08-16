@@ -419,6 +419,16 @@ foreach ($scriptName in @(
             $content.Contains('deviceProgramIntervalMilliseconds = 500')
         ) 'SSH authentication scenario does not enforce the layout/log secret boundary'
         Assert-True (
+            $content.Contains("'terminal-key-input'") -and
+            $content.Contains("Start-AuthCommand -User 'navigation'") -and
+            $content.Contains("left = 'navigation input hex=1b 5b 44'") -and
+            $content.Contains("right = 'navigation input hex=1b 5b 43'") -and
+            $content.Contains("ctrlP = 'navigation input hex=10'") -and
+            $content.Contains("ctrlC = 'navigation input hex=03'") -and
+            $content.Contains("tab = 'navigation input hex=09'") -and
+            $content.Contains("ctrlVPaste = 'navigation input hex=6c 65 61 6e 74 74 79")
+        ) 'SSH authentication scenario does not capture terminal key bytes at the server boundary'
+        Assert-True (
             $content.Contains('[string[]]$Only') -and
             $content.Contains('[switch]$DiagnosticHap') -and
             $content.Contains('[switch]$VerifyPreferencesUnchanged') -and
@@ -650,6 +660,9 @@ $sessionViewModel = Get-Content -LiteralPath (
 $indexPage = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
 ) -Raw
+$terminalPane = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\view\components\TerminalPane.ets'
+) -Raw
 $entryAbility = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
 ) -Raw
@@ -674,6 +687,11 @@ $fileTransferVerifier = Get-Content -LiteralPath (
 $putGetVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-put-get-pc.ps1'
 ) -Raw
+Assert-True (
+    $terminalPane.Contains('.onKeyPreIme') -and
+    $terminalPane.Contains('.onInterceptKeyEvent') -and
+    -not $terminalPane.Contains('.onKeyEventDispatch')
+) 'Terminal Web owns unhandled key dispatch; the generic component dispatcher must not shadow it'
 Assert-True (
     -not $sessionViewModel.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
     $acceptanceSource.Contains("import { ACCEPTANCE_TESTS } from 'BuildProfile'") -and
@@ -790,6 +808,8 @@ Assert-True (
     $putGetVerifier.Contains('one Pane remained usable in the original application process') -and
     $putGetVerifier.Contains('temporaryPresent=false') -and
     $putGetVerifier.Contains('device-put-get-cancel.json') -and
+    $putGetVerifier.Contains('fport rm "tcp:$FixturePort" "tcp:$FixturePort"') -and
+    -not $putGetVerifier.Contains('rport rm "tcp:$FixturePort"') -and
     $putGetVerifier.Contains('-WindowStyle Hidden') -and
     $putGetVerifier.Contains('device-put-get.json')
 ) 'Production PUT/GET physical-PC verifier is incomplete'

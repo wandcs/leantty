@@ -63,9 +63,6 @@ export struct TerminalPane {
         .onKeyPreIme((event: KeyEvent) => {
           return this.onPaneKeyEvent(event)
         })
-        .onKeyEventDispatch((event: KeyEvent) => {
-          return this.onPaneKeyEvent(event)
-        })
         .onInterceptKeyEvent((event: KeyEvent) => {
           return this.onPaneKeyEvent(event)
         })

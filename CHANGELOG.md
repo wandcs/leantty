@@ -41,6 +41,11 @@
 
 ### Fixed
 
+- Restored ordinary terminal key delivery through ArkWeb after the file-transfer
+  keyboard interception change. Left/Right, `Ctrl+P` and other TUI-owned keys
+  now reach the remote PTY again, while `Ctrl+C`, Tab, product search and
+  workspace shortcuts retain their explicit behavior; `Ctrl+V` once again
+  follows the system clipboard paste event instead of being lost before xterm.
 - Kept SSH terminal input continuously usable after large writes. The existing
   single writer now has full actor-level regression coverage and supervised
   failure reporting; 1 MiB input is delivered without truncation or reordering,
@@ -134,8 +139,11 @@
   occupied contents. An in-flight 8 MiB GET also survives real system suspend,
   wake and unlock in the same process, then completes PUT and exact cleanup.
   With a selection Ctrl+C copies without cancelling the transfer; without a
-  selection it still sends ETX. First-permission acceptance remains pending on
-  a genuinely unprivileged installation state.
+  selection it still sends ETX. The difficult-to-recreate first-permission
+  matrix is no longer a 1.3 release gate: current production ownership and
+  recovery paths remain covered, while a fresh denial/retry/single-flight pass
+  is reopened only for a real user failure, a material platform-permission
+  change, a security/data-integrity risk or direct candidate counter-evidence.
 
 ## [1.2.0] - 2026-08-08
 

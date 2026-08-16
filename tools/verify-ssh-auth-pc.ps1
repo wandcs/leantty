@@ -26,6 +26,7 @@ param(
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
     [ValidateSet(
         'password-success',
+        'terminal-key-input',
         'transport-main-path',
         'performance-matrix',
         'bell-attention',
@@ -200,6 +201,7 @@ $attemptId = [Guid]::NewGuid().ToString('N')
 $runMode = if ($Only.Count -eq 0 -and -not $DiagnosticHap) { 'acceptance' } else { 'diagnostic' }
 $availableStages = @(
     'password-success',
+    'terminal-key-input',
     'transport-main-path',
     'performance-matrix',
     'bell-attention',
@@ -252,6 +254,7 @@ function Get-LeanTTYFixtureStageBudgetSeconds {
     param([Parameter(Mandatory = $true)][string]$StageName)
     $budgets = @{
         'password-success' = 75
+        'terminal-key-input' = 120
         'transport-main-path' = 240
         'performance-matrix' = 420
         'bell-attention' = 180
@@ -1298,6 +1301,63 @@ try {
     Wait-AuthLog -Pattern 'SSH session connected'
     Close-FixtureShell
     Complete-AuthStage -Name 'password-success'
+    }
+
+    if (Test-AuthStageSelected -Name 'terminal-key-input') {
+    Start-AuthStage -Name 'terminal-key-input'
+    Start-AuthCommand -User 'navigation'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-terminal-key-input-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Wait-AuthLog -Pattern 'OSC 52 clipboard write success=true,length=17'
+
+    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2014
+    Start-Sleep -Milliseconds 300
+    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2015
+    Start-Sleep -Milliseconds 300
+    & $hdc -t $Target shell 'uinput -K -d 2072 -d 2032 -u 2032 -u 2072' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to inject Ctrl+P' }
+    Start-Sleep -Milliseconds 300
+    & $hdc -t $Target shell 'uinput -K -d 2072 -d 2019 -u 2019 -u 2072' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to inject Ctrl+C' }
+    Start-Sleep -Milliseconds 300
+    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+    Start-Sleep -Milliseconds 300
+    & $hdc -t $Target shell 'uinput -K -d 2072 -d 2038 -u 2038 -u 2072' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to inject Ctrl+V' }
+    Start-Sleep -Milliseconds 1000
+
+    $terminalKeyLog = Read-FixtureLogText
+    $terminalKeyLines = @($terminalKeyLog -split "`n" | Where-Object {
+        $_ -match '^navigation input hex='
+    })
+    [IO.File]::WriteAllLines(
+        (Join-Path $EvidenceDirectory 'terminal-key-input.txt'),
+        $terminalKeyLines,
+        [Text.UTF8Encoding]::new($false)
+    )
+    $expectedTerminalKeys = [ordered]@{
+        left = 'navigation input hex=1b 5b 44'
+        right = 'navigation input hex=1b 5b 43'
+        ctrlP = 'navigation input hex=10'
+        ctrlC = 'navigation input hex=03'
+        tab = 'navigation input hex=09'
+        ctrlVPaste = 'navigation input hex=6c 65 61 6e 74 74 79 2d 6b 65 79 2d 70 61 73 74 65'
+    }
+    $missingTerminalKeys = @($expectedTerminalKeys.GetEnumerator() | Where-Object {
+        $terminalKeyLog -notmatch [regex]::Escape([string]$_.Value)
+    } | ForEach-Object { [string]$_.Key })
+
+    Restart-RegressionApp
+    Wait-LeanTTYTerminalInputLayout `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'layout-terminal-key-input-restarted.json') `
+        -TimeoutSeconds 30 | Out-Null
+    if ($missingTerminalKeys.Count -gt 0) {
+        throw ('[product] Terminal key input was not delivered: ' + ($missingTerminalKeys -join ','))
+    }
+    Complete-AuthStage -Name 'terminal-key-input'
     }
 
     if (Test-AuthStageSelected -Name 'transport-main-path') {

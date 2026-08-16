@@ -2,11 +2,11 @@
 
 > 状态：唯一有效的项目 TODO
 >
-> 更新日期：2026-08-13
+> 更新日期：2026-08-14
 >
 > 当前 milestone：[`1.3 — 受约束的单文件交付`](roadmap.md)
 >
-> 当前阶段：实现收尾；先闭合 SSH 大写入连续可用性，再冻结 1.3 正式候选
+> 当前阶段：实现与自动化已闭合；先完成剩余适用的人工 smoke 和文档收尾，再冻结 1.3 正式候选
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -344,12 +344,14 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
 
 ## 2. 物理 ARM64 HarmonyOS PC 验收
 
-- [ ] 从未授权状态执行首条 `put/get`：只出现真实系统 Downloads 权限弹窗；拒绝后终端仍可用，
-  再次执行可以恢复；两个 Pane 同时请求时不出现并行授权状态。
-  当前测试 PC 的 Downloads 授权会跨重启和覆盖安装保留；2026-08-14 的 `aa` / `atm` / `bm`
-  设备命令审计没有发现只撤销该目录授权且保留应用数据的受支持入口，`bm clean` 会清除应用
-  数据，因此不得为复现未授权状态破坏现有 Hosts、密钥和其他持久资产。该项必须在可安全重置的
-  隔离应用身份或明确可清理的设备状态上完成。
+2026-08-14 决定不再把“从未授权状态首次执行 `put/get`、拒绝后恢复和双 Pane 授权
+single-flight”作为 1.3 发布门禁，后续默认跳过。现有状态机、自动化和已授权主路径已经覆盖
+失败可恢复与单一授权所有权；为制造未授权状态而清空实体机应用数据、增加第二应用身份、扩展
+x86_64 产品构建或维护测试专用授权路径，成本和风险高于当前剩余证据价值。只有出现真实用户
+故障、平台权限模型发生实质变化、安全/数据损坏风险，或发布前出现直接反证时，才重新评审并
+把该矩阵提升回本文件的活动门禁；普通版本迭代和候选冻结不主动复测。完整取舍与已有设备、
+虚拟机证据保留在 `design/file-transfer.md`。
+
 - [x] 从 Downloads 根上传并下载空、小、大文件，验证文件管理器可见性、实际保存名称和端到端
   SHA-256；覆盖空格、Unicode、长文件名与已决定的相对子目录规则。
 - [x] 预置远端上传目标、明确本地下载目标，以及省略目标或指向既有目录的 basename，并在
@@ -366,21 +368,21 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
   `put/get -i other` 不改变后续 `ssh` 或 `put/get`。
 - [x] 验证无 SFTP、远端权限拒绝、本地空间不足、服务器不支持可靠无覆盖提交和清理失败时，
   终端可恢复、错误可执行且已有文件不变；检查 hilog、命令历史和错误快照不含凭据或文件内容。
-- [ ] 在同一个保留候选上完成键盘、IME、Tab/Pane、终端输入输出、搜索、选择/复制、链接、
-  tmux/vim/less/Agent TUI、窗口与 SSH 主路径的最小稳定 smoke，证明文件传输没有破坏现有核心
-  终端事件链。2026-08-14 已从干净提交 `7b83becfaaafdaaeeee1d9948963458060465e96` 重建并保留
-  SHA-256 为 `0d38130f73c39ba772110d7c5c1bec08010222f53a9c9d35a41487c50f919edc` 的 ARM64 test-signed
-  HAP；同包已经通过 `verify-pc.ps1`、SSH transport main path、搜索全部五个场景（含 Tab/Pane、
-  warm eviction 和窗口/renderer lifecycle），以及 production GET -> Downloads -> PUT 的 131,089
-  字节 SHA-256 往返、补全、冲突命名、认证提示、终端续用和清理。剩余只保留 HDC 不能替代的
-  物理键盘与中英文 IME、真实选区/复制和 URL 激活，以及真实远端上的 tmux/vim/less/Agent TUI
-  最小 smoke；不得用输入注入或 repository fixture 冒充这些结论。
+- [ ] 在保留的 ARM64 test-signed 候选
+  `0116b6ecf02f7501541acf7ef654beb4c57246833a28d0de7a8f7240e7826c99` 上完成仅剩的真实人工
+  smoke：物理键盘配合中英文 IME；真实选区复制和 URL 激活；真实远端上的 tmux、vim、less 与
+  OpenCode/同类 Agent TUI。左右键、`Ctrl+P/C/V`、Tab、搜索、Pane/Tab 所有权、窗口/renderer、
+  SSH 大输入连续可用性和 production GET -> Downloads -> PUT 已由同一候选的精确字节与真机
+  自动门禁闭合，不重复执行。该人工 smoke 只确认 HDC 输入注入和 repository fixture 无法代表的
+  实体键盘、系统 IME、选区/浏览器激活和真实 TUI 体感；任一核心交互失败都阻止候选晋级。
 
 ## 3. 文档、版本与发布
 
-- [ ] 实现与证据闭合后，把 `design/file-transfer.md` 从活动方案更新为完成事实，并同步
-  `design/README.md`、中英文离线 User Guide、安全边界和必要的开发文档；删除已失去门禁价值的
-  临时探针或只保留受原则约束的持续回归入口。
+- [x] `design/file-transfer.md` 已更新为完成事实，并同步 `design/README.md`、命令体系、路线图、
+  架构、安全边界、Changelog 和跨版本愿景映射；中英文源码/离线 User Guide 已审计且现有
+  `put/get` 说明与产品行为一致。编译期隔离的 Downloads no-replace、FD/no-follow、管理器边界、
+  取消/迟到事件和背压入口继续直接复用生产事件链，仍提供安全与生命周期回归价值，因此保留；
+  没有为已跳过的首次授权矩阵增加新探针或第二路径。
 - [x] 将用户可见改动记录到 `CHANGELOG.md`。在功能和依赖稳定、准备保留候选时再按
   `versioning.md` 选择并统一推进 `1.3.0` 的所有版本源和 `versionCode`；不能提前把 WIP 描述成
   已发布能力。

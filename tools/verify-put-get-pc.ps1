@@ -3046,7 +3046,7 @@ try {
         }
     }
     if ($reverseMapped) {
-        & $hdc -t $Target rport rm "tcp:$FixturePort" 2>$null | Out-Null
+        & $hdc -t $Target fport rm "tcp:$FixturePort" "tcp:$FixturePort" 2>$null | Out-Null
     }
     if ($fixtureLinuxPid -gt 0) {
         & wsl.exe --exec kill -TERM $fixtureLinuxPid 2>$null | Out-Null
