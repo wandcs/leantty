@@ -91,6 +91,12 @@ Before building a release:
   interactions and remove or clearly exclude anything not shipped. Do not turn
   the Changelog into release notes inside the guide; use it as the mandatory
   delta checklist for rebuilding the task-oriented guide.
+- After regeneration, perform a separate natural-Chinese editorial pass as
+  defined by `design/offline-user-guide.md`. Review the Chinese opening,
+  task steps, recovery guidance and every changed feature section in the
+  browser; do not treat bilingual fact parity or automated HTML checks as a
+  substitute for this pass. Copy the reviewed source to the packaged resource
+  only after the pass is complete, then verify both files are byte-identical.
 - Update every version source defined by [`versioning.md`](versioning.md).
 
 User Guide regeneration is release-source work. Complete and review it in the

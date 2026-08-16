@@ -8,7 +8,7 @@
 >
 > 实现授权：[`next-work.md`](../next-work.md)
 >
-> 最近更新：2026-08-14
+> 最近更新：2026-08-15
 
 本文冻结 LeanTTY 1.2 的桌面终端界面与交互收敛方案，并记录 1.3 对透明 TUI 渲染、五档
 参数和 Chrome 层级的兼容修订。它解决现有界面在多 Tab、BEL
@@ -109,29 +109,75 @@ Terminal Surface 独占。透明效果不得暴露新的终端内容副本，也
 失败不是单个 RGB 参数问题：`tabBackground` 的 alpha 为 `0`，因此非活动 Tab 在定义上就是 rail；
 活动与 hover 又共用 80% surface0，既没有独立 hover 层，也会在更透明的系统材质上丢失相对差异。
 
-修订后的固定权重为：Chrome rail 最轻，只负责窗口结构并继续随五档透明度退后；非活动 Tab 居中，
-必须显示为可点击区域；hover 是短暂的中高层；活动 Tab 最重，是不受壁纸干扰的当前选择锚点。
-不按每个档位另挑颜色，而用同一组高稳定度 Catppuccin surface 叠加在动态 rail 上：
+2026-08-14 的后续浅色/深色背景走查又否定了“rail 连续五档、Tab 固定一组 surface”的方案：
+Low 与 High 在浅色背景下仍会让 rail 和非活动 Tab 合成趋同，Medium 为补偿浅色背景而提升到
+surface2 后又在深色背景中过亮。这不是继续微调单个 RGB 能稳定解决的问题，而是 Chrome 同时
+跟随五档 alpha、Tab token 和桌面背景三组变量造成的组合爆炸。
 
-| 角色 | 深色 | 浅色 | 固定 alpha | 透明档位行为 |
-| --- | --- | --- | ---: | --- |
-| Chrome rail | crust `#11111B` | crust `#DCE0E8` | 由五档决定 | `1.00 / 0.88 / 0.80 / 0.70 / 0.55` |
-| 非活动 Tab | base `#1E1E2E` | base `#EFF1F5` | `0.88` | 保持稳定识别，不追随壁纸变浅/变深 |
-| hover | surface0 `#313244` | surface0 `#CCD0DA` | `0.92` | 只表达指针经过，低于活动态 |
-| 活动 Tab | surface1 `#45475A` | surface1 `#BCC0CC` | `0.95` | 五档中始终保持最高视觉权重 |
+最终合同把五档用户语义映射为三个内部 Chrome 模式。终端内容区继续按五档逐级透明；Chrome
+只承担关闭透明、常规透明和高透明三种稳定视觉状态。同一模式内 rail、非活动、hover、活动
+四层使用相同 alpha，避免不同 alpha 合成后在浅色背景趋同。后续日常观察确认三种模式的活动
+Tab 仍然偏亮，因此先把三种模式收敛到低亮度角色；真机首次部署后又确认 B/C 与 rail 的间距
+不足。最终只让 B/C 从低亮度基线各上提一小级，A 保持菜单选中行水平，不引入新色相、设置或
+状态源：
 
-深色主题随权重增强而变亮；浅色主题随权重增强而变暗。两者方向相反但角色一致。Tab 仍使用现有
-形状、4vp 间距、文字权重、状态点和焦点环；不增加分隔线、阴影、渐变、主题选项或新状态源。
-完成条件是自动化锁定四级 surface 和 rail alpha 所有权，并用同一物理 PC 的四 Tab
-Off/Medium/Extreme 前后截图证明三层结构稳定可辨。
+| 模式 | 对应档位 | rail | 非活动 | hover | 活动 | 统一 alpha |
+| --- | --- | --- | --- | --- | --- | ---: |
+| A 不透明 | Off | base | base/surface0 50% | base/surface0 75% | surface0 | `1.00` |
+| B 稳定 | Low / Medium | base | base/surface0 80% | surface0/surface1 15% | surface0/surface1 40% | `0.94` |
+| C 高透明 | High / Extreme | base | surface0 | surface0/surface1 50% | surface0/surface1 75% | `0.86` |
 
-2026-08-14 已用 ARM64 物理 HAD-W32 闭合本次直接受影响链。深色主题四 Tab 的 rail、非活动 Tab
-和活动 Tab 在 Off、Medium、Extreme 下均保持上述顺序；菜单标签与无菜单画面分别留证，最终恢复
-Medium。hover 使用独立 surface0 且活动态判断优先，自动化锁定三种 Tab 状态映射；原有单/双 Pane、
-活动/非活动窗口证据对应的结构与事件链未改变，不重复执行无关全量矩阵。相同 HAP 还显示了整体
-绿色小写 `ltty>`。HAP SHA-256 为
-`364a82850afbccacacfcffb6330d7f65ddce731a661e6af57451dd317feba7c0`，截图保存在忽略目录
-`build/verification/tab-hierarchy-green-prompt-20260814/`。
+模式 A 深色使用 Mocha base `#1E1E2E` 到 surface0 `#313244` 的同色系插值，非活动/hover 分别为
+`#282839` / `#2C2D3F`；浅色使用 Latte base `#EFF1F5` 到 surface0 `#CCD0DA` 的反向插值，
+非活动/hover 分别为 `#DEE1E8` / `#D5D8E1`，活动态与菜单当前选中行共用 surface0。B/C 深色
+非活动/hover/活动为 `#2D2E40` / `#343547` / `#393A4D`，浅色为 `#D3D7DF` / `#CACED8` /
+`#C6CAD4`。C 深色三态为 `#313244` / `#3B3D4F` / `#404255`，浅色为 `#CCD0DA` / `#C4C8D3` /
+`#C0C4D0`。文字、关闭按钮与焦点环继续提供状态反馈。Tab 仍使用现有形状、
+4vp 间距、文字权重、状态点和焦点环；不增加
+分隔线、阴影、渐变、主题选项或新状态源。完成条件是自动化锁定三模式映射，并用同一物理 PC
+的四 Tab 在浅色与深色桌面背景下逐档确认 rail、非活动 Tab 和活动 Tab 稳定可辨。
+
+此前 HAP `364a82850afbccacacfcffb6330d7f65ddce731a661e6af57451dd317feba7c0` 的截图只证明被后续
+走查否定的旧方案，不再作为本项完成证据。新三模式映射必须重新构建并部署到物理 HAD-W32，
+由用户在真实桌面背景下完成最终主观确认。
+
+2026-08-14，新映射已通过 ArkTS 105/105，并构建、测试签名、安装和启动到物理 HAD-W32。
+测试 HAP SHA-256 为 `23037d267a03e83ab31ead39d782883c0b91457a39ab091f025e29cdadf976ee`；
+部署后 PID 为 `45959`，五 Tab 的 Medium 基线截图和布局保存在忽略目录
+`build/verification/chrome-three-mode-20260814/`。这些事实证明实现已进入测试机，不替代用户对
+真实浅色/深色桌面背景及五档切换的最终主观确认。
+
+2026-08-15，用户在首轮真机观察中认为 A/B 活动 Tab 仍然过亮。活动态从 surface2 下压到
+surface1，hover 复用 surface1 的 86% alpha；C 模式保持 surface1 / surface2 / overlay0 的
+增强层级。调整后的 ArkTS 仍为 105/105，通过 ARM64 调试构建、测试签名、覆盖安装与启动；
+HAP SHA-256 为 `71d701edbf74aa93528067eb88ee5b466f3eec97c7c5500ba739d40d646c2c2c`，
+设备 PID 为 `49638`，Medium 真机截图为同一证据目录下的
+`deployed-screen-calibration05.png`。2026-08-15，用户完成真机逐档观察并确认调整后没有问题；
+该精确 HAP 的三模式 Chrome 方案成为 1.3 当前完成基线。
+
+同日后续日常观察再次确认 A/B/C 三种模式的活动 Tab 都高于应用其余“当前项”表面，C 模式的
+overlay0 尤其突出。根因是 Tab 角色使用 surface1/overlay0，而菜单当前选中行只使用 surface0。
+首轮修订将三种模式活动态统一降至同主题 `commandBarBorder` / surface0，非活动与 hover 分别降至
+base 和 surface0 的 50% / 75% 插值；rail 和三模式 `1.00 / 0.94 / 0.86` alpha 不变。部署后用户
+澄清需要上提的是内部模式 B 和 C，而不是五档中的第二、第三档；实机观察显示这两种模式的 Tab
+已与 rail 趋同。最终保留 A 的低亮度组，B/C 非活动升到 base→surface0 70%，hover 升到 surface0，
+活动升到 surface0→surface1 25%；仍明显低于旧 surface1/overlay0 方案。旧 HAP `71d701ed...` 与
+本次第一次低亮度 HAP 都不再代表当前完成基线，必须以最终重新部署结果确认。
+
+修订后的 Web 视觉策略测试、ArkTS 107/107 与 ARM64 debug 构建通过；测试签名 HAP SHA-256 为
+`8e451561ec5833d089edc85eb391af1f43a4988108fc4cdcf9031e8b76e1a4da`，已覆盖安装并启动到物理
+HAD-W32，设备 PID 为 `52376`。这些事实证明 B/C 精确 token 已进入测试机；最终亮度仍由用户在
+真实桌面背景和对应透明档位下确认。
+
+该版本真机观察后，用户要求 B 只再提高一点、C 明显提高更多。最终 B 将非活动提高到
+base→surface0 80%，hover/活动提高到 surface0→surface1 15%/40%；C 将非活动提高到 surface0，
+hover/活动提高到 surface0→surface1 50%/75%。这保留了 B/C 不同的透明场景补偿强度，同时活动
+Tab 仍低于完整 surface1，更不回到旧 overlay0。上述 `8e451561...` HAP 因产品 token 再次变化而
+失效，必须重新构建部署。
+
+最终分级通过 Web 视觉策略测试、ArkTS 107/107 与 ARM64 debug 构建；测试签名 HAP SHA-256 为
+`13197f1ec1c2f9615ba737045f7731f484650b7647a68e41d728ff0d375dfab1`，已覆盖安装并启动到物理
+HAD-W32，设备 PID 为 `54657`。等待用户对 B 的轻微上提和 C 的较大上提完成最终主观确认。
 
 ### 2026-08-07 二次走查决定（历史基线，已被五档扩展替代）
 
@@ -326,9 +372,9 @@ Extreme 也必须在系统材质不可用的无 blur 回退下保持终端字形
 三层都使用现有主题色，不新增品牌渐变或高饱和装饰。
 
 透明度使用关/低/中/高/极限五档固定值。内容背景不透明度为
-`1.00/0.82/0.72/0.60/0.45`，Chrome 为 `1.00/0.88/0.80/0.70/0.55`，默认中档。
+`1.00/0.82/0.72/0.60/0.45`，Chrome 为 `1.00/0.94/0.94/0.86/0.86`，默认中档。
 两区共用同一语义档位但持有不重叠的派生 alpha；搜索浮层、链接菜单和明确设置背景的
-TUI 单元格保持稳定。显式 ANSI/TrueColor 单元格背景另用 `1.00/0.20/0.16/0.12/0.08`
+TUI 单元格保持稳定。显式 ANSI/TrueColor 单元格背景另用 `0.24/0.20/0.16/0.12/0.08`
 的 renderer-only alpha，避免它们在透明窗口上形成实黑矩形；文字始终保持不透明。窗口根
 仅使用一次系统 Regular 材质，不形成互相叠加的玻璃层。
 
@@ -550,10 +596,20 @@ Bridge 和窗口材质作为根因。
 LeanTTY 在固定版本的 WebGL 资产生成步骤中只替换这一处 alpha 来源，并要求精确匹配一次；
 若升级 xterm 后代码位置变化，构建会失败并要求重新审计。主题桥传入五档派生的
 `cellBackgroundOpacity`，Web 侧先限制到 `0..1`，从传给上游 xterm 的主题对象中删除该元数据，
-再刷新现有行。前景字形、光标、selection、默认背景和 Off 档不变。用户在同一物理 PC 的
+再刷新现有行。前景字形、光标、selection 和默认背景不变。用户在同一物理 PC 的
 Codex 页面确认黑块消失；五档同页截图位于
 `build/verification/transparency-ladder-20260814/`，普通 shell、Codex 深浅显式表面、文字和
 状态行从 Off 到 Extreme 均保持正确。
+
+2026-08-15 的后续日常使用发现 Off 仍会复发。物理机同一 SSH/Codex buffer 的受控对照证明：
+Off 出现实黑矩形，切到 Medium 立即消失，恢复 Off 后再次出现；唯一变化是
+`cellBackgroundOpacity(OFF)` 从其他档位的有界值跳到 `1.00`。这说明此前把“窗口内容表面完全
+不透明”和“显式 ANSI cell 也必须完全不透明”错误绑定。修订后 Off 的内容与 Chrome 表面仍为
+`1.00`，只把 renderer 内部显式 cell alpha 设为阶梯最高值 `0.24`。修复版物理 HAD-W32 在明确
+读取菜单为 Off 后重新运行 `ssh hsl` 和 `./run-codex`，欢迎卡片、输入区和状态栏不再形成黑块；
+同一会话的 ANSI 41/42/44 红绿蓝背景仍清楚可辨。失败、Medium 对照、修复后 Codex 和 ANSI
+截图位于 `build/verification/off-black-block-investigation/`。测试 HAP SHA-256 为
+`2f341ae228ae78afbe35d4460b1eb5c4509f3f0fd7b9d8cb7a079ced3ed68d02`。
 
 同轮按用户决定把透明参数整体前移一档，并新设更激进 Extreme。之后对单 Tab、多 Tab、双
 Pane、活动/非活动窗口与 Off/Medium/Extreme 做走查。结论是不增加装饰或新状态：非活动 Tab
@@ -689,6 +745,43 @@ Left `ESC [ D`、Right `ESC [ C`、`Ctrl+P` `0x10`、`Ctrl+C` `0x03`、Tab `0x09
 精确字节、搜索打开/关闭/焦点、Pane/Tab 所有权和 production PUT/GET 往返门禁。PUT/GET
 harness 的 reverse 映射清理命令同时在 `6556839` 中纠正，并以新端口复跑和独立映射审计闭合。
 
+### 2026-08-15 SSH 连接标题回归
+
+主流终端通常不把“SSH 后必须显示某个固定标题”写死在终端本身，而是让活动 Shell/应用通过
+OSC 0/2 或 Shell integration 提供标题：[Windows Terminal](https://learn.microsoft.com/en-us/windows/terminal/tutorials/tab-title)
+以活动 Pane 的应用标题为 Tab 标题，[kitty](https://sw.kovidgoyal.net/kitty/shell-integration/)
+以活动 window 标题为 Tab 标题并可通过远端 shell integration 更新，
+[Ghostty](https://ghostty.org/docs/vt/osc/2) 支持 OSC 0/2 与显式 Tab 标题覆盖，
+[iTerm2](https://iterm2.com/documentation-session-title.html) 的 Session Title 则能通过 Shell
+integration 组合 User、Host、PWD。共同点是标题表达当前会话，但动态程度和信任边界由产品决定。
+
+LeanTTY 是拥有 SSH 连接模型的键盘优先客户端，不需要依赖远端 Shell 配置才能识别会话。因此
+1.3 固定采用连接成功后的稳定身份 `user@displayHost`：通过 OpenSSH `Host` alias 连接时保留用户
+实际输入并认识的 alias，例如 `ssh hsl` 显示 `user@hsl`；直接连接域名或 IP 时显示直接目标。
+当远端正常 `exit`、连接失败或取消连接后重新出现本地 `ltty>` 时，Tab 同步恢复为 `ltty`；
+重连过程尚未回到本地提示符，因此继续保留原连接身份。标题由当前可交互环境决定，不把已经
+结束的服务器名称当作历史标签长期保留。
+当前不接入远端 OSC 动态改写 Tab，避免未建立清洗、长度、控制字符和生命周期边界前让远端内容
+控制 Chrome，也避免 PWD/前台程序频繁变化造成 Tab 抖动。未来若需要动态标题，必须单独定义可信
+输入、清洗、截断、用户覆盖和分屏所有权合同。
+
+回归根因不是 SSH 标题生成丢失。真机日志已证明 Session 在 CONNECTED 时生成标题并调用
+Index/AppViewModel；问题来自 `e4dac57` 将 `ForEach` key 收敛为稳定 `tab.id` 后，ChromeBar 又以
+`@Prop` 接收 Tab 数组，ArkUI V1 的嵌套对象观察链在中间层断开。模型继续更新，但稳定 key 复用的
+ChromeTab 没有收到重绘。最终保持稳定 `tab.id`，将数据链改为
+`Index @State tabs → ChromeBar @Link tabs → ChromeTab @ObjectLink tab`，TabInfo 使用
+`@Observed`，Pane 的 state/title/attention 变化由所属 Tab 的一层 `panes` 赋值发布。这样无需把
+title 放回 key、无需重建 Tab，也不会在连接完成时打断 Tab 或关闭按钮的焦点/动画状态。
+
+连接标题定向自动化通过 114/114 ArkTS 单元测试与 Web terminal policy。当前源码构建的 ARM64 测试签名
+HAP SHA-256 为 `F96EC145ADEE6FEBD0BBBBE5ECE5FB22B2E9AE9A671FFCE0C2E0CD8AC94BE765`；
+在 HAD-W32（USB、ARM64）输入 `ssh hsl` 后，hilog 记录
+`Connected tab title=user@hsl`，layout 与截图均实际显示 `user@hsl`。证据保存在忽略目录
+`build/verification/tab-title-regression/after-linked-object-fix.{log,png}` 及对应 layout JSON；验证后
+已退出测试 SSH 会话。2026-08-16 又补齐“任何非 IDLE 状态回到本地 IDLE 时发布 `ltty` 标题”的
+状态机约束和自动化；因测试机充电，`ssh hsl → exit → ltty` 的真机标题变化按用户决定暂缓到
+最终精确候选 smoke。上述旧包只证明连接后标题，不证明本次退出修复，也不替代正式发布候选。
+
 ## 验证边界
 
 ### 自动化证明
@@ -740,6 +833,10 @@ harness 的 reverse 映射清理命令同时在 `6556839` 中纠正，并以新�
 
 ## 决策记录
 
+- 2026-08-15–16：SSH 连接成功后的 Tab 标题固定为 `user@displayHost`；OpenSSH alias 优先于解析后的
+  hostname/IP；回到本地 `ltty>` 时标题恢复 `ltty`，重连未返回本地提示符时保留连接身份。保留
+  稳定 Tab ID，通过 ArkUI V1 的 `@State → @Link → @ObjectLink` 状态链刷新，当前不允许远端
+  OSC 动态改写 Chrome 标题。
 - 2026-08-08：字号沿用 `Ctrl+-` / `Ctrl+=`，透明度采用 `Ctrl+Alt+-` / `Ctrl+Alt+=`；四个
   按钮用平台原生 hover Tips 展示键位。真机否决会被菜单遮挡的普通 Popup 实现，不建立
   自定义 Tooltip 或覆盖层。

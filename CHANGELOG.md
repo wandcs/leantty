@@ -13,8 +13,14 @@
   Explicit file-name conflicts fail; downloads whose final basename is selected
   by LeanTTY keep both files with a numbered name. Bounded Tab completion covers
   local files/directories, Host aliases and LeanTTY key names without prompting
-  for Downloads access or enumerating remote directories. The
-  commands reuse existing Host, Identity, authentication and known-host rules,
+  for Downloads access or enumerating remote directories. Local paths accept
+  `./` as an explicit Downloads root. The first ambiguous Tab opens one
+  transient candidate region below the command, the second enters selection,
+  Tab/Shift+Tab and all four arrow keys navigate the displayed grid, Enter
+  accepts without executing, and Esc restores the real prefix. Continued
+  typing, Backspace and Delete refresh that same region without stacking old
+  candidates; selected directories can continue one level at a time with `/`.
+  The commands reuse existing Host, Identity, authentication and known-host rules,
   support an optional per-command port or identity, and keep file bytes in the
   Rust/native stream instead of ArkTS, ArkWeb or terminal output. A fixed-width
   30-cell line progress meter updates in place with percentage, transferred/total
@@ -41,24 +47,41 @@
 
 ### Fixed
 
+- Restored the connected SSH Tab identity without remounting the Tab component.
+  A connection through an OpenSSH `Host` alias now shows `user@alias`, while a
+  direct target shows `user@host`; the stable title is owned by LeanTTY rather
+  than untrusted remote OSC title sequences. The ArkUI V1 state path now remains
+  linked from the page Tab array through ChromeBar to each observed Tab item, so
+  title, connection-state and attention changes repaint with the stable Tab ID.
+  Returning from a remote, failed or cancelled connection to the local `ltty>`
+  prompt now restores the Tab title to `ltty` instead of retaining a stale Host.
 - Unified disconnected local-command output around a lowercase `ltty>` prompt
   in the theme ANSI green, restrained semantic status colors, a one-cell green
   dot for committed writes, quiet query results, and compact two-line errors with
   actionable next steps. Host, key, SSH and file-transfer output now share one
   token owner and sanitize dynamic terminal text without exposing raw exception
   details.
-- Clarified the terminal workspace hierarchy: the Chrome rail recedes with the
-  selected transparency level while inactive, hovered and active tabs retain
-  distinct stable Catppuccin surfaces. Resting Chrome controls remain
-  discoverable, and the one-pixel split boundary stays visible across presets.
+- Clarified the terminal workspace hierarchy with three stable Chrome modes:
+  Off remains opaque, Low/Medium share the regular surface set, and
+  High/Extreme share the same quiet surfaces at a lower Chrome alpha. The terminal content still follows
+  all five transparency levels, while rail, inactive, hovered and active Tab
+  persistent surfaces keep a common per-mode alpha so desktop brightness cannot
+  collapse their relative hierarchy. Opaque mode stops its active Tab at the
+  same `surface0` used by the selected menu row. The two transparent Chrome
+  modes compensate differently for their backdrops: Low/Medium use an 80%
+  base-to-surface0 inactive blend and a 40% surface0-to-surface1 active blend;
+  High/Extreme use surface0 for inactive Tabs and stop active Tabs at 75% toward
+  surface1. Both retain separation without returning to the old full
+  `surface1` through `overlay0` hierarchy.
 - Shifted each non-off transparency preset one step clearer: Low now matches
   the former Medium baseline, Medium matches former High, High matches former
-  Extreme, and the new Extreme uses a more aggressive 45% content / 55% Chrome
-  surface while keeping glyphs opaque and semantic ordering stable.
+  Extreme. The content curve remains 100/82/72/60/45%, while Chrome uses the
+  independent three-mode 100/94/86% mapping needed to keep navigation stable.
 - Kept ANSI and true-color cell backgrounds consistent with LeanTTY's
   transparency instead of letting the xterm WebGL renderer force them fully
   opaque. Dense TUI surfaces such as Codex no longer appear as black blocks;
-  foreground glyphs and the opaque `Off` mode retain their original contrast.
+  foreground glyphs stay opaque, and the `Off` window remains fully opaque
+  while its explicit cell backgrounds use the strongest bounded renderer alpha.
 - Restored ordinary terminal key delivery through ArkWeb after the file-transfer
   keyboard interception change. Left/Right, `Ctrl+P` and other TUI-owned keys
   now reach the remote PTY again, while `Ctrl+C`, Tab, product search and
@@ -162,6 +185,11 @@
   recovery paths remain covered, while a fresh denial/retry/single-flight pass
   is reopened only for a real user failure, a material platform-permission
   change, a security/data-integrity risk or direct candidate counter-evidence.
+- Added a mandatory natural-Chinese editorial pass after every offline User
+  Guide regeneration. The 1.3 guide now explains the final local-completion
+  workflow in both languages, and its Chinese opening, task steps and recovery
+  guidance have been rewritten around user actions instead of translated
+  implementation phrasing.
 
 ## [1.2.0] - 2026-08-08
 
