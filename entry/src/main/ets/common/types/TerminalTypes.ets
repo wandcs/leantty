@@ -37,6 +37,7 @@ export class PaneInfo {
   }
 }
 
+@Observed
 export class TabInfo {
   id: string
   title: string

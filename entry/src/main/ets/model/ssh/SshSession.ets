@@ -4,7 +4,7 @@ export { SshSessionState }
 
 export class SshSession {
   private state: SshSessionState = SshSessionState.IDLE
-  private hostAlias: string = ''
+  private displayHost: string = ''
   private hostname: string = ''
   private port: number = 22
   private username: string = ''
@@ -19,12 +19,12 @@ export class SshSession {
     this.state = state
   }
 
-  getHostAlias(): string {
-    return this.hostAlias
+  getDisplayHost(): string {
+    return this.displayHost
   }
 
-  setHostAlias(alias: string): void {
-    this.hostAlias = alias
+  setDisplayHost(host: string): void {
+    this.displayHost = host
   }
 
   getHostname(): string {
@@ -68,20 +68,15 @@ export class SshSession {
   }
 
   getDisplayTitle(): string {
-    if (this.hostAlias.length > 0) {
-      return this.hostAlias
-    }
-    if (this.hostname.length > 0) {
-      return this.username.length > 0 ? this.username + '@' + this.hostname : this.hostname
-    }
-    return 'ltty'
+    return this.getConnectionTitle()
   }
 
   getConnectionTitle(): string {
-    if (this.hostname.length === 0) {
+    let host: string = this.displayHost.length > 0 ? this.displayHost : this.hostname
+    if (host.length === 0) {
       return 'ltty'
     }
-    return this.username.length > 0 ? this.username + '@' + this.hostname : this.hostname
+    return this.username.length > 0 ? this.username + '@' + host : host
   }
 
   isConnected(): boolean {

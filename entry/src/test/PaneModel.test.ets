@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { PaneInfo, TabInfo, TerminalMode } from '../main/ets/common/types/TerminalTypes'
+import { SshSession } from '../main/ets/model/ssh/SshSession'
 import { AppViewModel } from '../main/ets/viewmodel/AppViewModel'
 
 export default function paneModelTest() {
@@ -111,6 +112,30 @@ export default function paneModelTest() {
         expect(first.title).assertEqual('right-host')
       }
       expect(second.title).assertEqual('two')
+    })
+
+    it('publishesStableObservableTabUpdatesForChrome', 0, () => {
+      let vm: AppViewModel = new AppViewModel()
+      let tab: TabInfo = vm.addTab('ltty')
+      let beforePanes: PaneInfo[] = tab.panes
+
+      vm.updatePaneTitle(tab.panes[0].id, 'user@host')
+
+      expect(vm.getTabs()[0] === tab).assertEqual(true)
+      expect(tab.panes === beforePanes).assertEqual(false)
+      expect(tab.title).assertEqual('user@host')
+      expect(tab.panes[0].title).assertEqual('user@host')
+    })
+
+    it('usesTheChosenSshHostLabelForTheStableConnectionTitle', 0, () => {
+      let session: SshSession = new SshSession()
+      session.setHostname('172.16.100.2')
+      session.setUsername('user')
+      session.setDisplayHost('hsl')
+      expect(session.getConnectionTitle()).assertEqual('user@hsl')
+
+      session.setDisplayHost('')
+      expect(session.getConnectionTitle()).assertEqual('user@172.16.100.2')
     })
 
     it('activePaneSelectionNeverCrossesTheActiveTab', 0, () => {

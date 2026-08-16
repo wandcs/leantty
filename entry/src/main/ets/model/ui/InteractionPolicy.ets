@@ -30,7 +30,7 @@ export class InteractionPolicy {
 
   static isTerminalTabKey(keyCode: number, ctrlKey: boolean,
     altKey: boolean, shiftKey: boolean): boolean {
-    return keyCode === 2049 && !ctrlKey && !altKey && !shiftKey
+    return keyCode === 2049 && !ctrlKey && !altKey
   }
 
   static isTerminalCopyOrInterruptKey(keyCode: number, ctrlKey: boolean, altKey: boolean): boolean {
