@@ -767,11 +767,11 @@ export default function interactionFixesTest() {
       expect(listed.kind).assertEqual(LocalCompletionUpdateKind.LISTED)
       expect(listed.text).assertEqual('get p')
       expect(listed.selectedIndex).assertEqual(-1)
-      let previewed: LocalCompletionUpdate = engine.complete('get p', set)
-      expect(previewed.kind).assertEqual(LocalCompletionUpdateKind.PREVIEWED)
-      expect(previewed.text).assertEqual('get prod:')
-      expect(previewed.displayValues.length).assertEqual(2)
-      expect(previewed.selectedIndex).assertEqual(0)
+      let selected: LocalCompletionUpdate = engine.complete('get p', set)
+      expect(selected.kind).assertEqual(LocalCompletionUpdateKind.SELECTED)
+      expect(selected.text).assertEqual('get prod:')
+      expect(selected.displayValues.length).assertEqual(2)
+      expect(selected.selectedIndex).assertEqual(0)
       expect(engine.isMenuActive()).assertEqual(true)
       let cycled: LocalCompletionUpdate = engine.cycle(1)
       expect(cycled.text).assertEqual('get production:')
@@ -788,7 +788,7 @@ export default function interactionFixesTest() {
       let directorySet: LocalCompletionSet = new LocalCompletionSet()
       directorySet.replacements = ['put ./reports/', 'put ./report.txt']
       directorySet.displayValues = ['reports/', 'report.txt']
-      let directory: LocalCompletionUpdate = engine.refresh('put ./r', directorySet)
+      let directory: LocalCompletionUpdate = engine.complete('put ./r', directorySet)
       expect(directory.kind).assertEqual(LocalCompletionUpdateKind.LISTED)
       directory = engine.complete('put ./r', directorySet)
       expect(directory.text).assertEqual('put ./reports/')
@@ -796,23 +796,48 @@ export default function interactionFixesTest() {
       expect(engine.accept().text).assertEqual('put ./reports/')
     })
 
-    it('refiltersCompletionFromTheRealInputWithoutImplicitlyAcceptingPreview', 0, () => {
+    it('editsTheSelectedCompletionAndUsesRollbackOnlyForCancellation', 0, () => {
       let engine: LocalCompletionEngine = new LocalCompletionEngine()
       let initial: LocalCompletionSet = new LocalCompletionSet()
-      initial.replacements = ['put ./alpha/', 'put ./alpine.txt']
-      initial.displayValues = ['alpha/', 'alpine.txt']
+      initial.replacements = ['put ./alpha.txt', 'put ./alpine.txt']
+      initial.displayValues = ['alpha.txt', 'alpine.txt']
       engine.complete('put ./a', initial)
+      let selected: LocalCompletionUpdate = engine.complete('put ./a', initial)
+      expect(selected.text).assertEqual('put ./alpha.txt')
+
+      let line: LocalCommandLine = new LocalCommandLine()
+      line.setText(selected.text)
+      line.setText(engine.editingText())
+      line.insert(' ')
+      expect(line.getText()).assertEqual('put ./alpha.txt ')
+      expect(engine.isActive()).assertEqual(false)
+
+      let directorySet: LocalCompletionSet = new LocalCompletionSet()
+      directorySet.replacements = ['put ./alpha/', 'put ./archive/']
+      directorySet.displayValues = ['alpha/', 'archive/']
+      engine.complete('put ./a', directorySet)
+      selected = engine.complete('put ./a', directorySet)
+      line.setText(selected.text)
+      line.setText(engine.editingText())
+      line.insert('c')
+      expect(line.getText()).assertEqual('put ./alpha/c')
+      expect(engine.isActive()).assertEqual(false)
+
+      engine.complete('put ./a', initial)
+      selected = engine.complete('put ./a', initial)
+      line.setText(selected.text)
+      line.setText(engine.editingText())
+      line.backspace()
+      expect(line.getText()).assertEqual('put ./alpha.tx')
+      expect(engine.isActive()).assertEqual(false)
+
+      engine.complete('put ./a', initial)
+      engine.complete('put ./a', initial)
+      expect(engine.cancel().text).assertEqual('put ./a')
+
       engine.complete('put ./a', initial)
       expect(engine.editingText()).assertEqual('put ./a')
-
-      let filtered: LocalCompletionSet = new LocalCompletionSet()
-      filtered.replacements = ['put ./alpha/']
-      filtered.displayValues = ['alpha/']
-      let update: LocalCompletionUpdate = engine.refresh('put ./al', filtered)
-      expect(update.kind).assertEqual(LocalCompletionUpdateKind.LISTED)
-      expect(update.text).assertEqual('put ./al')
-      expect(update.displayValues[0]).assertEqual('alpha/')
-      expect(update.selectedIndex).assertEqual(-1)
+      expect(engine.isActive()).assertEqual(false)
     })
 
     it('formatsCompletionCandidatesByTerminalCells', 0, () => {

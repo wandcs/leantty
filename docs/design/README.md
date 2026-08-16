@@ -28,7 +28,7 @@
 | 最小单文件传输 | Verified / 产品实现与适用功能矩阵已闭合；候选级核心终端人工回归仍由 `next-work.md` 管理 | 1.3 | [`file-transfer.md`](file-transfer.md) |
 | 终端输入调度与大粘贴连续可用性 | Verified / 实现与同一保留候选主路径已闭合 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
 | 本地命令提示符与输出规范 | Verified / 1.3 | 1.3 | [`local-command-output.md`](local-command-output.md) |
-| 本地命令 Tab 补全 | Implemented / 最终候选人工视觉 smoke | 1.3 | [`tab-completion.md`](tab-completion.md) |
+| 本地命令 Tab 补全 | Implemented / 精简编辑合同已闭合，待最终候选人工视觉 smoke | 1.3 | [`tab-completion.md`](tab-completion.md) |
 | HSL 本地执行环境入口 | WIP / 未授权实现 | 拟议 1.4 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
 | OpenSSH ProxyJump | WIP / 未授权实现 | 拟议 1.5 | [`proxy-jump.md`](proxy-jump.md) |
 | Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.6 | [`mosh.md`](mosh.md) |

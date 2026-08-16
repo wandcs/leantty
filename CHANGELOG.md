@@ -17,9 +17,12 @@
   `./` as an explicit Downloads root. The first ambiguous Tab opens one
   transient candidate region below the command, the second enters selection,
   Tab/Shift+Tab and all four arrow keys navigate the displayed grid, Enter
-  accepts without executing, and Esc restores the real prefix. Continued
-  typing, Backspace and Delete refresh that same region without stacking old
-  candidates; selected directories can continue one level at a time with `/`.
+  accepts without executing, and Esc restores the real prefix. Once selected,
+  a candidate becomes the real command-line text: continued typing, Space,
+  Backspace and Delete close the transient region and edit that visible text,
+  while another Tab explicitly starts the next completion. Repeating an
+  automatically appended directory `/` keeps one separator without opening a
+  hidden live-filtering mode.
   The commands reuse existing Host, Identity, authentication and known-host rules,
   support an optional per-command port or identity, and keep file bytes in the
   Rust/native stream instead of ArkTS, ArkWeb or terminal output. A fixed-width
