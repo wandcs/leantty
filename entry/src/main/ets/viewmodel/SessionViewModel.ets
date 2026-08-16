@@ -35,6 +35,16 @@ import { TransferFileManager, TransferLocalFile } from '../model/transfer/Transf
 import { FileTransferLifecycle, FileTransferPhase } from '../model/transfer/FileTransferLifecycle'
 import { FileTransferFailurePresenter } from '../model/transfer/FileTransferFailure'
 import { TerminalTextPolicy } from '../common/security/TerminalTextPolicy'
+import {
+  LocalCompletionEngine,
+  LocalCompletionSet,
+  LocalCompletionUpdate,
+  LocalCompletionUpdateKind
+} from '../model/terminal/LocalCompletionEngine'
+import {
+  LocalCompletionNavigation,
+  LocalCompletionRenderer
+} from '../model/terminal/LocalCompletionRenderer'
 
 export { TerminalMode } from '../common/types/TerminalTypes'
 
@@ -65,6 +75,8 @@ export class SessionViewModel {
   private hostKeyBuffer: string = ''
   private knownHostsPath: string = ''
   private commandBarVm: CommandBarViewModel = new CommandBarViewModel()
+  private completionEngine: LocalCompletionEngine = new LocalCompletionEngine()
+  private completionRenderer: LocalCompletionRenderer = new LocalCompletionRenderer()
   private heartbeatTimerId: number = -1
   private pendingKeyPath: string = ''
   private pendingKeyPassphrase: string = ''
@@ -181,6 +193,10 @@ export class SessionViewModel {
 
   onTerminalSurfaceDetached(): void {
     this.stopHeartbeat()
+    if (this.completionEngine.isActive()) {
+      this.commandLine.setText(this.completionEngine.editingText())
+    }
+    this.completionRenderer.reset()
   }
 
   private onBridgeReady(recoveredOutput: boolean): void {
@@ -198,20 +214,25 @@ export class SessionViewModel {
   }
 
   writePrompt(): void {
+    this.completionEngine.finishEditing()
+    this.completionRenderer.reset()
     this.writeTerminal('\u001b[0m\r\n' + LocalCommandOutput.prompt())
   }
 
   writeError(msg: string, guidance: string = ''): void {
+    this.completionEngine.finishEditing()
+    this.completionRenderer.reset()
     this.writeTerminal(LocalCommandOutput.error(
       SessionViewModel.terminalSafeMultilineText(msg),
       SessionViewModel.terminalSafeMultilineText(guidance)))
   }
 
-  async connect(host: string, port: number, username: string): Promise<void> {
+  async connect(host: string, port: number, username: string, displayHost: string = ''): Promise<void> {
     this.clearAuthChallenge()
     this.setMode(TerminalMode.CONNECTING)
     this.session.setState(SshSessionState.CONNECTING)
     this.session.setHostname(host)
+    this.session.setDisplayHost(displayHost)
     this.session.setPort(port)
     this.session.setUsername(username)
     this.notifyStateChange()
@@ -275,6 +296,7 @@ export class SessionViewModel {
 
   async reconnect(): Promise<void> {
     let host: string = this.session.getHostname()
+    let displayHost: string = this.session.getDisplayHost()
     let port: number = this.session.getPort()
     let username: string = this.session.getUsername()
     let previousClient: SshClient = this.sshClient
@@ -283,7 +305,7 @@ export class SessionViewModel {
     await previousClient.disconnect()
     this.sshClient = new SshClient()
     this.session.setState(SshSessionState.RECONNECTING)
-    await this.connect(host, port, username)
+    await this.connect(host, port, username, displayHost)
   }
 
   private cancelPendingConnection(): void {
@@ -324,6 +346,7 @@ export class SessionViewModel {
   }
 
   requestBlur(): void {
+    this.dismissCompletion()
     this.terminalFocused = false
     this.applyTerminalFocus()
   }
@@ -345,12 +368,21 @@ export class SessionViewModel {
   }
 
   private setMode(newMode: TerminalMode): void {
+    let returningToLocalPrompt: boolean = this.mode !== TerminalMode.IDLE &&
+      newMode === TerminalMode.IDLE
+    if (newMode !== TerminalMode.IDLE) {
+      this.completionEngine.finishEditing()
+      this.completionRenderer.reset()
+    }
     this.mode = newMode
     if (this.terminalSurface !== null) {
       this.terminalSurface.setInputMasked(SessionViewModel.isSecretInputMode(newMode))
     }
     if (this.onModeChange !== null) {
       this.onModeChange(newMode)
+    }
+    if (returningToLocalPrompt) {
+      this.notifyTitleChange('ltty')
     }
   }
 
@@ -421,7 +453,6 @@ export class SessionViewModel {
     this.session.setState(SshSessionState.CONNECTED)
     let connectedTitle: string = this.session.getConnectionTitle()
     this.logger.info('Connected tab title=' + connectedTitle)
-    this.session.setHostAlias(connectedTitle)
     this.notifyTitleChange(connectedTitle)
     this.notifyStateChange()
     this.sshClient.resize(this.lastCols, this.lastRows)
@@ -603,6 +634,9 @@ export class SessionViewModel {
         if (dims.length === 2) {
           this.lastCols = dims[0]
           this.lastRows = dims[1]
+          if (this.mode === TerminalMode.IDLE && this.completionEngine.isActive()) {
+            this.redrawLocalCommandLine()
+          }
           if (this.sshClient.isConnected()) {
             this.sshClient.resize(dims[0], dims[1])
             this.logger.info('Terminal resized: ' + dims[0].toString() + 'x' + dims[1].toString())
@@ -672,32 +706,88 @@ export class SessionViewModel {
     for (let i = 0; i < actions.length; i++) {
       let action: TerminalInputAction = actions[i]
       if (action.kind === TerminalInputActionKind.SUBMIT) {
-        this.executeCommandBuffer()
+        if (this.completionEngine.isMenuActive()) {
+          this.commandLine.setText(this.completionEngine.accept().text)
+          this.redrawLocalCommandLine()
+        } else {
+          this.dismissCompletion()
+          this.completionEngine.finishEditing()
+          this.executeCommandBuffer()
+        }
       } else if (action.kind === TerminalInputActionKind.INTERRUPT) {
+        this.dismissCompletion()
         this.commandLine.clear()
+        this.completionRenderer.reset()
         this.writeTerminal('^C\r\n')
         this.writePrompt()
       } else if (action.kind === TerminalInputActionKind.BACKSPACE) {
+        if (this.commandLine.getCursor() === 0) { continue }
+        let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
         if (this.commandLine.backspace() !== null) {
-          this.redrawLocalCommandLine()
+          if (completionWasActive) {
+            this.refreshCompletionAfterEdit()
+          } else {
+            this.redrawLocalCommandLine()
+          }
+        }
+      } else if (action.kind === TerminalInputActionKind.DELETE) {
+        if (this.commandLine.getCursor() === this.commandLine.getText().length) { continue }
+        let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+        if (this.commandLine.delete() !== null) {
+          if (completionWasActive) {
+            this.refreshCompletionAfterEdit()
+          } else {
+            this.redrawLocalCommandLine()
+          }
         }
       } else if (action.kind === TerminalInputActionKind.TAB) {
-        this.tabComplete()
+        this.tabComplete(1)
+      } else if (action.kind === TerminalInputActionKind.REVERSE_TAB) {
+        this.tabComplete(-1)
+      } else if (action.kind === TerminalInputActionKind.ESCAPE) {
+        this.dismissCompletion()
       } else if (action.kind === TerminalInputActionKind.HISTORY_PREVIOUS) {
-        this.navigateHistory(-1)
+        if (this.completionEngine.isMenuActive()) {
+          this.navigateCompletion(LocalCompletionNavigation.UP)
+        } else {
+          this.dismissCompletion()
+          this.navigateHistory(-1)
+        }
       } else if (action.kind === TerminalInputActionKind.HISTORY_NEXT) {
-        this.navigateHistory(1)
+        if (this.completionEngine.isMenuActive()) {
+          this.navigateCompletion(LocalCompletionNavigation.DOWN)
+        } else {
+          this.dismissCompletion()
+          this.navigateHistory(1)
+        }
       } else if (action.kind === TerminalInputActionKind.CURSOR_LEFT) {
-        if (this.commandLine.moveLeft()) {
-          this.redrawLocalCommandLine()
+        if (this.completionEngine.isMenuActive()) {
+          this.navigateCompletion(LocalCompletionNavigation.LEFT)
+        } else {
+          this.dismissCompletion()
+          if (this.commandLine.moveLeft()) {
+            this.redrawLocalCommandLine()
+          }
         }
       } else if (action.kind === TerminalInputActionKind.CURSOR_RIGHT) {
-        if (this.commandLine.moveRight()) {
-          this.redrawLocalCommandLine()
+        if (this.completionEngine.isMenuActive()) {
+          this.navigateCompletion(LocalCompletionNavigation.RIGHT)
+        } else {
+          this.dismissCompletion()
+          if (this.commandLine.moveRight()) {
+            this.redrawLocalCommandLine()
+          }
         }
       } else if (action.kind === TerminalInputActionKind.TEXT) {
-        this.commandLine.insert(action.text)
-        this.redrawLocalCommandLine()
+        if (!this.descendSelectedDirectory(action.text)) {
+          let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+          this.commandLine.insert(action.text)
+          if (completionWasActive) {
+            this.refreshCompletionAfterEdit()
+          } else {
+            this.redrawLocalCommandLine()
+          }
+        }
       }
     }
   }
@@ -852,6 +942,7 @@ export class SessionViewModel {
   private executeCommandBuffer(): void {
     let cmd: string = this.commandLine.getText().trim()
     this.commandLine.clear()
+    this.completionRenderer.reset()
     this.writeTerminal('\r\n')
 
     if (cmd.length === 0) {
@@ -905,7 +996,7 @@ export class SessionViewModel {
     let username: string = result.username
     this.pendingKeyPath = result.identityFile
     this.pendingKeyPassphrase = ''
-    this.connect(host, port, username)
+    this.connect(host, port, username, result.displayHost)
   }
 
   private async startFileTransfer(command: TransferCommandResult): Promise<void> {
@@ -1428,23 +1519,82 @@ export class SessionViewModel {
     }
   }
 
-  private tabComplete(): void {
-    this.commandBarVm.setInputText(this.commandLine.getText())
-    let matches: string[] = this.commandBarVm.tryTabComplete()
-    if (matches.length === 1) {
-      let completed: string = this.commandBarVm.applyCompletion(matches[0])
-      this.commandLine.setText(completed)
-      this.redrawLocalCommandLine()
-    } else if (matches.length > 1) {
-      let visible: string[] = []
-      for (let index: number = 0; index < matches.length; index++) {
-        visible.push(SessionViewModel.terminalSafeText(matches[index]))
-      }
-      let notice: string = this.commandBarVm.completionNotice()
-      if (notice.length > 0) { visible.push(notice) }
-      this.writeTerminal('\r\n' + visible.join('  ') + '\r\n' + LocalCommandOutput.prompt() +
-        SessionViewModel.terminalSafeText(this.commandLine.getText()))
+  private tabComplete(direction: number): void {
+    if (this.completionEngine.isMenuActive()) {
+      this.cycleCompletion(direction)
+      return
     }
+    let input: string = this.commandLine.getText()
+    this.commandBarVm.setInputText(input)
+    let set: LocalCompletionSet = this.commandBarVm.completionSet()
+    let update: LocalCompletionUpdate = this.completionEngine.complete(input, set, direction)
+    if (update.kind === LocalCompletionUpdateKind.COMPLETED ||
+      update.kind === LocalCompletionUpdateKind.PREVIEWED) {
+      this.commandLine.setText(update.text)
+      this.redrawLocalCommandLine()
+    } else if (update.kind === LocalCompletionUpdateKind.LISTED) {
+      this.commandLine.setText(update.text)
+      this.redrawLocalCommandLine()
+    } else {
+      this.redrawLocalCommandLine()
+    }
+  }
+
+  private cycleCompletion(direction: number): void {
+    this.commandLine.setText(this.completionEngine.cycle(direction).text)
+    this.redrawLocalCommandLine()
+  }
+
+  private navigateCompletion(direction: LocalCompletionNavigation): void {
+    let current: LocalCompletionUpdate = this.completionEngine.current()
+    let nextIndex: number = LocalCompletionRenderer.moveSelection(
+      current.selectedIndex, direction, current.displayValues.length,
+      this.completionRenderer.getLastLayout())
+    let update: LocalCompletionUpdate = this.completionEngine.select(nextIndex)
+    if (update.kind === LocalCompletionUpdateKind.PREVIEWED) {
+      this.commandLine.setText(update.text)
+      this.redrawLocalCommandLine()
+    }
+  }
+
+  private restoreCompletionBaseForEditing(): boolean {
+    if (!this.completionEngine.isActive()) { return false }
+    this.commandLine.setText(this.completionEngine.editingText())
+    return true
+  }
+
+  private refreshCompletionAfterEdit(): void {
+    let input: string = this.commandLine.getText()
+    this.commandBarVm.setInputText(input)
+    this.completionEngine.refresh(input, this.commandBarVm.completionSet())
+    this.redrawLocalCommandLine()
+  }
+
+  private descendSelectedDirectory(text: string): boolean {
+    if (text !== '/' || !this.completionEngine.isMenuActive() ||
+      !this.completionEngine.selectedCandidate().endsWith('/')) {
+      return false
+    }
+    this.commandLine.setText(this.completionEngine.accept().text)
+    let input: string = this.commandLine.getText()
+    this.commandBarVm.setInputText(input)
+    this.completionEngine.refresh(input, this.commandBarVm.completionSet())
+    this.redrawLocalCommandLine()
+    return true
+  }
+
+  private dismissCompletion(): void {
+    if (!this.completionEngine.isActive()) { return }
+    this.commandLine.setText(this.completionEngine.cancel().text)
+    this.redrawLocalCommandLine()
+  }
+
+  static formatCompletionCandidates(values: string[], terminalColumns: number): string {
+    return LocalCompletionRenderer.formatPlain(values, terminalColumns)
+  }
+
+  static terminalCellWidth(value: string): number {
+    return LocalCompletionRenderer.terminalCellWidth(value)
   }
 
   private static terminalSafeText(value: string): string {
@@ -1470,7 +1620,11 @@ export class SessionViewModel {
   }
 
   private redrawLocalCommandLine(): void {
-    this.writeTerminal(this.commandLine.renderForTerminal(LocalCommandOutput.prompt()))
+    let completion: LocalCompletionUpdate = this.completionEngine.current()
+    this.writeTerminal(this.completionRenderer.render(
+      LocalCommandOutput.prompt(), this.commandLine.getText(), this.commandLine.getCursor(),
+      completion.displayValues, completion.selectedIndex, completion.truncated,
+      this.lastCols, this.lastRows))
   }
 
   private notifyTitleChange(title: string): void {

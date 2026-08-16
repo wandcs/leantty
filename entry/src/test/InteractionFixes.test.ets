@@ -35,6 +35,17 @@ import { TransferFileManager } from '../main/ets/model/transfer/TransferFileMana
 import { DownloadsAccessManager } from '../main/ets/model/transfer/DownloadsAccessManager'
 import { ApplicationCloseCoordinator } from '../main/ets/model/ui/ApplicationCloseCoordinator'
 import { TerminalTextPolicy } from '../main/ets/common/security/TerminalTextPolicy'
+import {
+  LocalCompletionEngine,
+  LocalCompletionSet,
+  LocalCompletionUpdate,
+  LocalCompletionUpdateKind
+} from '../main/ets/model/terminal/LocalCompletionEngine'
+import {
+  LocalCompletionLayout,
+  LocalCompletionNavigation,
+  LocalCompletionRenderer
+} from '../main/ets/model/terminal/LocalCompletionRenderer'
 
 function asciiBytes(text: string): Uint8Array {
   let result: Uint8Array = new Uint8Array(text.length)
@@ -200,6 +211,35 @@ export default function interactionFixesTest() {
         expect(get.remotePath).assertEqual('/var/log/app.log')
         expect(get.automaticLocalName).assertEqual(true)
       }
+    })
+
+    it('treatsLeadingDotSlashAsTheExplicitDownloadsRoot', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName files.example.com\n  User deploy\n')
+      let put = CommandParser.parseInput('put ./reports/app.log prod:/incoming/', config)
+      let getDirectory = CommandParser.parseInput('get prod:/reports/app.log ./saved/', config)
+      let getRoot = CommandParser.parseInput('get prod:/reports/app.log ./', config)
+      let nestedDot = CommandParser.parseInput('put ./reports/./app.log prod:/incoming/', config)
+      expect(put instanceof TransferCommandResult).assertEqual(true)
+      expect(getDirectory instanceof TransferCommandResult).assertEqual(true)
+      expect(getRoot instanceof TransferCommandResult).assertEqual(true)
+      if (put instanceof TransferCommandResult) {
+        expect(put.isValid).assertEqual(true)
+        expect(put.localPath).assertEqual('reports/app.log')
+        expect(put.remotePath).assertEqual('/incoming/app.log')
+      }
+      if (getDirectory instanceof TransferCommandResult) {
+        expect(getDirectory.isValid).assertEqual(true)
+        expect(getDirectory.localPath).assertEqual('saved/')
+        expect(getDirectory.localTargetDirectory).assertEqual(true)
+      }
+      if (getRoot instanceof TransferCommandResult) {
+        expect(getRoot.isValid).assertEqual(true)
+        expect(getRoot.localPath).assertEqual('')
+        expect(getRoot.localTargetDirectory).assertEqual(true)
+        expect(getRoot.automaticLocalName).assertEqual(true)
+      }
+      expect(nestedDot instanceof TransferCommandResult && !nestedDot.isValid).assertEqual(true)
     })
 
     it('keepsTransferPathsBoundedAndScpAsAHint', 0, () => {
@@ -714,15 +754,123 @@ export default function interactionFixesTest() {
       expect(vm.tryTabComplete()[0]).assertEqual('get prod:')
     })
 
-    it('usesCommonPrefixBeforeListingAmbiguousCompletions', 0, () => {
+    it('cyclesAndAcceptsAmbiguousCompletionsWithoutRunningTheCommand', 0, () => {
       let vm: CommandBarViewModel = new CommandBarViewModel()
+      let engine: LocalCompletionEngine = new LocalCompletionEngine()
       vm.getSshConfig().loadFromText('Host prod production\n  HostName prod.example.com\n  User deploy\n')
       vm.setInputText('get p')
-      expect(vm.tryTabComplete()[0]).assertEqual('get prod')
-      expect(vm.applyCompletion('get prod')).assertEqual('get prod')
-      vm.setInputText('get prod')
-      expect(vm.tryTabComplete().length).assertEqual(0)
-      expect(vm.tryTabComplete().length).assertEqual(2)
+      let set: LocalCompletionSet = vm.completionSet()
+      expect(set.replacements.length).assertEqual(2)
+      expect(set.displayValues[0]).assertEqual('prod:')
+      expect(set.displayValues[1]).assertEqual('production:')
+      let listed: LocalCompletionUpdate = engine.complete('get p', set)
+      expect(listed.kind).assertEqual(LocalCompletionUpdateKind.LISTED)
+      expect(listed.text).assertEqual('get p')
+      expect(listed.selectedIndex).assertEqual(-1)
+      let previewed: LocalCompletionUpdate = engine.complete('get p', set)
+      expect(previewed.kind).assertEqual(LocalCompletionUpdateKind.PREVIEWED)
+      expect(previewed.text).assertEqual('get prod:')
+      expect(previewed.displayValues.length).assertEqual(2)
+      expect(previewed.selectedIndex).assertEqual(0)
+      expect(engine.isMenuActive()).assertEqual(true)
+      let cycled: LocalCompletionUpdate = engine.cycle(1)
+      expect(cycled.text).assertEqual('get production:')
+      expect(cycled.selectedIndex).assertEqual(1)
+      expect(engine.cycle(1).text).assertEqual('get prod:')
+      expect(engine.cycle(-1).text).assertEqual('get production:')
+      expect(engine.accept().text).assertEqual('get production:')
+      expect(engine.isMenuActive()).assertEqual(false)
+
+      listed = engine.complete('get p', set)
+      expect(listed.kind).assertEqual(LocalCompletionUpdateKind.LISTED)
+      expect(engine.cancel().text).assertEqual('get p')
+
+      let directorySet: LocalCompletionSet = new LocalCompletionSet()
+      directorySet.replacements = ['put ./reports/', 'put ./report.txt']
+      directorySet.displayValues = ['reports/', 'report.txt']
+      let directory: LocalCompletionUpdate = engine.refresh('put ./r', directorySet)
+      expect(directory.kind).assertEqual(LocalCompletionUpdateKind.LISTED)
+      directory = engine.complete('put ./r', directorySet)
+      expect(directory.text).assertEqual('put ./reports/')
+      expect(engine.selectedCandidate()).assertEqual('put ./reports/')
+      expect(engine.accept().text).assertEqual('put ./reports/')
+    })
+
+    it('refiltersCompletionFromTheRealInputWithoutImplicitlyAcceptingPreview', 0, () => {
+      let engine: LocalCompletionEngine = new LocalCompletionEngine()
+      let initial: LocalCompletionSet = new LocalCompletionSet()
+      initial.replacements = ['put ./alpha/', 'put ./alpine.txt']
+      initial.displayValues = ['alpha/', 'alpine.txt']
+      engine.complete('put ./a', initial)
+      engine.complete('put ./a', initial)
+      expect(engine.editingText()).assertEqual('put ./a')
+
+      let filtered: LocalCompletionSet = new LocalCompletionSet()
+      filtered.replacements = ['put ./alpha/']
+      filtered.displayValues = ['alpha/']
+      let update: LocalCompletionUpdate = engine.refresh('put ./al', filtered)
+      expect(update.kind).assertEqual(LocalCompletionUpdateKind.LISTED)
+      expect(update.text).assertEqual('put ./al')
+      expect(update.displayValues[0]).assertEqual('alpha/')
+      expect(update.selectedIndex).assertEqual(-1)
+    })
+
+    it('formatsCompletionCandidatesByTerminalCells', 0, () => {
+      expect(CommandBarViewModel.completionDisplayValue(
+        'put ./reports/report\\ alpha.txt', 4)).assertEqual('report alpha.txt')
+      expect(CommandBarViewModel.completionDisplayValue(
+        'put ./reports/', 4)).assertEqual('reports/')
+      expect(SessionViewModel.terminalCellWidth('plain')).assertEqual(5)
+      expect(SessionViewModel.terminalCellWidth('报告')).assertEqual(4)
+      expect(SessionViewModel.terminalCellWidth('😀')).assertEqual(2)
+      expect(SessionViewModel.formatCompletionCandidates(['alpha', '报告/', 'beta'], 14))
+        .assertEqual('alpha  beta\r\n报告/')
+    })
+
+    it('rendersOneTransientCompletionRegionBelowTheCommand', 0, () => {
+      let renderer: LocalCompletionRenderer = new LocalCompletionRenderer()
+      let first: string = renderer.render('ltty> ', 'put ./a', 7,
+        ['alpha/', 'alpine.txt'], -1, false, 40, 24)
+      expect(first.indexOf('ltty> put ./a\r\nalpha/')).assertEqual(5)
+      expect(first.includes('\u001b[7m')).assertEqual(false)
+
+      let second: string = renderer.render('ltty> ', 'put ./alpha/', 12,
+        ['alpha/', 'alpine.txt'], 0, false, 40, 24)
+      expect(second.includes('\u001b[1B\r\u001b[2K')).assertEqual(true)
+      expect(second.includes('ltty> put ./alpha/\r\n\u001b[7malpha/\u001b[0m')).assertEqual(true)
+      expect(second.indexOf('alpine.txt')).assertEqual(second.lastIndexOf('alpine.txt'))
+    })
+
+    it('navigatesCompletionColumnsInDisplayedOrder', 0, () => {
+      let layout: LocalCompletionLayout = LocalCompletionRenderer.layout(
+        ['aaaa', 'bbbb', 'cccc', 'dddd', 'eeee', 'ffff'], 0, false, 14, 8)
+      expect(layout.rowCount).assertEqual(3)
+      expect(LocalCompletionRenderer.moveSelection(
+        0, LocalCompletionNavigation.DOWN, 6, layout)).assertEqual(1)
+      expect(LocalCompletionRenderer.moveSelection(
+        0, LocalCompletionNavigation.UP, 6, layout)).assertEqual(2)
+      expect(LocalCompletionRenderer.moveSelection(
+        1, LocalCompletionNavigation.RIGHT, 6, layout)).assertEqual(4)
+      expect(LocalCompletionRenderer.moveSelection(
+        4, LocalCompletionNavigation.LEFT, 6, layout)).assertEqual(1)
+    })
+
+    it('boundsLongCompletionRowsWithoutDroppingTheDirectoryMarker', 0, () => {
+      let layout: LocalCompletionLayout = LocalCompletionRenderer.layout(
+        ['this-is-a-very-long-directory-name/'], -1, false, 10, 4)
+      expect(layout.lines.length).assertEqual(1)
+      expect(LocalCompletionRenderer.terminalCellWidth(layout.lines[0]) <= 9).assertEqual(true)
+      expect(layout.lines[0].endsWith('.../')).assertEqual(true)
+    })
+
+    it('reflowsTheTrackedCommandRegionAfterATerminalResize', 0, () => {
+      let renderer: LocalCompletionRenderer = new LocalCompletionRenderer()
+      renderer.render('ltty> ', '123456789012345', 15, [], -1, false, 20, 24)
+      let resized: string = renderer.render(
+        'ltty> ', '123456789012345', 15, [], -1, false, 10, 24)
+      expect(resized.startsWith('\r\u001b[2A')).assertEqual(true)
+      expect(resized.includes('\u001b[1B\r\u001b[2K')).assertEqual(true)
+      expect(resized.endsWith('\r\u001b[1C')).assertEqual(true)
     })
 
     it('doesNotTreatEscapedOrQuotedTrailingSpacesAsOperandSeparators', 0, () => {
@@ -744,9 +892,9 @@ export default function interactionFixesTest() {
       configText += 'Host Prod prod 报告\n  HostName fixture.example\n  User deploy\n'
       vm.getSshConfig().loadFromText(configText)
       vm.setInputText('get host')
-      expect(vm.tryTabComplete().length).assertEqual(0)
-      expect(vm.tryTabComplete().length).assertEqual(100)
-      expect(vm.completionNotice()).assertEqual('100+ matches; type more')
+      let bounded: LocalCompletionSet = vm.completionSet()
+      expect(bounded.replacements.length).assertEqual(100)
+      expect(bounded.truncated).assertEqual(true)
       vm.setInputText('get P')
       expect(vm.tryTabComplete()[0]).assertEqual('get Prod:')
       vm.setInputText('get 报')
@@ -820,6 +968,7 @@ export default function interactionFixesTest() {
       expect(result instanceof CommandParseResult).assertEqual(true)
       if (result instanceof CommandParseResult) {
         expect(result.host).assertEqual('prod.example.com')
+        expect(result.displayHost).assertEqual('prod')
         expect(result.username).assertEqual('deploy')
         expect(result.port).assertEqual(2200)
         expect(result.identityFile).assertEqual('~/.ssh/deploy')
@@ -1009,12 +1158,20 @@ export default function interactionFixesTest() {
     it('routesPhysicalTabToTerminalCompletion', 0, () => {
       let tab: string = KeyCodeMap.toAnsi(KeyCodeMap.TAB, false, false, false)
       let actions: TerminalInputAction[] = TerminalInputParser.parse(tab, true)
+      let reverseTab: string = KeyCodeMap.toAnsi(KeyCodeMap.TAB, false, false, true)
+      let reverseActions: TerminalInputAction[] = TerminalInputParser.parse(reverseTab, true)
+      let escapeActions: TerminalInputAction[] = TerminalInputParser.parse('\u001b', true)
       expect(InteractionPolicy.isTerminalTabKey(KeyCodeMap.TAB, false, false, false)).assertEqual(true)
       expect(InteractionPolicy.isTerminalTabKey(KeyCodeMap.TAB, true, false, false)).assertEqual(false)
-      expect(InteractionPolicy.isTerminalTabKey(KeyCodeMap.TAB, false, false, true)).assertEqual(false)
+      expect(InteractionPolicy.isTerminalTabKey(KeyCodeMap.TAB, false, false, true)).assertEqual(true)
       expect(tab).assertEqual('\t')
       expect(actions.length).assertEqual(1)
       expect(actions[0].kind).assertEqual(TerminalInputActionKind.TAB)
+      expect(reverseTab).assertEqual('\u001b[Z')
+      expect(reverseActions.length).assertEqual(1)
+      expect(reverseActions[0].kind).assertEqual(TerminalInputActionKind.REVERSE_TAB)
+      expect(escapeActions.length).assertEqual(1)
+      expect(escapeActions[0].kind).assertEqual(TerminalInputActionKind.ESCAPE)
     })
 
     it('routesExactCtrlCBeforeArkWebConsumesSelectionCopy', 0, () => {
@@ -1106,6 +1263,10 @@ export default function interactionFixesTest() {
       expect(interrupt.length).assertEqual(1)
       expect(interrupt[0].kind).assertEqual(TerminalInputActionKind.INTERRUPT)
 
+      let deleteActions: TerminalInputAction[] = TerminalInputParser.parse('\u001b[3~', true)
+      expect(deleteActions.length).assertEqual(1)
+      expect(deleteActions[0].kind).assertEqual(TerminalInputActionKind.DELETE)
+
       let line: LocalCommandLine = new LocalCommandLine()
       line.insert('ssh user@host')
       expect(line.moveLeft()).assertEqual(true)
@@ -1114,6 +1275,18 @@ export default function interactionFixesTest() {
       expect(line.getText()).assertEqual('ssh user@hoXst')
       expect(line.getCursor()).assertEqual(12)
       expect(suffix).assertEqual('st')
+      expect(line.delete()).assertEqual('t')
+      expect(line.getText()).assertEqual('ssh user@hoXt')
+
+      line.setText('a😀b')
+      expect(line.moveLeft()).assertEqual(true)
+      expect(line.moveLeft()).assertEqual(true)
+      expect(line.getCursor()).assertEqual(1)
+      expect(line.delete()).assertEqual('b')
+      expect(line.getText()).assertEqual('ab')
+      line.setText('a😀')
+      expect(line.backspace()).assertEqual('')
+      expect(line.getText()).assertEqual('a')
     })
 
     it('redrawsLocalCommandsWithoutAssumingChineseCharactersAreOneTerminalColumn', 0, () => {
@@ -1197,11 +1370,11 @@ export default function interactionFixesTest() {
       expect(TransparencyPolicy.contentOpacity(TransparencyMode.HIGH)).assertEqual(0.60)
       expect(TransparencyPolicy.contentOpacity(TransparencyMode.EXTREME)).assertEqual(0.45)
       expect(TransparencyPolicy.chromeOpacity(TransparencyMode.OFF)).assertEqual(1.00)
-      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.LOW)).assertEqual(0.88)
-      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.MEDIUM)).assertEqual(0.80)
-      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.HIGH)).assertEqual(0.70)
-      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.EXTREME)).assertEqual(0.55)
-      expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.OFF)).assertEqual(1.00)
+      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.LOW)).assertEqual(0.94)
+      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.MEDIUM)).assertEqual(0.94)
+      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.HIGH)).assertEqual(0.86)
+      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.EXTREME)).assertEqual(0.86)
+      expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.OFF)).assertEqual(0.24)
       expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.LOW)).assertEqual(0.20)
       expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.MEDIUM)).assertEqual(0.16)
       expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.HIGH)).assertEqual(0.12)
@@ -1219,21 +1392,46 @@ export default function interactionFixesTest() {
     it('derivesSeparateChromeAndContentSurfacesWithAnOpaqueFallback', 0, () => {
       let dark: AppTheme = new AppTheme(ColorMode.DARK, TransparencyMode.HIGH)
       let light: AppTheme = new AppTheme(ColorMode.LIGHT, TransparencyMode.LOW)
+      let medium: AppTheme = new AppTheme(ColorMode.DARK, TransparencyMode.MEDIUM)
       let extreme: AppTheme = new AppTheme(ColorMode.DARK, TransparencyMode.EXTREME)
+      let lightExtreme: AppTheme = new AppTheme(ColorMode.LIGHT, TransparencyMode.EXTREME)
       let off: AppTheme = new AppTheme(ColorMode.LIGHT, TransparencyMode.OFF)
       expect(dark.background()).assertEqual('#991E1E2E')
-      expect(dark.chromeBackground()).assertEqual('#B311111B')
+      expect(dark.chromeBackground()).assertEqual('#DB1E1E2E')
+      expect(dark.chrome.tabBackground).assertEqual('#DB313244')
+      expect(dark.chrome.tabHoverBackground).assertEqual('#DB3B3D4F')
+      expect(dark.chrome.tabActiveBackground).assertEqual('#DB404255')
       expect(dark.background(false)).assertEqual('#FF1E1E2E')
-      expect(dark.chromeBackground(false)).assertEqual('#FF11111B')
+      expect(dark.chromeBackground(false)).assertEqual('#FF1E1E2E')
       expect(dark.terminal.toJsInitObject().indexOf('rgba(0, 0, 0, 0)') >= 0).assertEqual(true)
       expect(light.background()).assertEqual('#D1EFF1F5')
-      expect(light.chromeBackground()).assertEqual('#E0DCE0E8')
+      expect(light.chromeBackground()).assertEqual('#F0EFF1F5')
+      expect(light.chrome.tabBackground).assertEqual('#F0D3D7DF')
+      expect(light.chrome.tabHoverBackground).assertEqual('#F0CACED8')
+      expect(light.chrome.tabActiveBackground).assertEqual('#F0C6CAD4')
+      expect(medium.chromeBackground()).assertEqual('#F01E1E2E')
+      expect(medium.chrome.tabBackground).assertEqual('#F02D2E40')
+      expect(medium.chrome.tabHoverBackground).assertEqual('#F0343547')
+      expect(medium.chrome.tabActiveBackground).assertEqual('#F0393A4D')
       expect(light.background(false)).assertEqual('#FFEFF1F5')
       expect(light.terminal.toJsInitObject().indexOf('rgba(0, 0, 0, 0)') >= 0).assertEqual(true)
       expect(extreme.background()).assertEqual('#731E1E2E')
-      expect(extreme.chromeBackground()).assertEqual('#8C11111B')
+      expect(extreme.chromeBackground()).assertEqual('#DB1E1E2E')
+      expect(extreme.chrome.tabBackground).assertEqual('#DB313244')
+      expect(extreme.chrome.tabHoverBackground).assertEqual('#DB3B3D4F')
+      expect(extreme.chrome.tabActiveBackground).assertEqual('#DB404255')
+      expect(extreme.chromeBackground()).assertEqual(dark.chromeBackground())
+      expect(extreme.chrome.tabBackground).assertEqual(dark.chrome.tabBackground)
+      expect(extreme.chrome.tabHoverBackground).assertEqual(dark.chrome.tabHoverBackground)
+      expect(extreme.chrome.tabActiveBackground).assertEqual(dark.chrome.tabActiveBackground)
+      expect(lightExtreme.chrome.tabBackground).assertEqual('#DBCCD0DA')
+      expect(lightExtreme.chrome.tabHoverBackground).assertEqual('#DBC4C8D3')
+      expect(lightExtreme.chrome.tabActiveBackground).assertEqual('#DBC0C4D0')
       expect(off.background()).assertEqual('#FFEFF1F5')
-      expect(off.chromeBackground()).assertEqual('#FFDCE0E8')
+      expect(off.chromeBackground()).assertEqual('#FFEFF1F5')
+      expect(off.chrome.tabBackground).assertEqual('#FFDEE1E8')
+      expect(off.chrome.tabHoverBackground).assertEqual('#FFD5D8E1')
+      expect(off.chrome.tabActiveBackground).assertEqual('#FFCCD0DA')
     })
 
     it('doesNotTreatTerminalQueryResponsesAsLocalCommandText', 0, () => {

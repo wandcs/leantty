@@ -7,7 +7,10 @@ export enum TerminalInputActionKind {
   HISTORY_NEXT = 5,
   CURSOR_LEFT = 6,
   CURSOR_RIGHT = 7,
-  INTERRUPT = 8
+  INTERRUPT = 8,
+  REVERSE_TAB = 9,
+  ESCAPE = 10,
+  DELETE = 11
 }
 
 export class TerminalInputAction {
@@ -50,7 +53,11 @@ export class TerminalInputParser {
         }
         let finalCode: number = data.charCodeAt(finalIndex)
         let isSimpleArrow: boolean = finalIndex === i + 2
-        if (allowHistory && isSimpleArrow && finalCode === 65) {
+        if (isSimpleArrow && finalCode === 90) {
+          actions.push(new TerminalInputAction(TerminalInputActionKind.REVERSE_TAB))
+        } else if (finalCode === 126 && data.substring(i + 2, finalIndex) === '3') {
+          actions.push(new TerminalInputAction(TerminalInputActionKind.DELETE))
+        } else if (allowHistory && isSimpleArrow && finalCode === 65) {
           actions.push(new TerminalInputAction(TerminalInputActionKind.HISTORY_PREVIOUS))
         } else if (allowHistory && isSimpleArrow && finalCode === 66) {
           actions.push(new TerminalInputAction(TerminalInputActionKind.HISTORY_NEXT))
@@ -60,6 +67,8 @@ export class TerminalInputParser {
           actions.push(new TerminalInputAction(TerminalInputActionKind.CURSOR_RIGHT))
         }
         i = finalIndex
+      } else if (code === 27) {
+        actions.push(new TerminalInputAction(TerminalInputActionKind.ESCAPE))
       } else if (code >= 32) {
         actions.push(new TerminalInputAction(TerminalInputActionKind.TEXT, data[i]))
       }

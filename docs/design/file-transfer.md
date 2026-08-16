@@ -4,7 +4,7 @@
 >
 > 当前 milestone：1.3；版本号在保留候选准备阶段再按版本规则推进
 >
-> 初稿日期：2026-07-26；最近更新：2026-08-14
+> 初稿日期：2026-07-26；最近更新：2026-08-15
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
@@ -448,12 +448,35 @@ A unique name will be chosen when the download completes.
 
 Tab 补全只优化已经授权的键盘主路径，不把命令栏变成文件管理器：
 
+- 交互参考 Zsh 的 `AUTO_LIST`、`AUTO_MENU` 和 `zsh/complist` 菜单选择，但只保留适合
+  LeanTTY 的最小合同：候选仍显示在终端中，当前候选直接预览到命令行；不增加 ArkUI 弹层、
+  鼠标选择、补全设置或第二套焦点状态。
+- Oh My Zsh 和 Prezto 的配置文件本身不实现补全引擎：它们加载 Zsh 原生 `compinit`、ZLE 与
+  `zsh/complist`，然后只设置 `AUTO_LIST`/`AUTO_MENU`、`menu select` 和键位；命令补全函数负责
+  提供候选。LeanTTY 的本地 `ltty>` 不是 Zsh，也没有本地 shell，不能直接执行这些配置；为了
+  复用配置而嵌入完整 Zsh/ZLE 会越过“不自带本地 shell”的产品边界。因此实现沿用同一职责
+  分割：一个局部、可测试的通用补全引擎只负责列出、循环、接受和取消；命令上下文只提供经过
+  安全过滤的候选、显示名和前缀匹配，不在 `SessionViewModel` 中分别实现菜单规则。
+- Starship 进一步验证了这条边界：它的 Zsh 初始化只接入 `precmd`/`preexec`、`PROMPT`/`RPROMPT`
+  和必要的 `zle reset-prompt`，不接管候选匹配或菜单；`starship completions zsh` 也只是由 Rust
+  `clap_complete` 根据命令模型生成候选定义，再交回宿主 Shell 的补全系统。LeanTTY 同样让提示符
+  只负责提示符，让 `put/get` 提供候选，让局部补全引擎统一处理键盘状态，不把三者混成一个实现。
 - `put` 的本地源补全 Downloads 中当前一层的普通文件和既有目录；目录候选追加 `/`。
 - `get` 的可选本地目标只补既有目录；已有文件不能作为目标候选，因为明确文件名不覆盖。
 - `put/get` 的远端操作数只补已有 Host 别名；`-i` 只补 LeanTTY 自己管理的密钥名。
 - 不补远端路径。按 Tab 不连接、认证或列出服务器目录，也不触发 Downloads 权限请求。
-- 唯一文件候选完成后追加空格，唯一目录候选追加 `/`；多候选第一次只扩展公共前缀，
-  再次 Tab 才显示候选。
+- Downloads 根仍是隐含根；为了符合成熟 Shell 的路径心智，补全额外接受开头的 `./` 作为
+  Downloads 根的显式写法。它只允许出现在本地路径开头，命令解析时规范化掉；中间的 `.`、
+  任意 `..`、反斜杠和绝对路径仍然拒绝。
+- 匹配只按用户已输入组件的原始前缀进行；不做模糊、子串、大小写折叠、拼写纠错或 Unicode
+  规范化。空前缀和 `./` 会列出当前目录一层的全部安全候选。
+- 唯一文件候选完成后追加空格，唯一目录候选保留 `/` 并等待下一层输入。多候选第一次 Tab
+  只显示有界候选列表并保留用户输入的前缀，第二次 Tab 才把第一项作为命令行预览；后续
+  Tab/Shift+Tab 正反向循环替换预览，Up/Down 同样移动选择并在首尾循环。Enter 只接受当前
+  预览而不执行命令，用户需要再次 Enter 才运行整条命令；Esc 恢复打开菜单前的前缀。
+- 选择目录后可以直接继续输入下一层前缀，也可以 Enter 接受后再次 Tab 列出下一层；文字、
+  Backspace 或左右移动会结束菜单选择并从当前预览继续正常编辑。候选列表保留在当前命令上方
+  作为参考，不为每次移动重复打印。
 - 每次只列当前目录一层；默认隐藏以 `.` 开头的项，除非当前组件本身以 `.` 开头；候选最多
   显示 100 项，超出时提示 `100+ matches; type more`。
 - 匹配保持原始大小写和 Unicode，不做大小写折叠或额外规范化；空格、引号和反斜杠必须
@@ -1064,6 +1087,29 @@ tmux/vim/less/Agent TUI。真实选区/复制和 URL 激活同样保留为同候
 或增加永久测试复杂度。只有真实用户故障、HarmonyOS 权限模型实质变化、安全或数据损坏风险，
 或候选验证出现直接反证时，才重新按产品原则评审，并先提升到 `next-work.md` 后复测。
 
+### 7.16 2026-08-15 Zsh 风格本地路径补全
+
+最终补全交互没有复制或嵌入 Zsh。官方 Zsh、Oh My Zsh 与 Prezto 的实现表明，配置层只启用
+`compinit`/ZLE/`zsh/complist` 的列表和菜单规则，命令上下文负责提供候选；Starship 同样只把
+生成的 CLI 补全定义交给宿主 Shell，提示符初始化不接管候选菜单。LeanTTY 因此保留“不自带
+本地 Shell”边界：`put/get` 只提供安全、原始大小写的前缀候选，独立
+`LocalCompletionEngine` 统一处理首 Tab 列表、第二次 Tab 进入选择、Tab/Shift+Tab 与
+Up/Down 循环、Enter 接受和 Esc 恢复。
+
+Downloads 根新增显式 `./` 写法，命令执行前规范化为既有隐含根；目录候选保留 `/`，接受后
+可以继续补全下一层。候选仍限 100 项，只枚举当前层，不申请权限、不连接远端、不递归，也不
+接受内部 `.`、`..`、反斜杠或控制字符。ArkTS 107/107、acceptance-source 与 PowerShell 构建
+工作流通过。物理 HAD-W32 使用真实 Tab、Shift+Tab、Up/Down、Enter 和 Esc 完成最终矩阵，
+并覆盖 `./`、空格、引号、Unicode、隐藏项、目录下钻和格式控制字符排除；接受候选没有提交
+命令，全程没有 Downloads 权限、远端认证或传输事件。测试 HAP SHA-256 为
+`5e34bdf7e5deef141e7d196a35d79e454c50fdd5c4b73602e5573a49c1431054`，证据位于
+`build/verification/put-get-tab-completion-verified-20260815/`。
+
+门禁同时修正了两个只属于观测层的问题：ArkWeb 无障碍隐藏输入在程序化命令行重绘后可能仍
+返回旧文本；多个 warm-retained 后台 Tab 也可能出现在布局树中。验收现以编译期隔离的生产
+命令缓冲状态作为输入真值，布局和截图只证明可见呈现，并优先定位唯一 focused 的活动输入；
+没有为测试差异修改产品交互。
+
 ## 八、后续讨论清单与实现前门禁
 
 本节是后续讨论的权威清单。标记为“待讨论”的条目没有被本文其他详细候选规则自动
@@ -1261,8 +1307,9 @@ LeanTTY 不按前缀认领、删除或恢复任何跨重启对象。
   `host:path` 分隔符。Host 别名继续由现有 `SshConfig` 解析。
 - 1.3 的 ArkTS/N-API 字符串边界只支持有效 UTF-8 名称；无法表示为字符串的非 UTF-8 远端
   名称不支持，也不增加字节路径入口。
-- 本地只接受 Downloads 内由 `/` 分隔的相对路径，允许但不创建既有子目录。拒绝绝对路径、
-  盘符、`\\`、空组件、`.`、`..` 和 NUL；每个中间对象必须是非 symlink 目录。
+- 本地只接受 Downloads 内由 `/` 分隔的相对路径，允许但不创建既有子目录。开头的 `./` 仅是
+  Downloads 根的显式补全别名，执行前会移除；除此之外拒绝绝对路径、盘符、`\\`、空组件、
+  `.`、`..` 和 NUL；每个中间对象必须是非 symlink 目录。
 - `get` 的远端源必须是普通文件，不能以 `/` 结尾。`put` 的远端目标以 `/` 结尾或路径为空
   时表示目录；否则表示最终文件名。远端相对路径始终相对于本次 SFTP Session 初始目录，
   不承诺 `~` 展开，也不创建目录。
@@ -1313,8 +1360,9 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
 - 下载临时文件成功提交；失败和取消清理。
 - 小文件、空文件和大文件内容哈希一致。
 - 进度事件节流，两个 Pane 的传输状态不串联。
-- Tab 覆盖 `put` 本地文件/目录、`get` 本地目录、Host、`-i`、公共前缀、再次 Tab 列表、
-  隐藏项、候选上限、转义和控制字符净化；证明不触发权限请求、远端连接或递归枚举。
+- Tab 覆盖 `put` 本地文件/目录、`get` 本地目录、Host、`-i`、`./` 根、原始前缀匹配、首 Tab
+  列表、第二次 Tab 选择、正反向循环、Enter 接受、Esc 恢复、目录下钻、隐藏项、候选上限、
+  转义和控制字符净化；证明不触发权限请求、远端连接或递归枚举。
 
 ### 9.2 物理 HarmonyOS PC
 
@@ -1340,7 +1388,7 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
 12. 服务器没有 SFTP、远端权限拒绝和本地空间不足时错误清楚且可恢复。
 13. 检查 hilog、命令历史和错误快照不包含凭据或文件内容。
 14. 在未授权和已授权状态分别验证 Tab：不弹权限、不连接服务器；文件/目录、空格、Unicode、
-    公共前缀和有界候选列表可用，控制字符不能改变终端布局。
+    `./`、前缀列表、正反向循环、接受/取消和目录下钻可用，控制字符不能改变终端布局。
 
 没有完成自动化、ARM64 干净构建和上述真机矩阵前，不得把文件传输标为完成或写入
 发布宣传。
@@ -1381,6 +1429,13 @@ Host/Identity 用例按 8.1.4 的最小复用范围实现；冲突用例按 8.1.
 - [OpenSSH `sftp` 手册](https://man.openbsd.org/sftp.1)
 - [OpenSSH `scp` 手册：未采用命令名的兼容性对照](https://man.openbsd.org/scp.1)
 - [OpenSSH `progressmeter.c`：80 列默认宽度与 1 秒更新间隔](https://github.com/openssh/openssh-portable/blob/master/progressmeter.c)
+- [Zsh completion options：`AUTO_MENU`、`MENU_COMPLETE`、`LIST_TYPES`](https://zsh.sourceforge.io/Doc/Release/Options.html#Completion)
+- [Zsh `complist` menu selection：候选高亮、循环移动和 Return/Tab 键位](https://zsh.sourceforge.io/Doc/Release/Zsh-Modules.html#Menu-selection)
+- [Zsh completion system：按命令参数上下文补全和目录 `/` 后缀](https://zsh.sourceforge.io/Doc/Release/Completion-System.html)
+- [Oh My Zsh `completion.zsh`：加载 `zsh/complist` 并配置 `AUTO_MENU`/`menu select`](https://github.com/ohmyzsh/ohmyzsh/blob/master/lib/completion.zsh)
+- [Prezto completion module：`AUTO_LIST`、`AUTO_MENU`、`compinit` 与候选样式分层](https://github.com/sorin-ionescu/prezto/blob/master/modules/completion/init.zsh)
+- [Starship Zsh init：只接入提示符生命周期和 ZLE 重绘](https://github.com/starship/starship/blob/main/src/init/starship.zsh)
+- [Starship CLI completion：用 `clap_complete` 生成候选定义并交给宿主 Shell](https://github.com/starship/starship/blob/main/src/main.rs)
 - [curl 进度表：百分比、速度与时间字段](https://curl.se/docs/tutorial.html#Progress-Meter)
 - [GNU Wget 进度类型：ASCII bar 与非 TTY dot](https://www.gnu.org/software/wget/manual/wget.html#index-progress_002dtype)
 - [aria2 console readout：完成量、速度与 ETA](https://aria2.github.io/manual/en/html/aria2c.html#console-readout)

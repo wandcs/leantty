@@ -279,10 +279,18 @@ function Add-LeanTTYAcceptanceSource {
         name !== '数据.bin' && name !== '数据 (1).bin' &&
         name !== longName && name !== longNumberedName &&
         name !== 'unsafe\u202Ename.txt' && name !== 'nested space' &&
+        name !== 'nested alpha' && name !== 'nested beta' &&
         !(name.startsWith('.leantty-') && name.endsWith('.part'))) {
         throw new Error('unexpected fixture entry: ' + name)
       }
-      if (name === 'nested space') {
+      if (name === 'nested space' || name === 'nested alpha' || name === 'nested beta') {
+        let childNames: string[] = fs.listFileSync(directory + '/' + name)
+        for (let childIndex: number = 0; childIndex < childNames.length; childIndex++) {
+          if (childNames[childIndex] !== 'child.txt') {
+            throw new Error('unexpected nested fixture entry: ' + childNames[childIndex])
+          }
+          this.removeAcceptanceProbeFile(directory + '/' + name + '/' + childNames[childIndex])
+        }
         fs.rmdirSync(directory + '/' + name)
       } else {
         this.removeAcceptanceProbeFile(directory + '/' + name)
@@ -356,6 +364,10 @@ function Add-LeanTTYAcceptanceSource {
       this.writeAcceptanceProbeFile(directory + '/数据.bin', completionBytes)
       this.writeAcceptanceProbeFile(directory + '/' + 'l'.repeat(220) + '.bin', completionBytes)
       fs.mkdirSync(directory + '/nested space')
+      fs.mkdirSync(directory + '/nested alpha')
+      fs.mkdirSync(directory + '/nested beta')
+      this.writeAcceptanceProbeFile(directory + '/nested alpha/child.txt', completionBytes)
+      this.writeAcceptanceProbeFile(directory + '/nested beta/child.txt', completionBytes)
       let forcePutFile: fs.File | null = null
       try {
         forcePutFile = fs.openSync(directory + '/force-put-source.bin',
@@ -818,33 +830,41 @@ function Add-LeanTTYAcceptanceSource {
     $text.session = Set-LeanTTYAcceptanceSourceText `
         $text.session $backpressureAnchor $backpressureReplacement
     $tabCompletionAnchor = @'
+    } else {
+      this.redrawLocalCommandLine()
     }
   }
 
-  private static terminalSafeText(value: string): string {
+  private cycleCompletion(direction: number): void {
 '@
     $tabCompletionReplacement = @'
+    } else {
+      this.redrawLocalCommandLine()
     }
     if (ACCEPTANCE_TESTS) {
       this.logger.info('ACCEPTANCE_TAB_COMPLETE input=' +
         SessionViewModel.terminalSafeText(this.commandLine.getText()) +
-        ',matches=' + matches.length.toString())
+        ',matches=' + set.replacements.length.toString())
     }
   }
 
-  private static terminalSafeText(value: string): string {
+  private cycleCompletion(direction: number): void {
 '@
     $text.session = Set-LeanTTYAcceptanceSourceText `
         $text.session $tabCompletionAnchor $tabCompletionReplacement
     $idleInterruptAnchor = @'
       } else if (action.kind === TerminalInputActionKind.INTERRUPT) {
+        this.dismissCompletion()
         this.commandLine.clear()
+        this.completionRenderer.reset()
         this.writeTerminal('^C\r\n')
         this.writePrompt()
 '@
     $idleInterruptReplacement = @'
       } else if (action.kind === TerminalInputActionKind.INTERRUPT) {
+        this.dismissCompletion()
         this.commandLine.clear()
+        this.completionRenderer.reset()
         this.writeTerminal('^C\r\n')
         this.writePrompt()
         if (ACCEPTANCE_TESTS) {
@@ -853,6 +873,67 @@ function Add-LeanTTYAcceptanceSource {
 '@
     $text.session = Set-LeanTTYAcceptanceSourceText `
         $text.session $idleInterruptAnchor $idleInterruptReplacement
+    $idleActionAnchor = @'
+    let actions: TerminalInputAction[] = TerminalInputParser.parse(data, true)
+    for (let i = 0; i < actions.length; i++) {
+      let action: TerminalInputAction = actions[i]
+      if (action.kind === TerminalInputActionKind.SUBMIT) {
+'@
+    $idleActionReplacement = @'
+    let actions: TerminalInputAction[] = TerminalInputParser.parse(data, true)
+    for (let i = 0; i < actions.length; i++) {
+      let action: TerminalInputAction = actions[i]
+      if (ACCEPTANCE_TESTS) {
+        this.logger.info('ACCEPTANCE_IDLE_ACTION kind=' + action.kind.toString() +
+          ',completionActive=' + this.completionEngine.isActive().toString() +
+          ',menuActive=' + this.completionEngine.isMenuActive().toString())
+      }
+      if (action.kind === TerminalInputActionKind.SUBMIT) {
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session $idleActionAnchor $idleActionReplacement
+    $idleResultAnchor = @'
+      } else if (action.kind === TerminalInputActionKind.TEXT) {
+        if (!this.descendSelectedDirectory(action.text)) {
+          let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+          this.commandLine.insert(action.text)
+          if (completionWasActive) {
+            this.refreshCompletionAfterEdit()
+          } else {
+            this.redrawLocalCommandLine()
+          }
+        }
+      }
+    }
+  }
+
+  private handlePasswordInput(data: string): void {
+'@
+    $idleResultReplacement = @'
+      } else if (action.kind === TerminalInputActionKind.TEXT) {
+        if (!this.descendSelectedDirectory(action.text)) {
+          let completionWasActive: boolean = this.restoreCompletionBaseForEditing()
+          this.commandLine.insert(action.text)
+          if (completionWasActive) {
+            this.refreshCompletionAfterEdit()
+          } else {
+            this.redrawLocalCommandLine()
+          }
+        }
+      }
+      if (ACCEPTANCE_TESTS) {
+        this.logger.info('ACCEPTANCE_IDLE_RESULT kind=' + action.kind.toString() + ',input=' +
+          SessionViewModel.terminalSafeText(this.commandLine.getText()) +
+          ',completionActive=' + this.completionEngine.isActive().toString() +
+          ',menuActive=' + this.completionEngine.isMenuActive().toString())
+      }
+    }
+  }
+
+  private handlePasswordInput(data: string): void {
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session $idleResultAnchor $idleResultReplacement
     foreach ($inputPoint in @(
         @{ anchor = "  private executeCommandBuffer(): void {"; kind = 'command' },
         @{ anchor = "    this.writeTerminal('\r\n')`n    let pw: string = this.passwordBuffer"; kind = 'password' },

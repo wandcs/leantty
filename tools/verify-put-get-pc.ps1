@@ -350,9 +350,18 @@ function Focus-TerminalInput {
     $layout = Wait-LeanTTYTerminalInputLayout `
         -Hdc $hdc -Target $Target -LocalPath $layoutPath -TimeoutSeconds 20
     $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
-    if ($nodes.Count -ne 1) { throw 'PUT/GET verifier requires exactly one terminal Pane' }
+    $focusedNodes = @($nodes | Where-Object {
+        [string]$_.attributes.focused -eq 'true'
+    })
+    $inputNode = if ($focusedNodes.Count -eq 1) {
+        $focusedNodes[0]
+    } elseif ($nodes.Count -eq 1) {
+        $nodes[0]
+    } else {
+        throw 'PUT/GET verifier could not identify one active terminal input'
+    }
     Set-LeanTTYTerminalInputFocus `
-        -Hdc $hdc -Target $Target -InputNode $nodes[0] -LocalPath $layoutPath | Out-Null
+        -Hdc $hdc -Target $Target -InputNode $inputNode -LocalPath $layoutPath | Out-Null
 }
 
 function Reset-TerminalInput {
@@ -617,13 +626,19 @@ function Assert-LocalTabCompletion {
     $typedExactly = $false
     for ($attempt = 1; $attempt -le 2; $attempt++) {
         Focus-TerminalInput -Name ($Name + '-focus-' + $attempt.ToString())
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Typed
         $typedLayout = Get-LeanTTYDeviceLayout `
             -Hdc $hdc -Target $Target `
             -LocalPath (Join-Path $EvidenceDirectory ($Name + '-typed-' + $attempt.ToString() + '.json'))
-        if ((Get-LeanTTYTerminalInputText -Layout $typedLayout) -ceq $Typed) {
+        try {
+            Wait-LocalCompletionInputState `
+                -ExpectedInput $Typed -Stage ($Name + ' typed prefix') `
+                -CompletionActive $false -MenuActive $false | Out-Null
             $typedExactly = $true
             break
+        } catch {
+            if ($attempt -ge 2) { throw }
         }
         Reset-TerminalInput -LayoutName ($Name + '-retry-' + $attempt.ToString())
         Start-Sleep -Milliseconds 300
@@ -665,6 +680,40 @@ function Assert-LocalTabCompletion {
     }
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     Start-Sleep -Milliseconds 200
+}
+
+function Wait-LocalCompletionInputState {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedInput,
+        [Parameter(Mandatory = $true)][string]$Stage,
+        [Parameter(Mandatory = $true)][bool]$CompletionActive,
+        [Parameter(Mandatory = $true)][bool]$MenuActive
+    )
+
+    $logs = Wait-LeanTTYAppLog `
+        -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+        -Pattern 'ACCEPTANCE_IDLE_RESULT kind=' -TimeoutSeconds 10
+    $records = @([regex]::Matches(
+            $logs,
+            'ACCEPTANCE_IDLE_RESULT kind=(?<kind>\d+),input=(?<input>[^\r\n]*),' +
+            'completionActive=(?<active>true|false),menuActive=(?<menu>true|false)'
+        ))
+    if ($records.Count -eq 0) {
+        throw "Completion state $Stage did not expose an acceptance result"
+    }
+    $record = $records[$records.Count - 1]
+    $actualInput = $record.Groups['input'].Value
+    $actualActive = $record.Groups['active'].Value -eq 'true'
+    $actualMenu = $record.Groups['menu'].Value -eq 'true'
+    if ($actualInput -cne $ExpectedInput -or $actualActive -ne $CompletionActive -or
+        $actualMenu -ne $MenuActive) {
+        throw (
+            "Completion state $Stage was input='$actualInput', active=$actualActive, " +
+            "menu=$actualMenu; expected input='$ExpectedInput', active=$CompletionActive, " +
+            "menu=$MenuActive"
+        )
+    }
+    return $logs
 }
 
 function Assert-LocalUnicodeTabCompletion {
@@ -1317,28 +1366,6 @@ try {
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     if ($TabCompletionMatrix) {
-        Assert-LocalTabCompletion `
-            -Typed 'put .leantty-transfer-f' `
-            -Expected 'put .leantty-transfer-fixture/' `
-            -Name 'tab-directory'
-        Assert-LocalTabCompletion `
-            -Typed 'put .leantty-transfer-fixture/report\ a' `
-            -Expected 'put .leantty-transfer-fixture/report\ alpha.txt ' `
-            -Name 'tab-space'
-        Assert-LocalTabCompletion `
-            -Typed 'put ".leantty-transfer-fixture/report a' `
-            -Expected 'put .leantty-transfer-fixture/report\ alpha.txt ' `
-            -Name 'tab-quote-canonicalization'
-        Assert-LocalUnicodeTabCompletion
-        Assert-LocalTabCompletion `
-            -Typed 'put .leantty-transfer-fixture/.h' `
-            -Expected 'put .leantty-transfer-fixture/.hidden-file ' `
-            -Name 'tab-hidden'
-        Assert-LocalTabCompletion `
-            -Typed 'put .leantty-transfer-fixture/report' `
-            -Expected 'put .leantty-transfer-fixture/report\ ' `
-            -Name 'tab-common-prefix'
-
         $ambiguousPrefix = 'put .leantty-transfer-fixture/report'
         $ambiguousTypedExactly = $false
         for ($attempt = 1; $attempt -le 2; $attempt++) {
@@ -1360,29 +1387,42 @@ try {
             throw 'Physical key injection could not enter the exact ambiguous Tab prefix'
         }
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        for ($index = 0; $index -lt 3; $index++) {
-            if ($index -gt 0) {
-                Focus-TerminalInput -Name ('tab-ambiguous-refocus-' + $index.ToString())
-            }
-            Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
-            Start-Sleep -Milliseconds 250
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        $listedLogs = Wait-LocalCompletionInputState `
+            -ExpectedInput $ambiguousPrefix -Stage 'first Tab list' `
+            -CompletionActive $true -MenuActive $false
+        $listedLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-listed.json')
+        if ((Get-LeanTTYTerminalInputText -Layout $listedLayout) -cne $ambiguousPrefix) {
+            throw 'First ambiguous Tab did not preserve the typed prefix while listing candidates'
         }
-        $ambiguousLogs = ''
-        try {
-            $ambiguousLogs = Wait-LeanTTYAppLog `
-                -Hdc $hdc -Target $Target -ProcessId $appProcessId `
-                -Pattern 'ACCEPTANCE_TAB_COMPLETE input=put \.leantty-transfer-fixture/report\\ ,matches=2' `
-                -TimeoutSeconds 10
-        } catch {
-            $ambiguousLogs = Get-LeanTTYAppLogs `
-                -Hdc $hdc -Target $Target -ProcessId $appProcessId
-            throw
-        } finally {
-            [IO.File]::WriteAllText(
-                (Join-Path $EvidenceDirectory 'tab-ambiguous-hilog.log'),
-                $ambiguousLogs
-            )
-        }
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-listed.png')
+        Focus-TerminalInput -Name 'tab-ambiguous-second-tab'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        $firstCandidate = 'put .leantty-transfer-fixture/report\ alpha.txt'
+        $secondCandidate = 'put .leantty-transfer-fixture/report\ beta.txt'
+        $menuDiagnosticLogs = Wait-LocalCompletionInputState `
+            -ExpectedInput $firstCandidate -Stage 'second Tab menu entry' `
+            -CompletionActive $true -MenuActive $true
+        $menuLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-menu.json')
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-menu.png')
+        [IO.File]::WriteAllText(
+            (Join-Path $EvidenceDirectory 'tab-ambiguous-menu-hilog.log'),
+            $menuDiagnosticLogs
+        )
+        $ambiguousLogs = $menuDiagnosticLogs
+        [IO.File]::WriteAllText(
+            (Join-Path $EvidenceDirectory 'tab-ambiguous-hilog.log'),
+            $ambiguousLogs
+        )
         $ambiguousRecords = @([regex]::Matches(
                 $ambiguousLogs,
                 'ACCEPTANCE_TAB_COMPLETE input=(?<input>[^\r\n]*),matches=(?<matches>\d+)'
@@ -1391,19 +1431,229 @@ try {
             throw 'Ambiguous Tab completion did not expose its acceptance state'
         }
         $ambiguousRecord = $ambiguousRecords[$ambiguousRecords.Count - 1]
-        if ($ambiguousRecord.Groups['input'].Value -cne
-            'put .leantty-transfer-fixture/report\ ' -or
+        if ($ambiguousRecord.Groups['input'].Value -cne $firstCandidate -or
             [int]$ambiguousRecord.Groups['matches'].Value -ne 2) {
-            throw 'Ambiguous Tab completion did not retain the common prefix and list both candidates'
+            throw 'Ambiguous Tab completion did not list then enter the two-candidate menu'
         }
-        $ambiguousLayout = Get-LeanTTYDeviceLayout `
+
+        Focus-TerminalInput -Name 'tab-ambiguous-next'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $secondCandidate -Stage 'next Tab candidate' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        $nextLayout = Get-LeanTTYDeviceLayout `
             -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous.json')
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-next.json')
+
+        Focus-TerminalInput -Name 'tab-ambiguous-shift-tab'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        & $hdc -t $Target shell 'uinput -K -d 2047 -d 2049 -u 2049 -u 2047' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to inject physical Shift+Tab for completion' }
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $firstCandidate -Stage 'Shift+Tab previous candidate' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        $reverseLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-shift-tab.json')
+
+        Focus-TerminalInput -Name 'tab-ambiguous-up'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2012
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $firstCandidate -Stage 'Up stays in the only displayed row' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        $upLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-up.json')
+
+        Focus-TerminalInput -Name 'tab-ambiguous-down'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2013
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $firstCandidate -Stage 'Down stays in the only displayed row' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        $downLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-down.json')
+
+        Focus-TerminalInput -Name 'tab-ambiguous-right'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2015
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $secondCandidate -Stage 'Right next candidate column' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        $rightLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-right.json')
+
+        Focus-TerminalInput -Name 'tab-ambiguous-left'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2014
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $firstCandidate -Stage 'Left previous candidate column' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        $leftLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-left.json')
+
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Focus-TerminalInput -Name 'tab-ambiguous-accept'
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2054
+        $acceptedLogs = Wait-LocalCompletionInputState `
+            -ExpectedInput ($firstCandidate + ' ') -Stage 'Enter accept without submit' `
+            -CompletionActive $false -MenuActive $false
+        $acceptedLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-accepted.json')
+        if ($acceptedLogs -match 'ACCEPTANCE_INPUT_SUBMIT|File transfer authentication prompt=|FILE_TRANSFER phase=') {
+            throw 'Accepting a completion candidate unexpectedly submitted the command'
+        }
         Save-LeanTTYDeviceScreenshot `
             -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous.png')
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-        Start-Sleep -Milliseconds 200
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-accepted.png')
+        Reset-TerminalInput -LayoutName 'tab-ambiguous-reset'
+
+        Focus-TerminalInput -Name 'tab-ambiguous-cancel-focus'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $ambiguousPrefix
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $ambiguousPrefix -Stage 'cancel list setup' `
+            -CompletionActive $true -MenuActive $false | Out-Null
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $firstCandidate -Stage 'cancel menu setup' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2070
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $ambiguousPrefix -Stage 'Esc restore' `
+            -CompletionActive $false -MenuActive $false | Out-Null
+        $cancelledLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-cancelled.json')
+        Reset-TerminalInput -LayoutName 'tab-ambiguous-cancel-reset'
+
+        Focus-TerminalInput -Name 'tab-live-filter-focus'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $ambiguousPrefix
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $ambiguousPrefix -Stage 'live filter list setup' `
+            -CompletionActive $true -MenuActive $false | Out-Null
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text '\ a'
+        $filteredInput = $ambiguousPrefix + '\ a'
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $filteredInput -Stage 'typed prefix refilter' `
+            -CompletionActive $true -MenuActive $false | Out-Null
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-live-filter.png')
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2055
+        Wait-LocalCompletionInputState `
+            -ExpectedInput ($ambiguousPrefix + '\ ') -Stage 'Backspace refilter' `
+            -CompletionActive $true -MenuActive $false | Out-Null
+        Reset-TerminalInput -LayoutName 'tab-live-filter-reset'
+
+        $nestedPrefix = 'put .leantty-transfer-fixture/nested'
+        $nestedDirectory = 'put .leantty-transfer-fixture/nested\ alpha/'
+        $nestedListReady = $false
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            Focus-TerminalInput -Name ('tab-slash-descent-focus-' + $attempt.ToString())
+            Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+            Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $nestedPrefix
+            Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+            try {
+                Wait-LocalCompletionInputState `
+                    -ExpectedInput $nestedPrefix -Stage ('slash descent list setup attempt ' + $attempt.ToString()) `
+                    -CompletionActive $true -MenuActive $false | Out-Null
+                $nestedListReady = $true
+                break
+            } catch {
+                if ($attempt -eq 2) { throw }
+                Clear-LeanTTYDeviceInput -Hdc $hdc -Target $Target
+                Start-Sleep -Milliseconds 300
+            }
+        }
+        if (-not $nestedListReady) {
+            throw 'Physical key injection could not open the exact slash-descent candidate list'
+        }
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $nestedDirectory -Stage 'slash descent menu setup' `
+            -CompletionActive $true -MenuActive $true | Out-Null
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2064
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $nestedDirectory -Stage 'slash descent child list' `
+            -CompletionActive $true -MenuActive $false | Out-Null
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-slash-descent.png')
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput ($nestedDirectory + 'child.txt ') -Stage 'slash descent child accept' `
+            -CompletionActive $false -MenuActive $false | Out-Null
+        Reset-TerminalInput -LayoutName 'tab-slash-descent-reset'
+
+        $directoryPrefix = 'put ./.leantty-transfer-f'
+        $completedDirectory = 'put ./.leantty-transfer-fixture/'
+        Focus-TerminalInput -Name 'tab-directory-descent-focus'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $directoryPrefix
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        Wait-LocalCompletionInputState `
+            -ExpectedInput $completedDirectory -Stage 'directory completion' `
+            -CompletionActive $false -MenuActive $false | Out-Null
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+        $descentLogs = Wait-LocalCompletionInputState `
+            -ExpectedInput $completedDirectory -Stage 'directory child list' `
+            -CompletionActive $true -MenuActive $false
+        $descentLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-directory-descent.json')
+        $descentRecords = @([regex]::Matches(
+                $descentLogs,
+                'ACCEPTANCE_TAB_COMPLETE input=(?<input>[^\r\n]*),matches=(?<matches>\d+)'
+            ))
+        if ($descentRecords.Count -lt 1 -or
+            $descentRecords[$descentRecords.Count - 1].Groups['input'].Value -cne $completedDirectory -or
+            [int]$descentRecords[$descentRecords.Count - 1].Groups['matches'].Value -lt 2) {
+            throw 'Completed directory did not expose its current-layer child candidates'
+        }
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'tab-directory-descent.png')
+        Reset-TerminalInput -LayoutName 'tab-directory-descent-reset'
+
+        Assert-LocalTabCompletion `
+            -Typed 'put .leantty-transfer-f' `
+            -Expected 'put .leantty-transfer-fixture/' `
+            -Name 'tab-directory'
+        Assert-LocalTabCompletion `
+            -Typed 'put ./.leantty-transfer-f' `
+            -Expected 'put ./.leantty-transfer-fixture/' `
+            -Name 'tab-explicit-downloads-root'
+        Assert-LocalTabCompletion `
+            -Typed 'put .leantty-transfer-fixture/report\ a' `
+            -Expected 'put .leantty-transfer-fixture/report\ alpha.txt ' `
+            -Name 'tab-space'
+        Assert-LocalTabCompletion `
+            -Typed 'put ".leantty-transfer-fixture/report a' `
+            -Expected 'put .leantty-transfer-fixture/report\ alpha.txt ' `
+            -Name 'tab-quote-canonicalization'
+        Assert-LocalUnicodeTabCompletion
+        Assert-LocalTabCompletion `
+            -Typed 'put .leantty-transfer-fixture/.h' `
+            -Expected 'put .leantty-transfer-fixture/.hidden-file ' `
+            -Name 'tab-hidden'
 
         Assert-LocalTabCompletion `
             -Typed 'put .leantty-transfer-fixture/unsafe' `
@@ -1430,8 +1680,10 @@ try {
             gate = '1.3-production-local-tab-completion'
             result = 'passed'
             fixedFont = 'packaged HarmonyOS Sans Mono'
-            unique = @('directory', 'space', 'quoted input canonicalized', 'Unicode', 'hidden item')
-            ambiguous = 'common prefix applied before bounded candidate list'
+            unique = @('directory', './ Downloads root', 'space', 'quoted input canonicalized', 'Unicode', 'hidden item')
+            ambiguous = 'first Tab listed; second entered menu; Tab and Shift+Tab cycled; two-dimensional arrows followed displayed rows and columns; Enter accepted and Esc restored without execution'
+            liveFilter = 'typed prefix and Backspace regenerated the same active candidate region from the real input'
+            directoryDescent = './ root completion and selected-directory slash shortcut listed exactly the next layer without recursion or a duplicate slash'
             unsafe = 'Unicode format-control candidate was excluded before terminal rendering'
             sideEffects = 'no permission request, transfer state or remote authentication observed'
             sourceDirty = (@(git -C $repoRoot status --short).Count -gt 0)

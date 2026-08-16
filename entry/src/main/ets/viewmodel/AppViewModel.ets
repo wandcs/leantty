@@ -115,7 +115,7 @@ export class AppViewModel {
     let pane: PaneInfo | null = this.getPane(paneId)
     if (pane !== null) {
       pane.state = state
-      this.tabs = this.tabs.slice()
+      this.publishPaneOwner(paneId)
     }
   }
 
@@ -123,7 +123,7 @@ export class AppViewModel {
     let pane: PaneInfo | null = this.getPane(paneId)
     if (pane !== null) {
       pane.mode = mode
-      this.tabs = this.tabs.slice()
+      this.publishPaneOwner(paneId)
     }
   }
 
@@ -138,7 +138,7 @@ export class AppViewModel {
         this.tabs[i].title = title
       }
     }
-    this.tabs = this.tabs.slice()
+    this.publishPaneOwner(paneId)
   }
 
   markPaneAttention(paneId: string): void {
@@ -147,7 +147,7 @@ export class AppViewModel {
       return
     }
     pane.needsAttention = true
-    this.tabs = this.tabs.slice()
+    this.publishPaneOwner(paneId)
     this.logger.info('Pane attention set: ' + paneId)
   }
 
@@ -157,7 +157,7 @@ export class AppViewModel {
       return
     }
     pane.needsAttention = false
-    this.tabs = this.tabs.slice()
+    this.publishPaneOwner(paneId)
     this.logger.info('Pane attention cleared: ' + paneId)
   }
 
@@ -204,6 +204,16 @@ export class AppViewModel {
     let id: string = 'pane-' + this.nextPaneId.toString()
     this.nextPaneId++
     return new PaneInfo(id, title)
+  }
+
+  private publishPaneOwner(paneId: string): void {
+    for (let tabIndex: number = 0; tabIndex < this.tabs.length; tabIndex++) {
+      if (this.findPaneIndex(this.tabs[tabIndex], paneId) >= 0) {
+        this.tabs[tabIndex].panes = this.tabs[tabIndex].panes.slice()
+        this.tabs = this.tabs.slice()
+        return
+      }
+    }
   }
 
   private findTabIndex(tabId: string): number {

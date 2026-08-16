@@ -4,7 +4,7 @@ import { accessibility } from '@kit.AccessibilityKit'
 
 @Component
 export struct ChromeBar {
-  @Prop tabs: TabInfo[] = []
+  @Link tabs: TabInfo[]
   @Prop activeTabIndex: number = 0
   @Prop chromeColors: ChromeColors = new ChromeColors()
   @Prop chromeBackground: string = '#FF11111B'
@@ -81,10 +81,8 @@ export struct ChromeBar {
         Row() {
           ForEach(this.tabs, (tab: TabInfo, index: number) => {
             ChromeTab({
-              title: tab.title,
+              tab: tab,
               isActive: index === this.activeTabIndex,
-              sessionState: this.tabState(tab),
-              hasAttention: this.tabNeedsAttention(tab),
               attentionPulseCount: this.tabContainsPane(tab, this.attentionPulsePaneId) ?
                 this.attentionPulseCount : 0,
               attentionPulseToken: this.tabContainsPane(tab, this.attentionPulsePaneId) ?
@@ -138,10 +136,8 @@ export struct ChromeBar {
 
 @Component
 struct ChromeTab {
-  @Prop title: string = 'ltty'
+  @ObjectLink tab: TabInfo
   @Prop isActive: boolean = false
-  @Prop sessionState: SshSessionState = SshSessionState.IDLE
-  @Prop hasAttention: boolean = false
   @Prop attentionPulseCount: number = 0
   @Prop @Watch('onAttentionPulseTokenChanged') attentionPulseToken: number = 0
   @Prop chromeColors: ChromeColors = new ChromeColors()
@@ -203,20 +199,39 @@ struct ChromeTab {
   }
 
   private indicatorColor(): string {
-    if (this.hasAttention) {
+    if (this.hasAttention()) {
       return this.chromeColors.attention
     }
-    if (this.sessionState === SshSessionState.CONNECTED) {
+    let sessionState: SshSessionState = this.activeSessionState()
+    if (sessionState === SshSessionState.CONNECTED) {
       return this.chromeColors.statusConnected
     }
-    if (this.sessionState === SshSessionState.CONNECTING || this.sessionState === SshSessionState.RECONNECTING ||
-      this.sessionState === SshSessionState.AUTHENTICATING || this.sessionState === SshSessionState.HOST_VERIFICATION_REQUIRED) {
+    if (sessionState === SshSessionState.CONNECTING || sessionState === SshSessionState.RECONNECTING ||
+      sessionState === SshSessionState.AUTHENTICATING || sessionState === SshSessionState.HOST_VERIFICATION_REQUIRED) {
       return this.chromeColors.statusConnecting
     }
-    if (this.sessionState === SshSessionState.FAILED) {
+    if (sessionState === SshSessionState.FAILED) {
       return this.chromeColors.statusDisconnected
     }
     return this.chromeColors.commandBarPlaceholder
+  }
+
+  private activeSessionState(): SshSessionState {
+    for (let paneIndex: number = 0; paneIndex < this.tab.panes.length; paneIndex++) {
+      if (this.tab.panes[paneIndex].id === this.tab.activePaneId) {
+        return this.tab.panes[paneIndex].state
+      }
+    }
+    return SshSessionState.IDLE
+  }
+
+  private hasAttention(): boolean {
+    for (let paneIndex: number = 0; paneIndex < this.tab.panes.length; paneIndex++) {
+      if (this.tab.panes[paneIndex].needsAttention) {
+        return true
+      }
+    }
+    return false
   }
 
   private surfaceColor(): string {
@@ -268,7 +283,7 @@ struct ChromeTab {
           .fill(this.indicatorColor())
           .opacity(this.isActive ? 1 : 0.55)
           .margin({ right: 6 })
-        Text(this.title)
+        Text(this.tab.title)
           .fontSize(13)
           .fontColor(this.isActive ? this.chromeColors.commandBarText : this.chromeColors.statusText)
           .fontWeight(this.isActive ? FontWeight.Medium : FontWeight.Regular)
@@ -286,7 +301,7 @@ struct ChromeTab {
             .borderRadius(8)
             .border({ width: this.closeFocused ? 1 : 0, color: this.chromeColors.focusRing })
             .focusable(true)
-            .accessibilityText('Close tab ' + this.title)
+            .accessibilityText('Close tab ' + this.tab.title)
             .onClick(() => { this.onClose() })
             .onFocus(() => { this.closeFocused = true })
             .onBlur(() => { this.closeFocused = false })
@@ -306,9 +321,9 @@ struct ChromeTab {
     }
     .width(176)
     .height(40)
-    .accessibilityDescription(this.title)
-    .accessibilityText((this.isActive ? 'Active tab, ' : 'Tab, ') + this.title +
-      (this.hasAttention ? ', attention requested' : ''))
+    .accessibilityDescription(this.tab.title)
+    .accessibilityText((this.isActive ? 'Active tab, ' : 'Tab, ') + this.tab.title +
+      (this.hasAttention() ? ', attention requested' : ''))
     .focusable(true)
     .onFocus(() => { this.focused = true })
     .onBlur(() => { this.focused = false })
