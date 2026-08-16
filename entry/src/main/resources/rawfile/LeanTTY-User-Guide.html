@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="2">
+  <meta name="leantty-guide-revision" content="3">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LeanTTY 1.3.0 使用指南 / User Guide</title>
@@ -949,8 +949,8 @@
       <p class="eyebrow">LeanTTY 快速使用指南</p>
       <h1>先安全连接，<br>再高效工作。</h1>
       <p class="hero-copy">
-        这份离线指南给出从第一次连接到日常操作的最短可靠路径。先掌握复制、链接和搜索，
-        再按需查看命令、安全边界与故障恢复。
+        这份离线指南从第一次连接讲起，只保留日常最常用的操作。建议先熟悉复制、打开链接
+        和搜索，再按需要查看本地命令、安全注意事项和故障处理。
       </p>
       <ul class="scope-line" aria-label="首先掌握的操作">
         <li>选中后右键复制</li>
@@ -1002,7 +1002,7 @@
         <p class="section-kicker">每天都会用到</p>
         <h2>先掌握六个高频动作。</h2>
         <p class="section-intro">
-          这些操作能减少菜单查找和重复输入，也是 LeanTTY 中最直接、最稳定的工作方式。
+          先记住这六个操作，日常使用时就能少翻菜单、少重复输入。
         </p>
 
         <div class="practice-grid">
@@ -1024,7 +1024,7 @@
           <article class="practice-item">
             <span class="practice-label">SEARCH</span>
             <h3>只搜索当前 Pane</h3>
-            <p>按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> 搜索当前终端表面，使用 <kbd>Enter</kbd>/<kbd>Shift</kbd>+<kbd>Enter</kbd> 前后跳转。</p>
+            <p>按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> 搜索当前 Pane 中已经显示的终端内容，使用 <kbd>Enter</kbd>/<kbd>Shift</kbd>+<kbd>Enter</kbd> 前后跳转。</p>
           </article>
           <article class="practice-item">
             <span class="practice-label">VERIFY</span>
@@ -1034,7 +1034,7 @@
           <article class="practice-item">
             <span class="practice-label">KEEP WORK</span>
             <h3>长期任务放在远端 tmux</h3>
-            <p>需要承受应用退出、休眠或网络变化的工作，应运行在远端 tmux 或 screen 中。</p>
+            <p>任务需要在应用退出、电脑休眠或网络波动后继续运行时，请把它放在远端 tmux 或 screen 中。</p>
           </article>
         </div>
       </section>
@@ -1043,15 +1043,15 @@
         <p class="section-kicker">从这里开始</p>
         <h2>建立第一个会话</h2>
         <p class="section-intro">
-          LeanTTY 启动后显示本地 <code>ltty&gt;</code> 提示符。输入一条命令即可前往远端
-          执行环境；首次连接会暂停，让你确认连接的确实是目标服务器。
+          LeanTTY 启动后会显示本地 <code>ltty&gt;</code> 提示符。输入连接命令即可进入远端
+          Shell。第一次连接时，LeanTTY 会先停下来，让你核对服务器身份。
         </p>
 
         <ol class="steps">
           <li class="step">
             <span class="step-number">01 / 连接</span>
             <strong>指定目标</strong>
-            <p>输入用户名和主机。只有服务器需要时，才额外指定端口或 Identity。</p>
+            <p>先输入用户名和主机；只有服务器有特殊要求时，再指定端口或私钥。</p>
           </li>
           <li class="step">
             <span class="step-number">02 / 校验</span>
@@ -1061,7 +1061,7 @@
           <li class="step">
             <span class="step-number">03 / 工作</span>
             <strong>完成认证</strong>
-            <p>使用密码、已经验证的私钥或服务器提供的 keyboard-interactive 流程。</p>
+            <p>使用密码、已经验证的私钥，或按服务器提示完成键盘交互式认证。</p>
           </li>
         </ol>
 
@@ -1074,22 +1074,27 @@ ssh -i id_work user@example.com</code></pre>
         <pre><code>host add work user@example.com:2222
 ssh work</code></pre>
         <p>
-          保存的 Host 位于 LeanTTY 管理的 <code>~/.ssh/config</code> 区域。连接前可以使用
-          <code>ssh -G work</code> 查看当前支持的最终配置。
+          保存的 Host 写在 <code>~/.ssh/config</code> 中由 LeanTTY 管理的区域。连接前可用
+          <code>ssh -G work</code> 查看 LeanTTY 最终会采用哪些配置。
+        </p>
+        <p>
+          连接成功后，当前 Tab 会显示 <code>用户@Host</code>；如果通过保存的 Host 名称连接，
+          标题会保留这个短名称。正常退出远端 Shell、连接失败或取消连接后，标题会恢复为
+          <code>ltty</code>。
         </p>
 
         <div class="callout">
-          <strong>LeanTTY 是执行环境的入口。</strong>
+          <strong>LeanTTY 负责连接，长期任务仍在远端运行。</strong>
           <p>如果工作必须跨越应用退出、重启或断网继续，请在远端使用 tmux 或 screen。</p>
         </div>
       </section>
 
       <section id="zh-trust" class="doc-section">
-        <p class="section-kicker">安全先于便利</p>
-        <h2>确认主机，掌控身份。</h2>
+        <p class="section-kicker">先确认，再信任</p>
+        <h2>核对服务器身份，管好自己的密钥。</h2>
         <p class="section-intro">
-          LeanTTY 不会静默接受新的或发生变化的主机密钥。密钥留在本地，秘密输入不会进入
-          命令历史，也不会以普通终端文本回显。
+          遇到新的主机密钥或主机密钥变化时，LeanTTY 一定会先询问或停止连接。你的私钥留在
+          本地；密码、口令和认证回答不会写入命令历史，也不会按普通终端文字显示。
         </p>
 
         <h3>主机密钥</h3>
@@ -1116,8 +1121,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
           <li>生成 Ed25519 和 RSA-4096 密钥</li>
           <li>导入并使用加密私钥</li>
           <li>交互式修改私钥口令</li>
-          <li>密码和 keyboard-interactive 认证</li>
-          <li>多认证方法连续协商</li>
+          <li>密码和键盘交互式（keyboard-interactive）认证</li>
+          <li>按服务器要求连续尝试多种认证方式</li>
           <li>使用 <kbd>Ctrl</kbd>+<kbd>C</kbd> 明确取消</li>
         </ul>
         <p>
@@ -1131,8 +1136,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         <p class="section-kicker">克制的工作区</p>
         <h2>用 Tab 区分上下文，需要对照时再使用双 Pane。</h2>
         <p class="section-intro">
-          一个 Tab 拥有一个或两个 Pane。每个 Pane 都拥有独立的 SSH Session 和终端表面，
-          因此焦点、搜索、输出与连接状态不会在工作区之间串联。
+          每个 Tab 可以放一个或两个 Pane。每个 Pane 都有独立的 SSH Session 和终端，
+          焦点、搜索、输出和连接状态互不干扰。
         </p>
 
         <div class="table-wrap">
@@ -1141,9 +1146,9 @@ ssh-copy-id -i id_work user@example.com</code></pre>
               <tr><th>任务</th><th>行为</th></tr>
             </thead>
             <tbody>
-              <tr><td>新建 Tab</td><td>创建另一个独立的本地提示符和 Session 路径。</td></tr>
+              <tr><td>新建 Tab</td><td>打开一个新的本地提示符，可独立建立 SSH Session。</td></tr>
               <tr><td>拆分 Pane</td><td>在当前 Tab 增加第二个 Pane；LeanTTY 不创建更深的布局。</td></tr>
-              <tr><td>搜索</td><td>只搜索活动 Pane 的内存终端表面；空查询和无结果均显示 <code>0/0</code>。</td></tr>
+              <tr><td>搜索</td><td>只搜索活动 Pane 当前已经显示的终端内容；空查询和无结果均显示 <code>0/0</code>。</td></tr>
               <tr><td>BEL 提醒</td><td>短暂强调来源 Tab；未查看的输出保留小型琥珀色标记。</td></tr>
               <tr><td>关闭</td><td>关闭已连接的 Pane 会断开该 Pane 的 SSH Session。</td></tr>
             </tbody>
@@ -1159,14 +1164,14 @@ ssh-copy-id -i id_work user@example.com</code></pre>
 
         <h3>外观服从内容</h3>
         <p>
-          四点菜单提供关、低、中、高、极限五档透明度，以及交互一致的字号调节器。终端或
-          TUI 明确设置的背景色始终优先；不支持窗口透明的平台会回退到不透明表面。
+          四点菜单提供关、低、中、高、极限五档透明度，也可以在这里调节字号。终端或 TUI
+          自己设置的背景色始终优先；系统不支持窗口透明时，LeanTTY 会自动使用不透明背景。
         </p>
       </section>
 
       <section id="zh-shortcuts" class="doc-section">
         <p class="section-kicker">键盘优先</p>
-        <h2>让操作留在工作流里。</h2>
+        <h2>常用操作不用离开键盘。</h2>
         <p class="section-intro">
           快捷键固定且数量克制。四点菜单会在对应操作旁显示相同按键。
         </p>
@@ -1200,7 +1205,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         <p class="section-kicker">Downloads 与 SFTP</p>
         <h2>在当前 Pane 传输一个文件。</h2>
         <p class="section-intro">
-          <code>put</code> 和 <code>get</code> 复用 <code>ssh</code> 的 Host、端口、Identity、
+          <code>put</code> 和 <code>get</code> 复用 <code>ssh</code> 的 Host、端口、私钥、
           主机校验和认证规则；远端必须提供 SFTP。
         </p>
 
@@ -1215,6 +1220,13 @@ get work:/reports/latest.csv reports/</code></pre>
           <code>get</code> 省略本地目标时也沿用远端文件名。
         </p>
         <p>
+          输入本地路径时可按 <kbd>Tab</kbd> 补全。<code>./</code> 表示 Downloads 根目录；文件夹
+          候选会以 <code>/</code> 结尾。多个候选时，第一次 <kbd>Tab</kbd> 列出当前目录的匹配项，
+          第二次进入选择；之后用 <kbd>Tab</kbd>/<kbd>Shift</kbd>+<kbd>Tab</kbd> 或四个方向键切换。
+          <kbd>Enter</kbd> 只接受当前候选，再按一次才会执行命令；<kbd>Esc</kbd> 恢复选择前的输入。
+          选中文件夹后可以继续输入下一层名称，或再次按 <kbd>Tab</kbd> 查看下一层。
+        </p>
+        <p>
           LeanTTY 从不覆盖已有文件。明确文件名冲突会失败；由 LeanTTY 选择下载名称时，会提交到
           第一个可用的 <code>name (n).ext</code>。进度在单行显示百分比、已传输量、实时速度与 ETA，
           完成后显示文件大小和耗时。无选区时 <kbd>Ctrl</kbd>+<kbd>C</kbd> 取消当前传输；有选区时
@@ -1224,7 +1236,7 @@ get work:/reports/latest.csv reports/</code></pre>
 
       <section id="zh-commands" class="doc-section">
         <p class="section-kicker">本地命令参考</p>
-        <h2>命令面小而明确。</h2>
+        <h2>本地命令不多，用法保持一致。</h2>
         <p class="section-intro">
           以下命令只在本地 <code>ltty&gt;</code> 提示符下运行。连接成功后，输入归远端 Shell
           所有。
@@ -1236,17 +1248,17 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><th>命令</th><th>用途</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>help</code>、<code>?</code></td><td>显示本地帮助，并在末尾提供本完整指南的链接。</td></tr>
+              <tr><td><code>help</code>、<code>?</code></td><td>显示本地帮助，并在末尾给出这份完整指南的链接。</td></tr>
               <tr><td><code>help &lt;command&gt;</code></td><td>显示一个受支持命令的简短帮助。</td></tr>
               <tr><td><code>ssh …</code></td><td>直接连接，或通过保存的 OpenSSH Host 连接。</td></tr>
-              <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>不发起连接，显示当前支持的最终配置。</td></tr>
+              <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>不连接服务器，只显示 LeanTTY 最终会采用的配置。</td></tr>
               <tr><td><code>put …</code></td><td>通过 SFTP 上传 Downloads 中的一个文件。</td></tr>
               <tr><td><code>get …</code></td><td>通过 SFTP 下载一个文件到 Downloads。</td></tr>
               <tr><td><code>host add|set|list|rm</code></td><td>管理 OpenSSH Host 配置中由 LeanTTY 拥有的区域。</td></tr>
               <tr><td><code>key list|import|export|rm</code></td><td>管理已经验证的 LeanTTY 密钥对。</td></tr>
               <tr><td><code>ssh-keygen …</code></td><td>生成、检查或更新密钥与主机信任记录。</td></tr>
               <tr><td><code>ssh-copy-id …</code></td><td>通过现有 SSH 路径安装一行公钥。</td></tr>
-              <tr><td><code>exit</code></td><td>关闭当前空闲 Pane 或对应 Tab 路径。</td></tr>
+              <tr><td><code>exit</code></td><td>关闭当前空闲 Pane；如果它是唯一 Pane，则关闭对应 Tab。</td></tr>
             </tbody>
           </table>
         </div>
@@ -1260,22 +1272,22 @@ get work:/reports/latest.csv reports/</code></pre>
       </section>
 
       <section id="zh-data" class="doc-section">
-        <p class="section-kicker">默认留在本地</p>
-        <h2>哪些会保留，哪些不会。</h2>
+        <p class="section-kicker">数据默认留在本地</p>
+        <h2>LeanTTY 会保留哪些数据。</h2>
         <p class="section-intro">
-          LeanTTY 只保留安全重连所需的最少持久状态。终端内容和认证秘密不属于持久状态。
+          LeanTTY 只保存下次安全连接确实需要的内容。终端输出、密码、口令和认证回答不会长期保存。
         </p>
 
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>保留</th><th>不会有意保留</th></tr>
+              <tr><th>会保留</th><th>不会保存</th></tr>
             </thead>
             <tbody>
               <tr><td>OpenSSH Host 配置</td><td>密码和认证回答</td></tr>
               <tr><td>已经信任的主机密钥</td><td>口令和未提交的秘密输入</td></tr>
               <tr><td>已经验证的密钥对</td><td>命令历史</td></tr>
-              <tr><td>字号和主窗口位置</td><td>应用退出后的 Tab、Pane、Session 与终端回滚区</td></tr>
+              <tr><td>字号和主窗口位置</td><td>应用退出后的 Tab、Pane、Session 与终端滚动记录</td></tr>
               <tr><td>所选透明度档位</td><td>账号、云工作区或使用情况遥测</td></tr>
             </tbody>
           </table>
@@ -1294,11 +1306,11 @@ get work:/reports/latest.csv reports/</code></pre>
       </section>
 
       <section id="zh-recovery" class="doc-section">
-        <p class="section-kicker">出现问题时</p>
-        <h2>明确恢复，不靠猜测。</h2>
+        <p class="section-kicker">遇到问题时</p>
+        <h2>先看提示，再按最短步骤恢复。</h2>
         <p class="section-intro">
-          LeanTTY 会显示失败，而不是隐藏失败。先阅读活动 Pane 中的信息，再选择能够保留
-          信任边界的最小恢复操作。
+          LeanTTY 会直接说明哪里失败。先看活动 Pane 里的提示，只处理当前问题；不要为了省一步
+          而跳过主机校验、覆盖保护或其他安全检查。
         </p>
 
         <details open>
@@ -1345,8 +1357,8 @@ get work:/reports/latest.csv reports/</code></pre>
           <summary>休眠或网络变化后 SSH 断开</summary>
           <div class="details-body">
             <p>
-              使用界面中可见的重连路径。SSH 不提供透明漫游；需要承受中断的工作应保存在
-              远端 tmux 或 screen 中。
+              按界面提示重新连接。SSH 不能在网络切换后无感续接；需要在断线后继续运行的任务，
+              请放在远端 tmux 或 screen 中。
             </p>
           </div>
         </details>
@@ -1355,7 +1367,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.3.0</strong> · 离线使用指南 · 修订 2 · 开发版 2026-08-13</div>
+    <div><strong>LeanTTY 1.3.0</strong> · 离线使用指南 · 修订 3 · 开发版 2026-08-16</div>
     <div>先核对，再连接；先保留工作，再处理断线。</div>
   </footer>
   </div>
@@ -1534,6 +1546,11 @@ ssh work</code></pre>
           Saved hosts use LeanTTY's managed section of <code>~/.ssh/config</code>. Inspect the
           supported effective values before connecting with <code>ssh -G work</code>.
         </p>
+        <p>
+          After a successful connection, the current Tab shows <code>user@Host</code> and keeps a saved
+          Host alias when one was used. After a normal remote-shell exit, a failed connection or a
+          cancelled connection, the title returns to <code>ltty</code>.
+        </p>
 
         <div class="callout">
           <strong>LeanTTY is the entry point.</strong>
@@ -1673,6 +1690,14 @@ get work:/reports/latest.csv reports/</code></pre>
           but LeanTTY does not create directories, recurse, expand wildcards or accept multiple sources.
           A target ending in <code>/</code> must be an existing directory and keeps the source basename;
           omitting the local <code>get</code> target also keeps the remote basename.
+        </p>
+        <p>
+          Press <kbd>Tab</kbd> to complete local paths. <code>./</code> explicitly names the Downloads root,
+          and directory candidates end in <code>/</code>. With multiple matches, the first <kbd>Tab</kbd>
+          lists the current directory and the second enters selection. Navigate with <kbd>Tab</kbd>,
+          <kbd>Shift</kbd>+<kbd>Tab</kbd> or all four arrow keys. <kbd>Enter</kbd> accepts the preview without running the
+          command; press it again to run. <kbd>Esc</kbd> restores the original prefix. After accepting a
+          directory, type the next prefix or press <kbd>Tab</kbd> again to complete the next level.
         </p>
         <p>
           LeanTTY never overwrites an existing file. An explicit name conflict fails; when LeanTTY chooses
@@ -1819,7 +1844,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.3.0</strong> · Offline user guide · Revision 2 · Development 2026-08-13</div>
+    <div><strong>LeanTTY 1.3.0</strong> · Offline user guide · Revision 3 · Development 2026-08-16</div>
     <div>Verify first. Keep work durable. Recover deliberately.</div>
   </footer>
   </div>

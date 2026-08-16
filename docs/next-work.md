@@ -2,11 +2,11 @@
 
 > 状态：唯一有效的项目 TODO
 >
-> 更新日期：2026-08-14
+> 更新日期：2026-08-15
 >
 > 当前 milestone：[`1.3 — 受约束的单文件交付`](roadmap.md)
 >
-> 当前阶段：核心实现与自动化已闭合；先修正真机视觉反证并完成剩余人工 smoke，再冻结 1.3 正式候选
+> 当前阶段：本地路径补全实现与核心真机事件链已闭合；下一步完成帮助 HTML 中文人工复核，再收口 1.3 release source
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -203,7 +203,7 @@ native。原有同目录 no-replace 与 FD/no-follow 探针也在同一 HAP 复�
 `file-transfer-manager-boundary-final-3` 已在物理机上闭合完整序号耗尽交互。
 
 2026-08-13，固定打包字体下的物理 Tab 矩阵闭合：真实裸 Tab 经 ArkUI key dispatch 进入当前 Pane，
-依次覆盖既有目录、转义空格、未闭合引号规范化、Unicode、隐藏文件、公共前缀、二次确认后的
+依次覆盖既有目录、转义空格、未闭合引号规范化、Unicode、隐藏文件、前缀匹配、二次确认后的
 双候选列表，以及 bidi 格式控制符文件名过滤；全程没有权限、认证或传输事件。门禁过程中发现并
 修复补全分词器把 `report\ ` 的转义末尾空格误判为新操作数、继而错误进入 Host 补全的问题；
 ArkTS 103/103 和物理矩阵均通过。按键注入器同时增加 5 秒上界和一次有限重试，避免 HDC `uinput`
@@ -253,7 +253,7 @@ E2E；证据为 `build/verification/targeted-regression-final.json`。真机门�
 Downloads 同名文件旁选择最小 `(1)` 名称、保留原内容并保持 131,089 字节 SHA-256 一致。长名称
 首次发现远端临时名复制最终 basename 会超过组件上限；实现改为同目录固定长度
 `.leantty-<transfer>-<nonce>.part` 后，Rust 255 字节回归和真机往返均通过。相同 HAP 又完成固定
-字体 Tab 矩阵：目录、空格、引号、Unicode、隐藏项、公共前缀、再次 Tab 列表及格式控制字符排除
+字体 Tab 矩阵：目录、空格、引号、Unicode、隐藏项、前缀匹配、再次 Tab 列表及格式控制字符排除
 均使用生产命令缓冲区判定，且没有权限或网络副作用。证据分别位于
 `build/verification/put-get-file-name-matrix-final-9/` 和
 `build/verification/put-get-tab-completion-final-1/`，HAP SHA-256 为
@@ -332,6 +332,13 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
    最小回归。完成条件是同一物理 ARM64 PC 上 Codex TUI 和至少一个非 Codex 复现场景不再出现
    异常黑块，普通 shell、显式 ANSI 背景、tmux/vim 和所有透明档位仍正确；不能把整个终端改成
    不透明背景来隐藏问题。
+   2026-08-15 Off 回归闭合：同一物理机 SSH/Codex buffer 在 Off 出现黑块、Medium 消失、恢复
+   Off 后复现，根因是 Off 把窗口表面 `1.00` 与 WebGL 显式 cell alpha `1.00` 错误绑定。窗口、
+   Chrome 和内容表面继续完全不透明，仅将五档 renderer-only cell alpha 收敛为
+   `0.24/0.20/0.16/0.12/0.08`。ArkTS 112/112 与 Web 策略测试通过；物理 HAD-W32 明确读取 Off
+   后重新运行 `ssh hsl`、`./run-codex` 不再出现黑块，ANSI 41/42/44 背景仍可辨。HAP SHA-256
+   为 `2f341ae228ae78afbe35d4460b1eb5c4509f3f0fd7b9d8cb7a079ced3ed68d02`，证据见
+   `build/verification/off-black-block-investigation/`。
 2. [x] 重新标定固定透明档位。把当前 Low 的视觉透明度提升到当前 Medium 的参数基线，后续档位
    依次整体提高，Extreme 采用更激进但仍保证文本、焦点、选区、菜单和 TUI 可读性的参数；Off
    保持完全不透明，档位仍单调、不循环且不增加设置。完成条件是参数来源、Chrome/content 分层
@@ -342,14 +349,32 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
    Tab bar 颜色过近导致的结构不清；只调整已有 token、透明度、边界和必要间距，不增加装饰、
    主题选择器或新的常驻控件。完成条件是每个层级在 Off/Medium/Extreme、活动/非活动窗口和
    单/双 Pane 下可辨，同时保持界面安静、紧凑并符合键盘优先原则。
-   2026-08-14 真机复开：把非活动 Tab 设为透明使其在定义上等于 Chrome rail；活动 Tab 仅叠加
-   相邻 surface 色，Off/Medium/Extreme 下三层仍过近。修订合同固定为 rail 最轻并继续跟随五档
-   alpha，非活动 Tab 使用高稳定度 base，hover 使用 surface0，活动 Tab 使用最重的 surface1；
-   深浅主题翻转亮度方向但保持相同视觉权重，不增加描边、阴影、设置或新状态源。
-   2026-08-14 修订完成：自动化锁定深浅主题的 rail/base/surface0/surface1 所有权与独立 hover；
-   同一物理 HAD-W32 的四 Tab Off/Medium/Extreme 菜单及无菜单截图证明 rail 最轻、非活动 Tab
-   居中、活动 Tab 最重，最终已恢复 Medium。直接受影响链的 HAP 与证据见
+   2026-08-14 二次真机走查否定了 Chrome 随五档连续变化的方案：Low/High 在浅色背景下 rail 与
+   非活动 Tab 仍会趋同，Medium 为补偿浅色而提升的非活动 Tab 又在深色背景中过亮。最终合同把
+   五档透明度映射为三个内部 Chrome 模式：Off 独立，Low/Medium 共用稳定模式，High/Extreme
+   共用增强模式；同一模式内 rail、非活动、hover、活动使用统一 alpha，只通过既有 Catppuccin
+   surface 保持角色间距。完成条件改为自动化锁定三模式映射，部署同一测试 HAP 后由用户在真实
+   浅色/深色桌面背景下逐档确认。详细决策见
    [`design/ui-interaction-polish.md`](design/ui-interaction-polish.md)。
+   当前三模式实现已通过 ArkTS 105/105，并以 SHA-256
+   `23037d267a03e83ab31ead39d782883c0b91457a39ab091f025e29cdadf976ee` 的测试 HAP 部署到物理
+   HAD-W32；应用保持在五 Tab 的 Medium 基线，等待用户完成上述最终主观确认，因此本项暂不关闭。
+   用户首轮真机确认认为 A/B 活动 Tab 仍然过亮；A/B 活动态由 surface2 下压到 surface1，hover
+   复用 surface1 的 86% alpha，模式 C 保持不变。调整后的测试 HAP SHA-256 为
+   `71d701edbf74aa93528067eb88ee5b466f3eec97c7c5500ba739d40d646c2c2c`，已覆盖安装并启动到
+   HAD-W32。2026-08-15，用户完成真机逐档观察并确认调整后观感没有问题；三模式 Chrome 方案
+   曾作为 1.3 完成基线。2026-08-15 后续日常观察再次确认 A/B/C 三种模式的活动 Tab 都偏亮；
+   本项重新打开。模式 A 以菜单当前选中行的 surface0 为活动 Tab 上限；首次部署后用户确认
+   模式 B/C 的活动与非活动 Tab 又和 rail 过近。最终区分两组：B 只小幅提高，非活动采用
+   base→surface0 80%，hover/活动采用 surface0→surface1 15%/40%；C 提高更多，非活动采用
+   surface0，hover/活动采用 surface0→surface1 50%/75%，但仍不回到完整 surface1 或 overlay0。
+   各角色继续使用所在 Chrome 模式的统一 alpha，不增加色相、描边、阴影或设置。自动化锁定后
+   重新部署 HAD-W32，由用户逐档确认。上一版测试 HAP
+   `8e451561ec5833d089edc85eb391af1f43a4988108fc4cdcf9031e8b76e1a4da` 已被本次用户反馈否定，
+   不再作为完成基线。修订后 Web 策略测试、ArkTS 107/107 与 ARM64 debug 构建通过；新测试 HAP
+   SHA-256 为 `13197f1ec1c2f9615ba737045f7731f484650b7647a68e41d728ff0d375dfab1`，已覆盖安装并启动到
+   HAD-W32（PID 54657）。用户随后确认“好”，并把工作转入补全修复；模式 B 的小幅提升与模式 C
+   的较大提升因此成为 1.3 Chrome 完成基线，本项关闭。
 4. [x] 重新审计并设计全部本地命令的提示符、输入回显、进行中、成功、警告、取消和错误输出，
    形成一份统一标准后再修改实现。启动提示符采用整体绿色的小写 `ltty>`，并统一未知命令、
    解析错误、Host/key/ssh、`put/get` 等结果的
@@ -377,7 +402,53 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
    绿色、尾随空格与光标对齐。HAP SHA-256 和证据见
    [`design/local-command-output.md`](design/local-command-output.md)。
 
-## 2. 自动化与集成门禁
+## 2. 本地路径补全与帮助文字收尾
+
+2026-08-15 的首版路径补全已经闭合候选生成和基础键盘状态，但后续真实使用发现候选列表被当作
+永久终端输出：列表位于命令上方、刷新时不断叠加、当前预览没有在列表中同步高亮，继续编辑也
+无法原地更新候选。本节因此重新打开；最终合同与外部调研统一由
+[`design/tab-completion.md`](design/tab-completion.md) 管理。旧测试 HAP 和证据只证明旧行为，
+不能证明修订完成或进入 1.3 候选。
+
+1. [x] 按 Tab 补全设计修复 `put/get` 的本地候选区与交互状态。候选区必须在当前命令下方且同一
+   Pane 只有一个可原地清除和重绘的区域；首 Tab 列表、二次 Tab 选择，选择后命令行预览与列表
+   高亮共享同一当前项。候选打开后，普通输入、Backspace/Delete 必须基于最近一次真实输入重新
+   做安全前缀匹配并更新同一区域，不能隐式接受预览或留下旧列表。Tab/Shift+Tab 与四方向键按
+   二维列表导航；Enter 只接受候选，Esc 恢复真实输入；目录保留 `/`，高亮目录时按 `/` 可接受
+   并立即补全下一层且不产生 `//`。保持已有 Downloads 边界、无联网、无递归、无权限弹窗、
+   100 候选上限、控制字符净化和固定字体 cell 宽度规则，不引入 Shell、模糊搜索、图标、设置或
+   ArkUI 文件面板。
+   完成条件是自动化覆盖关闭/列表/选择、无/一/多候选、实时增删输入、同区重绘、二维导航、
+   Enter/Esc、`/` 下钻、候选溢出、Unicode/宽字符、终端换行与 resize，并证明无网络、认证、
+   传输和跨 Pane 副作用；受影响 ArkTS 与 ARM64 debug 构建通过后，在物理 ARM64 PC 的固定字体、
+   深浅背景、Off/Medium/Extreme、窄/宽窗口和屏幕底部场景中用真实键盘确认位置、无叠加、高亮、
+   光标恢复、目录逐层补全及关闭后不残留旧候选。
+   2026-08-15 完成：当前 Pane 使用单一补全会话和单一 transient renderer；首 Tab 列表、二次
+   Tab 选择、实时输入/Backspace 更新、Tab/Shift+Tab、四方向、Enter/Esc、目录 `/` 下钻、固定
+   字体 cell 布局、候选分页/截断和 resize 重排均由 ArkTS 112/112 覆盖。物理 ARM64 HAD-W32 的
+   `TabCompletionMatrix` 进一步闭合真实终端 key dispatch、同区清除重绘、高亮同步、空格/引号/
+   Unicode/隐藏项和格式控制字符过滤，且没有权限、认证、网络或传输副作用；结果位于
+   `build/verification/tab-completion-transient-final-v3/`，验收 HAP SHA-256 为
+   `c43d3e9ee303cd38fb2bb2da21f82d782dfe4e1041aa72c3fb8d4161901d2efa`。验收后正常开发 HAP 已
+   重新构建、安装并启动。深浅背景、Off/Medium/Extreme、窄/宽窗口、屏幕底部和实体键盘体感
+   合并到最终精确候选的人工视觉 smoke；任一反证仍阻止晋级，但不再把已闭合实现保持为 WIP。
+2. [ ] 把“每次重新生成帮助 HTML 后，必须对中文做一次说人话复核”固化到离线指南设计与发布
+   流程，并对 1.3 最终 `LeanTTY-User-Guide.html` 执行。复核不是中英文逐句音译检查，而是从
+   中文用户任务出发逐段确认：主语和动作明确、语序自然、术语一致、句子不过长、提示能直接
+   指向下一步；保留命令、路径、快捷键和必要英文专名，不为了口语化改变产品事实或安全边界。
+   完成条件是发布清单明确要求生成后单独完成人工中文复核，审查源与打包资源逐字节一致，现有
+   HTML 自动化继续通过，并在浏览器中逐页检查中文首屏、操作步骤、错误恢复和 `put/get` 章节，
+   不残留明显翻译腔、英文语序或内部实现口吻。
+   2026-08-15 已把复核清单写入 `design/offline-user-guide.md` 与 `release-process.md`，完成当前
+   中文正文改写和新补全交互的双语更新。2026-08-16 又逐段清理了 `Identity`、
+   `keyboard-interactive`、认证协商和终端滚动记录等内部或半英文化表达，并补充连接/退出时的
+   Tab 标题合同；审查源与打包资源 SHA-256 均为
+   `bec38a1ab3958a37fc3993c2448503cde82b4366abf2f631ea467f9d64120e82`，指南自动化通过
+   （70,389 bytes、3 套 code palette）。本机预览件位于
+   `build/design-review/LeanTTY-User-Guide-preview.html`；内置浏览器安全策略允许用户查看，
+   但禁止代理读取该 `file://` 页面的 DOM 或截图。待用户确认逐页视觉效果后，本项才关闭。
+
+## 3. 自动化与集成门禁
 
 - [x] 闭合 SSH 大写入后的连续可用性：在现有单 writer/FIFO 内有界推进较大输入，在块之间恢复
   后续输入和控制事件的调度机会；保持写入顺序、SSH window 背压、resize 和取消/断开有界，
@@ -390,7 +461,8 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
 - [x] 覆盖 Downloads 边界、no-follow、FD 所有权、目标预存在、提交期并发抢占、自动编号、
   后缀/隐藏文件/Unicode/序号耗尽、既有多级子目录、中间 symlink、目录意图、临时文件同目录
   可见性与精确清理；每个冲突用例验证已有内容哈希不变。
-- [x] 覆盖本地路径、Host 和 `-i` 的 Tab 上下文、唯一/多候选、公共前缀、空格与引号转义、
+- [x] 覆盖本地路径、Host 和 `-i` 的 Tab 上下文、唯一/多候选、前缀匹配、首 Tab 列表、二次
+  Tab 进入选择、正反向循环、Enter 接受、Esc 恢复、空格与引号转义、
   隐藏项、大小写/Unicode、控制字符净化、候选上限和无授权状态；证明补全不发起网络请求、
   不递归枚举，也不改变已有 `ssh`、`host` 和命令名补全。
 - [x] 覆盖上传 `CREATE | EXCL | WRITE`、标准 rename、禁止危险回退、空/小/大文件哈希、
@@ -399,7 +471,7 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
   行为需要设备包时运行 `tools/dev-pc.ps1`，并通过干净 ARM64 debug HAP 集成检查和
   `git diff --check`。普通迭代不运行完整 release gate。
 
-## 3. 物理 ARM64 HarmonyOS PC 验收
+## 4. 物理 ARM64 HarmonyOS PC 验收
 
 2026-08-14 决定不再把“从未授权状态首次执行 `put/get`、拒绝后恢复和双 Pane 授权
 single-flight”作为 1.3 发布门禁，后续默认跳过。现有状态机、自动化和已授权主路径已经覆盖
@@ -414,7 +486,7 @@ x86_64 产品构建或维护测试专用授权路径，成本和风险高于当�
 - [x] 预置远端上传目标、明确本地下载目标，以及省略目标或指向既有目录的 basename，并在
   预检查后抢占最终名称：明确目标与所有 `put` 必须失败且已有文件哈希不变；LeanTTY 选择的
   本地名称必须在不重传内容的情况下提交到下一个最小可用名称。
-- [x] 在固定打包字体下验证 Tab 补全的文件/目录候选、空格与 Unicode、公共前缀和候选列表；
+- [x] 在固定打包字体下验证 Tab 补全的文件/目录候选、空格与 Unicode、前缀匹配、列表与循环选择；
   验证 Tab 不弹 Downloads 权限、不连接远端，候选和传输摘要中的不安全控制字符不能影响
   终端布局或注入控制序列。
 - [x] 分别在传输中验证休眠和恢复；有选区 `Ctrl+C` 只复制、断网和最小化已经由上文物理门禁
@@ -425,15 +497,12 @@ x86_64 产品构建或维护测试专用授权路径，成本和风险高于当�
   `put/get -i other` 不改变后续 `ssh` 或 `put/get`。
 - [x] 验证无 SFTP、远端权限拒绝、本地空间不足、服务器不支持可靠无覆盖提交和清理失败时，
   终端可恢复、错误可执行且已有文件不变；检查 hilog、命令历史和错误快照不含凭据或文件内容。
-- [ ] 在保留的 ARM64 test-signed 候选
-  `0116b6ecf02f7501541acf7ef654beb4c57246833a28d0de7a8f7240e7826c99` 上完成仅剩的真实人工
-  smoke：物理键盘配合中英文 IME；真实选区复制和 URL 激活；真实远端上的 tmux、vim、less 与
-  OpenCode/同类 Agent TUI。左右键、`Ctrl+P/C/V`、Tab、搜索、Pane/Tab 所有权、窗口/renderer、
-  SSH 大输入连续可用性和 production GET -> Downloads -> PUT 已由同一候选的精确字节与真机
-  自动门禁闭合，不重复执行。该人工 smoke 只确认 HDC 输入注入和 repository fixture 无法代表的
-  实体键盘、系统 IME、选区/浏览器激活和真实 TUI 体感；任一核心交互失败都阻止候选晋级。
+此前保留的 ARM64 test-signed 候选
+`0116b6ecf02f7501541acf7ef654beb4c57246833a28d0de7a8f7240e7826c99` 不包含最终三模式 Chrome
+改动，已按 `quality-strategy.md` 的产品路径变更规则失去 1.3 晋级资格。剩余人工 smoke 必须在
+下节从新精确 release commit 冻结的候选上执行，不能复用旧 HAP。
 
-## 4. 文档、版本与发布
+## 5. 文档、版本与发布
 
 - [x] `design/file-transfer.md` 已更新为完成事实，并同步 `design/README.md`、命令体系、路线图、
   架构、安全边界、Changelog 和跨版本愿景映射；中英文源码/离线 User Guide 已审计且现有
@@ -443,11 +512,21 @@ x86_64 产品构建或维护测试专用授权路径，成本和风险高于当�
 - [x] 将用户可见改动记录到 `CHANGELOG.md`。在功能和依赖稳定、准备保留候选时再按
   `versioning.md` 选择并统一推进 `1.3.0` 的所有版本源和 `versionCode`；不能提前把 WIP 描述成
   已发布能力。
-- [ ] 准备正式发布包时才运行 `tools/test-regression.ps1`、`tools/verify-pc.ps1` 和
-  `release-process.md` 的隔离 production/review 流程；冻结一个精确提交、tree、native 输出、
-  签名 APP/HAP、哈希和同候选物理机证据。上述 `7b83bec` test-signed HAP 是已保留的开发验收
-  候选，不是 production APP 或 AppGallery 上传物；正式 production/review 隔离构建、版本提交、
-  标签和发布仍必须在全部验收闭合后按流程完成。
+- [ ] 收口 1.3 release source：把当前已验证的三模式 Chrome 改动作为聚焦提交合入并推送 `main`；
+  审定 1.3 Changelog 日期与 release notes，按最终用户可见合同重新生成并复核中英文离线 User
+  Guide，确认 `1.3.0` 全部版本源与递增 `versionCode` 一致。所有 release-source 修改完成后再
+  选择一个干净、已推送的精确 `main` 提交，后续任何产品、资源、版本或 User Guide 字节变化都
+  使候选失效。
+- [ ] 从上述精确提交运行 `tools/test-regression.ps1`、`tools/verify-pc.ps1` 和完整适用的
+  `verify-*-pc.ps1` release matrix，冻结同一 ARM64 test-signed HAP。随后只在该候选上完成剩余
+  真实人工 smoke：物理键盘配合中英文 IME；真实选区复制和 URL 激活；真实远端上的 tmux、vim、
+  less 与 OpenCode/同类 Agent TUI；确认 `ssh hsl` 后 Tab 为 `user@hsl`，正常 `exit` 回到本地
+  `ltty>` 后 Tab 恢复 `ltty`。自动门禁已经精确覆盖的左右键、`Ctrl+P/C/V`、Tab、搜索、
+  Pane/Tab 所有权、窗口/renderer、SSH 大输入连续可用性和 production GET -> Downloads -> PUT
+  不重复人工执行；任一核心交互失败都阻止候选晋级。
+- [ ] 人工 smoke 通过后，按 `release-process.md` 从同一精确提交执行隔离 production/review
+  流程，冻结 tree、native 输出、production signed APP/HAP、review test-signed HAP、manifest、
+  签名验证和全部哈希。开发验收 HAP 不是 production APP 或 AppGallery 上传物。
 - [ ] 1.2.0 AppGallery 审核已于 2026-08-13 通过并上架。1.3.0 仍须先发布不可变签名标签和
   匹配 GitHub Release，才提交同版本 production APP；不移动标签、不替换 Release。
 
