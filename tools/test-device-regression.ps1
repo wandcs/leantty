@@ -140,6 +140,17 @@ Assert-True (
     -not $submitCommandSource.Contains('Get-LeanTTYTerminalInputText')
 ) 'Device command submission still treats ArkWeb accessibility text as the native command buffer'
 
+$keyPassphraseVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-key-passphrase-pc.ps1'
+) -Raw
+Assert-True (
+    $keyPassphraseVerifier.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
+    $keyPassphraseVerifier.Contains('completionActive=(?:true|false),menuActive=(?:true|false)') -and
+    $keyPassphraseVerifier.Contains('$actualBuffer -ceq $Command') -and
+    $keyPassphraseVerifier.Contains('ACCEPTANCE_IDLE_INTERRUPT cleared=true') -and
+    $keyPassphraseVerifier.Contains('Physical key injection could not prepare the exact command buffer')
+) 'Key-passphrase device commands are not verified before consequential submission'
+
 $center = Get-LeanTTYBoundsCenter -Bounds '[1900,1200][2200,1300]'
 Assert-True ($center.x -eq 2050 -and $center.y -eq 1250) (
     'Native-layout button coordinates were not calculated correctly'
