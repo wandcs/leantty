@@ -791,12 +791,17 @@
       brightBlue: '#89B4FA',
       brightMagenta: '#F5C2E7',
       brightCyan: '#94E2D5',
-      brightWhite: '#A6ADC8'
+      brightWhite: '#A6ADC8',
+      cellBackgroundOpacity: 0.16
     };
 
     function applyTerminalTheme(themeObj) {
       if (!themeObj || typeof themeObj.background !== 'string' || themeObj.background.length === 0) return;
       if (isSearchOpen()) closeSearch(true);
+      var requestedCellBackgroundOpacity = Number(themeObj.cellBackgroundOpacity);
+      globalThis.LeanTTYCellBackgroundOpacity = Number.isFinite(requestedCellBackgroundOpacity) ?
+        Math.max(0, Math.min(1, requestedCellBackgroundOpacity)) : 1;
+      delete themeObj.cellBackgroundOpacity;
       themeObj.overviewRulerBorder = themeObj.background;
       document.documentElement.style.setProperty('--terminal-background', themeObj.background);
       document.documentElement.style.setProperty('--terminal-foreground', themeObj.foreground || '#CDD6F4');
@@ -809,6 +814,7 @@
       document.documentElement.style.setProperty('--search-accent', themeObj.blue || '#89B4FA');
       if (term) {
         term.options.theme = themeObj;
+        term.refresh(0, term.rows - 1);
       }
     }
 

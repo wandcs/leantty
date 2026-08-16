@@ -14,7 +14,7 @@ run in the selected execution environment.
 
 ## Product model
 
-- The application starts at a local `ltty>` prompt.
+- The application starts at a lowercase `ltty>` prompt in the theme's green.
 - A tab owns one or two panes.
 - Each pane owns one independent SSH session and terminal surface.
 - Closing a connected pane disconnects its SSH session.

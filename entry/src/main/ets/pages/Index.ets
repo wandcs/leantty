@@ -183,7 +183,7 @@ struct Index {
                 .width(1)
                 .height('100%')
                 .backgroundColor(this.chromeColors.divider)
-                .opacity(0.50)
+                .opacity(0.64)
                 .hitTestBehavior(HitTestMode.None)
               if (this.splitPaneNeedsAttention(false)) {
                 Circle()
@@ -1020,7 +1020,8 @@ struct Index {
       logger.error('Application termination failed: ' + e)
       let runtime: PaneRuntime | null = this.findPaneRuntime(paneId)
       if (runtime !== null) {
-        runtime.viewModel.writeError('Unable to close the application: ' + e)
+        runtime.viewModel.writeError('The application could not close cleanly.',
+          'Try: close it again after active connections and transfers finish.')
       }
     }
   }

@@ -60,18 +60,24 @@ export class TransparencyPolicy {
 
   static contentOpacity(mode: TransparencyMode): number {
     if (mode === TransparencyMode.OFF) return 1.00
-    if (mode === TransparencyMode.HIGH) return 0.72
-    if (mode === TransparencyMode.LOW) return 0.90
-    if (mode === TransparencyMode.EXTREME) return 0.60
-    return 0.82
+    if (mode === TransparencyMode.HIGH) return 0.60
+    if (mode === TransparencyMode.LOW) return 0.82
+    if (mode === TransparencyMode.EXTREME) return 0.45
+    return 0.72
   }
 
   static chromeOpacity(mode: TransparencyMode): number {
     if (mode === TransparencyMode.OFF) return 1.00
-    if (mode === TransparencyMode.HIGH) return 0.80
-    if (mode === TransparencyMode.LOW) return 0.94
-    if (mode === TransparencyMode.EXTREME) return 0.70
-    return 0.88
+    if (mode === TransparencyMode.LOW || mode === TransparencyMode.MEDIUM) return 0.94
+    return 0.86
+  }
+
+  static cellBackgroundOpacity(mode: TransparencyMode): number {
+    if (mode === TransparencyMode.OFF) return 0.24
+    if (mode === TransparencyMode.HIGH) return 0.12
+    if (mode === TransparencyMode.LOW) return 0.20
+    if (mode === TransparencyMode.EXTREME) return 0.08
+    return 0.16
   }
 
   static terminalBackground(mode: TransparencyMode, isLight: boolean): string {
@@ -81,19 +87,51 @@ export class TransparencyPolicy {
   static surfaceBackground(mode: TransparencyMode, isLight: boolean): string {
     let rgb: string = isLight ? 'EFF1F5' : '1E1E2E'
     if (mode === TransparencyMode.OFF) return '#FF' + rgb
-    if (mode === TransparencyMode.HIGH) return '#B8' + rgb
-    if (mode === TransparencyMode.LOW) return '#E6' + rgb
-    if (mode === TransparencyMode.EXTREME) return '#99' + rgb
-    return '#D1' + rgb
+    if (mode === TransparencyMode.HIGH) return '#99' + rgb
+    if (mode === TransparencyMode.LOW) return '#D1' + rgb
+    if (mode === TransparencyMode.EXTREME) return '#73' + rgb
+    return '#B8' + rgb
   }
 
   static chromeSurfaceBackground(mode: TransparencyMode, isLight: boolean): string {
-    let rgb: string = isLight ? 'DCE0E8' : '11111B'
-    if (mode === TransparencyMode.OFF) return '#FF' + rgb
-    if (mode === TransparencyMode.HIGH) return '#CC' + rgb
-    if (mode === TransparencyMode.LOW) return '#F0' + rgb
-    if (mode === TransparencyMode.EXTREME) return '#B3' + rgb
-    return '#E0' + rgb
+    let rgb: string = isLight ? 'EFF1F5' : '1E1E2E'
+    return '#' + TransparencyPolicy.chromeAlpha(mode) + rgb
+  }
+
+  static chromeTabBackground(mode: TransparencyMode, isLight: boolean): string {
+    let rgb: string = isLight ? 'D3D7DF' : '2D2E40'
+    if (mode === TransparencyMode.OFF) {
+      rgb = isLight ? 'DEE1E8' : '282839'
+    } else if (mode === TransparencyMode.HIGH || mode === TransparencyMode.EXTREME) {
+      rgb = isLight ? 'CCD0DA' : '313244'
+    }
+    return '#' + TransparencyPolicy.chromeAlpha(mode) + rgb
+  }
+
+  static chromeTabHoverBackground(mode: TransparencyMode, isLight: boolean): string {
+    let rgb: string = isLight ? 'CACED8' : '343547'
+    if (mode === TransparencyMode.OFF) {
+      rgb = isLight ? 'D5D8E1' : '2C2D3F'
+    } else if (mode === TransparencyMode.HIGH || mode === TransparencyMode.EXTREME) {
+      rgb = isLight ? 'C4C8D3' : '3B3D4F'
+    }
+    return '#' + TransparencyPolicy.chromeAlpha(mode) + rgb
+  }
+
+  static chromeTabActiveBackground(mode: TransparencyMode, isLight: boolean): string {
+    let rgb: string = isLight ? 'C6CAD4' : '393A4D'
+    if (mode === TransparencyMode.OFF) {
+      rgb = isLight ? 'CCD0DA' : '313244'
+    } else if (mode === TransparencyMode.HIGH || mode === TransparencyMode.EXTREME) {
+      rgb = isLight ? 'C0C4D0' : '404255'
+    }
+    return '#' + TransparencyPolicy.chromeAlpha(mode) + rgb
+  }
+
+  private static chromeAlpha(mode: TransparencyMode): string {
+    if (mode === TransparencyMode.OFF) return 'FF'
+    if (mode === TransparencyMode.LOW || mode === TransparencyMode.MEDIUM) return 'F0'
+    return 'DB'
   }
 
   static opaqueSurfaceBackground(isLight: boolean): string {
@@ -101,7 +139,7 @@ export class TransparencyPolicy {
   }
 
   static opaqueChromeSurfaceBackground(isLight: boolean): string {
-    return isLight ? '#FFDCE0E8' : '#FF11111B'
+    return isLight ? '#FFEFF1F5' : '#FF1E1E2E'
   }
 }
 
@@ -130,15 +168,25 @@ export class AppTheme {
       this.chrome = new ChromeColorsLatte()
       this.terminalColors.background = TransparencyPolicy.terminalBackground(transparencyMode, true)
       this.terminalColors.surfaceBackground = TransparencyPolicy.surfaceBackground(transparencyMode, true)
-      this.terminal = new TerminalThemeState(new XtermTheme(this.terminalColors, this.ansiColors))
+      this.terminal = new TerminalThemeState(new XtermTheme(
+        this.terminalColors, this.ansiColors,
+        TransparencyPolicy.cellBackgroundOpacity(transparencyMode)))
     } else {
       this.terminalColors = new TerminalColors()
       this.ansiColors = new AnsiColors()
       this.chrome = new ChromeColors()
       this.terminalColors.background = TransparencyPolicy.terminalBackground(transparencyMode, false)
       this.terminalColors.surfaceBackground = TransparencyPolicy.surfaceBackground(transparencyMode, false)
-      this.terminal = new TerminalThemeState(new XtermTheme(this.terminalColors, this.ansiColors))
+      this.terminal = new TerminalThemeState(new XtermTheme(
+        this.terminalColors, this.ansiColors,
+        TransparencyPolicy.cellBackgroundOpacity(transparencyMode)))
     }
+    this.chrome.tabBackground = TransparencyPolicy.chromeTabBackground(
+      transparencyMode, mode === ColorMode.LIGHT)
+    this.chrome.tabHoverBackground = TransparencyPolicy.chromeTabHoverBackground(
+      transparencyMode, mode === ColorMode.LIGHT)
+    this.chrome.tabActiveBackground = TransparencyPolicy.chromeTabActiveBackground(
+      transparencyMode, mode === ColorMode.LIGHT)
   }
 
   isDark(): boolean {

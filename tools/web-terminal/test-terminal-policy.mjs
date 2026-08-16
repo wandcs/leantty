@@ -235,6 +235,20 @@ assert.match(terminalHtml,
   'terminal padding and leftover cell space must expose the single ArkUI surface background');
 assert.match(terminalHtml, /document\.documentElement\.style\.setProperty\('--terminal-background', themeObj\.background\)/,
   'theme changes must propagate their background to the Web terminal chrome');
+assert.match(terminalHtml,
+  /LeanTTYCellBackgroundOpacity = Number\.isFinite\(requestedCellBackgroundOpacity\)[\s\S]*Math\.max\(0, Math\.min\(1, requestedCellBackgroundOpacity\)\)/,
+  'theme changes must clamp the renderer-only cell-background opacity');
+assert.match(terminalHtml, /delete themeObj\.cellBackgroundOpacity/,
+  'LeanTTY renderer metadata must not leak into the upstream xterm theme');
+const packagedWebglAddon = readFileSync(
+  new URL('../../entry/src/main/resources/rawfile/addon-webgl.js', import.meta.url), 'utf8'
+);
+assert.match(packagedWebglAddon,
+  /globalThis\.LeanTTYCellBackgroundOpacity\?\?1/,
+  'the packaged WebGL renderer must use LeanTTY cell-background opacity');
+assert.doesNotMatch(packagedWebglAddon,
+  /f=\(h>>8&255\)\/255,g=1,this\._addRectangle/,
+  'the pinned WebGL renderer must not force explicit cell backgrounds opaque');
 assert.match(terminalHtml, /themeObj\.overviewRulerBorder = themeObj\.background/,
   'the width-only overview ruler must not draw a contrasting edge line');
 assert.match(terminalHtml,
@@ -623,8 +637,36 @@ assert.match(sessionViewModel,
   /private onSshClose[\s\S]*?releaseDisconnectedFlowControl\(\)[\s\S]*?writeTerminal\([\s\S]*?writePrompt\(\)/,
   'disconnect cleanup must release output flow control before appending the local close message and prompt');
 assert.match(sessionViewModel,
-  /if \(parsed === null\) \{\s*this\.writeError\("Unknown command\. Type 'help' for commands, or use: ssh user@host"\)/,
-  'unknown idle commands must point to both local help and the direct SSH path');
+  /if \(parsed === null\) \{[\s\S]*?this\.writeError\('Unknown command "' \+ summary \+ '"\.',\s*'Try: help, or ssh user@host to connect\.'\)/,
+  'unknown idle commands must identify a bounded input and put both next steps on a second line');
+assert.match(sessionViewModel,
+  /writeError\(msg: string, guidance: string = ''\)[\s\S]*?LocalCommandOutput\.error\([\s\S]*?terminalSafeMultilineText\(msg\)/,
+  'local diagnostics must preserve a bounded multiline structure while escaping terminal control text');
+assert.doesNotMatch(sessionViewModel, /ltty> /,
+  'the old wordmark prompt must not remain hard-coded in the session output path');
+
+const localCommandOutput = readFileSync(
+  new URL('../../entry/src/main/ets/model/terminal/LocalCommandOutput.ets', import.meta.url), 'utf8');
+assert.match(localCommandOutput,
+  /return GREEN \+ 'ltty>' \+ RESET \+ ' '/,
+  'the local prompt must use the theme ANSI green for one explicit lowercase local identity');
+assert.match(localCommandOutput,
+  /RED \+ 'Error:' \+ RESET[\s\S]*?guidance[\s\S]*?LocalCommandOutput\.prompt\(\)/,
+  'errors must color only the semantic label, preserve optional guidance, and return to the standard prompt');
+assert.match(sessionViewModel,
+  /LocalCommandOutput\.status\('Cancelling', 'file transfer\.\.\.'\)/,
+  'file-transfer cancellation in progress must remain distinct from its yellow terminal result');
+assert.match(sessionViewModel,
+  /HOST_KEY_CHANGED[\s\S]*?LocalCommandOutput\.warning\([\s\S]*?terminalSafeMultilineText/,
+  'changed transfer host keys must use the warning token after terminal-text sanitization');
+
+const keyCommandService = readFileSync(
+  new URL('../../entry/src/main/ets/model/command/KeyCommandService.ets', import.meta.url), 'utf8');
+assert.doesNotMatch(keyCommandService, /ltty> /,
+  'Host and key commands must reuse the single local prompt owner');
+assert.match(keyCommandService,
+  /safeMultilineText\(query\.output\)[\s\S]*?LocalCommandOutput\.prompt\(\)/,
+  'known-host query output must be control-safe before returning to the prompt');
 assert.match(sessionViewModel,
   /private setMode[\s\S]*setInputMasked\(SessionViewModel\.isSecretInputMode\(newMode\)\)[\s\S]*PASSWORD_INPUT[\s\S]*KEY_PASSPHRASE_INPUT[\s\S]*AUTH_CHALLENGE_INPUT[\s\S]*KEY_PASSPHRASE_CHANGE_INPUT/,
   'only local secret-entry modes may mask the xterm helper input');
@@ -695,15 +737,30 @@ assert.match(themeConstants,
 assert.match(themeConstants,
   /background: string = 'rgba\(0, 0, 0, 0\)'[\s\S]*surfaceBackground: string = '#D1EFF1F5'/,
   'the light xterm renderer must stay transparent behind the content surface owner');
+assert.match(themeConstants,
+  /tabBackground: string = '#F02D2E40'[\s\S]*tabHoverBackground: string = '#F0343547'[\s\S]*tabActiveBackground: string = '#F0393A4D'/,
+  'default dark tabs must keep the Low/Medium rail separation without returning to surface1');
+assert.match(themeConstants,
+  /tabBackground: string = '#F0D3D7DF'[\s\S]*tabHoverBackground: string = '#F0CACED8'[\s\S]*tabActiveBackground: string = '#F0C6CAD4'/,
+  'default light tabs must reverse luminance while preserving the Low/Medium rail separation');
+assert.match(chromeBar,
+  /ChromeButton[\s\S]*fontColor\(this\.chromeColors\.statusText\)[\s\S]*opacity\(this\.hovered \|\| this\.focused \? 1 : 0\.72\)/,
+  'Chrome controls must remain visible at rest without competing with the active tab');
+assert.match(indexPage,
+  /activeTabIsSplit\(\)[\s\S]*backgroundColor\(this\.chromeColors\.divider\)[\s\S]*opacity\(0\.64\)/,
+  'the one-pixel split boundary must remain visible across transparent presets');
 assert.match(themeManager,
   /HIGH = 0[\s\S]*MEDIUM = 1[\s\S]*LOW = 2[\s\S]*OFF = 3[\s\S]*EXTREME = 4/,
   'the five-mode model must preserve the three existing semantic preference values');
 assert.match(themeManager,
-  /contentOpacity[\s\S]*1\.00[\s\S]*0\.72[\s\S]*0\.90[\s\S]*0\.60[\s\S]*0\.82/,
+  /contentOpacity[\s\S]*1\.00[\s\S]*0\.60[\s\S]*0\.82[\s\S]*0\.45[\s\S]*0\.72/,
   'theme authority must own all five approved content opacity values');
 assert.match(themeManager,
-  /chromeOpacity[\s\S]*1\.00[\s\S]*0\.80[\s\S]*0\.94[\s\S]*0\.70[\s\S]*0\.88/,
-  'theme authority must own all five derived Chrome opacity values');
+  /cellBackgroundOpacity[\s\S]*OFF\) return 0\.24[\s\S]*HIGH\) return 0\.12[\s\S]*LOW\) return 0\.20[\s\S]*EXTREME\) return 0\.08[\s\S]*return 0\.16/,
+  'explicit cell backgrounds must keep a bounded monotonic renderer alpha even when window transparency is Off');
+assert.match(themeManager,
+  /chromeOpacity[\s\S]*OFF\) return 1\.00[\s\S]*LOW \|\| mode === TransparencyMode\.MEDIUM\) return 0\.94[\s\S]*return 0\.86/,
+  'theme authority must map the five transparency presets onto the approved three Chrome modes');
 assert.match(userPreferences,
   /TERMINAL_TRANSPARENCY_MODE_KEY[\s\S]*loadTransparencyMode\(\)[\s\S]*saveTransparencyMode\(value: number\)/,
   'the semantic transparency mode must persist in the existing local preferences projection');
@@ -901,10 +958,10 @@ assert.doesNotMatch(chromeBar, /chromeBarWidth|\.onAreaChange\(/,
 assert.match(chromeBar, /\.fadingEdge\(this\.tabs\.length > 1\)/,
   'the tab strip must use the platform edge fade without adding width measurement state');
 assert.match(chromeBar,
-  /private surfaceColor\(\): string \{[\s\S]*this\.isActive \|\| this\.hovered[\s\S]*tabActiveBackground[\s\S]*tabBackground/,
-  'tabs must map active and inactive states to explicit palette surfaces');
+  /private surfaceColor\(\): string \{[\s\S]*this\.isActive[\s\S]*tabActiveBackground[\s\S]*this\.hovered[\s\S]*tabHoverBackground[\s\S]*tabBackground/,
+  'tabs must map active, hover, and inactive states to distinct palette surfaces');
 assert.doesNotMatch(chromeBar, /tabInactiveSurfaceOpacity|tabHoverSurfaceOpacity/,
-  'tab separation must not depend on alpha that collapses against the Low chrome surface');
+  'tab separation must not depend on separate opacity state that can drift from the palette surfaces');
 assert.match(chromeBar, /attentionPulseCount[\s\S]*isAnimationReduceEnabledSync[\s\S]*pulseIndex/,
   'tab attention must be finite and respect the system reduced-motion preference');
 assert.match(chromeBar, /indicatorColor\(\): string \{[\s\S]*?if \(this\.hasAttention\) \{[\s\S]*?return this\.chromeColors\.attention/,

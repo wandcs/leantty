@@ -19,6 +19,7 @@ import {
   TerminalInputParser
 } from '../main/ets/model/terminal/TerminalInputParser'
 import { LocalCommandLine } from '../main/ets/model/terminal/LocalCommandLine'
+import { LocalCommandOutput } from '../main/ets/model/terminal/LocalCommandOutput'
 import { SessionViewModel } from '../main/ets/viewmodel/SessionViewModel'
 import { FileTransferLifecycle, FileTransferPhase } from '../main/ets/model/transfer/FileTransferLifecycle'
 import {
@@ -502,6 +503,7 @@ export default function interactionFixesTest() {
       let unknown = FileTransferFailurePresenter.describe('bad\u001b[2Jcode', 'private detail', 'put')
       expect(permission.kind).assertEqual(FileTransferFailureKind.PERMISSION)
       expect(permission.message.includes('remote target directory')).assertEqual(true)
+      expect(permission.message.includes('\r\n')).assertEqual(true)
       expect(permission.message.includes('secret')).assertEqual(false)
       expect(space.kind).assertEqual(FileTransferFailureKind.SPACE)
       expect(space.message.includes('Downloads')).assertEqual(true)
@@ -532,6 +534,7 @@ export default function interactionFixesTest() {
       expect(remoteCleanup.kind).assertEqual(FileTransferFailureKind.CLEANUP)
       expect(remoteCleanup.message.includes('remote temporary file')).assertEqual(true)
       expect(remoteCleanup.message.includes('.leantty-*.part')).assertEqual(true)
+      expect(remoteCleanup.message.includes('\r\n')).assertEqual(true)
       let disconnectedGet: FileTransferFailureInfo =
         FileTransferFailurePresenter.describe('SOURCE_CHANGED', '', 'get')
       expect(disconnectedGet.kind).assertEqual(FileTransferFailureKind.NETWORK)
@@ -1117,11 +1120,35 @@ export default function interactionFixesTest() {
       let line: LocalCommandLine = new LocalCommandLine()
       line.insert('中文')
       expect(line.moveLeft()).assertEqual(true)
-      expect(line.renderForTerminal('ltty> '))
-        .assertEqual('\r\u001b[2Kltty> 中文\rltty> 中')
+      expect(line.renderForTerminal(LocalCommandOutput.prompt()))
+        .assertEqual('\r\u001b[2K\u001b[32mltty>\u001b[0m 中文' +
+          '\r\u001b[32mltty>\u001b[0m 中')
       expect(line.backspace() !== null).assertEqual(true)
-      expect(line.renderForTerminal('ltty> '))
-        .assertEqual('\r\u001b[2Kltty> 文\rltty> ')
+      expect(line.renderForTerminal(LocalCommandOutput.prompt()))
+        .assertEqual('\r\u001b[2K\u001b[32mltty>\u001b[0m 文' +
+          '\r\u001b[32mltty>\u001b[0m ')
+    })
+
+    it('keepsLocalCommandOutputSemanticAndTextCompleteWithoutColor', 0, () => {
+      expect(LocalCommandOutput.prompt()).assertEqual('\u001b[32mltty>\u001b[0m ')
+      expect(LocalCommandOutput.status('Preparing', 'upload...'))
+        .assertEqual('\u001b[36mPreparing\u001b[0m upload...')
+      expect(LocalCommandOutput.success('Uploaded file.'))
+        .assertEqual('\u001b[32m●\u001b[0m Uploaded file.')
+      expect(LocalCommandOutput.warning('A unique name will be used.'))
+        .assertEqual('\u001b[33mWarning:\u001b[0m A unique name will be used.')
+      expect(LocalCommandOutput.note('"alias" is deprecated.'))
+        .assertEqual('\u001b[36mNote:\u001b[0m "alias" is deprecated.')
+      expect(LocalCommandOutput.cancelled()).assertEqual('\u001b[33mCancelled.\u001b[0m')
+      expect(LocalCommandOutput.error('Unknown command "oops".', 'Try: help'))
+        .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m Unknown command "oops".\r\n' +
+          '  Try: help\r\n\u001b[32mltty>\u001b[0m ')
+      expect(LocalCommandOutput.error('Usage: host rm <host-name>'))
+        .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m Invalid command syntax.\r\n' +
+          '  Usage: host rm <host-name>\r\n\u001b[32mltty>\u001b[0m ')
+      expect(LocalCommandOutput.error('First line.\r\n\r\nSecond group.'))
+        .assertEqual('\u001b[0m\r\n\u001b[31mError:\u001b[0m First line.\r\n\r\n' +
+          '  Second group.\r\n\u001b[32mltty>\u001b[0m ')
     })
 
     it('confirmsApplicationCloseOnlyForUnsuppressedActiveSessions', 0, () => {
@@ -1165,15 +1192,20 @@ export default function interactionFixesTest() {
       expect(TransparencyPolicy.normalize(TransparencyMode.LOW)).assertEqual(TransparencyMode.LOW)
       expect(TransparencyPolicy.normalize(TransparencyMode.EXTREME)).assertEqual(TransparencyMode.EXTREME)
       expect(TransparencyPolicy.contentOpacity(TransparencyMode.OFF)).assertEqual(1.00)
-      expect(TransparencyPolicy.contentOpacity(TransparencyMode.LOW)).assertEqual(0.90)
-      expect(TransparencyPolicy.contentOpacity(TransparencyMode.MEDIUM)).assertEqual(0.82)
-      expect(TransparencyPolicy.contentOpacity(TransparencyMode.HIGH)).assertEqual(0.72)
-      expect(TransparencyPolicy.contentOpacity(TransparencyMode.EXTREME)).assertEqual(0.60)
+      expect(TransparencyPolicy.contentOpacity(TransparencyMode.LOW)).assertEqual(0.82)
+      expect(TransparencyPolicy.contentOpacity(TransparencyMode.MEDIUM)).assertEqual(0.72)
+      expect(TransparencyPolicy.contentOpacity(TransparencyMode.HIGH)).assertEqual(0.60)
+      expect(TransparencyPolicy.contentOpacity(TransparencyMode.EXTREME)).assertEqual(0.45)
       expect(TransparencyPolicy.chromeOpacity(TransparencyMode.OFF)).assertEqual(1.00)
-      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.LOW)).assertEqual(0.94)
-      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.MEDIUM)).assertEqual(0.88)
-      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.HIGH)).assertEqual(0.80)
-      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.EXTREME)).assertEqual(0.70)
+      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.LOW)).assertEqual(0.88)
+      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.MEDIUM)).assertEqual(0.80)
+      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.HIGH)).assertEqual(0.70)
+      expect(TransparencyPolicy.chromeOpacity(TransparencyMode.EXTREME)).assertEqual(0.55)
+      expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.OFF)).assertEqual(1.00)
+      expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.LOW)).assertEqual(0.20)
+      expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.MEDIUM)).assertEqual(0.16)
+      expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.HIGH)).assertEqual(0.12)
+      expect(TransparencyPolicy.cellBackgroundOpacity(TransparencyMode.EXTREME)).assertEqual(0.08)
       expect(TransparencyPolicy.increase(TransparencyMode.OFF)).assertEqual(TransparencyMode.LOW)
       expect(TransparencyPolicy.increase(TransparencyMode.HIGH)).assertEqual(TransparencyMode.EXTREME)
       expect(TransparencyPolicy.increase(TransparencyMode.EXTREME)).assertEqual(TransparencyMode.EXTREME)
@@ -1189,17 +1221,17 @@ export default function interactionFixesTest() {
       let light: AppTheme = new AppTheme(ColorMode.LIGHT, TransparencyMode.LOW)
       let extreme: AppTheme = new AppTheme(ColorMode.DARK, TransparencyMode.EXTREME)
       let off: AppTheme = new AppTheme(ColorMode.LIGHT, TransparencyMode.OFF)
-      expect(dark.background()).assertEqual('#B81E1E2E')
-      expect(dark.chromeBackground()).assertEqual('#CC11111B')
+      expect(dark.background()).assertEqual('#991E1E2E')
+      expect(dark.chromeBackground()).assertEqual('#B311111B')
       expect(dark.background(false)).assertEqual('#FF1E1E2E')
       expect(dark.chromeBackground(false)).assertEqual('#FF11111B')
       expect(dark.terminal.toJsInitObject().indexOf('rgba(0, 0, 0, 0)') >= 0).assertEqual(true)
-      expect(light.background()).assertEqual('#E6EFF1F5')
-      expect(light.chromeBackground()).assertEqual('#F0DCE0E8')
+      expect(light.background()).assertEqual('#D1EFF1F5')
+      expect(light.chromeBackground()).assertEqual('#E0DCE0E8')
       expect(light.background(false)).assertEqual('#FFEFF1F5')
       expect(light.terminal.toJsInitObject().indexOf('rgba(0, 0, 0, 0)') >= 0).assertEqual(true)
-      expect(extreme.background()).assertEqual('#991E1E2E')
-      expect(extreme.chromeBackground()).assertEqual('#B311111B')
+      expect(extreme.background()).assertEqual('#731E1E2E')
+      expect(extreme.chromeBackground()).assertEqual('#8C11111B')
       expect(off.background()).assertEqual('#FFEFF1F5')
       expect(off.chromeBackground()).assertEqual('#FFDCE0E8')
     })

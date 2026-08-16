@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.3 — 受约束的单文件交付`](roadmap.md)
 >
-> 当前阶段：实现与自动化已闭合；先完成剩余适用的人工 smoke 和文档收尾，再冻结 1.3 正式候选
+> 当前阶段：核心实现与自动化已闭合；先修正真机视觉反证并完成剩余人工 smoke，再冻结 1.3 正式候选
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -79,7 +79,7 @@ Download 子目录中预置同名文件，经 Tab 完成 GET 目录后自动提�
 2026-08-12，当前 Pane 已拥有显式、可测试且不进入 Tab/WebView/全局单例的传输生命周期：
 `PREPARING → TRANSFERRING → FINALIZING → SUCCEEDED/FAILED/CANCELLED → IDLE`。本地 Downloads
 准备阶段也进入同一完成 Promise，`Ctrl+C` 或关闭 Pane 不会在异步准备返回后重新启动 native
-传输；全部终态回到原 `ltty>`。错误输出收敛为有限类别并给出可执行下一步，底层 detail、凭据
+传输；全部终态回到统一 `ltty>`。错误输出收敛为有限类别并给出可执行下一步，底层 detail、凭据
 和文件内容不直接回显；本地/远端清理失败有独立警告。SFTP metadata/open/close/rename/remove
 以及本地 flush/sync 均增加 30 秒上界并响应同一取消信号，远端失败清理由独立 30 秒上界兜底。
 解析矩阵还覆盖分词、单双引号、转义、`--`、参数数量/方向、全部拒绝选项、IPv6、Unicode、
@@ -320,7 +320,64 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
 尚未排期的评估议题，不自动进入既定 1.4 HSL milestone，也不授权实现；仅按字节数弹窗和可调
 节流当前不分配版本。若以后出现持续用户证据，必须重新按产品原则评审并先提升到本文件。
 
-## 1. 自动化与集成门禁
+## 1. 终端渲染、视觉层级与命令输出收尾
+
+以下四项由用户于 2026-08-14 明确加入 1.3，必须按顺序执行。先修复真实渲染错误，再调整透明
+参数和 Chrome 层级，最后统一命令输出；不得用后续调色掩盖前序根因，也不得在过程中增加主题、
+字体、透明度自定义值或第二套输出模式。
+
+1. [x] 定位并修复 HSL 中运行 `./run-codex` 以及其他高密度 TUI 时出现的大面积黑色文字背景块。
+   先保留当前真机截图、终端字节/样式和 renderer 状态作为失败基线，沿 SSH → Rust/N-API →
+   ArkTS → Bridge → xterm/WebGL/CSS → HarmonyOS 透明窗口链路确定根因，并建立能在修复前失败的
+   最小回归。完成条件是同一物理 ARM64 PC 上 Codex TUI 和至少一个非 Codex 复现场景不再出现
+   异常黑块，普通 shell、显式 ANSI 背景、tmux/vim 和所有透明档位仍正确；不能把整个终端改成
+   不透明背景来隐藏问题。
+2. [x] 重新标定固定透明档位。把当前 Low 的视觉透明度提升到当前 Medium 的参数基线，后续档位
+   依次整体提高，Extreme 采用更激进但仍保证文本、焦点、选区、菜单和 TUI 可读性的参数；Off
+   保持完全不透明，档位仍单调、不循环且不增加设置。完成条件是参数来源、Chrome/content 分层
+   和 opaque fallback 一致，自动化锁定五档映射，并在物理 PC 的普通 shell、深浅背景 TUI、
+   活跃/非活跃窗口中逐档截图比较。
+3. [x] 对当前固定字体和五档透明度下的整体视觉进行一次产品级审计与优化，重点检查 Chrome、
+   Tab bar、活动/非活动 Tab、终端背景、分屏分隔、焦点和状态点的层级。优先解决 Chrome 与
+   Tab bar 颜色过近导致的结构不清；只调整已有 token、透明度、边界和必要间距，不增加装饰、
+   主题选择器或新的常驻控件。完成条件是每个层级在 Off/Medium/Extreme、活动/非活动窗口和
+   单/双 Pane 下可辨，同时保持界面安静、紧凑并符合键盘优先原则。
+   2026-08-14 真机复开：把非活动 Tab 设为透明使其在定义上等于 Chrome rail；活动 Tab 仅叠加
+   相邻 surface 色，Off/Medium/Extreme 下三层仍过近。修订合同固定为 rail 最轻并继续跟随五档
+   alpha，非活动 Tab 使用高稳定度 base，hover 使用 surface0，活动 Tab 使用最重的 surface1；
+   深浅主题翻转亮度方向但保持相同视觉权重，不增加描边、阴影、设置或新状态源。
+   2026-08-14 修订完成：自动化锁定深浅主题的 rail/base/surface0/surface1 所有权与独立 hover；
+   同一物理 HAD-W32 的四 Tab Off/Medium/Extreme 菜单及无菜单截图证明 rail 最轻、非活动 Tab
+   居中、活动 Tab 最重，最终已恢复 Medium。直接受影响链的 HAP 与证据见
+   [`design/ui-interaction-polish.md`](design/ui-interaction-polish.md)。
+4. [x] 重新审计并设计全部本地命令的提示符、输入回显、进行中、成功、警告、取消和错误输出，
+   形成一份统一标准后再修改实现。启动提示符采用整体绿色的小写 `ltty>`，并统一未知命令、
+   解析错误、Host/key/ssh、`put/get` 等结果的
+   文案结构、换行、缩进、颜色和 ASCII/单格图标。颜色只表达有限语义且文字始终自足；错误必须
+   清楚说明“发生了什么”和“下一步怎么做”，不泄露秘密或远端不可信内容。完成条件是建立命令
+   输出清单和 token/格式规范，覆盖所有命令与状态的自动化，并在固定字体真机截图中保持对齐、
+   专业、克制且不与可展开控件混淆。
+
+   2026-08-14 对齐：[`design/local-command-output.md`](design/local-command-output.md) 已冻结并
+   获得实现授权。固定采用绿色小写 `ltty>`、已提交写操作的成功绿点、`Error: 事实` + 可选
+   `Try:/Usage:` 两段式错误，以及黄色警告/取消、青色进行中/说明；按该规范执行本项。
+
+   2026-08-14 完成：Host/key/SSH/帮助和 `put/get` 已共享单一 token/提示符所有者，动态正文经过
+   终端安全边界，自动化、ARM64 debug HAP 与固定字体真机代表场景通过。8 MiB GET 取消只产生
+   一个终态并完整清理；用户指定的 118,349,760 字节安装包完成 GET → PUT 字节精确链，实时
+   速度、ETA、耗时和平均速度可见，最终文件与临时 fixture 数据均按验证器合同清理。长期规范与
+   精确证据见 [`design/local-command-output.md`](design/local-command-output.md)。
+
+   2026-08-14 真机复开：青色 `L` 与绿色 `>` 在固定字体和实际观看距离下无法形成有效区分，已由
+   用户否决。提示符改为整体绿色的小写 `ltty>`；颜色复用当前主题 ANSI green，深色为 Catppuccin
+   Mocha `#A6E3A1`、浅色为 Latte `#40A02B`，不新建品牌 RGB，也不增加 bold。
+
+   2026-08-14 修订完成：单一提示符所有者只输出 `ESC[32mltty>ESC[0mSPACE`；自动化覆盖提示符、
+   宽字符命令行重绘与全部错误回返路径，同一物理 HAD-W32 的启动和四 Tab 三档画面确认文字、
+   绿色、尾随空格与光标对齐。HAP SHA-256 和证据见
+   [`design/local-command-output.md`](design/local-command-output.md)。
+
+## 2. 自动化与集成门禁
 
 - [x] 闭合 SSH 大写入后的连续可用性：在现有单 writer/FIFO 内有界推进较大输入，在块之间恢复
   后续输入和控制事件的调度机会；保持写入顺序、SSH window 背压、resize 和取消/断开有界，
@@ -342,7 +399,7 @@ LeanTTY 断开合同；验收使用现有 Pane 关闭确认和 fixture 的显式
   行为需要设备包时运行 `tools/dev-pc.ps1`，并通过干净 ARM64 debug HAP 集成检查和
   `git diff --check`。普通迭代不运行完整 release gate。
 
-## 2. 物理 ARM64 HarmonyOS PC 验收
+## 3. 物理 ARM64 HarmonyOS PC 验收
 
 2026-08-14 决定不再把“从未授权状态首次执行 `put/get`、拒绝后恢复和双 Pane 授权
 single-flight”作为 1.3 发布门禁，后续默认跳过。现有状态机、自动化和已授权主路径已经覆盖
@@ -376,7 +433,7 @@ x86_64 产品构建或维护测试专用授权路径，成本和风险高于当�
   自动门禁闭合，不重复执行。该人工 smoke 只确认 HDC 输入注入和 repository fixture 无法代表的
   实体键盘、系统 IME、选区/浏览器激活和真实 TUI 体感；任一核心交互失败都阻止候选晋级。
 
-## 3. 文档、版本与发布
+## 4. 文档、版本与发布
 
 - [x] `design/file-transfer.md` 已更新为完成事实，并同步 `design/README.md`、命令体系、路线图、
   架构、安全边界、Changelog 和跨版本愿景映射；中英文源码/离线 User Guide 已审计且现有

@@ -41,6 +41,24 @@
 
 ### Fixed
 
+- Unified disconnected local-command output around a lowercase `ltty>` prompt
+  in the theme ANSI green, restrained semantic status colors, a one-cell green
+  dot for committed writes, quiet query results, and compact two-line errors with
+  actionable next steps. Host, key, SSH and file-transfer output now share one
+  token owner and sanitize dynamic terminal text without exposing raw exception
+  details.
+- Clarified the terminal workspace hierarchy: the Chrome rail recedes with the
+  selected transparency level while inactive, hovered and active tabs retain
+  distinct stable Catppuccin surfaces. Resting Chrome controls remain
+  discoverable, and the one-pixel split boundary stays visible across presets.
+- Shifted each non-off transparency preset one step clearer: Low now matches
+  the former Medium baseline, Medium matches former High, High matches former
+  Extreme, and the new Extreme uses a more aggressive 45% content / 55% Chrome
+  surface while keeping glyphs opaque and semantic ordering stable.
+- Kept ANSI and true-color cell backgrounds consistent with LeanTTY's
+  transparency instead of letting the xterm WebGL renderer force them fully
+  opaque. Dense TUI surfaces such as Codex no longer appear as black blocks;
+  foreground glyphs and the opaque `Off` mode retain their original contrast.
 - Restored ordinary terminal key delivery through ArkWeb after the file-transfer
   keyboard interception change. Left/Right, `Ctrl+P` and other TUI-owned keys
   now reach the remote PTY again, while `Ctrl+C`, Tab, product search and

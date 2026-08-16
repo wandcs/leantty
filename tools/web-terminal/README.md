@@ -22,3 +22,9 @@ Pinned packages:
 The generated `assets-manifest.json` records the size and SHA-256 of each
 vendored file. All six packages use the MIT license and are covered by
 `docs/THIRD_PARTY_NOTICES.md`.
+
+The build applies one version-locked LeanTTY patch to `addon-webgl.js`:
+explicit ANSI and true-color cell backgrounds use the opacity supplied by the
+terminal theme instead of xterm's hard-coded opaque alpha. The build fails if
+the exact audited xterm 6.0.0 render site changes, so dependency updates must
+review the patch rather than silently carrying it forward.

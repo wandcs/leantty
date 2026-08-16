@@ -21,6 +21,7 @@ import { TerminalMode } from '../common/types/TerminalTypes'
 import { ConnectionControl } from '../model/ssh/ConnectionControl'
 import { TerminalSurfaceController } from '../model/terminal/TerminalSurfaceController'
 import { LocalCommandLine } from '../model/terminal/LocalCommandLine'
+import { LocalCommandOutput } from '../model/terminal/LocalCommandOutput'
 import { common } from '@kit.AbilityKit'
 import { KnownHostsManager } from '../model/ssh/KnownHostsManager'
 import { UserGuideManager, UserGuideResult } from '../model/guide/UserGuideManager'
@@ -197,11 +198,13 @@ export class SessionViewModel {
   }
 
   writePrompt(): void {
-    this.writeTerminal('\u001b[0m\r\nltty> ')
+    this.writeTerminal('\u001b[0m\r\n' + LocalCommandOutput.prompt())
   }
 
-  writeError(msg: string): void {
-    this.writeTerminal('\u001b[0m\r\n\u001b[31m' + msg + '\u001b[0m\r\nltty> ')
+  writeError(msg: string, guidance: string = ''): void {
+    this.writeTerminal(LocalCommandOutput.error(
+      SessionViewModel.terminalSafeMultilineText(msg),
+      SessionViewModel.terminalSafeMultilineText(guidance)))
   }
 
   async connect(host: string, port: number, username: string): Promise<void> {
@@ -240,7 +243,9 @@ export class SessionViewModel {
       this.session.setErrorMessage('' + e)
       this.setMode(TerminalMode.IDLE)
       this.releaseDisconnectedFlowControl()
-      this.writeError('Connection failed: ' + e)
+      this.logger.warn('SSH connection start failed: ' + e)
+      this.writeError('The SSH connection could not start.',
+        'Check the Host, network and credentials, then try again.')
       this.notifyStateChange()
     }
   }
@@ -290,7 +295,7 @@ export class SessionViewModel {
       this.requestFileTransferCancellation()
       this.setMode(TerminalMode.TRANSFERRING)
       this.clearTransferProgress()
-      this.writeTerminal('^C\r\nCancelling file transfer...')
+      this.writeTerminal('^C\r\n' + LocalCommandOutput.status('Cancelling', 'file transfer...'))
       return
     }
     this.sshClient.disconnect()
@@ -508,7 +513,8 @@ export class SessionViewModel {
   private onSshError(errorDetail: string): void {
     this.clearAuthChallenge()
     if (this.pendingKeypush) {
-      this.failKeypush('Key installation failed: ' + errorDetail)
+      this.logger.warn('Key installation SSH error: ' + errorDetail)
+      this.failKeypush('Key installation failed.\r\nCheck the Host, network and credentials, then try again.')
       return
     }
     this.pendingKeypush = false
@@ -517,7 +523,9 @@ export class SessionViewModel {
     this.session.setErrorMessage(errorDetail)
     this.setMode(TerminalMode.IDLE)
     this.releaseDisconnectedFlowControl()
-    this.writeError('SSH error: ' + errorDetail)
+    this.logger.warn('SSH error: ' + errorDetail)
+    this.writeError('The SSH connection failed.',
+      'Check the Host, network and credentials, then try again.')
     if (this.terminalSurface !== null) {
       this.terminalSurface.captureSnapshot()
     }
@@ -553,16 +561,15 @@ export class SessionViewModel {
     this.session.setErrorMessage('Remote host identification has changed')
     this.setMode(TerminalMode.IDLE)
     this.releaseDisconnectedFlowControl()
-    this.writeTerminal('\r\n' + SessionViewModel.buildHostKeyChangedWarning(
-      info.host, info.port, info.algorithm, info.oldFingerprint, info.newFingerprint) +
-      '\r\nltty> ')
+    this.writeError(SessionViewModel.buildHostKeyChangedWarning(
+      info.host, info.port, info.algorithm, info.oldFingerprint, info.newFingerprint))
     this.notifyStateChange()
   }
 
   static buildHostKeyChangedWarning(host: string, port: number, algorithm: string,
     oldFingerprint: string, newFingerprint: string): string {
     let target: string = KnownHostsManager.formatTarget(host, port)
-    return 'WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\r\n\r\n' +
+    return 'Remote host identification has changed.\r\n\r\n' +
       'Host: ' + target + '\r\n' +
       'Stored ' + algorithm + ' fingerprint:\r\n  ' + oldFingerprint + '\r\n\r\n' +
       'Received ' + algorithm + ' fingerprint:\r\n  ' + newFingerprint + '\r\n\r\n' +
@@ -832,7 +839,8 @@ export class SessionViewModel {
       this.session.setState(SshSessionState.FAILED)
       this.setMode(TerminalMode.IDLE)
       this.releaseDisconnectedFlowControl()
-      this.writeError('Host key rejected')
+      this.writeError('The host key was not trusted.',
+        'Reconnect when you are ready to verify the fingerprint.')
       this.notifyStateChange()
     }
   }
@@ -855,16 +863,20 @@ export class SessionViewModel {
     let parsed: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
       CommandParser.parseInput(cmd, this.commandBarVm.getSshConfig())
     if (parsed === null) {
-      this.writeError("Unknown command. Type 'help' for commands, or use: ssh user@host")
+      let summary: string = cmd.length > 80 ? cmd.substring(0, 80) + '...' : cmd
+      this.writeError('Unknown command "' + summary + '".',
+        'Try: help, or ssh user@host to connect.')
       return
     }
     if (parsed instanceof TransferCommandResult) {
       if (parsed.direction === TransferDirection.SCP_HINT) {
-        this.writeError('LeanTTY does not implement scp. Use put for uploads or get for downloads.')
+        this.writeError('The scp command is not available.', 'Try: put to upload or get to download.')
         return
       }
       if (!parsed.isValid) {
-        this.writeError(parsed.errorMessage)
+        this.writeError(parsed.errorMessage,
+          parsed.errorMessage.startsWith('Usage: ') ? '' :
+            'Try: help ' + (parsed.direction === TransferDirection.PUT ? 'put' : 'get'))
         return
       }
       this.startFileTransfer(parsed)
@@ -873,7 +885,8 @@ export class SessionViewModel {
     if (parsed instanceof KeyCommandResult) {
       if (parsed.kind === KeyCommandKind.EXIT) {
         if (this.onLocalExit === null || !this.onLocalExit()) {
-          this.writeError('Cannot close this pane until its remote connection is closed.')
+          this.writeError('This Pane still has a remote connection.',
+            'Disconnect it before closing the Pane.')
         }
         return
       }
@@ -882,7 +895,8 @@ export class SessionViewModel {
     }
     let result: CommandParseResult = parsed
     if (!result.isValid) {
-      this.writeError(result.errorMessage)
+      this.writeError(result.errorMessage,
+        result.errorMessage.startsWith('Usage: ') ? '' : 'Try: help ssh')
       return
     }
 
@@ -896,11 +910,13 @@ export class SessionViewModel {
 
   private async startFileTransfer(command: TransferCommandResult): Promise<void> {
     if (this.context === null || this.paneId.length === 0) {
-      this.writeError('File transfer is unavailable because the Pane context is missing.')
+      this.writeError('File transfer is unavailable in this Pane.',
+        'Close and reopen the Pane, then try again.')
       return
     }
     if (!this.setFileTransferPhase(FileTransferPhase.PREPARING)) {
-      this.writeError('File transfer is unavailable because this Pane already owns a transfer.')
+      this.writeError('This Pane already has a file transfer in progress.',
+        'Cancel or finish it before starting another transfer.')
       return
     }
     this.transferCancellationRequested = false
@@ -914,8 +930,8 @@ export class SessionViewModel {
     this.setMode(TerminalMode.TRANSFERRING)
     this.session.setState(SshSessionState.CONNECTING)
     this.notifyStateChange()
-    this.writeTerminal('\u001b[36mPreparing\u001b[0m ' +
-      (command.direction === TransferDirection.PUT ? 'upload' : 'download') + '...\r\n')
+    this.writeTerminal(LocalCommandOutput.status('Preparing',
+      (command.direction === TransferDirection.PUT ? 'upload' : 'download') + '...') + '\r\n')
     let prepared: TransferLocalFile | null = null
     try {
       prepared = command.direction === TransferDirection.PUT ?
@@ -931,9 +947,9 @@ export class SessionViewModel {
         return
       }
       if (command.direction === TransferDirection.GET && prepared.nameConflictExpected) {
-        this.writeTerminal('\u001b[33mDownloads/' +
+        this.writeTerminal(LocalCommandOutput.warning('Downloads/' +
           SessionViewModel.terminalSafeText(prepared.localName) +
-          ' already exists. A unique name will be chosen when the download finishes.\u001b[0m\r\n')
+          ' already exists. A unique name will be chosen when the download finishes.') + '\r\n')
       }
       this.transferCommand = command
       this.transferLocalFile = prepared
@@ -1030,7 +1046,8 @@ export class SessionViewModel {
         break
       case SshClientEvent.HOST_KEY_CHANGED:
         this.transferControlFailureCode = 'HOST_KEY_CHANGED'
-        this.writeTerminal('\r\n' + this.transferHostKeyChangedWarning(data) + '\r\n')
+        this.writeTerminal('\r\n' + LocalCommandOutput.warning(
+          SessionViewModel.terminalSafeMultilineText(this.transferHostKeyChangedWarning(data))) + '\r\n')
         if (this.fileTransferClient !== null) { this.fileTransferClient.cancel() }
         break
       case SshClientEvent.ERROR:
@@ -1142,8 +1159,8 @@ export class SessionViewModel {
         ',durationMs=' + Math.floor(elapsedMs).toString())
       let transferStats: string = SessionViewModel.formatTransferCompletion(bytes, elapsedMs)
       this.finishFileTransferState(FileTransferPhase.SUCCEEDED)
-      this.writeTerminal('\r\n\u001b[32m●\u001b[0m ' + summary +
-        ' (' + transferStats + ').\r\nltty> ')
+      this.writeTerminal('\r\n' + LocalCommandOutput.success(summary +
+        ' (' + transferStats + ').') + '\r\n' + LocalCommandOutput.prompt())
     } catch (e) {
       let cleanupSucceeded: boolean = this.cleanupTransferLocalFile()
       let message: string = this.fileTransferError('LOCAL_COMMIT', '' + e)
@@ -1223,8 +1240,9 @@ export class SessionViewModel {
     this.clearTransferProgress()
     this.finishFileTransferState(FileTransferPhase.CANCELLED)
     let cleanupWarning: string = cleanupSucceeded ? '' :
-      '\r\n\u001b[31m' + FileTransferFailurePresenter.cleanupWarning(true) + '\u001b[0m'
-    this.writeTerminal('\r\n\u001b[33mCancelled\u001b[0m.' + cleanupWarning + '\r\nltty> ')
+      '\r\n' + LocalCommandOutput.warning(FileTransferFailurePresenter.cleanupWarning(true))
+    this.writeTerminal('\r\n' + LocalCommandOutput.cancelled() + cleanupWarning +
+      '\r\n' + LocalCommandOutput.prompt())
   }
 
   private requestFileTransferCancellation(): void {
@@ -1385,10 +1403,10 @@ export class SessionViewModel {
   static styleTransferProgress(text: string, finalizing: boolean): string {
     let percentageEnd: number = text.indexOf(']') + 6
     if (percentageEnd < 6 || percentageEnd > text.length) { return text }
-    let styled: string = '\u001b[36m' + text.substring(0, percentageEnd) +
-      '\u001b[0m' + text.substring(percentageEnd)
+    let styled: string = LocalCommandOutput.progress(text.substring(0, percentageEnd)) +
+      text.substring(percentageEnd)
     if (finalizing) {
-      styled = styled.replace('Finalizing...', '\u001b[33mFinalizing...\u001b[0m')
+      styled = styled.replace('Finalizing...', LocalCommandOutput.finalizing('Finalizing...'))
     }
     return styled
   }
@@ -1424,13 +1442,24 @@ export class SessionViewModel {
       }
       let notice: string = this.commandBarVm.completionNotice()
       if (notice.length > 0) { visible.push(notice) }
-      this.writeTerminal('\r\n' + visible.join('  ') + '\r\nltty> ' +
+      this.writeTerminal('\r\n' + visible.join('  ') + '\r\n' + LocalCommandOutput.prompt() +
         SessionViewModel.terminalSafeText(this.commandLine.getText()))
     }
   }
 
   private static terminalSafeText(value: string): string {
     return TerminalTextPolicy.escape(value)
+  }
+
+  private static terminalSafeMultilineText(value: string): string {
+    let normalized: string = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    let lines: string[] = normalized.split('\n')
+    let safe: string = ''
+    for (let index: number = 0; index < lines.length; index++) {
+      if (index > 0) { safe += '\r\n' }
+      safe += TerminalTextPolicy.escape(lines[index])
+    }
+    return safe
   }
 
   private navigateHistory(direction: number): void {
@@ -1441,7 +1470,7 @@ export class SessionViewModel {
   }
 
   private redrawLocalCommandLine(): void {
-    this.writeTerminal(this.commandLine.renderForTerminal('ltty> '))
+    this.writeTerminal(this.commandLine.renderForTerminal(LocalCommandOutput.prompt()))
   }
 
   private notifyTitleChange(title: string): void {
@@ -1469,7 +1498,8 @@ export class SessionViewModel {
 
   private executeKeyCommand(result: KeyCommandResult): void {
     if (this.context === null) {
-      this.writeError('Context not available')
+      this.writeError('Local commands are unavailable in this Pane.',
+        'Close and reopen the Pane, then try again.')
       return
     }
     let ctx: KeyCommandContext = {
@@ -1489,7 +1519,8 @@ export class SessionViewModel {
       showTopLevelHelp: (helpText: string) => { this.showTopLevelHelp(helpText) },
       confirmKeyDelete: (name: string, fingerprint: string, onConfirm: () => void, onCancel: () => void) => {
         if (this.onConfirmKeyDelete === null) {
-          this.writeError('Key deletion confirmation is unavailable.')
+          this.writeError('Key deletion confirmation is unavailable.',
+            'Close and reopen the Pane, then try again.')
           return
         }
         this.onConfirmKeyDelete(name, fingerprint, onConfirm, onCancel)
@@ -1500,7 +1531,9 @@ export class SessionViewModel {
 
   private showTopLevelHelp(helpText: string): void {
     if (this.context === null || this.localHelpPending) {
-      this.writeTerminal(helpText + '\u001b[31mFull user guide unavailable: Application context is unavailable.\u001b[0m\r\nltty> ')
+      this.writeTerminal(helpText + LocalCommandOutput.warning(
+        'The full user guide is unavailable because the application context is unavailable.') +
+        '\r\n' + LocalCommandOutput.prompt())
       return
     }
     this.writeTerminal(helpText)
@@ -1509,13 +1542,17 @@ export class SessionViewModel {
     UserGuideManager.sync(context).then((result: UserGuideResult) => {
       if (result.available) {
         let link: string = UserGuidePolicy.osc8Link(result.uri)
-        this.writeTerminal('Full user guide: ' + link + ' (Ctrl+Click to open)\r\nltty> ')
+        this.writeTerminal('Full user guide: ' + link + ' (Ctrl+Click to open)\r\n' +
+          LocalCommandOutput.prompt())
       } else {
-        this.writeTerminal('\u001b[31mFull user guide unavailable: ' + result.errorMessage + '\u001b[0m\r\nltty> ')
+        this.writeTerminal(LocalCommandOutput.warning('The full user guide is unavailable: ' +
+          SessionViewModel.terminalSafeText(result.errorMessage)) + '\r\n' + LocalCommandOutput.prompt())
       }
       this.localHelpPending = false
     }).catch(() => {
-      this.writeTerminal('\u001b[31mFull user guide unavailable: LeanTTY could not create or update the guide.\u001b[0m\r\nltty> ')
+      this.writeTerminal(LocalCommandOutput.warning(
+        'The full user guide is unavailable because LeanTTY could not create or update it.') +
+        '\r\n' + LocalCommandOutput.prompt())
       this.localHelpPending = false
     })
   }
@@ -1552,7 +1589,8 @@ export class SessionViewModel {
       this.clearKeyPassphraseChangeSecrets()
       this.keyPassphraseChangeStage = KeyPassphraseChangeStage.OLD_PASSPHRASE
       this.logger.info('KEY_PASSPHRASE_CHANGE result=mismatch stage=old')
-      this.writeTerminal('\r\nPassphrases do not match. No changes were made.\r\n' +
+      this.writeTerminal('\r\n' + LocalCommandOutput.warning(
+        'Passphrases do not match. No changes were made.') + '\r\n' +
         'Old passphrase (leave empty if none): ')
       return
     }
@@ -1560,7 +1598,8 @@ export class SessionViewModel {
       this.clearKeyPassphraseChangeState()
       this.setMode(TerminalMode.IDLE)
       this.logger.warn('KEY_PASSPHRASE_CHANGE result=failure reason=context')
-      this.writeError('Key passphrase change failed: context not available')
+      this.writeError('The key passphrase could not be updated.',
+        'Close and reopen the Pane, then try again.')
       return
     }
     let context: common.Context = this.context
@@ -1572,11 +1611,14 @@ export class SessionViewModel {
       SshKeyManager.changeKeyPassphrase(context, keyName, oldPassphrase, newPassphrase)
       this.setMode(TerminalMode.IDLE)
       this.logger.info('KEY_PASSPHRASE_CHANGE result=success')
-      this.writeTerminal('\r\nPassphrase updated: ' + keyName + '\r\nltty> ')
+      this.writeTerminal('\r\n' + LocalCommandOutput.success('Passphrase updated for ' +
+        SessionViewModel.terminalSafeText(keyName) + '.') + '\r\n' + LocalCommandOutput.prompt())
     } catch (e) {
       this.setMode(TerminalMode.IDLE)
       this.logger.warn('KEY_PASSPHRASE_CHANGE result=failure reason=native')
-      this.writeError('Key passphrase change failed: ' + e)
+      this.logger.warn('Key passphrase change detail: ' + e)
+      this.writeError('The key passphrase could not be updated.',
+        'Check the current passphrase and try again.')
     }
     oldPassphrase = ''
     newPassphrase = ''
@@ -1680,12 +1722,16 @@ export class SessionViewModel {
     this.setMode(TerminalMode.IDLE)
     this.releaseDisconnectedFlowControl()
     if (status === 0) {
-      this.writeTerminal('\r\nKey installed. Verify with: ssh ' + username + '@' + hostname +
-        ' -i ' + keyPath + '\r\nltty> ')
+      this.writeTerminal('\r\n' + LocalCommandOutput.success('Key installed.') + '\r\n' +
+        '  Verify with: ssh ' + SessionViewModel.terminalSafeText(username) + '@' +
+        SessionViewModel.terminalSafeText(hostname) + ' -i ' +
+        SessionViewModel.terminalSafeText(keyPath) + '\r\n' + LocalCommandOutput.prompt())
     } else if (status < 0) {
-      this.writeError('Key installation timed out before the server confirmed completion.')
+      this.writeError('The server did not confirm key installation before the timeout.',
+        'Check the server before running ssh-copy-id again.')
     } else {
-      this.writeError('Key installation failed with remote exit status ' + status.toString() + '.')
+      this.writeError('Key installation failed with remote exit status ' + status.toString() + '.',
+        'Check the remote ~/.ssh permissions, then try again.')
     }
     this.notifyStateChange()
   }

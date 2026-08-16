@@ -220,8 +220,11 @@ struct ChromeTab {
   }
 
   private surfaceColor(): string {
-    if (this.isActive || this.hovered) {
+    if (this.isActive) {
       return this.chromeColors.tabActiveBackground
+    }
+    if (this.hovered) {
+      return this.chromeColors.tabHoverBackground
     }
     return this.chromeColors.tabBackground
   }
@@ -325,7 +328,8 @@ struct ChromeButton {
   build() {
     Text(this.symbol)
       .fontSize(13)
-      .fontColor(this.chromeColors.commandBarPlaceholder)
+      .fontColor(this.chromeColors.statusText)
+      .opacity(this.hovered || this.focused ? 1 : 0.72)
       .width(32)
       .height(32)
       .textAlign(TextAlign.Center)
@@ -355,29 +359,30 @@ struct MoreButton {
           Circle()
             .width(3)
             .height(3)
-            .fill(this.chromeColors.commandBarPlaceholder)
+            .fill(this.chromeColors.statusText)
             .margin({ right: 4 })
           Circle()
             .width(3)
             .height(3)
-            .fill(this.chromeColors.commandBarPlaceholder)
+            .fill(this.chromeColors.statusText)
         }
         .margin({ bottom: 4 })
         Row() {
           Circle()
             .width(3)
             .height(3)
-            .fill(this.chromeColors.commandBarPlaceholder)
+            .fill(this.chromeColors.statusText)
             .margin({ right: 4 })
           Circle()
             .width(3)
             .height(3)
-            .fill(this.chromeColors.commandBarPlaceholder)
+            .fill(this.chromeColors.statusText)
         }
       }
     }
     .width(32)
     .height(32)
+    .opacity(this.hovered || this.focused ? 1 : 0.72)
     .borderRadius(6)
     .backgroundColor(this.hovered ? this.chromeColors.commandBarBorder : '#00000000')
     .border({ width: this.focused ? 1 : 0, color: this.chromeColors.focusRing, radius: 6 })

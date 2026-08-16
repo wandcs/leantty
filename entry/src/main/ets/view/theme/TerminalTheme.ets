@@ -24,8 +24,9 @@ export class XtermTheme {
   brightMagenta: string
   brightCyan: string
   brightWhite: string
+  cellBackgroundOpacity: number
 
-  constructor(term: TerminalColors, ansi: AnsiColors) {
+  constructor(term: TerminalColors, ansi: AnsiColors, cellBackgroundOpacity: number = 1.00) {
     this.background = term.background
     this.foreground = term.foreground
     this.cursor = term.cursor
@@ -49,6 +50,7 @@ export class XtermTheme {
     this.brightMagenta = ansi.brightMagenta
     this.brightCyan = ansi.brightCyan
     this.brightWhite = ansi.brightWhite
+    this.cellBackgroundOpacity = cellBackgroundOpacity
   }
 }
 
