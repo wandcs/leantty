@@ -59,9 +59,9 @@ export class TerminalColorsLatte extends TerminalColors {
 }
 
 export class ChromeColors {
-  tabBackground: string = '#E01E1E2E'
-  tabHoverBackground: string = '#EB313244'
-  tabActiveBackground: string = '#F245475A'
+  tabBackground: string = '#F02D2E40'
+  tabHoverBackground: string = '#F0343547'
+  tabActiveBackground: string = '#F0393A4D'
   focusRing: string = '#89B4FA'
   attention: string = '#F9E2AF'
   commandBarBackground: string = '#181825'
@@ -83,9 +83,9 @@ export class ChromeColors {
 }
 
 export class ChromeColorsLatte extends ChromeColors {
-  tabBackground: string = '#E0EFF1F5'
-  tabHoverBackground: string = '#EBCCD0DA'
-  tabActiveBackground: string = '#F2BCC0CC'
+  tabBackground: string = '#F0D3D7DF'
+  tabHoverBackground: string = '#F0CACED8'
+  tabActiveBackground: string = '#F0C6CAD4'
   focusRing: string = '#1E66F5'
   attention: string = '#DF8E1D'
   commandBarBackground: string = '#E6E9EF'
