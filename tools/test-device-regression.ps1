@@ -657,6 +657,9 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 $sessionViewModel = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
 ) -Raw
+$localCommandOutput = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\model\terminal\LocalCommandOutput.ets'
+) -Raw
 $indexPage = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
 ) -Raw
@@ -816,7 +819,7 @@ Assert-True (
 Assert-True (
     $sessionViewModel.Contains("const width: number = 30") -and
     $sessionViewModel.Contains("'\r\u001b[2K' + SessionViewModel.styleTransferProgress") -and
-    $sessionViewModel.Contains("\u001b[32m●\u001b[0m") -and
+    $localCommandOutput.Contains("GREEN + '●' + RESET") -and
     $sessionViewModel.Contains('FILE_TRANSFER progress=visible') -and
     $sessionViewModel.Contains('FILE_TRANSFER speed=visible') -and
     $sessionViewModel.Contains("FILE_TRANSFER stage=finalizing")

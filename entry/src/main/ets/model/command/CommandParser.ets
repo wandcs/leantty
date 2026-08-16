@@ -5,6 +5,7 @@ import { TerminalTextPolicy } from '../../common/security/TerminalTextPolicy'
 export class CommandParseResult {
   isValid: boolean
   host: string
+  displayHost: string
   port: number
   username: string
   isAlias: boolean
@@ -14,6 +15,7 @@ export class CommandParseResult {
   constructor() {
     this.isValid = false
     this.host = ''
+    this.displayHost = ''
     this.port = 22
     this.username = ''
     this.isAlias = false
@@ -262,6 +264,7 @@ export class CommandParser {
       if (host.user.length === 0) { result.errorMessage = 'SSH alias must define User: ' + target; return result }
       result.isValid = true
       result.host = host.hostname
+      result.displayHost = target
       result.port = explicitPort > 0 ? explicitPort : host.port
       result.username = host.user
       if (result.identityFile.length === 0) { result.identityFile = host.identityFile }
@@ -277,6 +280,7 @@ export class CommandParser {
     if (result.errorMessage.length > 0) { return result }
     if (explicitPort > 0) { result.port = explicitPort }
     result.isValid = result.username.length > 0 && result.host.length > 0
+    if (result.isValid) { result.displayHost = result.host }
     if (!result.isValid) { result.errorMessage = 'Invalid SSH target' }
     return result
   }
@@ -351,6 +355,8 @@ export class CommandParser {
     let remoteOperand: string = direction === TransferDirection.PUT ? operands[1] : operands[0]
     let localOperand: string = direction === TransferDirection.PUT ? operands[0] :
       (operands.length === 2 ? operands[1] : '')
+    let localDirectoryRequested: boolean = direction === TransferDirection.GET && localOperand.endsWith('/')
+    if (localOperand.startsWith('./')) { localOperand = localOperand.substring(2) }
     let remoteParts: string[] | string = CommandParser.splitRemoteOperand(remoteOperand)
     if (typeof remoteParts === 'string') {
       result.errorMessage = command + ': ' + remoteParts
@@ -365,7 +371,7 @@ export class CommandParser {
         command + ': remote target must name a safe file or end with / for a directory'
       return result
     }
-    result.localTargetDirectory = direction === TransferDirection.GET && localOperand.endsWith('/')
+    result.localTargetDirectory = localDirectoryRequested
     if ((direction === TransferDirection.PUT || localOperand.length > 0) &&
       !CommandParser.validDownloadsRelativePath(localOperand, result.localTargetDirectory)) {
       result.errorMessage = command + ': local path must stay within Downloads and use a relative file path'

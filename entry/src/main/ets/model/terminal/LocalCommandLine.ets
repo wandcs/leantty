@@ -31,10 +31,29 @@ export class LocalCommandLine {
     if (this.cursor === 0) {
       return null
     }
+    let removedLength: number = 1
+    if (this.cursor >= 2 && LocalCommandLine.isLowSurrogate(this.text.charCodeAt(this.cursor - 1)) &&
+      LocalCommandLine.isHighSurrogate(this.text.charCodeAt(this.cursor - 2))) {
+      removedLength = 2
+    }
     let suffix: string = this.text.substring(this.cursor)
-    this.text = this.text.substring(0, this.cursor - 1) + suffix
-    this.cursor--
+    this.text = this.text.substring(0, this.cursor - removedLength) + suffix
+    this.cursor -= removedLength
     return suffix
+  }
+
+  delete(): string | null {
+    if (this.cursor === this.text.length) {
+      return null
+    }
+    let removedLength: number = 1
+    if (this.cursor + 1 < this.text.length &&
+      LocalCommandLine.isHighSurrogate(this.text.charCodeAt(this.cursor)) &&
+      LocalCommandLine.isLowSurrogate(this.text.charCodeAt(this.cursor + 1))) {
+      removedLength = 2
+    }
+    this.text = this.text.substring(0, this.cursor) + this.text.substring(this.cursor + removedLength)
+    return this.text.substring(this.cursor)
   }
 
   moveLeft(): boolean {
@@ -42,6 +61,10 @@ export class LocalCommandLine {
       return false
     }
     this.cursor--
+    if (this.cursor > 0 && LocalCommandLine.isLowSurrogate(this.text.charCodeAt(this.cursor)) &&
+      LocalCommandLine.isHighSurrogate(this.text.charCodeAt(this.cursor - 1))) {
+      this.cursor--
+    }
     return true
   }
 
@@ -49,8 +72,22 @@ export class LocalCommandLine {
     if (this.cursor === this.text.length) {
       return false
     }
-    this.cursor++
+    if (this.cursor + 1 < this.text.length &&
+      LocalCommandLine.isHighSurrogate(this.text.charCodeAt(this.cursor)) &&
+      LocalCommandLine.isLowSurrogate(this.text.charCodeAt(this.cursor + 1))) {
+      this.cursor += 2
+    } else {
+      this.cursor++
+    }
     return true
+  }
+
+  private static isHighSurrogate(code: number): boolean {
+    return code >= 0xD800 && code <= 0xDBFF
+  }
+
+  private static isLowSurrogate(code: number): boolean {
+    return code >= 0xDC00 && code <= 0xDFFF
   }
 
   renderForTerminal(prompt: string): string {

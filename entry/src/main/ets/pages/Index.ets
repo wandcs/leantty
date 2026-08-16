@@ -14,6 +14,7 @@ import { UserPreferences } from '../model/settings/UserPreferences'
 import { TerminalSurfaceController } from '../model/terminal/TerminalSurfaceController'
 import { BrowserLauncher } from '../model/browser/BrowserLauncher'
 import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator'
+import { KeyCodeMap } from '../common/constants/KeyCodeMap'
 
 const logger: Logger = new Logger('IndexPage')
 const WARM_TAB_RETENTION_MS: number = 30000
@@ -110,7 +111,7 @@ struct Index {
     Stack() {
       Column() {
         ChromeBar({
-          tabs: this.tabs,
+          tabs: $tabs,
           activeTabIndex: this.activeTabIndex,
           chromeColors: this.chromeColors,
           chromeBackground: this.chromeBg,
@@ -705,7 +706,8 @@ struct Index {
     if (InteractionPolicy.isTerminalTabKey(event.keyCode, ctrlKey, altKey, shiftKey)) {
       let runtime: PaneRuntime | null = activeRuntime
       if (runtime !== null) {
-        runtime.viewModel.handleTerminalInput('\t')
+        runtime.viewModel.handleTerminalInput(KeyCodeMap.toAnsi(
+          event.keyCode, ctrlKey, altKey, shiftKey))
         return true
       }
     }

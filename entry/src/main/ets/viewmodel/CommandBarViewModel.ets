@@ -5,6 +5,7 @@ import { CommandParser, CommandParseResult, KeyCommandResult, KeyCommandKind } f
 import { SshKeyManager } from '../model/ssh/SshKeyManager'
 import { KeyPairInfo } from '../common/types/SshKeyTypes'
 import { TerminalTextPolicy } from '../common/security/TerminalTextPolicy'
+import { LocalCompletionSet } from '../model/terminal/LocalCompletionEngine'
 
 export { CommandParseResult, KeyCommandResult, KeyCommandKind } from '../model/command/CommandParser'
 
@@ -17,12 +18,8 @@ export class CommandBarViewModel {
   private inputText: string = ''
   private history: string[] = []
   private historyIndex: number = -1
-  private completions: string[] = []
   private sshConfig: SshConfig = new SshConfig()
   private context: common.Context | null = null
-  private completionIsPrefix: boolean = false
-  private lastAmbiguousInput: string = ''
-  private completionTruncated: boolean = false
   private static readonly MAX_HISTORY: number = 100
   private static readonly MAX_COMPLETIONS: number = 100
 
@@ -36,8 +33,10 @@ export class CommandBarViewModel {
   getSshConfig(): SshConfig { return this.sshConfig }
 
   tryTabComplete(): string[] {
-    this.completionIsPrefix = false
-    this.completionTruncated = false
+    return this.completionSet().replacements
+  }
+
+  completionSet(): LocalCompletionSet {
     let transferMatches: string[] | null = this.transferCompletions()
     if (transferMatches !== null) { return this.finishCompletions(transferMatches) }
     let trimmed: string = this.inputText.trim()
@@ -66,41 +65,23 @@ export class CommandBarViewModel {
     return this.finishCompletions(matches)
   }
 
-  applyCompletion(completion: string): string {
-    let suffix: string = this.completionIsPrefix || completion.endsWith('/') || completion.endsWith(':') ? '' : ' '
-    this.inputText = completion + suffix
-    this.completions = []
-    this.completionIsPrefix = false
-    this.lastAmbiguousInput = ''
-    return this.inputText
-  }
-
-  completionNotice(): string {
-    return this.completionTruncated ? '100+ matches; type more' : ''
-  }
-
-  private finishCompletions(matches: string[]): string[] {
+  private finishCompletions(matches: string[]): LocalCompletionSet {
+    let set: LocalCompletionSet = new LocalCompletionSet()
     matches.sort()
-    let common: string = matches.length > 1 ? CommandBarViewModel.commonPrefix(matches) : ''
     if (matches.length > CommandBarViewModel.MAX_COMPLETIONS) {
       matches = matches.slice(0, CommandBarViewModel.MAX_COMPLETIONS)
-      this.completionTruncated = true
+      set.truncated = true
     }
-    this.completions = matches
-    if (matches.length <= 1) {
-      this.lastAmbiguousInput = ''
-      return matches
+    set.replacements = matches
+    let tokens: CompletionToken[] = CommandBarViewModel.tokenizeForCompletion(this.inputText)
+    let displayStart: number = 0
+    if (tokens.length > 0) {
+      displayStart = tokens[tokens.length - 1].start
     }
-    if (common.length > this.inputText.length) {
-      this.completionIsPrefix = true
-      this.lastAmbiguousInput = ''
-      return [common]
+    for (let index: number = 0; index < matches.length; index++) {
+      set.displayValues.push(CommandBarViewModel.completionDisplayValue(matches[index], displayStart))
     }
-    if (this.lastAmbiguousInput !== this.inputText) {
-      this.lastAmbiguousInput = this.inputText
-      return []
-    }
-    return matches
+    return set
   }
 
   private transferCompletions(): string[] | null {
@@ -161,7 +142,11 @@ export class CommandBarViewModel {
 
   private localPathCompletions(token: CompletionToken, includeFiles: boolean): string[] {
     let slash: number = token.value.lastIndexOf('/')
-    let directory: string = slash < 0 ? '' : token.value.substring(0, slash)
+    let visibleDirectory: string = slash < 0 ? '' : token.value.substring(0, slash)
+    let explicitRoot: boolean = token.value.startsWith('./')
+    let directory: string = visibleDirectory
+    if (directory === '.') { directory = '' }
+    else if (directory.startsWith('./')) { directory = directory.substring(2) }
     let partial: string = slash < 0 ? token.value : token.value.substring(slash + 1)
     if (!CommandBarViewModel.safeCompletionDirectory(directory)) { return [] }
     try {
@@ -180,6 +165,7 @@ export class CommandBarViewModel {
         let stat: fs.Stat = fs.lstatSync(child)
         if (stat.isSymbolicLink() || (!stat.isDirectory() && (!includeFiles || !stat.isFile()))) { continue }
         let relative: string = directory.length > 0 ? directory + '/' + name : name
+        if (explicitRoot) { relative = './' + relative }
         if (stat.isDirectory()) { relative += '/' }
         matches.push(this.inputText.substring(0, token.start) + CommandBarViewModel.escapeArgument(relative))
       }
@@ -251,14 +237,30 @@ export class CommandBarViewModel {
     return escaped
   }
 
-  private static commonPrefix(values: string[]): string {
-    let prefix: string = values[0]
-    for (let index: number = 1; index < values.length; index++) {
-      while (!values[index].startsWith(prefix) && prefix.length > 0) {
-        prefix = prefix.substring(0, prefix.length - 1)
+  private static unescapeDisplayValue(value: string): string {
+    let display: string = ''
+    let escaping: boolean = false
+    for (let index: number = 0; index < value.length; index++) {
+      let character: string = value[index]
+      if (escaping) {
+        display += character
+        escaping = false
+      } else if (character === '\\') {
+        escaping = true
+      } else {
+        display += character
       }
     }
-    return prefix
+    if (escaping) { display += '\\' }
+    return display
+  }
+
+  static completionDisplayValue(replacement: string, tokenStart: number): string {
+    let value: string = replacement.substring(tokenStart)
+    let searchEnd: number = value.endsWith('/') ? value.length - 1 : value.length
+    let slash: number = value.lastIndexOf('/', Math.max(0, searchEnd - 1))
+    if (slash >= 0) { value = value.substring(slash + 1) }
+    return CommandBarViewModel.unescapeDisplayValue(value)
   }
 
   navigateHistory(direction: number): string {
