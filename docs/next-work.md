@@ -47,20 +47,18 @@ loopback endpoint。1.4 因此不增加 HSL 专用入口，普通 OpenSSH Host �
 第二轮普通签名 HAP 与物理机验证没有发现新的公开 HSL 语义接口：应用可以直连已知来宾
 `IP:22`，但 Network Kit 不暴露 HSL 网桥或来宾 endpoint，HSL/`sshd` 不发布 `_ssh._tcp`，
 HiShell 内的 `loh`、`localhost` 和动态 `eth0` 地址也没有三方调用契约。因此调研按停止条件
-闭合，不执行只会验证内部实现的状态/重启矩阵；HSL 专用入口继续裁剪。若要帮助当前用户，
-只可另行评估基于官方步骤的手工使用指南，不改变现有 OpenSSH Host/Identity 权威来源。
+闭合，不执行只会验证内部实现的状态/重启矩阵；HSL 专用入口继续裁剪。HSL 作为普通 SSH
+服务器使用，不增加专用适配、入口或使用指南，也不改变现有 OpenSSH Host/Identity 权威来源。
 
 ## 1. 集成、文档与发布
 
-1. [ ] 把实际用户可见改动记录到 `CHANGELOG.md` 的 `[1.4.0] - In development`；只记录
-   启动性能与真实保留的行为，不暗示自动 HSL 入口已经交付。
-2. [ ] 只运行与启动事件链及可能重排的安全/持久化路径直接相关的
-   日常自动化、ARM64 build 与物理机 smoke；不要在每次性能实验后运行完整 release matrix。
-3. [ ] 准备正式 1.4 候选时，从干净、已推送的精确提交运行 `tools/test-regression.ps1`、
+1. [ ] 把当前 HSL 门禁与“按普通 SSH 服务对待”的最终决策通过 PR 合入 `main`，随后
+   `git pull --ff-only origin main` 并确认本地 `main`、`origin/main` 与工作区一致、干净。
+2. [ ] 从干净、已推送的精确提交准备正式 1.4 候选，运行 `tools/test-regression.ps1`、
    `tools/verify-pc.ps1` 和完整适用的物理机矩阵，冻结同一候选、签名角色、manifest 和哈希。
-4. [ ] 在 production 候选上从真实桌面图标完成冷启动到首字母输入人工确认；安装、启动、看到
+3. [ ] 在 production 候选上从真实桌面图标完成冷启动到首字母输入人工确认；安装、启动、看到
    窗口或 Bridge ready 不能替代。
-5. [ ] 全部 1.4 门禁闭合后，按 `release-process.md` 从 `release/1.4.0` 准备并合入精确候选，
+4. [ ] 全部 1.4 门禁闭合后，按 `release-process.md` 从 `release/1.4.0` 准备并合入精确候选，
    发布不可变 `v1.4.0` GitHub Release，再提交匹配 production APP；不移动标签或替换 Release。
 
 ## 当前非目标与停止条件
