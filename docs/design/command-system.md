@@ -300,7 +300,7 @@ ProxyJump 最多帮助 Mosh 的 SSH bootstrap；它不转发 UDP。只有目标 
 | 1.1 | keyboard-interactive/多方法认证；`ssh-keygen -p/-F`；未知 option/config 的明确失败；现有 `ssh`、`ssh-keygen`、`ssh-copy-id`、`host/key` help/test 边界 |
 | 1.2 | 不强行加入命令能力；保持终端搜索的单一主题 |
 | 1.3 | 已采纳 `put/get`；SFTP 只作内部 subsystem，不开放 `scp/sftp` |
-| 1.4 | HSL 复用现有 SSH 命令、Host、认证和主机信任，不建立 Local Transport |
+| 1.4 | 启动性能；不增加命令能力。HSL 专用入口因公开发现门禁失败而裁剪，手工 HSL Host 仍只复用现有 SSH 命令、认证和主机信任 |
 | 1.5 | `ProxyJump` 配置与标准 `-J`；首版单跳，跳板/目标双重信任与认证 |
 | 1.6 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
 | 1.7 | `-4/-6`、安全 `-v`、基本 SSH escape、timeout/keepalive config、`UpdateHostKeys`、config import/export、`ssh-keygen -c`、ECDSA 导入/认证候选 |

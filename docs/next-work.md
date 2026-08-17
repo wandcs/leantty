@@ -4,9 +4,10 @@
 >
 > 更新日期：2026-08-17
 >
-> 当前 milestone：[`1.4 — 启动性能与条件 HSL 本地入口`](roadmap.md)
+> 当前 milestone：[`1.4 — 启动性能`](roadmap.md)
 >
-> 当前阶段：启动性能实现与开发候选验收已完成；活动工作转入 HSL 公开接口/真机进入门禁
+> 当前阶段：启动性能实现与开发候选验收、HSL 第二轮真机调研均已完成；
+> HSL 产品入口继续裁剪，1.4 进入集成与正式候选准备
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -27,68 +28,37 @@ Release、精确提交和已归档产物是恢复与追溯基线。
 
 ## 1.4 用户结果与版本边界
 
-1.4 有一项确定交付和一项条件交付：
+1.4 现在只保留一项产品交付：
 
-1. **确定交付：启动到首次输入性能。** 缩短用户点击 LeanTTY 图标，到首个 Pane 的终端
+1. **启动到首次输入性能。** 缩短用户点击 LeanTTY 图标，到首个 Pane 的终端
    能够正确接收并显示第一个字母的时间。窗口出现、页面完成、ArkWeb ready 或提示符进入
    DOM 都只是诊断节点，不代替端到端结果。
-2. **条件交付：HSL 本地执行环境入口。** 只有公开、稳定、可分发的发现与接入边界在物理
-   ARM64 HarmonyOS PC 上得到证据后，才实现最小入口。门禁失败时整体裁剪 HSL，不阻止
-   启动性能版本发布。
 
-两条工作流都必须保持用户信任、终端正确性、`Tab → Pane → Session`、现有 SSH/认证/主机
+启动路径必须保持用户信任、终端正确性、`Tab → Pane → Session`、现有 SSH/认证/主机
 校验、可恢复错误和正式包边界。详细方案见
-[`design/startup-performance.md`](design/startup-performance.md) 与
+[`design/startup-performance.md`](design/startup-performance.md)。
+
+HSL 公开接口与物理机进入门禁已形成失败结论：当前系统只提供动态地址、手工启动的
+`sshd` 和系统终端内部集成，没有三方应用可依赖的公开稳定发现/状态 API、Intent 或文档化
+loopback endpoint。1.4 因此不增加 HSL 专用入口，普通 OpenSSH Host 手工连接能力保持不变；
+完整证据和重新进入条件见
 [`design/hsl-execution-environment.md`](design/hsl-execution-environment.md)。
 
-## 1. HSL 公开接口与物理机进入门禁
+第二轮普通签名 HAP 与物理机验证没有发现新的公开 HSL 语义接口：应用可以直连已知来宾
+`IP:22`，但 Network Kit 不暴露 HSL 网桥或来宾 endpoint，HSL/`sshd` 不发布 `_ssh._tcp`，
+HiShell 内的 `loh`、`localhost` 和动态 `eth0` 地址也没有三方调用契约。因此调研按停止条件
+闭合，不执行只会验证内部实现的状态/重启矩阵；HSL 专用入口继续裁剪。HSL 作为普通 SSH
+服务器使用，不增加专用适配、入口或使用指南，也不改变现有 OpenSSH Host/Identity 权威来源。
 
-本节只决定产品级 HSL 入口是否成立。现有普通 OpenSSH Host 手工连接是基线，不因调查失败
-而退化。
+## 1. 集成、文档与发布
 
-1. [ ] 从公开 HarmonyOS/HSL 文档和目标 ARM64 HarmonyOS PC 共同确认：
-   - 三方应用可用的公开发现/状态 API，或稳定且文档化的 loopback endpoint；
-   - endpoint 地址、端口、动态性、多实例和网络隔离；
-   - HSL 启用、启动、停止、重启、系统重启、合盖、锁屏、资源回收和升级行为；
-   - `sshd` 就绪时机与 LeanTTY 的权限边界；
-   - 用户、密码、私钥、keyboard-interactive 和主机密钥生命周期；
-   - 正式商店包是否无需 HDC、开发者模式、私有权限和固定弱凭据。
-2. [ ] 记录 endpoint、身份、主机密钥和生命周期的唯一权威来源，并判断动态发现结果能否只
-   作为当前连接输入，不写入第二套 Host/Identity 数据库或覆盖用户同名 Host。
-3. [ ] 完成进入条件决策：
-   - **通过：** 锁定最小、可发现的用户入口与错误分类，再进入第 2 节；
-   - **失败：** 裁剪 1.4 产品级 HSL 入口，保留普通 `ssh <alias>` 手工路径，1.4 继续作为
-     启动性能版本；
-   - **证据不足：** 保持调查，不使用私有 API、硬编码 endpoint、固定凭据、自动信任或伪
-     Local Transport 维持 milestone。
-
-## 2. 条件 HSL 产品实现与验证
-
-本节只在第 1 节形成“通过”结论后执行；通过前不增加 discovery adapter、UI、命令或持久状态。
-
-1. [ ] 通过现有 SSH Transport、Session、终端、认证和主机校验形成一次有效 HSL 连接目标；
-   HSL discovery 只读取公开系统状态，不拥有 Session，不建立第二套 Host/Identity 权威来源。
-2. [ ] 提供一个最小入口，并明确区分“HSL 未启用”“SSH 服务未就绪”“认证失败”“主机密钥
-   变化”和普通网络错误；错误说明发生了什么及用户下一步，不管理或修复 HSL。
-3. [ ] 自动化验证用户 Host 不被覆盖、动态 endpoint 不被持久复制、取消和迟到事件明确，HSL
-   与远端 SSH 并行时状态、输出、认证、主机信任和重连不串联。
-4. [ ] 在物理 PC 验证首次进入、正常重连、HSL 停止/重启、锁屏、合盖和系统重启；覆盖实际
-   支持的密码/私钥/keyboard-interactive、主机密钥首次确认和变化恢复，以及两个 Pane 分别
-   连接 HSL 与远端服务器的焦点、输入、输出、剪贴板和生命周期。
-5. [ ] 用 production 构建确认不依赖开发者模式、HDC、测试入口、私有权限或商店版本不可用
-   的接口；任何边界失败都整体裁剪入口，不通过扩大为 HSL 管理器或削弱安全边界补救。
-
-## 4. 集成、文档与发布
-
-1. [ ] 把实际用户可见改动记录到 `CHANGELOG.md` 的 `[1.4.0] - In development`；若 HSL 被
-   裁剪，只记录启动性能与真实保留的行为，不暗示自动 HSL 入口已经交付。
-2. [ ] 只运行与启动事件链、可能重排的安全/持久化路径和实际进入产品的 HSL 路径直接相关的
-   日常自动化、ARM64 build 与物理机 smoke；不要在每次性能实验后运行完整 release matrix。
-3. [ ] 准备正式 1.4 候选时，从干净、已推送的精确提交运行 `tools/test-regression.ps1`、
+1. [ ] 把当前 HSL 门禁与“按普通 SSH 服务对待”的最终决策通过 PR 合入 `main`，随后
+   `git pull --ff-only origin main` 并确认本地 `main`、`origin/main` 与工作区一致、干净。
+2. [ ] 从干净、已推送的精确提交准备正式 1.4 候选，运行 `tools/test-regression.ps1`、
    `tools/verify-pc.ps1` 和完整适用的物理机矩阵，冻结同一候选、签名角色、manifest 和哈希。
-4. [ ] 在 production 候选上从真实桌面图标完成冷启动到首字母输入人工确认；安装、启动、看到
-   窗口或 Bridge ready 不能替代。若 HSL 进入产品，在同一候选上完成其最终真机路径。
-5. [ ] 全部 1.4 门禁闭合后，按 `release-process.md` 从 `release/1.4.0` 准备并合入精确候选，
+3. [ ] 在 production 候选上从真实桌面图标完成冷启动到首字母输入人工确认；安装、启动、看到
+   窗口或 Bridge ready 不能替代。
+4. [ ] 全部 1.4 门禁闭合后，按 `release-process.md` 从 `release/1.4.0` 准备并合入精确候选，
    发布不可变 `v1.4.0` GitHub Release，再提交匹配 production APP；不移动标签或替换 Release。
 
 ## 当前非目标与停止条件
