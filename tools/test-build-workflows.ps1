@@ -76,6 +76,11 @@ try {
         "Startup performance source helper is missing: $startupPerformanceSourceScript"
     )
     . $startupPerformanceSourceScript
+    $startupWarmSourceScript = Join-Path $PSScriptRoot 'startup-warm-source.ps1'
+    Assert-True (Test-Path -LiteralPath $startupWarmSourceScript -PathType Leaf) (
+        "Startup warm source helper is missing: $startupWarmSourceScript"
+    )
+    . $startupWarmSourceScript
     $durableStateProductionPath = Join-Path $repoRoot `
         'entry\src\main\ets\model\persistence\DurableStateManager.ets'
     $durableStateProductionText = Get-Content -LiteralPath $durableStateProductionPath -Raw
@@ -242,6 +247,42 @@ try {
         $startupPerformanceVerifierText.Contains('t5RequiresMatchingAsciiEchoAndPaint = $true') -and
         $startupPerformanceVerifierText.Contains('maxT4ToInputInjectionMs = 250')
     ) 'Startup performance PC verifier no longer measures cold App Center click through painted input'
+    $startupWarmPath = Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
+    $startupWarmHash = (Get-FileHash -LiteralPath $startupWarmPath -Algorithm SHA256).Hash
+    Invoke-WithLeanTTYStartupWarmSource -RepoRoot $repoRoot -Action {
+        $startupWarmText = Get-Content -LiteralPath $startupWarmPath -Raw
+        Assert-True (
+            $startupWarmText.Contains("sendBridgeControl('perfRender', 'STARTUP_WARM phase=' + phase)") -and
+            $startupWarmText.Contains("data === 'a'") -and
+            $startupWarmText.Contains('terminalBytes.indexOf(97) >= 0') -and
+            $startupWarmText.Contains("scheduleStartupWarmPaint('T4')") -and
+            $startupWarmText.Contains("scheduleStartupWarmPaint('T5')")
+        ) 'Warm startup injection no longer gates T4/T5 on foreground paint and echoed input'
+    }
+    Assert-True (
+        (Get-FileHash -LiteralPath $startupWarmPath -Algorithm SHA256).Hash -eq $startupWarmHash
+    ) 'Warm startup injection did not restore terminal.html byte-for-byte'
+    $startupWarmVerifier = Join-Path $PSScriptRoot 'verify-startup-warm-pc.ps1'
+    Assert-True (Test-Path -LiteralPath $startupWarmVerifier -PathType Leaf) (
+        "Warm startup PC verifier is missing: $startupWarmVerifier"
+    )
+    $startupWarmVerifierText = Get-Content -LiteralPath $startupWarmVerifier -Raw
+    Assert-True (
+        $startupWarmVerifierText.Contains('[ValidateRange(3, 100)][int]$SampleCount = 20') -and
+        $startupWarmVerifierText.Contains("'pidof com.leantty.app'") -and
+        $startupWarmVerifierText.Contains("'AppCenterAppGrid_AppBubble_com.leantty.app'") -and
+        $startupWarmVerifierText.Contains('STARTUP_WARM phase=T4') -and
+        $startupWarmVerifierText.Contains('uinput -K -d 2017 -u 2017') -and
+        $startupWarmVerifierText.Contains('processRetainedForAllSamples = $true')
+    ) 'Warm startup PC verifier no longer measures retained-process foreground input readiness'
+    foreach ($startupVerifierName in @(
+        'verify-startup-upgrade-pc.ps1',
+        'verify-startup-readiness-pc.ps1'
+    )) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $PSScriptRoot $startupVerifierName) -PathType Leaf) (
+            "Startup verification helper is missing: $startupVerifierName"
+        )
+    }
     Invoke-WithLeanTTYAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
         $injectedText = $acceptanceArkTsPaths | ForEach-Object {
             Get-Content -LiteralPath $_ -Raw
