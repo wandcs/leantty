@@ -53,14 +53,11 @@ HSL 调研已经闭合；HSL 只作为普通 SSH 服务器使用，不增加专�
 
 ## 1. ProxyJump 技术门禁与范围冻结
 
-1. [ ] 建立受控的跳板机与目标服务器基线，证明当前 russh 版本可以在跳板 SSH 的
-   `direct-tcpip` channel 上承载第二层客户端 SSH，并记录握手、关闭、取消和资源释放边界；
-   若只能依赖远端 shell 拼接、全局连接池或不可维护的库改造，按停止条件裁剪 ProxyJump。
-2. [ ] 冻结单跳用户契约：OpenSSH config `ProxyJump <jump-spec>` 与
+1. [ ] 冻结单跳用户契约：OpenSSH config `ProxyJump <jump-spec>` 与
    `ssh -J <jump-spec> target` 进入同一解析和 Session 路径；单个 jump spec 覆盖 config alias
    及标准 `[user@]host[:port]` 形式，目标引用自身、循环、逗号多跳及不支持的表达式必须在
    连接前明确失败。
-3. [ ] 冻结两层安全与交互模型：跳板和目标分别解析 endpoint、User、Identity，分别进行
+2. [ ] 冻结两层安全与交互模型：跳板和目标分别解析 endpoint、User、Identity，分别进行
    主机密钥校验与认证；提示和错误必须明确属于 jump 还是 target，且不增加第二套认证 UI、
    Host/Identity 数据库或隐式信任。
 
