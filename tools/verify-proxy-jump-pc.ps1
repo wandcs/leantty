@@ -14,7 +14,9 @@ param(
     [ValidateRange(1024, 65535)][int]$JumpPort = 22222,
     [ValidateRange(1024, 65535)][int]$TargetPort = 22223,
     [string]$EvidenceDirectory = '',
-    [string]$Distribution = $env:LEANTTY_WSL_DISTRO
+    [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
+    [switch]$IncludeHostKeyRotation,
+    [ValidateSet('Target', 'Jump', 'Both')][string]$HostKeyRotationLayer = 'Both'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,7 +61,7 @@ function Start-ProxyFixture {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         (Join-Path $PSScriptRoot 'start-ssh-auth-fixture.ps1'),
         '-ListenAddress', "0.0.0.0:$Port",
-        '-RunSeconds', '240',
+        '-RunSeconds', ($IncludeHostKeyRotation ? '600' : '240'),
         '-ControlDirectory', $ControlDirectory,
         '-DirectTcpipTarget', $DirectTarget
     )
@@ -107,18 +109,42 @@ function Wait-ProxyFixture {
     throw 'Timed out waiting for an SSH fixture'
 }
 
+function Stop-ProxyFixture {
+    param(
+        [Diagnostics.Process]$Process,
+        [int]$LinuxPid
+    )
+    if ($LinuxPid -gt 0) {
+        $wslPrefix = Get-LeanTTYWslPrefix -Distribution $Distribution
+        & wsl.exe @wslPrefix --exec kill -TERM $LinuxPid 2>$null
+    }
+    if ($null -ne $Process -and -not $Process.HasExited) {
+        Wait-Process -Id $Process.Id -Timeout 10 -ErrorAction SilentlyContinue
+        $Process.Refresh()
+        if (-not $Process.HasExited) {
+            Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Wait-ProxyLog {
     param([Parameter(Mandatory = $true)][string]$Pattern, [int]$TimeoutSeconds = 15)
-    Wait-LeanTTYAppLog `
+    Wait-ProxyLogText -Pattern $Pattern -TimeoutSeconds $TimeoutSeconds | Out-Null
+}
+
+function Wait-ProxyLogText {
+    param([Parameter(Mandatory = $true)][string]$Pattern, [int]$TimeoutSeconds = 15)
+    return Wait-LeanTTYAppLog `
         -Hdc $script:proxyHdc `
         -Target $script:proxyTarget `
         -ProcessId $script:proxyAppPid `
         -Pattern $Pattern `
-        -TimeoutSeconds $TimeoutSeconds | Out-Null
+        -TimeoutSeconds $TimeoutSeconds
 }
 
 function Submit-SecretOrDecision {
     param([Parameter(Mandatory = $true)][string]$Text)
+    Focus-ProxyCommandInput
     Invoke-LeanTTYDeviceText -Hdc $script:proxyHdc -Target $script:proxyTarget -Text $Text
     Invoke-LeanTTYDeviceKey -Hdc $script:proxyHdc -Target $script:proxyTarget -KeyCode 2054
 }
@@ -133,6 +159,9 @@ function Focus-ProxyCommandInput {
             -LocalPath $layoutPath
         $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
         if ($nodes.Count -eq 1) {
+            if ([string]$nodes[0].attributes.focused -eq 'true') {
+                return
+            }
             Set-LeanTTYTerminalInputFocus `
                 -Hdc $script:proxyHdc `
                 -Target $script:proxyTarget `
@@ -167,6 +196,83 @@ function Submit-ProxyCommand {
             }
         }
     }
+}
+
+function Submit-HostKeyDecisionUntilResult {
+    param([Parameter(Mandatory = $true)][string]$ExpectedPattern)
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        Submit-SecretOrDecision -Text 'yes'
+        try {
+            Wait-ProxyLog -Pattern $ExpectedPattern -TimeoutSeconds 6
+            return
+        } catch {
+            if ($attempt -ge 3) {
+                throw '[harness] Host-key confirmation was not accepted after three attempts'
+            }
+        }
+    }
+}
+
+function Submit-JumpPasswordUntilResult {
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$JumpPassword,
+        [Parameter(Mandatory = $true)][string]$ExpectedPattern,
+        [switch]$CurrentPrompt
+    )
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        if ($attempt -gt 1 -or -not $CurrentPrompt) {
+            Submit-ProxyCommand -Command $Command
+            Wait-ProxyLog -Pattern 'native auth event kind=password, layer=jump'
+        }
+        Submit-SecretOrDecision -Text $JumpPassword
+        $logs = Wait-ProxyLogText -Pattern (
+            $ExpectedPattern + '|rust event: AUTH:jump:authentication was rejected'
+        )
+        if ($logs -match $ExpectedPattern) { return }
+    }
+    throw '[harness] Jump password injection was rejected after three connection attempts'
+}
+
+function Complete-KnownHostProxyConnection {
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$JumpPassword,
+        [Parameter(Mandatory = $true)][string]$TargetPassword
+    )
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        Submit-ProxyCommand -Command $Command
+        Wait-ProxyLog -Pattern 'native auth event kind=password, layer=jump'
+        Submit-SecretOrDecision -Text $JumpPassword
+        $jumpLogs = Wait-ProxyLogText -Pattern (
+            'native auth event kind=password, layer=target|' +
+                'rust event: AUTH:jump:authentication was rejected'
+        )
+        if ($jumpLogs -notmatch 'native auth event kind=password, layer=target') { continue }
+        Submit-SecretOrDecision -Text $TargetPassword
+        $targetLogs = Wait-ProxyLogText -Pattern (
+            'rust event: CONNECTED|rust event: AUTH:target:authentication was rejected'
+        )
+        if ($targetLogs -match 'rust event: CONNECTED') { return }
+    }
+    throw '[harness] ProxyJump password injection was rejected after three connection attempts'
+}
+
+function Submit-CurrentTargetPasswordWithRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$JumpPassword,
+        [Parameter(Mandatory = $true)][string]$TargetPassword
+    )
+    Submit-SecretOrDecision -Text $TargetPassword
+    $logs = Wait-ProxyLogText -Pattern (
+        'rust event: CONNECTED|rust event: AUTH:target:authentication was rejected'
+    )
+    if ($logs -match 'rust event: CONNECTED') { return }
+    Complete-KnownHostProxyConnection `
+        -Command $Command `
+        -JumpPassword $JumpPassword `
+        -TargetPassword $TargetPassword
 }
 
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
@@ -244,14 +350,19 @@ try {
     Submit-ProxyCommand -Command $proxyCommand
 
     Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
-    Submit-SecretOrDecision -Text 'yes'
-    Wait-ProxyLog -Pattern 'native auth event kind=password, layer=jump'
-    Submit-SecretOrDecision -Text $jumpFixture.password
-    Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:target\t'
-    Submit-SecretOrDecision -Text 'yes'
-    Wait-ProxyLog -Pattern 'native auth event kind=password, layer=target'
-    Submit-SecretOrDecision -Text $targetFixture.password
-    Wait-ProxyLog -Pattern 'rust event: CONNECTED'
+    Submit-HostKeyDecisionUntilResult `
+        -ExpectedPattern 'native auth event kind=password, layer=jump'
+    Submit-JumpPasswordUntilResult `
+        -Command $proxyCommand `
+        -JumpPassword $jumpFixture.password `
+        -ExpectedPattern 'rust event: HOST_KEY_PROMPT:target\t' `
+        -CurrentPrompt
+    Submit-HostKeyDecisionUntilResult `
+        -ExpectedPattern 'native auth event kind=password, layer=target'
+    Submit-CurrentTargetPasswordWithRetry `
+        -Command $proxyCommand `
+        -JumpPassword $jumpFixture.password `
+        -TargetPassword $targetFixture.password
 
     Save-LeanTTYDeviceScreenshot `
         -Hdc $hdc `
@@ -260,18 +371,101 @@ try {
     Submit-SecretOrDecision -Text 'ltty-exit'
     Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
 
-    Submit-ProxyCommand -Command $proxyCommand
-    Wait-ProxyLog -Pattern 'native auth event kind=password, layer=jump'
-    Submit-SecretOrDecision -Text $jumpFixture.password
-    Wait-ProxyLog -Pattern 'native auth event kind=password, layer=target'
-    Submit-SecretOrDecision -Text $targetFixture.password
-    Wait-ProxyLog -Pattern 'rust event: CONNECTED'
-    Save-LeanTTYDeviceScreenshot `
-        -Hdc $hdc `
-        -Target $targetId `
-        -LocalPath (Join-Path $EvidenceDirectory 'known-hosts-reconnect.png')
-    Submit-SecretOrDecision -Text 'ltty-exit'
-    Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
+    if (-not $IncludeHostKeyRotation) {
+        Complete-KnownHostProxyConnection `
+            -Command $proxyCommand `
+            -JumpPassword $jumpFixture.password `
+            -TargetPassword $targetFixture.password
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'known-hosts-reconnect.png')
+        Submit-SecretOrDecision -Text 'ltty-exit'
+        Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
+    }
+
+    if ($IncludeHostKeyRotation -and $HostKeyRotationLayer -in @('Target', 'Both')) {
+        Stop-ProxyFixture -Process $targetProcess -LinuxPid $targetLinuxPid
+        $targetProcess = $null
+        $targetLinuxPid = 0
+        $targetProcess = Start-ProxyFixture `
+            -ControlDirectory $targetControl `
+            -StdoutPath $targetStdout `
+            -StderrPath $targetStderr `
+            -Port $TargetPort `
+            -DirectTarget 'none'
+        $targetFixture = Wait-ProxyFixture -Process $targetProcess -ControlDirectory $targetControl
+        $targetLinuxPid = $targetFixture.linuxPid
+
+        Submit-ProxyCommand -Command $proxyCommand
+        Wait-ProxyLog -Pattern 'native auth event kind=password, layer=jump'
+        Submit-JumpPasswordUntilResult `
+            -Command $proxyCommand `
+            -JumpPassword $jumpFixture.password `
+            -ExpectedPattern 'rust event: HOST_KEY_CHANGED:target\t' `
+            -CurrentPrompt
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'target-host-key-changed.png')
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Submit-ProxyCommand -Command $proxyCommand
+        Wait-ProxyLog -Pattern 'native auth event kind=password, layer=jump'
+        Submit-JumpPasswordUntilResult `
+            -Command $proxyCommand `
+            -JumpPassword $jumpFixture.password `
+            -ExpectedPattern 'rust event: HOST_KEY_PROMPT:target\t' `
+            -CurrentPrompt
+        Submit-HostKeyDecisionUntilResult `
+            -ExpectedPattern 'native auth event kind=password, layer=target'
+        Submit-CurrentTargetPasswordWithRetry `
+            -Command $proxyCommand `
+            -JumpPassword $jumpFixture.password `
+            -TargetPassword $targetFixture.password
+        Submit-SecretOrDecision -Text 'ltty-exit'
+        Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
+    }
+
+    if ($IncludeHostKeyRotation -and $HostKeyRotationLayer -in @('Jump', 'Both')) {
+        Stop-ProxyFixture -Process $jumpProcess -LinuxPid $jumpLinuxPid
+        $jumpProcess = $null
+        $jumpLinuxPid = 0
+        $jumpProcess = Start-ProxyFixture `
+            -ControlDirectory $jumpControl `
+            -StdoutPath $jumpStdout `
+            -StderrPath $jumpStderr `
+            -Port $JumpPort `
+            -DirectTarget "127.0.0.1:$TargetPort"
+        $jumpFixture = Wait-ProxyFixture -Process $jumpProcess -ControlDirectory $jumpControl
+        $jumpLinuxPid = $jumpFixture.linuxPid
+
+        Submit-ProxyCommand -Command $proxyCommand
+        Wait-ProxyLog -Pattern 'rust event: HOST_KEY_CHANGED:jump\t'
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'jump-host-key-changed.png')
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command $proxyCommand
+        Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
+        Submit-HostKeyDecisionUntilResult `
+            -ExpectedPattern 'native auth event kind=password, layer=jump'
+        Submit-JumpPasswordUntilResult `
+            -Command $proxyCommand `
+            -JumpPassword $jumpFixture.password `
+            -ExpectedPattern 'native auth event kind=password, layer=target' `
+            -CurrentPrompt
+        Submit-CurrentTargetPasswordWithRetry `
+            -Command $proxyCommand `
+            -JumpPassword $jumpFixture.password `
+            -TargetPassword $targetFixture.password
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'host-key-rotation-recovered.png')
+        Submit-SecretOrDecision -Text 'ltty-exit'
+        Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
+    }
 
     Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
     Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
@@ -286,8 +480,17 @@ try {
         jumpPort = $JumpPort
         targetPort = $TargetPort
         authentication = 'password-per-layer-with-distinct-temporary-secrets'
-        hostKeyVerification = 'first-use-confirmed-and-known-match-reused-independently-per-layer'
-        knownHostReconnect = $true
+        hostKeyVerification = if ($IncludeHostKeyRotation) {
+            'first-use-confirmed-and-' + $HostKeyRotationLayer.ToLowerInvariant() +
+                '-host-key-rotation-recovered'
+        } else {
+            'first-use-confirmed-and-known-match-reused-independently-per-layer'
+        }
+        knownHostReconnect = -not [bool]$IncludeHostKeyRotation
+        targetHostKeyRotationRecovered = [bool]$IncludeHostKeyRotation -and
+            $HostKeyRotationLayer -in @('Target', 'Both')
+        jumpHostKeyRotationRecovered = [bool]$IncludeHostKeyRotation -and
+            $HostKeyRotationLayer -in @('Jump', 'Both')
         targetShellOpened = $true
         targetShellClosedCleanly = $true
         hapSha256 = (Get-FileHash -LiteralPath $hapPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -303,23 +506,8 @@ try {
         & $script:proxyHdc -t $script:proxyTarget fport rm "tcp:$JumpPort" "tcp:$JumpPort" 2>$null | Out-Null
         $mappingActive = $false
     }
-    foreach ($linuxPid in @($jumpLinuxPid, $targetLinuxPid)) {
-        if ($linuxPid -gt 0) {
-            try {
-                $wslPrefix = Get-LeanTTYWslPrefix -Distribution $Distribution
-                & wsl.exe @wslPrefix --exec kill -TERM $linuxPid 2>$null
-            } catch {}
-        }
-    }
-    foreach ($process in @($jumpProcess, $targetProcess)) {
-        if ($null -ne $process -and -not $process.HasExited) {
-            Wait-Process -Id $process.Id -Timeout 10 -ErrorAction SilentlyContinue
-            $process.Refresh()
-            if (-not $process.HasExited) {
-                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
+    try { Stop-ProxyFixture -Process $jumpProcess -LinuxPid $jumpLinuxPid } catch {}
+    try { Stop-ProxyFixture -Process $targetProcess -LinuxPid $targetLinuxPid } catch {}
     if ($awakeLeaseActive) {
         Stop-LeanTTYDeviceAwakeLease -Hdc $script:proxyHdc -Target $script:proxyTarget
     }
