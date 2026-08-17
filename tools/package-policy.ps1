@@ -5,6 +5,8 @@ function Assert-LeanTTYReleasePackageExcludesAcceptanceMarkers {
             'ACCEPTANCE_INPUT_SUBMIT',
             'ACCEPTANCE_DOWNLOADS_NOREPLACE',
             'ACCEPTANCE_DOWNLOADS_FD',
+            'STARTUP_PERF phase=',
+            "KIND_STARTUP_PERF: string = 'startupPerf'",
             'Acceptance: Rebuild Renderer',
             'Acceptance: Downloads No-Replace',
             'Acceptance: Downloads FD Boundary',

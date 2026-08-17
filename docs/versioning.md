@@ -241,12 +241,12 @@ tag, artifacts and version number are never moved, replaced or reused.
 
 | Component | Config File | Current |
 |---|---|---|
-| App (HAP) | `AppScope/app.json5` | `1.3.0` |
-| Native crate | `leantty_ssh/Cargo.toml` | `1.3.0` |
-| Core crate | `leantty_ssh/leantty-ssh-core/Cargo.toml` | `1.3.0` |
-| OHPM | `entry/oh-package.json5` | `1.3.0` |
-| Native OHPM | `entry/src/main/cpp/types/libleantty_ssh/oh-package.json5` | `1.3.0` |
-| Root OHPM | `oh-package.json5` | `1.3.0` |
+| App (HAP) | `AppScope/app.json5` | `1.4.0` |
+| Native crate | `leantty_ssh/Cargo.toml` | `1.4.0` |
+| Core crate | `leantty_ssh/leantty-ssh-core/Cargo.toml` | `1.4.0` |
+| OHPM | `entry/oh-package.json5` | `1.4.0` |
+| Native OHPM | `entry/src/main/cpp/types/libleantty_ssh/oh-package.json5` | `1.4.0` |
+| Root OHPM | `oh-package.json5` | `1.4.0` |
 | Release artifact name | `tools/build-all.ps1` | Derived from `AppScope/app.json5` unless explicitly supplied |
 
 All semantic version sources must stay aligned. The build script does not own
@@ -261,5 +261,6 @@ before compiling if it differs from any version source.
 `versionCode` is independent of compatibility classification and must increase
 monotonically whenever a newer package supersedes an earlier package. It must
 not be used to infer MAJOR, MINOR or PATCH compatibility. The submitted `1.0.0`
-package uses `versionCode` `1000000`; the released `1.1.1` package uses
-`1001001`, and the prepared `1.2.0` package uses `1002000`.
+package uses `versionCode` `1000000`; the released `1.1.1`, `1.2.0` and `1.3.0`
+packages use `1001001`, `1002000` and `1003000`; current `1.4.0` development
+uses `1004000`.

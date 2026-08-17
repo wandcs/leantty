@@ -21,15 +21,16 @@
 | 功能点 | 状态 | milestone | 文档 |
 | --- | --- | --- | --- |
 | SSH 与 Mosh 命令体系 | Accepted 能力取舍基线 | 跨 1.1–1.7 | [`command-system.md`](command-system.md) |
-| SSH keyboard-interactive 与多方法认证 | Implementing；实现中闭合 WIP 细节 | 1.1 | [`ssh-authentication.md`](ssh-authentication.md) |
-| 工作区键盘导航 | Implementing（Tab）；WIP（Pane 前置门禁） | 1.1 | [`workspace-navigation.md`](workspace-navigation.md) |
+| SSH keyboard-interactive 与多方法认证 | Verified / GitHub/AppGallery 已发布 | 1.1 | [`ssh-authentication.md`](ssh-authentication.md) |
+| 工作区键盘导航 | Verified / GitHub/AppGallery 已发布 | 1.1 | [`workspace-navigation.md`](workspace-navigation.md) |
 | 终端 scrollback 搜索 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`terminal-search.md`](terminal-search.md) |
 | 桌面终端界面与交互收敛 | Verified / 1.2–1.3 | 1.2–1.3 | [`ui-interaction-polish.md`](ui-interaction-polish.md) |
-| 最小单文件传输 | Verified / 产品实现与适用功能矩阵已闭合；候选级核心终端人工回归仍由 `next-work.md` 管理 | 1.3 | [`file-transfer.md`](file-transfer.md) |
-| 终端输入调度与大粘贴连续可用性 | Verified / 实现与同一保留候选主路径已闭合 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
-| 本地命令提示符与输出规范 | Verified / 1.3 | 1.3 | [`local-command-output.md`](local-command-output.md) |
-| 本地命令 Tab 补全 | Implemented / 精简编辑合同已闭合，待最终候选人工视觉 smoke | 1.3 | [`tab-completion.md`](tab-completion.md) |
-| HSL 本地执行环境入口 | WIP / 未授权实现 | 拟议 1.4 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
+| 最小单文件传输 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`file-transfer.md`](file-transfer.md) |
+| 终端输入调度与大粘贴连续可用性 | Verified / GitHub、AppGallery 已发布 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
+| 本地命令提示符与输出规范 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`local-command-output.md`](local-command-output.md) |
+| 本地命令 Tab 补全 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`tab-completion.md`](tab-completion.md) |
+| 启动到首次输入性能 | Implementing / 架构已确认，首个日常冷启动候选已通过 20 次真机分布 | 1.4 | [`startup-performance.md`](startup-performance.md) |
+| HSL 本地执行环境入口 | WIP / 公开接口与真机门禁调查已授权；产品实现有条件 | 1.4 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
 | OpenSSH ProxyJump | WIP / 未授权实现 | 拟议 1.5 | [`proxy-jump.md`](proxy-jump.md) |
 | Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.6 | [`mosh.md`](mosh.md) |
 

@@ -2,11 +2,11 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-13
+> Last updated: 2026-08-17
 >
-> Applies to: the current repository 1.3.0 development behavior. An installed
-> release may not contain every command described here; check the matching
-> GitHub Release and `CHANGELOG.md` before relying on a capability.
+> Applies to: the current repository 1.4.0 in-development behavior. AppGallery
+> currently distributes 1.3.0; check the matching GitHub Release and
+> `CHANGELOG.md` before relying on behavior that has not yet shipped.
 
 LeanTTY is a keyboard-first SSH terminal for a physical ARM64 HarmonyOS PC. It
 provides the TTY entry point; the shell, tmux, editor and Agent TUI continue to

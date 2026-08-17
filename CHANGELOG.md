@@ -2,7 +2,21 @@
 
 ## [Unreleased]
 
+## [1.4.0] - In development
+
+### Changed
+
+- Reduced cold startup work before the first interactive `ltty>` prompt. SSH
+  configuration, known-host and key projection now prepares once after the
+  first terminal frame is painted; an SSH-backed command submitted earlier
+  waits for that same preparation and then runs normally. Explicit local help
+  and exit paths remain immediately available, while durable cleanup is
+  deferred to the application background lifecycle without adding a second
+  cache or persistent state model.
+
 ## [1.3.0] - 2026-08-16
+
+**AppGallery review approved; released to users on 2026-08-17.**
 
 ### Added
 

@@ -3,6 +3,7 @@ import util from '@ohos.util'
 import { SshConnectOptions } from '../common/types/SshTypes'
 import { SshSession, SshSessionState } from '../model/ssh/SshSession'
 import { SshKeyManager } from '../model/ssh/SshKeyManager'
+import { SshEnvironment } from '../model/ssh/SshEnvironment'
 import { KeyPairInfo } from '../common/types/SshKeyTypes'
 import { BridgeProtocol, BridgeMessage } from '../model/bridge/BridgeProtocol'
 import { CommandBarViewModel, CommandParseResult, KeyCommandResult } from './CommandBarViewModel'
@@ -124,6 +125,9 @@ export class SessionViewModel {
   private transferLifecycle: FileTransferLifecycle = new FileTransferLifecycle()
   private transferCancellationRequested: boolean = false
   private transferControlFailureCode: string = ''
+  private sshEnvironmentPreparation: Promise<void> | null = null
+  private sshEnvironmentReady: boolean = false
+  private sshEnvironmentCommandPending: boolean = false
 
   getSession(): SshSession {
     return this.session
@@ -174,7 +178,6 @@ export class SessionViewModel {
   loadSshConfig(context: common.Context): void {
     this.context = context
     this.knownHostsPath = FileUtils.getSshDir(context) + '/known_hosts'
-    this.commandBarVm.loadSshConfig(context)
   }
 
   bindTerminalSurface(surface: TerminalSurfaceController): void {
@@ -643,6 +646,11 @@ export class SessionViewModel {
           }
         }
         break
+      case BridgeProtocol.KIND_INTERACTIVE_READY:
+        if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.payload.length === 0) {
+          this.beginSshEnvironmentPreparation()
+        }
+        break
       default:
         break
     }
@@ -699,7 +707,7 @@ export class SessionViewModel {
   }
 
   private handleIdleInput(data: string): void {
-    if (this.localHelpPending) {
+    if (this.localHelpPending || this.sshEnvironmentCommandPending) {
       return
     }
     let actions: TerminalInputAction[] = TerminalInputParser.parse(data, true)
@@ -933,7 +941,7 @@ export class SessionViewModel {
     return answer === 'yes' || answer === 'no' ? '\r\n' : '\r\nPlease type yes or no: '
   }
 
-  private executeCommandBuffer(): void {
+  private async executeCommandBuffer(): Promise<void> {
     let cmd: string = this.commandLine.getText().trim()
     this.commandLine.clear()
     this.completionRenderer.reset()
@@ -945,6 +953,23 @@ export class SessionViewModel {
     }
 
     this.commandBarVm.addToHistory(cmd)
+    if (CommandParser.requiresSshEnvironment(cmd)) {
+      let showWaitingStatus: boolean = !SshEnvironment.isReady()
+      this.sshEnvironmentCommandPending = true
+      if (showWaitingStatus) {
+        this.writeTerminal(LocalCommandOutput.status('Preparing', 'SSH environment...') + '\r\n')
+      }
+      try {
+        await this.ensureSshEnvironment()
+      } catch (e) {
+        this.sshEnvironmentCommandPending = false
+        this.logger.warn('SSH environment preparation failed: ' + e)
+        this.writeError('The SSH environment is unavailable.',
+          'Try the command again. If the problem continues, restart LeanTTY.')
+        return
+      }
+      this.sshEnvironmentCommandPending = false
+    }
     let parsed: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
       CommandParser.parseInput(cmd, this.commandBarVm.getSshConfig())
     if (parsed === null) {
@@ -991,6 +1016,34 @@ export class SessionViewModel {
     this.pendingKeyPath = result.identityFile
     this.pendingKeyPassphrase = ''
     this.connect(host, port, username, result.displayHost)
+  }
+
+  private beginSshEnvironmentPreparation(): void {
+    this.ensureSshEnvironment().catch((e: Error) => {
+      this.logger.warn('Background SSH environment preparation failed: ' + e)
+    })
+  }
+
+  private ensureSshEnvironment(): Promise<void> {
+    if (this.sshEnvironmentReady) {
+      return Promise.resolve()
+    }
+    if (this.sshEnvironmentPreparation !== null) {
+      return this.sshEnvironmentPreparation
+    }
+    if (this.context === null) {
+      return Promise.reject(new Error('Pane context is unavailable'))
+    }
+    let context: common.Context = this.context
+    this.sshEnvironmentPreparation = SshEnvironment.prepare(context).then(() => {
+      this.commandBarVm.loadSshConfig(context)
+      this.sshEnvironmentReady = true
+      this.sshEnvironmentPreparation = null
+    }, (e: Error) => {
+      this.sshEnvironmentPreparation = null
+      throw e
+    })
+    return this.sshEnvironmentPreparation
   }
 
   private async startFileTransfer(command: TransferCommandResult): Promise<void> {
