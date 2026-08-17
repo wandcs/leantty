@@ -20,6 +20,11 @@
   In-place 1.3 upgrade, existing SSH assets, readiness failure/retry,
   background completion, renderer rebuild, focus restoration, and a probe-free
   Host/Key/input smoke were verified without weakening key protection.
+- Made HarmonyOS the sole owner of restart window geometry, so the system
+  starting window and the restored main window use the same saved bounds after
+  a normal close. Removed the second durable window-rectangle store and the
+  post-content move/resize sequence that caused a visible startup jump; window
+  geometry is intentionally no longer retained across uninstall/reinstall.
 
 ## [1.3.0] - 2026-08-16
 

@@ -110,6 +110,13 @@ try {
     $entryAbilityProductionText = Get-Content -LiteralPath (
         Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
     ) -Raw
+    Assert-True (
+        $entryAbilityProductionText.Contains('windowStage.setWindowRectAutoSave(true)') -and
+        -not $entryAbilityProductionText.Contains('restoreOrCaptureWindowRect') -and
+        -not $entryAbilityProductionText.Contains("mainWindow.on('windowRectChange'") -and
+        -not $durableStateProductionText.Contains('DurableWindowRect') -and
+        -not $durableStateProductionText.Contains('WINDOW_RECT_PATH')
+    ) 'System window auto-save is not the sole owner of restart window geometry'
     $onBackgroundBlock = [regex]::Match(
         $entryAbilityProductionText,
         '(?s)  onBackground\(\): void \{.*?\r?\n  \}'
