@@ -51,17 +51,7 @@ loopback endpoint。1.4 因此不增加 HSL 专用入口，普通 OpenSSH Host �
 HSL 调研已经闭合；HSL 只作为普通 SSH 服务器使用，不增加专用适配、入口或使用指南，也不
 改变现有 OpenSSH Host/Identity 权威来源。该结论不因 ProxyJump 并入 1.4 而重新打开。
 
-## 1. ProxyJump 技术门禁与范围冻结
-
-1. [ ] 冻结单跳用户契约：OpenSSH config `ProxyJump <jump-spec>` 与
-   `ssh -J <jump-spec> target` 进入同一解析和 Session 路径；单个 jump spec 覆盖 config alias
-   及标准 `[user@]host[:port]` 形式，目标引用自身、循环、逗号多跳及不支持的表达式必须在
-   连接前明确失败。
-2. [ ] 冻结两层安全与交互模型：跳板和目标分别解析 endpoint、User、Identity，分别进行
-   主机密钥校验与认证；提示和错误必须明确属于 jump 还是 target，且不增加第二套认证 UI、
-   Host/Identity 数据库或隐式信任。
-
-## 2. ProxyJump 实现
+## 1. ProxyJump 实现
 
 1. [ ] 扩展唯一 OpenSSH config/命令解析路径，支持单跳 `ProxyJump` 与 `-J`，并让安全的
    `ssh -G` 输出解释有效 jump Host；不接受后静默忽略 `ProxyCommand`、多跳或未知参数。
@@ -74,7 +64,7 @@ HSL 调研已经闭合；HSL 只作为普通 SSH 服务器使用，不增加专�
    结构化阶段与错误；取消、超时、Pane 关闭、网络断开和任一层失败必须终止两层未完成工作，
    拒绝迟到事件并释放资源。
 
-## 3. ProxyJump 验证
+## 2. ProxyJump 验证
 
 1. [ ] 在仓库内受控双服务器 fixture 覆盖直连非退化、单跳成功，以及密码、私钥和
    keyboard-interactive 分别出现在 jump/target 层的代表性组合；避免无价值的全笛卡尔矩阵，
@@ -87,7 +77,7 @@ HSL 调研已经闭合；HSL 只作为普通 SSH 服务器使用，不增加专�
    清楚，jump/target 错误可区分；Shell、tmux、vim、Agent TUI、复制粘贴、resize、大输出、
    合盖/锁屏和任一层退出后的行为与所有权一致。
 
-## 4. 集成、文档与发布
+## 3. 集成、文档与发布
 
 1. [ ] ProxyJump 用户行为和门禁形成真实完成证据后，更新 `CHANGELOG.md` 的 1.4
    `In development`、离线用户指南、命令 help/补全和长期设计约束；规划文档不能提前声明交付。

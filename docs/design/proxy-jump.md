@@ -37,7 +37,7 @@ Session，并清楚管理跳板与目标两层 SSH 安全边界。
 - 首个版本不承诺逗号分隔任意多跳、循环跳转或嵌套 ProxyJump 链。
 - 不用跳板 shell 内再次运行 `ssh` 代替协议级 `direct-tcpip`。
 
-## 初步所有权与事件链
+## 所有权与事件链
 
 ```text
 Pane → Target Session
@@ -84,11 +84,20 @@ jump Handle
 
 ## 配置与解析
 
-- 单个 `ProxyJump <jump-spec>` 支持 config alias 与标准 `[user@]host[:port]` 形式，并通过与
-  目标相同的 OpenSSH config 解析器和覆盖规则解析。
-- 目标与跳板的 Identity 优先级分别计算，不能把目标密钥隐式提交给跳板或反之。
-- 必须拒绝目标引用自身、循环引用、未知 jump Host 和首版不支持的多跳表达式。
-- 配置解析结果应能在安全的 `ssh -G` 输出中解释 jump Host，但不能输出秘密。
+- `ProxyJump` 遵循当前 config 的 first-obtained-value 规则；值为 `none` 时明确关闭 jump，
+  其他值只接受一个 config alias 或一个 `[user@]host[:port]`。
+- `ssh -J <jump-spec> target` 覆盖目标 Host 的 `ProxyJump`，只影响当前命令；`-J none`
+  强制本次直连。重复 `-J`、缺少参数和其他未知 SSH option 沿用当前严格拒绝策略。
+- jump spec 的 host 部分先尝试作为 config alias 解析自己的 `HostName`、`User`、`Port` 和
+  `IdentityFile`，再由 spec 中显式的 user/port 覆盖对应字段。它不继承目标 Host 的配置。
+- spec 未命中 alias 时按直接 endpoint 处理；由于 LeanTTY 没有可靠的本地 Unix 用户默认值，
+  此时必须显式提供 user。alias 也必须最终解析出 User。
+- config 中的逗号多跳、SSH URI、`%` token 或环境变量展开、空值及其他表达式不进入首版；
+  接受后不能静默降级。jump Host 自身存在非 `none` ProxyJump 时，按不支持的链或循环失败。
+- jump 与 target 的有效 `HostName + Port` 相同视为自引用并在连接前失败；端口不同仍是不同
+  endpoint。Host alias 名称只用于显示和配置查找，不代替有效 endpoint 判断。
+- `ssh -G` 输出目标有效配置，并在有 jump 时增加脱敏的有效 jump alias/hostname/user/port/
+  identity 名称；不输出私钥内容、口令、认证回答或完整服务器 banner。
 
 `ssh -J <jump-spec> target` 只作为当前命令的一次性 jump Host 覆盖，不写入 config，不建立
 第二套 Host 状态，也不能绕过对 jump spec、循环、多跳和安全边界的相同校验。
@@ -102,14 +111,24 @@ jump Handle
   私钥口令、完整服务器 banner 或目标敏感路径。
 - 取消、超时、Pane 关闭和 app 生命周期变化必须同时终止两层未完成工作。
 
-## 实施前需要闭合
+## 两层交互契约
 
-- 真实主要场景是否以单跳为主；若多数用户需要多跳，首版是扩展有界链还是取消该
-  milestone，需要在设计前决定。
-- 跳板与目标同时需要 `keyboard-interactive` 时，终端如何清楚标识当前回答属于哪一层。
-- 跳板连接建立后目标不可达、主机密钥变化或认证失败时的最小错误文案。
-- `ControlMaster`、agent forwarding、SSH agent 和证书认证不属于当前能力，文档与
-  错误如何避免暗示支持。
+- 一个 Pane 仍只有一个 native session id 和 generation。native 内部顺序执行 jump connect /
+  verify / auth、`direct-tcpip`、target connect / verify / auth、PTY / shell；只有最后一步成功
+  才发出 `CONNECTED`。
+- host-key、password、private-key passphrase、banner 和 keyboard-interactive 事件统一携带
+  `jump` 或 `target` layer。UI 继续使用现有一套输入模式，在提示前显示安全的层级与 Host
+  名称，不增加第二个对话框、页面或状态机。
+- host-key 决策、密码、私钥口令和 keyboard-interactive 回答必须回传事件的 layer；后者还
+  回传当前 round id。native 只接受当前 session、generation、layer 和轮次全部匹配的回答，
+  因取消、重试或前一层留下的迟到回答直接拒绝。
+- 同一时刻只有一层可以等待用户输入。jump 完成认证并打开 channel 后才开始 target 握手；
+  target 失败不会重新打开 jump 的认证提示，重试从整个 Target Session 重新开始。
+- 跳板相关错误使用 `jump connect`、`jump host key`、`jump auth` 或 `direct-tcpip` 阶段；目标
+  使用 `target connect`、`target host key`、`target auth`、`PTY` 或 `shell`。错误包含安全的
+  alias/endpoint 和下一步，不泄露秘密，也不把 target 错误归为 jump 已连接成功。
+- `ControlMaster`、agent forwarding、SSH agent 和证书认证不是当前能力；实现、help 和错误
+  不得暗示已支持，也不为这些能力预留新的全局所有者。
 
 ## 验证门禁
 
