@@ -59,7 +59,7 @@ HSL 当前可以作为本机上的普通 SSH 目标使用，但不能成为 Lean
 在同一 HAD-W32 上安装普通调试签名、非系统身份的最小 HAP 探针，并由应用自身调用公开
 Network Kit。探针完成后已从源码、manifest 和设备安装包中移除，不进入产品实现。
 
-- `getAllNets`/`getConnectionProperties` 只返回 `wlan0`（`10.160.1.239/24`）与
+- `getAllNets`/`getConnectionProperties` 只返回 `wlan0`（当前 Wi-Fi 私网地址）与
   `vpn-tun`（`172.19.0.1/30`）；没有返回系统侧 `WVMBrEulerOS`、来宾 `eth0`、
   `172.16.105.0/24` 或任何 HSL/虚拟机语义。
 - 同一普通 HAP 使用公开 TCP socket 可以连接当前快照 `172.16.105.2:22`。这证明现有 SSH
