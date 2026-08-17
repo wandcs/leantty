@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Verify first-use and known-host password ProxyJump paths on a physical HarmonyOS PC.
+  Verify password ProxyJump success, host-key rotation and layered authentication failures on a physical HarmonyOS PC.
 .DESCRIPTION
   Starts two repository-only temporary SSH fixtures in WSL. The jump fixture
   permits direct-tcpip only to the target fixture. It deploys the current
@@ -16,7 +16,9 @@ param(
     [string]$EvidenceDirectory = '',
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
     [switch]$IncludeHostKeyRotation,
-    [ValidateSet('Target', 'Jump', 'Both')][string]$HostKeyRotationLayer = 'Both'
+    [ValidateSet('Target', 'Jump', 'Both')][string]$HostKeyRotationLayer = 'Both',
+    [ValidateSet('None', 'JumpAuthentication', 'TargetAuthentication')]
+    [string]$FailureScenario = 'None'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +28,9 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
 
 if ($JumpPort -eq $TargetPort) { throw 'Jump and target fixture ports must differ' }
+if ($IncludeHostKeyRotation -and $FailureScenario -ne 'None') {
+    throw 'Host-key rotation and expected-failure scenarios must run independently'
+}
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + `
     [IO.Path]::DirectorySeparatorChar
 $fixtureRoot = Join-Path $temporaryRoot ('leantty-proxy-jump-' + [guid]::NewGuid().ToString('N'))
@@ -275,6 +280,43 @@ function Submit-CurrentTargetPasswordWithRetry {
         -TargetPassword $TargetPassword
 }
 
+function Write-ProxySummary {
+    param(
+        [Parameter(Mandatory = $true)][string]$Scenario,
+        [Parameter(Mandatory = $true)][string]$Authentication,
+        [Parameter(Mandatory = $true)][string]$HostKeyVerification,
+        [Parameter(Mandatory = $true)][bool]$KnownHostReconnect,
+        [Parameter(Mandatory = $true)][bool]$TargetHostKeyRotationRecovered,
+        [Parameter(Mandatory = $true)][bool]$JumpHostKeyRotationRecovered,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ExpectedFailureLayer,
+        [Parameter(Mandatory = $true)][bool]$TargetShellOpened,
+        [Parameter(Mandatory = $true)][bool]$TargetShellClosedCleanly
+    )
+    $script:result = 'passed'
+    $summary = [ordered]@{
+        schemaVersion = 1
+        capturedAt = (Get-Date).ToString('o')
+        result = $script:result
+        scenario = $Scenario
+        target = $script:proxyTarget
+        transport = 'usb'
+        jumpPort = $JumpPort
+        targetPort = $TargetPort
+        authentication = $Authentication
+        hostKeyVerification = $HostKeyVerification
+        knownHostReconnect = $KnownHostReconnect
+        targetHostKeyRotationRecovered = $TargetHostKeyRotationRecovered
+        jumpHostKeyRotationRecovered = $JumpHostKeyRotationRecovered
+        expectedFailureLayer = $ExpectedFailureLayer
+        targetShellOpened = $TargetShellOpened
+        targetShellClosedCleanly = $TargetShellClosedCleanly
+        hapSha256 = (Get-FileHash -LiteralPath $script:proxyHapPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $summaryPath = Join-Path $EvidenceDirectory 'summary.json'
+    [IO.File]::WriteAllText($summaryPath, (ConvertTo-Json $summary -Depth 5) + "`n")
+    Write-Host "PROXYJUMP PC EVIDENCE: $summaryPath" -ForegroundColor Green
+}
+
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
     $EvidenceDirectory = Join-Path $repoRoot (
@@ -324,6 +366,7 @@ try {
     $awakeLeaseActive = $true
 
     $hapPath = Join-Path $repoRoot 'entry\build\default\outputs\default\entry-default-signed.hap'
+    $script:proxyHapPath = $hapPath
     & (Join-Path $PSScriptRoot 'dev-pc.ps1') `
         -Target $targetId `
         -HapPath $hapPath `
@@ -352,6 +395,35 @@ try {
     Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
     Submit-HostKeyDecisionUntilResult `
         -ExpectedPattern 'native auth event kind=password, layer=jump'
+    if ($FailureScenario -eq 'JumpAuthentication') {
+        if ($jumpFixture.password -eq $targetFixture.password) {
+            throw 'Temporary fixture passwords unexpectedly match across layers'
+        }
+        Submit-SecretOrDecision -Text $targetFixture.password
+        Wait-ProxyLog -Pattern 'rust event: AUTH:jump:authentication was rejected'
+        Wait-ProxyLog -Pattern 'SSH error: jump:authentication was rejected'
+        $failureLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+        if ($failureLogs -match 'native auth event kind=\S+, layer=target|rust event: CONNECTED') {
+            throw 'Jump authentication failure continued into the target layer'
+        }
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'jump-authentication-rejected.png')
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Write-ProxySummary `
+            -Scenario 'jump-authentication-rejected' `
+            -Authentication 'wrong-target-secret-submitted-to-jump-and-rejected' `
+            -HostKeyVerification 'jump-first-use-confirmed-before-authentication-failure' `
+            -KnownHostReconnect $false `
+            -TargetHostKeyRotationRecovered $false `
+            -JumpHostKeyRotationRecovered $false `
+            -ExpectedFailureLayer 'jump' `
+            -TargetShellOpened $false `
+            -TargetShellClosedCleanly $false
+        return
+    }
     Submit-JumpPasswordUntilResult `
         -Command $proxyCommand `
         -JumpPassword $jumpFixture.password `
@@ -359,6 +431,35 @@ try {
         -CurrentPrompt
     Submit-HostKeyDecisionUntilResult `
         -ExpectedPattern 'native auth event kind=password, layer=target'
+    if ($FailureScenario -eq 'TargetAuthentication') {
+        if ($jumpFixture.password -eq $targetFixture.password) {
+            throw 'Temporary fixture passwords unexpectedly match across layers'
+        }
+        Submit-SecretOrDecision -Text $jumpFixture.password
+        Wait-ProxyLog -Pattern 'rust event: AUTH:target:authentication was rejected'
+        Wait-ProxyLog -Pattern 'SSH error: target:authentication was rejected'
+        $failureLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+        if ($failureLogs -match 'rust event: CONNECTED') {
+            throw 'Target authentication failure opened a target shell'
+        }
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'target-authentication-rejected.png')
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Write-ProxySummary `
+            -Scenario 'target-authentication-rejected' `
+            -Authentication 'wrong-jump-secret-submitted-to-target-and-rejected' `
+            -HostKeyVerification 'both-first-use-host-keys-confirmed-before-target-authentication-failure' `
+            -KnownHostReconnect $false `
+            -TargetHostKeyRotationRecovered $false `
+            -JumpHostKeyRotationRecovered $false `
+            -ExpectedFailureLayer 'target' `
+            -TargetShellOpened $false `
+            -TargetShellClosedCleanly $false
+        return
+    }
     Submit-CurrentTargetPasswordWithRetry `
         -Command $proxyCommand `
         -JumpPassword $jumpFixture.password `
@@ -470,34 +571,24 @@ try {
     Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
     Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
 
-    $result = 'passed'
-    $summary = [ordered]@{
-        schemaVersion = 1
-        capturedAt = (Get-Date).ToString('o')
-        result = $result
-        target = $targetId
-        transport = 'usb'
-        jumpPort = $JumpPort
-        targetPort = $TargetPort
-        authentication = 'password-per-layer-with-distinct-temporary-secrets'
-        hostKeyVerification = if ($IncludeHostKeyRotation) {
+    Write-ProxySummary `
+        -Scenario ($IncludeHostKeyRotation ?
+            ('host-key-rotation-' + $HostKeyRotationLayer.ToLowerInvariant()) : 'success') `
+        -Authentication 'password-per-layer-with-distinct-temporary-secrets' `
+        -HostKeyVerification $(if ($IncludeHostKeyRotation) {
             'first-use-confirmed-and-' + $HostKeyRotationLayer.ToLowerInvariant() +
                 '-host-key-rotation-recovered'
         } else {
             'first-use-confirmed-and-known-match-reused-independently-per-layer'
-        }
-        knownHostReconnect = -not [bool]$IncludeHostKeyRotation
-        targetHostKeyRotationRecovered = [bool]$IncludeHostKeyRotation -and
-            $HostKeyRotationLayer -in @('Target', 'Both')
-        jumpHostKeyRotationRecovered = [bool]$IncludeHostKeyRotation -and
-            $HostKeyRotationLayer -in @('Jump', 'Both')
-        targetShellOpened = $true
-        targetShellClosedCleanly = $true
-        hapSha256 = (Get-FileHash -LiteralPath $hapPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
-    $summaryPath = Join-Path $EvidenceDirectory 'summary.json'
-    [IO.File]::WriteAllText($summaryPath, (ConvertTo-Json $summary -Depth 5) + "`n")
-    Write-Host "PROXYJUMP PC EVIDENCE: $summaryPath" -ForegroundColor Green
+        }) `
+        -KnownHostReconnect (-not [bool]$IncludeHostKeyRotation) `
+        -TargetHostKeyRotationRecovered ([bool]$IncludeHostKeyRotation -and
+            $HostKeyRotationLayer -in @('Target', 'Both')) `
+        -JumpHostKeyRotationRecovered ([bool]$IncludeHostKeyRotation -and
+            $HostKeyRotationLayer -in @('Jump', 'Both')) `
+        -ExpectedFailureLayer '' `
+        -TargetShellOpened $true `
+        -TargetShellClosedCleanly $true
 } catch {
     $failure = $_.Exception.Message
     throw
