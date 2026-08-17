@@ -4,7 +4,7 @@ import { ThemeManager, TransparencyPolicy } from '../view/theme/ThemeManager';
 import { Logger } from '../common/logger/Logger';
 import { UserPreferences } from '../model/settings/UserPreferences';
 import { InteractionPolicy } from '../model/ui/InteractionPolicy';
-import { DurableStateManager, DurableWindowRect } from '../model/persistence/DurableStateManager';
+import { DurableStateManager } from '../model/persistence/DurableStateManager';
 import webview from '@ohos.web.webview';
 import { BusinessError } from '@ohos.base';
 import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator';
@@ -14,27 +14,6 @@ const FALLBACK_TITLE_BUTTON_WIDTH: number = 140
 
 export default class EntryAbility extends UIAbility {
   private mainWindow: window.Window | null = null
-  private pendingWindowRect: DurableWindowRect | null = null
-  private windowRectTimer: number = -1
-  private applyingWindowRect: boolean = false
-  private windowRectChangeHandler: (options: window.RectChangeOptions) => void =
-    (options: window.RectChangeOptions): void => {
-      if (this.applyingWindowRect) {
-        return
-      }
-      let rect: DurableWindowRect = new DurableWindowRect()
-      rect.left = options.rect.left
-      rect.top = options.rect.top
-      rect.width = options.rect.width
-      rect.height = options.rect.height
-      this.pendingWindowRect = rect
-      if (this.windowRectTimer >= 0) {
-        clearTimeout(this.windowRectTimer)
-      }
-      this.windowRectTimer = setTimeout(() => {
-        this.flushWindowRect()
-      }, 300)
-    }
   private windowVisibilityChangeHandler: (visible: boolean) => void = (visible: boolean): void => {
     AppStorage.setOrCreate('mainWindowVisible', visible)
     logger.info('Window visibility changed: visible=' + visible.toString())
@@ -75,7 +54,6 @@ export default class EntryAbility extends UIAbility {
   }
 
   onDestroy(): void {
-    this.flushWindowRect()
     logger.info('Ability onDestroy');
   }
 
@@ -84,9 +62,8 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     logger.info('Ability onWindowStageCreate');
-    let retainedWindowRect: DurableWindowRect | null = DurableStateManager.readWindowRect()
-    windowStage.setWindowRectAutoSave(retainedWindowRect === null).catch((e: Error) => {
-      logger.warn('Window rect auto-save compatibility setup failed: ' + e.message)
+    windowStage.setWindowRectAutoSave(true).catch((e: Error) => {
+      logger.warn('Window rect auto-save is unavailable: ' + e.message)
     })
 
     windowStage.loadContent('pages/Index', (loadError) => {
@@ -103,7 +80,6 @@ export default class EntryAbility extends UIAbility {
         }
         this.mainWindow = mainWindow
         this.configurePcWindowTransparency(mainWindow)
-        this.restoreOrCaptureWindowRect(windowStage, mainWindow, retainedWindowRect)
         this.validatePcWindowChrome(mainWindow)
       })
     });
@@ -111,11 +87,6 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageDestroy(): void {
     if (this.mainWindow !== null) {
-      try {
-        this.mainWindow.off('windowRectChange', this.windowRectChangeHandler)
-      } catch (e) {
-        logger.warn('Failed to unregister window rect listener: ' + e)
-      }
       try {
         this.mainWindow.off('windowTitleButtonRectChange', this.titleButtonRectChangeHandler)
       } catch (e) {
@@ -235,55 +206,6 @@ export default class EntryAbility extends UIAbility {
       let error: BusinessError = e as BusinessError
       logger.warn('PC container transparency unavailable; using opaque terminal surface: code=' +
         error.code.toString() + ', message=' + error.message)
-    }
-  }
-
-  private restoreOrCaptureWindowRect(
-    windowStage: window.WindowStage,
-    mainWindow: window.Window,
-    retainedRect: DurableWindowRect | null
-  ): void {
-    if (retainedRect === null) {
-      let current: window.Rect = mainWindow.getWindowProperties().windowRect
-      let initial: DurableWindowRect = new DurableWindowRect()
-      initial.left = current.left
-      initial.top = current.top
-      initial.width = current.width
-      initial.height = current.height
-      DurableStateManager.writeWindowRect(initial)
-      windowStage.setWindowRectAutoSave(false).catch((e: Error) => {
-        logger.warn('Failed to disable legacy window auto-save: ' + e.message)
-      })
-      mainWindow.on('windowRectChange', this.windowRectChangeHandler)
-      return
-    }
-    this.applyingWindowRect = true
-    mainWindow.moveWindowTo(retainedRect.left, retainedRect.top)
-      .then(() => mainWindow.resize(retainedRect.width, retainedRect.height))
-      .then(() => {
-        this.applyingWindowRect = false
-        mainWindow.on('windowRectChange', this.windowRectChangeHandler)
-      })
-      .catch((e: Error) => {
-        this.applyingWindowRect = false
-        logger.warn('Failed to restore retained window rect: ' + e.message)
-        mainWindow.on('windowRectChange', this.windowRectChangeHandler)
-      })
-  }
-
-  private flushWindowRect(): void {
-    if (this.windowRectTimer >= 0) {
-      clearTimeout(this.windowRectTimer)
-      this.windowRectTimer = -1
-    }
-    if (this.pendingWindowRect === null) {
-      return
-    }
-    try {
-      DurableStateManager.writeWindowRect(this.pendingWindowRect)
-      this.pendingWindowRect = null
-    } catch (e) {
-      logger.error('Failed to retain window rect: ' + e)
     }
   }
 

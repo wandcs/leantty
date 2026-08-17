@@ -4,17 +4,9 @@ import { DurableAssetStore } from './DurableAssetStore'
 
 const INITIALIZED_PATH: string = '_meta/initialized'
 const FONT_SIZE_PATH: string = 'settings/terminal-font-size'
-const WINDOW_RECT_PATH: string = 'window/main-rect'
 const SSH_CONFIG_PATH: string = 'ssh/config'
 const SSH_KNOWN_HOSTS_PATH: string = 'ssh/known-hosts'
 const SSH_KEYPAIR_PREFIX: string = 'ssh/keypair/'
-
-export class DurableWindowRect {
-  left: number = 0
-  top: number = 0
-  width: number = 0
-  height: number = 0
-}
 
 export class DurableStateManager {
   private static store: DurableAssetStore | null = null
@@ -81,35 +73,6 @@ export class DurableStateManager {
 
   static writeFontSize(value: number): void {
     DurableStateManager.requireStore().write(FONT_SIZE_PATH, value.toString())
-  }
-
-  static readWindowRect(): DurableWindowRect | null {
-    let value: string | null = DurableStateManager.requireStore().read(WINDOW_RECT_PATH)
-    if (value === null) {
-      return null
-    }
-    let record: Record<string, number> = JSON.parse(value)
-    let rect: DurableWindowRect = new DurableWindowRect()
-    rect.left = record['left']
-    rect.top = record['top']
-    rect.width = record['width']
-    rect.height = record['height']
-    if (!Number.isInteger(rect.left) || !Number.isInteger(rect.top) ||
-      !Number.isInteger(rect.width) || !Number.isInteger(rect.height) ||
-      rect.width < 1 || rect.height < 1) {
-      throw new Error('Invalid durable window rect')
-    }
-    return rect
-  }
-
-  static writeWindowRect(rect: DurableWindowRect): void {
-    let record: Record<string, number> = {
-      'left': Math.round(rect.left),
-      'top': Math.round(rect.top),
-      'width': Math.round(rect.width),
-      'height': Math.round(rect.height)
-    }
-    DurableStateManager.requireStore().write(WINDOW_RECT_PATH, JSON.stringify(record))
   }
 
   static commitSshConfig(context: common.Context, content: string): void {
