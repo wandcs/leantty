@@ -17,7 +17,10 @@ param(
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
     [switch]$IncludeHostKeyRotation,
     [ValidateSet('Target', 'Jump', 'Both')][string]$HostKeyRotationLayer = 'Both',
-    [ValidateSet('None', 'JumpAuthentication', 'TargetAuthentication')]
+    [ValidateSet(
+        'None', 'JumpAuthentication', 'TargetAuthentication',
+        'DirectTcpipRejected', 'CancelAtTargetAuthentication'
+    )]
     [string]$FailureScenario = 'None'
 )
 
@@ -112,6 +115,32 @@ function Wait-ProxyFixture {
         Start-Sleep -Milliseconds 200
     }
     throw 'Timed out waiting for an SSH fixture'
+}
+
+function Read-ProxyFixtureLog {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true)
+        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Wait-ProxyFixtureLog {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Pattern,
+        [int]$TimeoutSeconds = 15
+    )
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        if ((Read-ProxyFixtureLog -Path $Path) -match $Pattern) { return }
+        Start-Sleep -Milliseconds 200
+    }
+    throw "Timed out waiting for SSH fixture evidence: $Pattern"
 }
 
 function Stop-ProxyFixture {
@@ -349,7 +378,7 @@ try {
         -StdoutPath $jumpStdout `
         -StderrPath $jumpStderr `
         -Port $JumpPort `
-        -DirectTarget "127.0.0.1:$TargetPort"
+        -DirectTarget ($FailureScenario -eq 'DirectTcpipRejected' ? 'none' : "127.0.0.1:$TargetPort")
     $jumpFixture = Wait-ProxyFixture -Process $jumpProcess -ControlDirectory $jumpControl
     $jumpLinuxPid = $jumpFixture.linuxPid
 
@@ -424,6 +453,38 @@ try {
             -TargetShellClosedCleanly $false
         return
     }
+    if ($FailureScenario -eq 'DirectTcpipRejected') {
+        Submit-JumpPasswordUntilResult `
+            -Command $proxyCommand `
+            -JumpPassword $jumpFixture.password `
+            -ExpectedPattern 'rust event: CHANNEL:jump:direct-tcpip failed' `
+            -CurrentPrompt
+        Wait-ProxyLog -Pattern 'SSH error: jump:direct-tcpip failed'
+        Wait-ProxyFixtureLog `
+            -Path $jumpStderr `
+            -Pattern 'direct-tcpip result=deny reason=disabled'
+        $failureLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+        if ($failureLogs -match 'native auth event kind=\S+, layer=target|rust event: CONNECTED') {
+            throw 'Rejected direct-tcpip channel continued into the target layer'
+        }
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'direct-tcpip-rejected.png')
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Write-ProxySummary `
+            -Scenario 'direct-tcpip-rejected' `
+            -Authentication 'jump-password-accepted-before-channel-rejection' `
+            -HostKeyVerification 'jump-first-use-confirmed-before-channel-rejection' `
+            -KnownHostReconnect $false `
+            -TargetHostKeyRotationRecovered $false `
+            -JumpHostKeyRotationRecovered $false `
+            -ExpectedFailureLayer 'jump' `
+            -TargetShellOpened $false `
+            -TargetShellClosedCleanly $false
+        return
+    }
     Submit-JumpPasswordUntilResult `
         -Command $proxyCommand `
         -JumpPassword $jumpFixture.password `
@@ -431,6 +492,43 @@ try {
         -CurrentPrompt
     Submit-HostKeyDecisionUntilResult `
         -ExpectedPattern 'native auth event kind=password, layer=target'
+    if ($FailureScenario -eq 'CancelAtTargetAuthentication') {
+        Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $targetId
+        Wait-ProxyFixtureLog `
+            -Path $jumpStderr `
+            -Pattern 'direct-tcpip result=closed'
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'target-authentication-cancelled.png')
+        $idleProbe = "ssh -G -J password@127.0.0.1:$JumpPort password@127.0.0.1"
+        Submit-ProxyCommand -Command $idleProbe
+        try {
+            Wait-ProxyLog -Pattern 'rust event: CONNECTED' -TimeoutSeconds 2
+            throw 'Cancelled ProxyJump emitted a late CONNECTED event'
+        } catch {
+            if ($_.Exception.Message -eq 'Cancelled ProxyJump emitted a late CONNECTED event') {
+                throw
+            }
+        }
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'target-authentication-cancel-recovered.png')
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Write-ProxySummary `
+            -Scenario 'target-authentication-cancelled' `
+            -Authentication 'cancelled-at-target-password-prompt' `
+            -HostKeyVerification 'both-first-use-host-keys-confirmed-before-cancellation' `
+            -KnownHostReconnect $false `
+            -TargetHostKeyRotationRecovered $false `
+            -JumpHostKeyRotationRecovered $false `
+            -ExpectedFailureLayer '' `
+            -TargetShellOpened $false `
+            -TargetShellClosedCleanly $false
+        return
+    }
     if ($FailureScenario -eq 'TargetAuthentication') {
         if ($jumpFixture.password -eq $targetFixture.password) {
             throw 'Temporary fixture passwords unexpectedly match across layers'
