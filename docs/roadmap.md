@@ -79,7 +79,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 不足的保持 WIP。
 
 正式能力矩阵、明确不做范围和 milestone 分配见
-[`design/command-system.md`](design/command-system.md)。该基线跨越 1.1–1.7；它决定
+[`design/command-system.md`](design/command-system.md)。该基线跨越 1.1–1.6；它决定
 后续版本的命令边界，但不是新的并行 TODO，活动工作仍只进入 `next-work.md`。
 
 ## 已完成基础：1.0
@@ -130,7 +130,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 
 - 文件传输、终端搜索、ProxyJump、Mosh 或新的执行环境入口。
 - `-4/-6`、安全 `-v`、SSH escape、config import/export、`UpdateHostKeys` 和其他
-  1.7 兼容/诊断能力。
+  1.6 兼容/诊断能力。
 - 厂商认证 SDK、验证码生成/保存、第二套 Host/Identity 或厂商特例。
 - SFTP 文件管理器、复杂工作区、自定义快捷键和会话恢复。
 
@@ -225,12 +225,19 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 production 产物共同冻结，不再由发布分支承载。`main` 已进入 1.4，后续工作使用聚焦、短期
 topic branch；`release/1.4.0` 只在正式候选准备阶段创建。
 
-## 当前 milestone：1.4 — 启动性能
+## 当前 milestone：1.4 — 启动性能与 OpenSSH ProxyJump
 
 ### 版本目标
 
-1.4 缩短用户点击 LeanTTY 图标，到本地终端能够正确接收并显示第一个字母的时间。窗口出现、
-页面加载或 ArkWeb ready 只用于定位分段耗时，不能代替这一端到端用户结果。
+1.4 现在包含两个核心结果：已经完成开发候选验收的启动优化，以及新进入活动范围、仍须通过
+技术和真实场景门禁的 OpenSSH ProxyJump。前者缩短用户点击 LeanTTY 图标，到本地终端能够
+正确接收并显示第一个字母的时间；后者让用户通过一个标准 SSH 跳板机进入无法直接访问的目标
+执行环境。
+启动窗口出现、页面加载或 ArkWeb ready 只用于定位分段耗时；ProxyJump 仅解析成功、跳板已连
+或目标 TCP 可达也不等于目标 TTY 已可用。
+
+原拟议 1.5 OpenSSH ProxyJump 已于 2026-08-17 合并到 1.4，不再保留独立的 ProxyJump 1.5
+发布计划。原拟议 1.6 Mosh 与 1.7 SSH 配置/诊断里程碑相应调整为拟议 1.5 与 1.6。
 
 原条件 HSL 本地入口已于 2026-08-17 完成公开接口与物理机进入门禁。由于没有三方应用可用的
 公开稳定发现/状态 API、Intent 或文档化 loopback endpoint，该入口按预设停止条件整体裁剪，
@@ -275,17 +282,13 @@ ARM64 HarmonyOS PC 验证后，HSL 产品入口才可重新排期。
 2026-08-17 完成第二轮 HSL 调研。普通签名 HAP 能直连已知 HSL `IP:22`，但 Network Kit
 看不到 HSL 网桥或来宾 endpoint，8 秒 `_ssh._tcp` 发现没有服务，HiShell 的 `loh` 仍只暴露
 内部执行结果而非三方接口。因此没有重新进入产品实现；HSL 沿用普通 OpenSSH Host 路径，
-不提供专用入口、适配或指南。该结论不改变 1.4 启动性能 milestone，也不授权以内部网卡名、
-地址扫描、包名或系统权限实现 HSL 专用入口。
+不提供专用入口、适配或指南。该结论不因 ProxyJump 并入 1.4 而重新打开，也不授权以内部
+网卡名、地址扫描、包名或系统权限实现 HSL 专用入口。
 
-## 拟议 milestone：1.5 — OpenSSH ProxyJump
-
-### 用户结果
+### OpenSSH ProxyJump 用户结果与范围
 
 用户可以通过一个标准 SSH 跳板机进入无法直接访问的目标执行环境，同时继续使用
 LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模型。
-
-### 拟议范围
 
 - 支持 OpenSSH config 中的标准 `ProxyJump` 单跳语义，并提供复用同一状态机的标准
   `-J` 一次性入口；逗号多跳在首版明确报错。
@@ -294,7 +297,7 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 - 跳板和目标分别执行主机密钥校验与认证，错误必须指出失败发生在哪一跳。
 - 目标 PTY Session 仍是 Pane 唯一拥有的业务 Session；跳板连接只是其传输前置状态。
 
-### 非目标与进入条件
+#### 非目标与进入条件
 
 - 不支持 `ProxyCommand`、任意命令执行、通用端口转发、动态代理或堡垒机资产管理。
 - 首个版本不承诺逗号分隔任意多跳；单跳不足以覆盖真实主要场景时，重新评估整个范围，
@@ -302,10 +305,10 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 - 必须先有受控双服务器基线，并证明嵌套认证、主机校验、取消、超时和错误恢复不会
   串 Session 或泄露目标/凭据。
 
-技术草案：[`design/proxy-jump.md`](design/proxy-jump.md)。该 milestone 未进入
-`next-work.md`，不授权实现。
+技术方案：[`design/proxy-jump.md`](design/proxy-jump.md)。ProxyJump 已进入
+[`next-work.md`](next-work.md)，按其中的技术门禁、实现和验证顺序授权执行。
 
-## 拟议 milestone：1.6 — Mosh 弱网连接
+## 拟议 milestone：1.5 — Mosh 弱网连接
 
 ### 用户结果
 
@@ -339,7 +342,7 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 技术草案：[`design/mosh.md`](design/mosh.md)。该 milestone 未进入 `next-work.md`，
 不授权实现。
 
-## 拟议 milestone：1.7 — SSH 配置、诊断与资产互操作
+## 拟议 milestone：1.6 — SSH 配置、诊断与资产互操作
 
 ### 用户结果
 
@@ -365,7 +368,7 @@ Host、Identity、`known_hosts` 和 config，不引入第二套配置模型。
 - 不因配置导入而承诺完整 OpenSSH parser；`Include`、safe `Match`、token expansion、
   certificate 等仍按证据触发，不能静默忽略后声称兼容。
 - 进入开发前必须收集受控 IPv4/IPv6、超时、半开连接、host-key rotation 和真实 config
-  样本，并确认每个子能力可以独立裁剪，不让 1.7 变成无限兼容版本。
+  样本，并确认每个子能力可以独立裁剪，不让 1.6 变成无限兼容版本。
 
 命令边界与单项门禁见 [`design/command-system.md`](design/command-system.md)。该 milestone
 未进入 `next-work.md`，不授权实现。

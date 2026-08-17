@@ -11,6 +11,7 @@
 | `Accepted` | 产品范围与技术方向已确认；仍需进入 `next-work.md` 才能开始 |
 | `Implementing` | 已在 `next-work.md` 中成为活动工作 |
 | `Verified` | 已实现并按方案门禁验证；完成事实转入 Changelog/Git，文档只保留仍有长期价值的设计约束 |
+| `Closed` | 条件调查或进入门禁已经闭合，产品实现已裁剪；只有文档化的重新进入条件成立时才重议 |
 | `Superseded` | 已被另一文档或方向取代，不再指导新工作 |
 
 `project-principles.md` 始终是最高规则，`roadmap.md` 负责 milestone，`next-work.md`
@@ -20,7 +21,7 @@
 
 | 功能点 | 状态 | milestone | 文档 |
 | --- | --- | --- | --- |
-| SSH 与 Mosh 命令体系 | Accepted 能力取舍基线 | 跨 1.1–1.7 | [`command-system.md`](command-system.md) |
+| SSH 与 Mosh 命令体系 | Accepted 能力取舍基线 | 跨 1.1–1.6 | [`command-system.md`](command-system.md) |
 | SSH keyboard-interactive 与多方法认证 | Verified / GitHub/AppGallery 已发布 | 1.1 | [`ssh-authentication.md`](ssh-authentication.md) |
 | 工作区键盘导航 | Verified / GitHub/AppGallery 已发布 | 1.1 | [`workspace-navigation.md`](workspace-navigation.md) |
 | 终端 scrollback 搜索 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`terminal-search.md`](terminal-search.md) |
@@ -29,10 +30,10 @@
 | 终端输入调度与大粘贴连续可用性 | Verified / GitHub、AppGallery 已发布 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
 | 本地命令提示符与输出规范 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`local-command-output.md`](local-command-output.md) |
 | 本地命令 Tab 补全 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`tab-completion.md`](tab-completion.md) |
-| 启动到首次输入性能 | Implementing / 架构已确认，首个日常冷启动候选已通过 20 次真机分布 | 1.4 | [`startup-performance.md`](startup-performance.md) |
-| HSL 本地执行环境入口 | WIP / 公开接口与真机门禁调查已授权；产品实现有条件 | 1.4 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
-| OpenSSH ProxyJump | WIP / 未授权实现 | 拟议 1.5 | [`proxy-jump.md`](proxy-jump.md) |
-| Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.6 | [`mosh.md`](mosh.md) |
+| 启动到首次输入性能 | Verified 开发候选 / 正式发布门禁待执行 | 1.4 | [`startup-performance.md`](startup-performance.md) |
+| HSL 本地执行环境入口 | Closed / 进入门禁失败，专用入口已裁剪 | 1.4 决策 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
+| OpenSSH ProxyJump | Implementing / 已进入活动 TODO | 1.4 | [`proxy-jump.md`](proxy-jump.md) |
+| Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.5 | [`mosh.md`](mosh.md) |
 
 ## 最小文档结构
 
