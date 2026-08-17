@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit'
 import { SshKeyManager } from '../ssh/SshKeyManager'
 import { KeyPairInfo } from '../../common/types/SshKeyTypes'
-import { KeyCommandResult, KeyCommandKind } from './CommandParser'
+import { CommandParser, CommandParseResult, KeyCommandResult, KeyCommandKind } from './CommandParser'
 import { SshConfig } from '../ssh/SshConfig'
 import { Logger } from '../../common/logger/Logger'
 import { KnownHostQueryResult, KnownHostRemovalResult, KnownHostsManager } from '../ssh/KnownHostsManager'
@@ -338,17 +338,30 @@ export class KeyCommandService {
   }
 
   private static executeSshConfig(result: KeyCommandResult, ctx: KeyCommandContext): void {
-    let host = ctx.sshConfig.resolveHost(result.keyName)
-    if (host.errorMessage.length > 0) {
-      ctx.writeError(host.errorMessage + '\r\nCheck the matching Host entry in ~/.ssh/config.')
+    let command: string = 'ssh '
+    if (result.sshJump.length > 0) { command += '-J ' + result.sshJump + ' ' }
+    command += result.keyName
+    let connection: CommandParseResult = CommandParser.parseCommand(command, ctx.sshConfig)
+    if (!connection.isValid) {
+      ctx.writeError(connection.errorMessage + '\r\nCheck the matching Host entry in ~/.ssh/config.')
       return
     }
     ctx.writeOutput('\r\nhost ' + KeyCommandService.safeText(result.keyName) + '\r\n')
-    ctx.writeOutput('hostname ' + KeyCommandService.safeText(host.hostname) + '\r\n')
-    if (host.user.length > 0) { ctx.writeOutput('user ' + KeyCommandService.safeText(host.user) + '\r\n') }
-    ctx.writeOutput('port ' + host.port.toString() + '\r\n')
-    if (host.identityFile.length > 0) {
-      ctx.writeOutput('identityfile ' + KeyCommandService.safeText(host.identityFile) + '\r\n')
+    ctx.writeOutput('hostname ' + KeyCommandService.safeText(connection.host) + '\r\n')
+    ctx.writeOutput('user ' + KeyCommandService.safeText(connection.username) + '\r\n')
+    ctx.writeOutput('port ' + connection.port.toString() + '\r\n')
+    if (connection.identityFile.length > 0) {
+      ctx.writeOutput('identityfile ' + KeyCommandService.safeText(connection.identityFile) + '\r\n')
+    }
+    if (connection.jumpHost.length > 0) {
+      ctx.writeOutput('proxyjump ' + KeyCommandService.safeText(connection.jumpDisplayHost) + '\r\n')
+      ctx.writeOutput('proxyjumphostname ' + KeyCommandService.safeText(connection.jumpHost) + '\r\n')
+      ctx.writeOutput('proxyjumpuser ' + KeyCommandService.safeText(connection.jumpUsername) + '\r\n')
+      ctx.writeOutput('proxyjumpport ' + connection.jumpPort.toString() + '\r\n')
+      if (connection.jumpIdentityFile.length > 0) {
+        ctx.writeOutput('proxyjumpidentityfile ' +
+          KeyCommandService.safeText(connection.jumpIdentityFile) + '\r\n')
+      }
     }
     ctx.writeOutput(LocalCommandOutput.prompt())
   }

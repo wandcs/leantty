@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
@@ -13,7 +14,7 @@ use russh::keys::{Algorithm, PrivateKey, PublicKey};
 use russh::server::{Auth, Handler, Msg, Response, Server, Session};
 use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet};
 use russh_sftp::protocol::{Attrs, Data, FileAttributes, Handle, OpenFlags, Status, StatusCode};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -179,6 +180,7 @@ struct FixtureServer {
     sftp_root: Arc<PathBuf>,
     sftp_delay: Duration,
     sftp_fault: SftpFault,
+    direct_tcpip_target: Option<SocketAddr>,
 }
 
 impl FixtureServer {
@@ -197,6 +199,7 @@ impl FixtureServer {
             sftp_root,
             Duration::ZERO,
             SftpFault::None,
+            None,
         )
     }
 
@@ -205,6 +208,7 @@ impl FixtureServer {
         sftp_root: Arc<PathBuf>,
         sftp_delay: Duration,
         sftp_fault: SftpFault,
+        direct_tcpip_target: Option<SocketAddr>,
     ) -> Self {
         Self {
             credentials,
@@ -219,6 +223,7 @@ impl FixtureServer {
             sftp_root,
             sftp_delay,
             sftp_fault,
+            direct_tcpip_target,
         }
     }
 
@@ -445,6 +450,7 @@ impl Server for FixtureServer {
             Arc::clone(&self.sftp_root),
             self.sftp_delay,
             self.sftp_fault,
+            self.direct_tcpip_target,
         )
     }
 
@@ -511,6 +517,52 @@ impl Handler for FixtureServer {
             .await
             .insert(channel.id(), Some(channel));
         reply.accept().await;
+        Ok(())
+    }
+
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        host_to_connect: &str,
+        port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: russh::server::ChannelOpenHandle,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let requested_target = host_to_connect.parse::<IpAddr>().ok().and_then(|address| {
+            u16::try_from(port_to_connect)
+                .ok()
+                .map(|port| SocketAddr::new(address, port))
+        });
+        let Some(allowed_target) = self.direct_tcpip_target else {
+            eprintln!("direct-tcpip result=deny reason=disabled");
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
+        };
+        if requested_target != Some(allowed_target) {
+            eprintln!(
+                "direct-tcpip result=deny requested={host_to_connect}:{port_to_connect} allowed={allowed_target}"
+            );
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
+        }
+        let Ok(mut target_stream) = TcpStream::connect(allowed_target).await else {
+            eprintln!("direct-tcpip result=connect-failed target={allowed_target}");
+            reply.reject(ChannelOpenFailure::ConnectFailed).await;
+            return Ok(());
+        };
+        let mut channel_stream = channel.into_stream();
+        reply.accept().await;
+        eprintln!("direct-tcpip result=accept target={allowed_target}");
+        tokio::spawn(async move {
+            let _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut target_stream).await;
+            eprintln!("direct-tcpip result=closed target={allowed_target}");
+        });
         Ok(())
     }
 
@@ -1171,6 +1223,7 @@ struct Arguments {
     ready_path: Option<PathBuf>,
     sftp_delay_ms: u64,
     sftp_fault: SftpFault,
+    direct_tcpip_target: Option<SocketAddr>,
 }
 
 fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Arguments, String> {
@@ -1179,7 +1232,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         .unwrap_or_else(|| "ssh-auth-fixture".to_string());
     let usage = || {
         format!(
-            "usage: {executable} <listen-address> <credentials-file> [run-seconds] [ready-file] [sftp-delay-ms] [sftp-fault]"
+            "usage: {executable} <listen-address> <credentials-file> [run-seconds] [ready-file] [sftp-delay-ms] [sftp-fault] [direct-tcpip-target]"
         )
     };
     let listen = arguments.next().ok_or_else(&usage)?;
@@ -1214,6 +1267,19 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         .map(|value| SftpFault::parse(&value))
         .transpose()?
         .unwrap_or_default();
+    let direct_tcpip_target = arguments
+        .next()
+        .map(|value| {
+            if value == "none" {
+                Ok(None)
+            } else {
+                value.parse::<SocketAddr>().map(Some).map_err(|_| {
+                    "direct-tcpip-target must be none or an IP socket address".to_string()
+                })
+            }
+        })
+        .transpose()?
+        .flatten();
     if arguments.next().is_some() {
         return Err(usage());
     }
@@ -1224,6 +1290,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         ready_path,
         sftp_delay_ms,
         sftp_fault,
+        direct_tcpip_target,
     })
 }
 
@@ -1253,6 +1320,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(sftp_root),
         Duration::from_millis(arguments.sftp_delay_ms),
         arguments.sftp_fault,
+        arguments.direct_tcpip_target,
     );
     let running = fixture.run_on_socket(config, &socket);
     let handle = running.handle();
@@ -1342,6 +1410,27 @@ mod tests {
         .unwrap();
         assert_eq!(parsed.sftp_delay_ms, 125);
         assert_eq!(parsed.sftp_fault, SftpFault::PutWriteRemove);
+        assert_eq!(parsed.direct_tcpip_target, None);
+
+        let jump = parse_arguments(
+            [
+                "fixture",
+                "127.0.0.1:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "0",
+                "none",
+                "127.0.0.1:22223",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert_eq!(
+            jump.direct_tcpip_target,
+            Some("127.0.0.1:22223".parse().unwrap())
+        );
 
         for (value, expected) in [
             ("permission-denied", SftpFault::PermissionDenied),
@@ -1393,6 +1482,22 @@ mod tests {
             .map(str::to_string),
         );
         assert!(unknown_fault.is_err());
+
+        let invalid_target = parse_arguments(
+            [
+                "fixture",
+                "127.0.0.1:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "0",
+                "none",
+                "target.example.com:22",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        );
+        assert!(invalid_target.is_err());
     }
 
     #[test]
@@ -1402,11 +1507,16 @@ mod tests {
             Arc::new(PathBuf::from("/tmp/leantty-sftp-root")),
             Duration::ZERO,
             SftpFault::PutWriteRemove,
+            Some("127.0.0.1:22223".parse().unwrap()),
         );
 
         let client = fixture.new_client(None);
 
         assert_eq!(client.sftp_fault, SftpFault::PutWriteRemove);
+        assert_eq!(
+            client.direct_tcpip_target,
+            Some("127.0.0.1:22223".parse().unwrap())
+        );
     }
 
     #[test]

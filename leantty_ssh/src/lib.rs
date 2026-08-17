@@ -26,7 +26,7 @@ static NEXT_SESSION_ID: AtomicU32 = AtomicU32::new(1);
 
 type WriteSender = tokio::sync::mpsc::Sender<Vec<u8>>;
 type ResizeSender = tokio::sync::mpsc::Sender<(u32, u32)>;
-type AuthSender = tokio::sync::mpsc::Sender<AuthMethod>;
+type AuthSender = tokio::sync::mpsc::Sender<LayeredAuthMethod>;
 type DisconnectSender = tokio::sync::mpsc::Sender<()>;
 type OutputPauseSender = tokio::sync::mpsc::Sender<bool>;
 type JsCallback = Arc<ThreadsafeFunction<String, (), String, Status, false, false, 64>>;
@@ -70,6 +70,7 @@ pub struct AuthPromptEvent {
 #[napi(object)]
 pub struct AuthEvent {
     pub kind: String,
+    pub layer: String,
     pub session_id: String,
     pub generation: u32,
     pub round_id: u32,
@@ -153,9 +154,10 @@ impl FileTransferEvent {
 }
 
 impl AuthEvent {
-    fn simple(kind: &str, session_id: u32, generation: u32) -> Self {
+    fn simple(kind: &str, layer: ConnectionLayer, session_id: u32, generation: u32) -> Self {
         Self {
             kind: kind.to_string(),
+            layer: layer.as_str().to_string(),
             session_id: session_id.to_string(),
             generation,
             round_id: 0,
@@ -166,9 +168,10 @@ impl AuthEvent {
         }
     }
 
-    fn banner(session_id: u32, generation: u32, text: &str) -> Self {
+    fn banner(layer: ConnectionLayer, session_id: u32, generation: u32, text: &str) -> Self {
         Self {
             kind: "banner".to_string(),
+            layer: layer.as_str().to_string(),
             session_id: session_id.to_string(),
             generation,
             round_id: 0,
@@ -179,9 +182,15 @@ impl AuthEvent {
         }
     }
 
-    fn challenge(session_id: u32, generation: u32, challenge: AuthChallenge) -> Self {
+    fn challenge(
+        layer: ConnectionLayer,
+        session_id: u32,
+        generation: u32,
+        challenge: AuthChallenge,
+    ) -> Self {
         Self {
             kind: "challenge".to_string(),
+            layer: layer.as_str().to_string(),
             session_id: session_id.to_string(),
             generation,
             round_id: challenge.round_id,
@@ -196,6 +205,62 @@ impl AuthEvent {
                     echo: prompt.echo,
                 })
                 .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectionLayer {
+    Jump,
+    Target,
+}
+
+impl ConnectionLayer {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Jump => "jump",
+            Self::Target => "target",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "jump" => Some(Self::Jump),
+            "target" => Some(Self::Target),
+            _ => None,
+        }
+    }
+}
+
+struct LayeredAuthMethod {
+    layer: ConnectionLayer,
+    method: AuthMethod,
+}
+
+#[derive(Clone, Copy)]
+struct HostKeyDecision {
+    layer: ConnectionLayer,
+    accepted: bool,
+}
+
+type SharedHostKeyReceiver = Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<HostKeyDecision>>>;
+
+async fn wait_for_host_key_decision(
+    expected_layer: ConnectionLayer,
+    receiver: &SharedHostKeyReceiver,
+) -> bool {
+    loop {
+        let decision = receiver.lock().await.recv().await;
+        match decision {
+            Some(decision) if decision.layer == expected_layer => return decision.accepted,
+            Some(decision) => {
+                eprintln!(
+                    "[LTTY_SSH] stage=host_key_response_rejected expected={} received={}",
+                    expected_layer.as_str(),
+                    decision.layer.as_str()
+                );
+            }
+            None => return false,
         }
     }
 }
@@ -263,7 +328,7 @@ struct ShellSession {
     resize_tx: ResizeSender,
     disconnect_tx: DisconnectSender,
     auth_tx: AuthSender,
-    host_key_tx: tokio::sync::mpsc::Sender<bool>,
+    host_key_tx: tokio::sync::mpsc::Sender<HostKeyDecision>,
     output_pause_tx: OutputPauseSender,
 }
 
@@ -271,7 +336,7 @@ struct FileTransferSession {
     generation: u32,
     disconnect_tx: DisconnectSender,
     auth_tx: AuthSender,
-    host_key_tx: tokio::sync::mpsc::Sender<bool>,
+    host_key_tx: tokio::sync::mpsc::Sender<HostKeyDecision>,
 }
 
 type SessionMap = Arc<Mutex<HashMap<u32, ShellSession>>>;
@@ -405,10 +470,11 @@ fn should_flush_immediately(pending_empty: bool, decoded_len: usize) -> bool {
 struct ClientHandler {
     session_id: u32,
     generation: u32,
+    layer: ConnectionLayer,
     host: String,
     port: u16,
     known_hosts_path: PathBuf,
-    host_key_rx: tokio::sync::mpsc::Receiver<bool>,
+    host_key_rx: SharedHostKeyReceiver,
     connect_progress_tx: tokio::sync::mpsc::Sender<ConnectProgress>,
     control_callback: JsCallback,
     auth_callback: JsAuthCallback,
@@ -424,7 +490,7 @@ impl russh::client::Handler for ClientHandler {
     ) -> std::result::Result<(), Self::Error> {
         if !send_auth_event(
             &self.auth_callback,
-            AuthEvent::banner(self.session_id, self.generation, banner),
+            AuthEvent::banner(self.layer, self.session_id, self.generation, banner),
         ) {
             return Err(russh::Error::SendError);
         }
@@ -454,14 +520,18 @@ impl russh::client::Handler for ClientHandler {
                 let public_key = match server_public_key.to_openssh() {
                     Ok(value) => value,
                     Err(error) => {
-                        send_control(&self.control_callback, &format!("HOST_KEY_ERROR:{}", error));
+                        send_control(
+                            &self.control_callback,
+                            &format!("HOST_KEY_ERROR:{}\t{}", self.layer.as_str(), error),
+                        );
                         return Ok(false);
                     }
                 };
                 send_control(
                     &self.control_callback,
                     &format!(
-                        "HOST_KEY_PROMPT:{} {}\t{} {}",
+                        "HOST_KEY_PROMPT:{}\t{} {}\t{} {}",
+                        self.layer.as_str(),
                         server_public_key.algorithm(),
                         fingerprint,
                         host,
@@ -472,7 +542,7 @@ impl russh::client::Handler for ClientHandler {
                     .connect_progress_tx
                     .send(ConnectProgress::WaitingForUser)
                     .await;
-                let accepted = self.host_key_rx.recv().await == Some(true);
+                let accepted = wait_for_host_key_decision(self.layer, &self.host_key_rx).await;
                 let _ = self
                     .connect_progress_tx
                     .send(ConnectProgress::NetworkActivityResumed)
@@ -499,7 +569,8 @@ impl russh::client::Handler for ClientHandler {
                     send_control(
                         &self.control_callback,
                         &format!(
-                            "HOST_KEY_CHANGED:{}\t{}\t{}\t{}\t{}",
+                            "HOST_KEY_CHANGED:{}\t{}\t{}\t{}\t{}\t{}",
+                            self.layer.as_str(),
                             server_public_key.algorithm(),
                             old_fingerprint,
                             new_fingerprint,
@@ -508,7 +579,10 @@ impl russh::client::Handler for ClientHandler {
                         ),
                     );
                 } else {
-                    send_control(&self.control_callback, &format!("HOST_KEY_ERROR:{}", error));
+                    send_control(
+                        &self.control_callback,
+                        &format!("HOST_KEY_ERROR:{}\t{}", self.layer.as_str(), error),
+                    );
                 }
                 Ok(false)
             }
@@ -520,8 +594,8 @@ struct SessionReceivers {
     write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
     disconnect_rx: tokio::sync::mpsc::Receiver<()>,
-    auth_rx: tokio::sync::mpsc::Receiver<AuthMethod>,
-    host_key_rx: Option<tokio::sync::mpsc::Receiver<bool>>,
+    auth_rx: tokio::sync::mpsc::Receiver<LayeredAuthMethod>,
+    host_key_rx: Option<tokio::sync::mpsc::Receiver<HostKeyDecision>>,
     output_pause_rx: tokio::sync::mpsc::Receiver<bool>,
 }
 
@@ -682,17 +756,31 @@ where
 }
 
 async fn wait_for_auth_command(
-    auth_rx: &mut tokio::sync::mpsc::Receiver<AuthMethod>,
+    expected_layer: ConnectionLayer,
+    auth_rx: &mut tokio::sync::mpsc::Receiver<LayeredAuthMethod>,
     disconnect_rx: &mut tokio::sync::mpsc::Receiver<()>,
     timeout: Duration,
 ) -> AuthWaitResult {
-    tokio::select! {
-      command = auth_rx.recv() => match command {
-        Some(command) => AuthWaitResult::Command(command),
-        None => AuthWaitResult::Cancelled,
-      },
-      _ = disconnect_rx.recv() => AuthWaitResult::Cancelled,
-      _ = tokio::time::sleep(timeout) => AuthWaitResult::TimedOut,
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+          command = auth_rx.recv() => match command {
+            Some(command) if command.layer == expected_layer => {
+              return AuthWaitResult::Command(command.method);
+            }
+            Some(command) => {
+              eprintln!(
+                "[LTTY_SSH] stage=auth_response_rejected expected={} received={}",
+                expected_layer.as_str(),
+                command.layer.as_str()
+              );
+            }
+            None => return AuthWaitResult::Cancelled,
+          },
+          _ = disconnect_rx.recv() => return AuthWaitResult::Cancelled,
+          _ = &mut deadline => return AuthWaitResult::TimedOut,
+        }
     }
 }
 
@@ -746,12 +834,13 @@ async fn authenticate_private_key(
 async fn run_authentication(
     session_id: u32,
     generation: u32,
+    layer: ConnectionLayer,
     user: &str,
     private_key_path: &str,
     private_key_requires_passphrase: bool,
     ssh: &mut russh::client::Handle<ClientHandler>,
     auth_callback: &JsAuthCallback,
-    auth_rx: &mut tokio::sync::mpsc::Receiver<AuthMethod>,
+    auth_rx: &mut tokio::sync::mpsc::Receiver<LayeredAuthMethod>,
     disconnect_rx: &mut tokio::sync::mpsc::Receiver<()>,
 ) -> AuthenticationOutcome {
     let mut state = AuthStateMachine::new(
@@ -787,8 +876,11 @@ async fn run_authentication(
         };
         let action = state.select_next_method(&remaining_methods, partial_success);
         eprintln!(
-            "[LTTY_SSH] session={} stage=auth_select action={:?} partial_success={}",
-            session_id, action, partial_success
+            "[LTTY_SSH] session={} layer={} stage=auth_select action={:?} partial_success={}",
+            session_id,
+            layer.as_str(),
+            action,
+            partial_success
         );
 
         match action {
@@ -815,13 +907,14 @@ async fn run_authentication(
             AuthAction::RequestPrivateKeyPassphrase => {
                 if !send_auth_event(
                     auth_callback,
-                    AuthEvent::simple("private_key_passphrase", session_id, generation),
+                    AuthEvent::simple("private_key_passphrase", layer, session_id, generation),
                 ) {
                     return AuthenticationOutcome::Failed(
                         "authentication callback delivery failed".to_string(),
                     );
                 }
                 let mut command = match wait_for_auth_command(
+                    layer,
                     auth_rx,
                     disconnect_rx,
                     AUTH_RESPONSE_TIMEOUT,
@@ -871,13 +964,14 @@ async fn run_authentication(
             AuthAction::RequestPassword => {
                 if !send_auth_event(
                     auth_callback,
-                    AuthEvent::simple("password", session_id, generation),
+                    AuthEvent::simple("password", layer, session_id, generation),
                 ) {
                     return AuthenticationOutcome::Failed(
                         "authentication callback delivery failed".to_string(),
                     );
                 }
                 let mut command = match wait_for_auth_command(
+                    layer,
                     auth_rx,
                     disconnect_rx,
                     AUTH_RESPONSE_TIMEOUT,
@@ -991,13 +1085,14 @@ async fn run_authentication(
                                 };
                             if !send_auth_event(
                                 auth_callback,
-                                AuthEvent::challenge(session_id, generation, challenge),
+                                AuthEvent::challenge(layer, session_id, generation, challenge),
                             ) {
                                 return AuthenticationOutcome::Failed(
                                     "authentication callback delivery failed".to_string(),
                                 );
                             }
                             let mut command = match wait_for_auth_command(
+                                layer,
                                 auth_rx,
                                 disconnect_rx,
                                 AUTH_RESPONSE_TIMEOUT,
@@ -1111,6 +1206,24 @@ where
     }
 }
 
+async fn disconnect_client(ssh: &mut russh::client::Handle<ClientHandler>) {
+    let _ = tokio::time::timeout(
+        Duration::from_secs(1),
+        ssh.disconnect(russh::Disconnect::ByApplication, "", ""),
+    )
+    .await;
+}
+
+async fn disconnect_session_route(
+    target: &mut russh::client::Handle<ClientHandler>,
+    jump: &mut Option<russh::client::Handle<ClientHandler>>,
+) {
+    disconnect_client(target).await;
+    if let Some(jump) = jump.as_mut() {
+        disconnect_client(jump).await;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_session(
     session_id: u32,
@@ -1120,6 +1233,11 @@ async fn run_session(
     user: String,
     private_key_path: String,
     private_key_requires_passphrase: bool,
+    jump_host: String,
+    jump_port: u16,
+    jump_user: String,
+    jump_private_key_path: String,
+    jump_private_key_requires_passphrase: bool,
     known_hosts_path: String,
     connect_timeout: Duration,
     transport_callback: JsTransportCallback,
@@ -1128,62 +1246,197 @@ async fn run_session(
     mut receivers: SessionReceivers,
 ) {
     let _cleanup_guard = SessionCleanupGuard(session_id);
-    eprintln!(
-        "[LTTY_SSH] session={} stage=connect host={} port={}",
-        session_id, host, port
-    );
-
     let config = Arc::new(build_client_config());
-    let (connect_progress_tx, mut connect_progress_rx) = tokio::sync::mpsc::channel(2);
-    let handler = ClientHandler {
-        session_id,
-        generation,
-        host: host.clone(),
-        port,
-        known_hosts_path: PathBuf::from(known_hosts_path),
-        host_key_rx: receivers
+    let host_key_rx = Arc::new(tokio::sync::Mutex::new(
+        receivers
             .host_key_rx
             .take()
             .expect("host key receiver must exist"),
-        connect_progress_tx,
+    ));
+    let known_hosts_path = PathBuf::from(known_hosts_path);
+    let mut jump_ssh = None;
+
+    if !jump_host.is_empty() {
+        eprintln!(
+            "[LTTY_SSH] session={} layer=jump stage=connect host={} port={}",
+            session_id, jump_host, jump_port
+        );
+        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(2);
+        let handler = ClientHandler {
+            session_id,
+            generation,
+            layer: ConnectionLayer::Jump,
+            host: jump_host.clone(),
+            port: jump_port,
+            known_hosts_path: known_hosts_path.clone(),
+            host_key_rx: host_key_rx.clone(),
+            connect_progress_tx: progress_tx,
+            control_callback: control_callback.clone(),
+            auth_callback: auth_callback.clone(),
+        };
+        let connect =
+            russh::client::connect(config.clone(), (jump_host.as_str(), jump_port), handler);
+        let mut jump = match wait_for_connect(
+            connect,
+            connect_timeout,
+            &mut receivers.disconnect_rx,
+            &mut progress_rx,
+        )
+        .await
+        {
+            ConnectWaitResult::Connected(handle) => handle,
+            ConnectWaitResult::Failed(error) => {
+                send_control(&control_callback, &format!("CONNECT:jump:{error}"));
+                return;
+            }
+            ConnectWaitResult::TimedOut => {
+                send_control(
+                    &control_callback,
+                    &format!(
+                        "CONNECT:jump:connection timed out after {} ms",
+                        connect_timeout.as_millis()
+                    ),
+                );
+                return;
+            }
+            ConnectWaitResult::Cancelled => return,
+        };
+        eprintln!(
+            "[LTTY_SSH] session={} layer=jump stage=kex_complete",
+            session_id
+        );
+        match run_authentication(
+            session_id,
+            generation,
+            ConnectionLayer::Jump,
+            &jump_user,
+            &jump_private_key_path,
+            jump_private_key_requires_passphrase,
+            &mut jump,
+            &auth_callback,
+            &mut receivers.auth_rx,
+            &mut receivers.disconnect_rx,
+        )
+        .await
+        {
+            AuthenticationOutcome::Authenticated => {}
+            AuthenticationOutcome::Cancelled => {
+                disconnect_client(&mut jump).await;
+                return;
+            }
+            AuthenticationOutcome::Failed(error) => {
+                send_control(&control_callback, &format!("AUTH:jump:{error}"));
+                disconnect_client(&mut jump).await;
+                return;
+            }
+        }
+        jump_ssh = Some(jump);
+    }
+
+    eprintln!(
+        "[LTTY_SSH] session={} layer=target stage=connect host={} port={}",
+        session_id, host, port
+    );
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(2);
+    let target_handler = ClientHandler {
+        session_id,
+        generation,
+        layer: ConnectionLayer::Target,
+        host: host.clone(),
+        port,
+        known_hosts_path,
+        host_key_rx,
+        connect_progress_tx: progress_tx,
         control_callback: control_callback.clone(),
         auth_callback: auth_callback.clone(),
     };
-    let connect = russh::client::connect(config, (host.as_str(), port), handler);
-    let mut ssh = match wait_for_connect(
-        connect,
-        connect_timeout,
-        &mut receivers.disconnect_rx,
-        &mut connect_progress_rx,
-    )
-    .await
-    {
+    let target_connect_result = if let Some(jump) = jump_ssh.as_mut() {
+        let tunnel = match wait_for_auth_exchange(
+            jump.channel_open_direct_tcpip(host.clone(), port.into(), "127.0.0.1", 0),
+            connect_timeout,
+            &mut receivers.disconnect_rx,
+        )
+        .await
+        {
+            AuthExchangeResult::Completed(channel) => channel,
+            AuthExchangeResult::Failed(error) => {
+                send_control(
+                    &control_callback,
+                    &format!("CHANNEL:jump:direct-tcpip failed: {error}"),
+                );
+                disconnect_client(jump).await;
+                return;
+            }
+            AuthExchangeResult::TimedOut => {
+                send_control(
+                    &control_callback,
+                    &format!(
+                        "CHANNEL:jump:direct-tcpip timed out after {} ms",
+                        connect_timeout.as_millis()
+                    ),
+                );
+                disconnect_client(jump).await;
+                return;
+            }
+            AuthExchangeResult::Cancelled => {
+                disconnect_client(jump).await;
+                return;
+            }
+        };
+        wait_for_connect(
+            russh::client::connect_stream(config, tunnel.into_stream(), target_handler),
+            connect_timeout,
+            &mut receivers.disconnect_rx,
+            &mut progress_rx,
+        )
+        .await
+    } else {
+        wait_for_connect(
+            russh::client::connect(config, (host.as_str(), port), target_handler),
+            connect_timeout,
+            &mut receivers.disconnect_rx,
+            &mut progress_rx,
+        )
+        .await
+    };
+    let mut ssh = match target_connect_result {
         ConnectWaitResult::Connected(handle) => handle,
         ConnectWaitResult::Failed(error) => {
-            send_control(&control_callback, &format!("CONNECT:{}", error));
+            send_control(&control_callback, &format!("CONNECT:target:{error}"));
+            if let Some(jump) = jump_ssh.as_mut() {
+                disconnect_client(jump).await;
+            }
             return;
         }
         ConnectWaitResult::TimedOut => {
             send_control(
                 &control_callback,
                 &format!(
-                    "CONNECT:connection timed out after {} ms",
+                    "CONNECT:target:connection timed out after {} ms",
                     connect_timeout.as_millis()
                 ),
             );
+            if let Some(jump) = jump_ssh.as_mut() {
+                disconnect_client(jump).await;
+            }
             return;
         }
         ConnectWaitResult::Cancelled => {
-            eprintln!("[LTTY_SSH] session={} stage=connect_cancelled", session_id);
+            if let Some(jump) = jump_ssh.as_mut() {
+                disconnect_client(jump).await;
+            }
             return;
         }
     };
-
-    eprintln!("[LTTY_SSH] session={} stage=kex_complete", session_id);
+    eprintln!(
+        "[LTTY_SSH] session={} layer=target stage=kex_complete",
+        session_id
+    );
 
     match run_authentication(
         session_id,
         generation,
+        ConnectionLayer::Target,
         &user,
         &private_key_path,
         private_key_requires_passphrase,
@@ -1196,36 +1449,104 @@ async fn run_session(
     {
         AuthenticationOutcome::Authenticated => {}
         AuthenticationOutcome::Cancelled => {
-            let _ = ssh
-                .disconnect(russh::Disconnect::ByApplication, "", "")
-                .await;
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
         AuthenticationOutcome::Failed(error) => {
-            send_control(&control_callback, &format!("AUTH:{error}"));
+            send_control(&control_callback, &format!("AUTH:target:{error}"));
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
     }
 
-    let channel = match ssh.channel_open_session().await {
-        Ok(value) => value,
-        Err(error) => {
-            send_control(&control_callback, &format!("CHANNEL:{}", error));
+    let channel = match wait_for_auth_exchange(
+        ssh.channel_open_session(),
+        connect_timeout,
+        &mut receivers.disconnect_rx,
+    )
+    .await
+    {
+        AuthExchangeResult::Completed(value) => value,
+        AuthExchangeResult::Failed(error) => {
+            send_control(&control_callback, &format!("CHANNEL:target:{error}"));
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
+            return;
+        }
+        AuthExchangeResult::TimedOut => {
+            send_control(
+                &control_callback,
+                &format!(
+                    "CHANNEL:target:session channel timed out after {} ms",
+                    connect_timeout.as_millis()
+                ),
+            );
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
+            return;
+        }
+        AuthExchangeResult::Cancelled => {
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
     };
 
-    if let Err(error) = channel
-        .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
-        .await
+    match wait_for_auth_exchange(
+        channel.request_pty(false, "xterm-256color", 80, 24, 0, 0, &[]),
+        connect_timeout,
+        &mut receivers.disconnect_rx,
+    )
+    .await
     {
-        send_control(&control_callback, &format!("PTY:{}", error));
-        return;
+        AuthExchangeResult::Completed(()) => {}
+        AuthExchangeResult::Failed(error) => {
+            send_control(&control_callback, &format!("PTY:target:{error}"));
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
+            return;
+        }
+        AuthExchangeResult::TimedOut => {
+            send_control(
+                &control_callback,
+                &format!(
+                    "PTY:target:request timed out after {} ms",
+                    connect_timeout.as_millis()
+                ),
+            );
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
+            return;
+        }
+        AuthExchangeResult::Cancelled => {
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
+            return;
+        }
     }
 
-    if let Err(error) = channel.request_shell(true).await {
-        send_control(&control_callback, &format!("SHELL:{}", error));
-        return;
+    match wait_for_auth_exchange(
+        channel.request_shell(true),
+        connect_timeout,
+        &mut receivers.disconnect_rx,
+    )
+    .await
+    {
+        AuthExchangeResult::Completed(()) => {}
+        AuthExchangeResult::Failed(error) => {
+            send_control(&control_callback, &format!("SHELL:target:{error}"));
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
+            return;
+        }
+        AuthExchangeResult::TimedOut => {
+            send_control(
+                &control_callback,
+                &format!(
+                    "SHELL:target:request timed out after {} ms",
+                    connect_timeout.as_millis()
+                ),
+            );
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
+            return;
+        }
+        AuthExchangeResult::Cancelled => {
+            disconnect_session_route(&mut ssh, &mut jump_ssh).await;
+            return;
+        }
     }
 
     eprintln!("[LTTY_SSH] session={} stage=connected", session_id);
@@ -1328,11 +1649,7 @@ async fn run_session(
         let _ = channel_writer.await;
     }
     if local_disconnect_requested {
-        let _ = tokio::time::timeout(
-            Duration::from_secs(1),
-            ssh.disconnect(russh::Disconnect::ByApplication, "", ""),
-        )
-        .await;
+        disconnect_client(&mut ssh).await;
     }
 
     if !pending_output.is_empty() {
@@ -1364,6 +1681,9 @@ async fn run_session(
     } else {
         None
     };
+    if let Some(jump) = jump_ssh.as_mut() {
+        disconnect_client(jump).await;
+    }
     let keepalive_timed_out = match connection_result {
         Some(result) => match result {
             Err(russh::Error::KeepaliveTimeout) => {
@@ -1421,8 +1741,8 @@ async fn run_file_transfer(
     auth_callback: JsAuthCallback,
     transfer_callback: JsFileTransferCallback,
     mut disconnect_rx: tokio::sync::mpsc::Receiver<()>,
-    mut auth_rx: tokio::sync::mpsc::Receiver<AuthMethod>,
-    host_key_rx: tokio::sync::mpsc::Receiver<bool>,
+    mut auth_rx: tokio::sync::mpsc::Receiver<LayeredAuthMethod>,
+    host_key_rx: tokio::sync::mpsc::Receiver<HostKeyDecision>,
 ) {
     let _cleanup_guard = FileTransferCleanupGuard(transfer_id);
     let mut local_temp_cleanup = LocalTempCleanup(if direction == transfer::Direction::Get {
@@ -1440,10 +1760,11 @@ async fn run_file_transfer(
     let handler = ClientHandler {
         session_id: transfer_id,
         generation,
+        layer: ConnectionLayer::Target,
         host: host.clone(),
         port,
         known_hosts_path: PathBuf::from(known_hosts_path),
-        host_key_rx,
+        host_key_rx: Arc::new(tokio::sync::Mutex::new(host_key_rx)),
         connect_progress_tx,
         control_callback: control_callback.clone(),
         auth_callback: auth_callback.clone(),
@@ -1499,6 +1820,7 @@ async fn run_file_transfer(
     match run_authentication(
         transfer_id,
         generation,
+        ConnectionLayer::Target,
         &user,
         &private_key_path,
         private_key_requires_passphrase,
@@ -1686,6 +2008,11 @@ pub fn ssh_connect(
     user: String,
     private_key_path: String,
     private_key_requires_passphrase: bool,
+    jump_host: String,
+    jump_port: u32,
+    jump_user: String,
+    jump_private_key_path: String,
+    jump_private_key_requires_passphrase: bool,
     known_hosts_path: String,
     connect_timeout_ms: u32,
     generation: u32,
@@ -1701,6 +2028,17 @@ pub fn ssh_connect(
     }
     if user.trim().is_empty() {
         return Err(napi_error("user must not be empty"));
+    }
+    if !jump_host.trim().is_empty() {
+        if jump_port == 0 || jump_port > u16::MAX as u32 {
+            return Err(napi_error("jump port must be between 1 and 65535"));
+        }
+        if jump_user.trim().is_empty() {
+            return Err(napi_error("jump user must not be empty"));
+        }
+        if host == jump_host && port == jump_port {
+            return Err(napi_error("jump host must differ from target host"));
+        }
     }
     if known_hosts_path.trim().is_empty() {
         return Err(napi_error("known_hosts path must not be empty"));
@@ -1772,6 +2110,11 @@ pub fn ssh_connect(
         user,
         private_key_path,
         private_key_requires_passphrase,
+        jump_host,
+        jump_port as u16,
+        jump_user,
+        jump_private_key_path,
+        jump_private_key_requires_passphrase,
         known_hosts_path,
         Duration::from_millis(connect_timeout_ms as u64),
         transport_callback,
@@ -1933,7 +2276,7 @@ fn is_current_auth_generation(session_generation: u32, received_generation: u32)
 struct AuthSessionChannels {
     generation: u32,
     auth_tx: AuthSender,
-    host_key_tx: tokio::sync::mpsc::Sender<bool>,
+    host_key_tx: tokio::sync::mpsc::Sender<HostKeyDecision>,
     disconnect_tx: DisconnectSender,
 }
 
@@ -1965,7 +2308,12 @@ fn find_auth_session_channels(id: u32) -> Result<AuthSessionChannels> {
 }
 
 #[napi]
-pub fn ssh_auth_password(session_id: String, generation: u32, password: String) -> Result<()> {
+pub fn ssh_auth_password(
+    session_id: String,
+    generation: u32,
+    layer: String,
+    password: String,
+) -> Result<()> {
     let id = parse_session_id(&session_id)?;
     let session = find_auth_session_channels(id)?;
     if !is_current_auth_generation(session.generation, generation) {
@@ -1973,7 +2321,11 @@ pub fn ssh_auth_password(session_id: String, generation: u32, password: String) 
     }
     session
         .auth_tx
-        .try_send(AuthMethod::Password(password))
+        .try_send(LayeredAuthMethod {
+            layer: ConnectionLayer::parse(&layer)
+                .ok_or_else(|| napi_error("authentication layer must be jump or target"))?,
+            method: AuthMethod::Password(password),
+        })
         .map_err(|error| napi_error(&format!("send failed: {}", error)))
 }
 
@@ -1981,6 +2333,7 @@ pub fn ssh_auth_password(session_id: String, generation: u32, password: String) 
 pub fn ssh_auth_private_key_passphrase(
     session_id: String,
     generation: u32,
+    layer: String,
     passphrase: String,
 ) -> Result<()> {
     let id = parse_session_id(&session_id)?;
@@ -1990,7 +2343,11 @@ pub fn ssh_auth_private_key_passphrase(
     }
     session
         .auth_tx
-        .try_send(AuthMethod::PrivateKeyPassphrase(passphrase))
+        .try_send(LayeredAuthMethod {
+            layer: ConnectionLayer::parse(&layer)
+                .ok_or_else(|| napi_error("authentication layer must be jump or target"))?,
+            method: AuthMethod::PrivateKeyPassphrase(passphrase),
+        })
         .map_err(|error| napi_error(&format!("send failed: {}", error)))
 }
 
@@ -1998,6 +2355,7 @@ pub fn ssh_auth_private_key_passphrase(
 pub fn ssh_auth_keyboard_interactive_responses(
     session_id: String,
     generation: u32,
+    layer: String,
     round_id: u32,
     responses: Vec<String>,
 ) -> Result<()> {
@@ -2008,20 +2366,36 @@ pub fn ssh_auth_keyboard_interactive_responses(
     }
     session
         .auth_tx
-        .try_send(AuthMethod::KeyboardInteractiveResponses {
-            round_id,
-            responses,
+        .try_send(LayeredAuthMethod {
+            layer: ConnectionLayer::parse(&layer)
+                .ok_or_else(|| napi_error("authentication layer must be jump or target"))?,
+            method: AuthMethod::KeyboardInteractiveResponses {
+                round_id,
+                responses,
+            },
         })
         .map_err(|error| napi_error(&format!("send failed: {}", error)))
 }
 
 #[napi]
-pub fn ssh_verify_host_key(session_id: String, accepted: bool) -> Result<()> {
+pub fn ssh_verify_host_key(
+    session_id: String,
+    generation: u32,
+    layer: String,
+    accepted: bool,
+) -> Result<()> {
     let id = parse_session_id(&session_id)?;
     let session = find_auth_session_channels(id)?;
+    if !is_current_auth_generation(session.generation, generation) {
+        return Err(napi_error("stale host-key generation"));
+    }
     session
         .host_key_tx
-        .try_send(accepted)
+        .try_send(HostKeyDecision {
+            layer: ConnectionLayer::parse(&layer)
+                .ok_or_else(|| napi_error("host-key layer must be jump or target"))?,
+            accepted,
+        })
         .map_err(|error| napi_error(&format!("send failed: {}", error)))
 }
 
@@ -2202,9 +2576,10 @@ mod tests {
     use super::{
         build_client_config, channel_writer_exit_message, is_current_auth_generation,
         run_channel_writer_core, send_scheduled_input, should_flush_immediately,
-        wait_for_auth_command, wait_for_auth_exchange, wait_for_connect, AuthExchangeResult,
-        AuthMethod, AuthWaitResult, ConnectProgress, ConnectWaitResult, FileTransferEvent,
-        OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
+        wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
+        wait_for_host_key_decision, AuthExchangeResult, AuthMethod, AuthWaitResult,
+        ConnectProgress, ConnectWaitResult, ConnectionLayer, FileTransferEvent, HostKeyDecision,
+        LayeredAuthMethod, OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
         INPUT_WRITE_CHUNK_BYTES, SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
     };
     use napi_ohos::Status;
@@ -2612,15 +2987,25 @@ mod tests {
     async fn auth_command_wait_times_out_and_can_be_cancelled() {
         let (_auth_tx, mut auth_rx) = tokio::sync::mpsc::channel(1);
         let (_disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::channel(1);
-        let timed_out =
-            wait_for_auth_command(&mut auth_rx, &mut disconnect_rx, Duration::from_millis(1)).await;
+        let timed_out = wait_for_auth_command(
+            ConnectionLayer::Target,
+            &mut auth_rx,
+            &mut disconnect_rx,
+            Duration::from_millis(1),
+        )
+        .await;
         assert!(matches!(timed_out, AuthWaitResult::TimedOut));
 
         let (_auth_tx, mut auth_rx) = tokio::sync::mpsc::channel(1);
         let (disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::channel(1);
         disconnect_tx.send(()).await.unwrap();
-        let cancelled =
-            wait_for_auth_command(&mut auth_rx, &mut disconnect_rx, Duration::from_secs(1)).await;
+        let cancelled = wait_for_auth_command(
+            ConnectionLayer::Target,
+            &mut auth_rx,
+            &mut disconnect_rx,
+            Duration::from_secs(1),
+        )
+        .await;
         assert!(matches!(cancelled, AuthWaitResult::Cancelled));
     }
 
@@ -2631,21 +3016,29 @@ mod tests {
         let (_first_disconnect_tx, mut first_disconnect_rx) = tokio::sync::mpsc::channel(1);
         let (_second_disconnect_tx, mut second_disconnect_rx) = tokio::sync::mpsc::channel(1);
         first_auth_tx
-            .send(AuthMethod::Password("first-secret".to_string()))
+            .send(LayeredAuthMethod {
+                layer: ConnectionLayer::Target,
+                method: AuthMethod::Password("first-secret".to_string()),
+            })
             .await
             .unwrap();
         second_auth_tx
-            .send(AuthMethod::Password("second-secret".to_string()))
+            .send(LayeredAuthMethod {
+                layer: ConnectionLayer::Jump,
+                method: AuthMethod::Password("second-secret".to_string()),
+            })
             .await
             .unwrap();
 
         let (first, second) = tokio::join!(
             wait_for_auth_command(
+                ConnectionLayer::Target,
                 &mut first_auth_rx,
                 &mut first_disconnect_rx,
                 Duration::from_secs(1),
             ),
             wait_for_auth_command(
+                ConnectionLayer::Jump,
                 &mut second_auth_rx,
                 &mut second_disconnect_rx,
                 Duration::from_secs(1),
@@ -2664,6 +3057,63 @@ mod tests {
             }
             _ => panic!("second session did not receive its own command"),
         }
+    }
+
+    #[tokio::test]
+    async fn auth_command_wait_discards_a_late_response_for_the_other_layer() {
+        let (auth_tx, mut auth_rx) = tokio::sync::mpsc::channel(2);
+        let (_disconnect_tx, mut disconnect_rx) = tokio::sync::mpsc::channel(1);
+        auth_tx
+            .send(LayeredAuthMethod {
+                layer: ConnectionLayer::Jump,
+                method: AuthMethod::Password("late-jump-secret".to_string()),
+            })
+            .await
+            .unwrap();
+        auth_tx
+            .send(LayeredAuthMethod {
+                layer: ConnectionLayer::Target,
+                method: AuthMethod::Password("target-secret".to_string()),
+            })
+            .await
+            .unwrap();
+
+        let result = wait_for_auth_command(
+            ConnectionLayer::Target,
+            &mut auth_rx,
+            &mut disconnect_rx,
+            Duration::from_secs(1),
+        )
+        .await;
+
+        match result {
+            AuthWaitResult::Command(AuthMethod::Password(ref value)) => {
+                assert_eq!(value, "target-secret");
+            }
+            _ => panic!("target did not receive its own authentication response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn host_key_wait_discards_a_late_response_for_the_other_layer() {
+        let (decision_tx, decision_rx) = tokio::sync::mpsc::channel(2);
+        let receiver = Arc::new(tokio::sync::Mutex::new(decision_rx));
+        decision_tx
+            .send(HostKeyDecision {
+                layer: ConnectionLayer::Jump,
+                accepted: false,
+            })
+            .await
+            .unwrap();
+        decision_tx
+            .send(HostKeyDecision {
+                layer: ConnectionLayer::Target,
+                accepted: true,
+            })
+            .await
+            .unwrap();
+
+        assert!(wait_for_host_key_decision(ConnectionLayer::Target, &receiver).await);
     }
 
     #[tokio::test]

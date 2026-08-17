@@ -27,6 +27,11 @@ export class SshConnectOptions {
   username: string
   privateKeyPath: string
   privateKeyRequiresPassphrase: boolean
+  jumpHost: string
+  jumpPort: number
+  jumpUsername: string
+  jumpPrivateKeyPath: string
+  jumpPrivateKeyRequiresPassphrase: boolean
   knownHostsPath: string
   connectTimeoutMs: number
 
@@ -36,6 +41,11 @@ export class SshConnectOptions {
     this.username = ''
     this.privateKeyPath = ''
     this.privateKeyRequiresPassphrase = false
+    this.jumpHost = ''
+    this.jumpPort = 22
+    this.jumpUsername = ''
+    this.jumpPrivateKeyPath = ''
+    this.jumpPrivateKeyRequiresPassphrase = false
     this.knownHostsPath = ''
     this.connectTimeoutMs = 15000
   }

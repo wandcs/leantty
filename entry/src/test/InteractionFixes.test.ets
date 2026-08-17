@@ -678,11 +678,25 @@ export default function interactionFixesTest() {
       }
     })
 
+    it('keepsProxyJumpFailureAndChangedHostLayersVisibleWithoutExposingDetails', 0, () => {
+      expect(SessionViewModel.sshFailureTitle('jump:authentication rejected'))
+        .assertEqual('The jump host connection failed.')
+      expect(SessionViewModel.sshFailureTitle('target:connection refused'))
+        .assertEqual('The target host connection failed.')
+      expect(SessionViewModel.sshFailureTitle('connection refused'))
+        .assertEqual('The SSH connection failed.')
+      let warning: string = SessionViewModel.buildHostKeyChangedWarning(
+        'jump.example.com', 2200, 'ssh-ed25519', 'SHA256:old', 'SHA256:new', 'jump')
+      expect(warning.startsWith('Jump host identification has changed.')).assertEqual(true)
+      expect(warning.includes('Host: [jump.example.com]:2200')).assertEqual(true)
+    })
+
     it('parsesStructuredChangedHostKeyEvents', 0, () => {
       let info = SshClient.parseHostKeyChangedInfo(
-        'ssh-ed25519\tSHA256:old\tSHA256:new\tserver.example.com\t2222')
+        'target\tssh-ed25519\tSHA256:old\tSHA256:new\tserver.example.com\t2222')
       expect(info !== null).assertEqual(true)
       if (info !== null) {
+        expect(info.layer).assertEqual('target')
         expect(info.algorithm).assertEqual('ssh-ed25519')
         expect(info.oldFingerprint).assertEqual('SHA256:old')
         expect(info.newFingerprint).assertEqual('SHA256:new')
@@ -690,6 +704,29 @@ export default function interactionFixesTest() {
         expect(info.port).assertEqual(2222)
       }
       expect(SshClient.parseHostKeyChangedInfo('SHA256:new')).assertEqual(null)
+    })
+
+    it('formatsProxyJumpAuthenticationPromptsWithoutChangingDirectSshPrompts', 0, () => {
+      expect(SessionViewModel.formatPasswordPrompt('target', false)).assertEqual('Password: ')
+      expect(SessionViewModel.formatPrivateKeyPassphrasePrompt('/data/key', 'target', false))
+        .assertEqual('\r\nThe key at /data/key is encrypted.\r\nEnter passphrase: ')
+      expect(SessionViewModel.formatHostKeyPrompt('SHA256:direct', 'target', false))
+        .assertEqual('\r\nThe authenticity of this host cannot be established.\r\n' +
+          'Fingerprint: SHA256:direct\r\nTrust this host key? Type yes or no: ')
+      expect(SessionViewModel.formatAuthenticationHeading('target', false)).assertEqual('')
+
+      expect(SessionViewModel.formatPasswordPrompt('jump', true)).assertEqual('Jump host password: ')
+      expect(SessionViewModel.formatPasswordPrompt('target', true)).assertEqual('Target host password: ')
+      expect(SessionViewModel.formatPrivateKeyPassphrasePrompt('/data/jump-key', 'jump', true))
+        .assertEqual('\r\nThe jump host key at /data/jump-key is encrypted.\r\n' +
+          'Enter jump host key passphrase: ')
+      expect(SessionViewModel.formatHostKeyPrompt('SHA256:target', 'target', true))
+        .assertEqual('\r\nThe authenticity of this target host cannot be established.\r\n' +
+          'Fingerprint: SHA256:target\r\nTrust this target host key? Type yes or no: ')
+      expect(SessionViewModel.formatAuthenticationHeading('jump', true))
+        .assertEqual('Jump host authentication')
+      expect(SessionViewModel.formatAuthenticationHeading('target', true))
+        .assertEqual('Target host authentication')
     })
 
     it('parsesOptionalKeyExportFileNameAndRejectsInvalidSyntax', 0, () => {
@@ -963,10 +1000,86 @@ export default function interactionFixesTest() {
     it('parsesEffectiveConfigInspection', 0, () => {
       let result: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('ssh -G prod', new SshConfig())
+      let jumped: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput('ssh -G -J jump prod', new SshConfig())
       expect(result instanceof KeyCommandResult).assertEqual(true)
       if (result instanceof KeyCommandResult) {
         expect(result.kind).assertEqual(KeyCommandKind.SSH_CONFIG)
         expect(result.keyName).assertEqual('prod')
+      }
+      expect(jumped instanceof KeyCommandResult).assertEqual(true)
+      if (jumped instanceof KeyCommandResult) {
+        expect(jumped.kind).assertEqual(KeyCommandKind.SSH_CONFIG)
+        expect(jumped.keyName).assertEqual('prod')
+        expect(jumped.sshJump).assertEqual('jump')
+      }
+    })
+
+    it('resolvesSingleProxyJumpWithSeparateHostIdentityAndOverrides', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName target.example.com\n  User target-user\n' +
+        '  IdentityFile target-key\n  ProxyJump jump-user@bastion:2200\n\n' +
+        'Host bastion\n  HostName jump.example.com\n  User config-jump-user\n' +
+        '  Port 2222\n  IdentityFile jump-key\n')
+      let parsed = CommandParser.parseInput('ssh prod', config)
+      expect(parsed instanceof CommandParseResult).assertEqual(true)
+      if (parsed instanceof CommandParseResult) {
+        expect(parsed.isValid).assertEqual(true)
+        expect(parsed.host).assertEqual('target.example.com')
+        expect(parsed.username).assertEqual('target-user')
+        expect(parsed.identityFile).assertEqual('target-key')
+        expect(parsed.jumpDisplayHost).assertEqual('bastion')
+        expect(parsed.jumpHost).assertEqual('jump.example.com')
+        expect(parsed.jumpPort).assertEqual(2200)
+        expect(parsed.jumpUsername).assertEqual('jump-user')
+        expect(parsed.jumpIdentityFile).assertEqual('jump-key')
+      }
+    })
+
+    it('appliesOneShotProxyJumpWithoutMutatingSavedConfig', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName target.example.com\n  User target-user\n' +
+        '  ProxyJump saved-jump\n\nHost saved-jump\n  HostName saved.example.com\n  User saved-user\n')
+      let disabled = CommandParser.parseInput('ssh -J none prod', config)
+      let overridden = CommandParser.parseInput('ssh -J once@other.example.com:2200 prod', config)
+      let following = CommandParser.parseInput('ssh prod', config)
+      if (disabled instanceof CommandParseResult) {
+        expect(disabled.isValid).assertEqual(true)
+        expect(disabled.jumpHost).assertEqual('')
+      }
+      if (overridden instanceof CommandParseResult) {
+        expect(overridden.isValid).assertEqual(true)
+        expect(overridden.jumpHost).assertEqual('other.example.com')
+        expect(overridden.jumpPort).assertEqual(2200)
+        expect(overridden.jumpUsername).assertEqual('once')
+      }
+      if (following instanceof CommandParseResult) {
+        expect(following.isValid).assertEqual(true)
+        expect(following.jumpHost).assertEqual('saved.example.com')
+        expect(following.jumpUsername).assertEqual('saved-user')
+      }
+    })
+
+    it('rejectsUnsupportedProxyJumpChainsLoopsAndExpressions', 0, () => {
+      let chain: SshConfig = new SshConfig()
+      chain.loadFromText('Host prod\n  HostName target.example.com\n  User target\n  ProxyJump jump\n\n' +
+        'Host jump\n  HostName jump.example.com\n  User jump\n  ProxyJump outer\n')
+      let self: SshConfig = new SshConfig()
+      self.loadFromText('Host prod\n  HostName same.example.com\n  User target\n' +
+        '  ProxyJump jump\n\nHost jump\n  HostName same.example.com\n  User jump\n')
+      let direct: SshConfig = new SshConfig()
+      direct.loadFromText('Host prod\n  HostName target.example.com\n  User target\n')
+      let chained = CommandParser.parseInput('ssh prod', chain)
+      let looped = CommandParser.parseInput('ssh prod', self)
+      let multiple = CommandParser.parseInput('ssh -J one,two prod', direct)
+      let uri = CommandParser.parseInput('ssh -J ssh://jump prod', direct)
+      let missingUser = CommandParser.parseInput('ssh -J unknown prod', direct)
+      for (let parsed of [chained, looped, multiple, uri, missingUser]) {
+        expect(parsed instanceof CommandParseResult).assertEqual(true)
+        if (parsed instanceof CommandParseResult) {
+          expect(parsed.isValid).assertEqual(false)
+          expect(parsed.errorMessage.length > 0).assertEqual(true)
+        }
       }
     })
 
@@ -982,6 +1095,17 @@ export default function interactionFixesTest() {
       expect(text.includes('ProxyJump bastion')).assertEqual(true)
       expect(text.includes('# >>> LeanTTY managed hosts >>>')).assertEqual(true)
       expect(text.includes('Host prod\n  HostName new.example.com\n  User deploy\n  Port 2222')).assertEqual(true)
+    })
+
+    it('managedHostUpdatesPreserveProxyJump', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('# >>> LeanTTY managed hosts >>>\nHost prod\n' +
+        '  HostName old.example.com\n  User old-user\n  ProxyJump jump\n\n' +
+        '# <<< LeanTTY managed hosts <<<\n\nHost jump\n  HostName jump.example.com\n  User jump-user\n')
+      config.addAlias('prod', 'new.example.com', 2200, 'new-user')
+      let text: string = config.previewConfigText()
+      expect(text.includes('Host prod\n  HostName new.example.com\n  User new-user\n' +
+        '  Port 2200\n  ProxyJump jump')).assertEqual(true)
     })
 
     it('resolvesOpenSshFirstValueAndIdentityFile', 0, () => {
@@ -1014,7 +1138,7 @@ export default function interactionFixesTest() {
       }
     })
 
-    it('rejectsUnknownOrInvalidConfigBeforeConnection', 0, () => {
+    it('rejectsUnresolvableProxyJumpOrInvalidConfigBeforeConnection', 0, () => {
       let unknown: SshConfig = new SshConfig()
       unknown.loadFromText('Host prod\n  HostName prod.example.com\n  User deploy\n  ProxyJump bastion\n')
       let unknownResult = CommandParser.parseInput('ssh prod', unknown)
@@ -1022,6 +1146,16 @@ export default function interactionFixesTest() {
       if (unknownResult instanceof CommandParseResult) {
         expect(unknownResult.isValid).assertEqual(false)
         expect(unknownResult.errorMessage.includes('ProxyJump')).assertEqual(true)
+      }
+
+      let proxyCommand: SshConfig = new SshConfig()
+      proxyCommand.loadFromText('Host prod\n  HostName prod.example.com\n  User deploy\n' +
+        '  ProxyCommand ssh jump -W %h:%p\n')
+      let proxyCommandResult = CommandParser.parseInput('ssh prod', proxyCommand)
+      expect(proxyCommandResult instanceof CommandParseResult).assertEqual(true)
+      if (proxyCommandResult instanceof CommandParseResult) {
+        expect(proxyCommandResult.isValid).assertEqual(false)
+        expect(proxyCommandResult.errorMessage.includes('ProxyCommand')).assertEqual(true)
       }
 
       let invalid: SshConfig = new SshConfig()
@@ -1052,11 +1186,13 @@ export default function interactionFixesTest() {
       let malformed = CommandParser.parseInput('ssh -p 22oops deploy@example.com', config)
       let duplicatePort = CommandParser.parseInput('ssh -p 22 -p 2200 deploy@example.com', config)
       let duplicateIdentity = CommandParser.parseInput('ssh -i first -i second deploy@example.com', config)
+      let duplicateJump = CommandParser.parseInput('ssh -J one -J two deploy@example.com', config)
       let malformedTarget = CommandParser.parseInput('ssh deploy@example.com:22oops', config)
       let bracketSuffix = CommandParser.parseInput('ssh deploy@[2001:db8::1]oops', config)
       expect(malformed instanceof CommandParseResult).assertEqual(true)
       expect(duplicatePort instanceof CommandParseResult).assertEqual(true)
       expect(duplicateIdentity instanceof CommandParseResult).assertEqual(true)
+      expect(duplicateJump instanceof CommandParseResult).assertEqual(true)
       expect(malformedTarget instanceof CommandParseResult).assertEqual(true)
       expect(bracketSuffix instanceof CommandParseResult).assertEqual(true)
       if (malformed instanceof CommandParseResult) { expect(malformed.isValid).assertEqual(false) }
@@ -1065,6 +1201,9 @@ export default function interactionFixesTest() {
       }
       if (duplicateIdentity instanceof CommandParseResult) {
         expect(duplicateIdentity.errorMessage).assertEqual('Duplicate SSH option: -i')
+      }
+      if (duplicateJump instanceof CommandParseResult) {
+        expect(duplicateJump.errorMessage).assertEqual('Duplicate SSH option: -J')
       }
       if (malformedTarget instanceof CommandParseResult) { expect(malformedTarget.isValid).assertEqual(false) }
       if (bracketSuffix instanceof CommandParseResult) { expect(bracketSuffix.isValid).assertEqual(false) }

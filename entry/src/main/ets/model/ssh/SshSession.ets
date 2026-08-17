@@ -8,6 +8,12 @@ export class SshSession {
   private hostname: string = ''
   private port: number = 22
   private username: string = ''
+  private identityFile: string = ''
+  private jumpDisplayHost: string = ''
+  private jumpHostname: string = ''
+  private jumpPort: number = 22
+  private jumpUsername: string = ''
+  private jumpIdentityFile: string = ''
   private errorMessage: string = ''
   private exitCode: number = -1
 
@@ -49,6 +55,54 @@ export class SshSession {
 
   setUsername(u: string): void {
     this.username = u
+  }
+
+  getIdentityFile(): string {
+    return this.identityFile
+  }
+
+  setIdentityFile(identityFile: string): void {
+    this.identityFile = identityFile
+  }
+
+  getJumpDisplayHost(): string {
+    return this.jumpDisplayHost
+  }
+
+  setJumpDisplayHost(host: string): void {
+    this.jumpDisplayHost = host
+  }
+
+  getJumpHostname(): string {
+    return this.jumpHostname
+  }
+
+  setJumpHostname(host: string): void {
+    this.jumpHostname = host
+  }
+
+  getJumpPort(): number {
+    return this.jumpPort
+  }
+
+  setJumpPort(port: number): void {
+    this.jumpPort = port
+  }
+
+  getJumpUsername(): string {
+    return this.jumpUsername
+  }
+
+  setJumpUsername(username: string): void {
+    this.jumpUsername = username
+  }
+
+  getJumpIdentityFile(): string {
+    return this.jumpIdentityFile
+  }
+
+  setJumpIdentityFile(identityFile: string): void {
+    this.jumpIdentityFile = identityFile
   }
 
   getErrorMessage(): string {

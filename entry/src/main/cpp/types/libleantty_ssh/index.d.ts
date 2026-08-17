@@ -4,6 +4,7 @@ export interface AuthPromptEvent {
 }
 export interface AuthEvent {
   kind: string
+  layer: string
   sessionId: string
   generation: number
   roundId: number
@@ -30,19 +31,28 @@ export interface FileTransferEvent {
 export declare function sshConnect(
   host: string, port: number, user: string,
   privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
+  jumpHost: string, jumpPort: number, jumpUser: string,
+  jumpPrivateKeyPath: string, jumpPrivateKeyRequiresPassphrase: boolean,
   knownHostsPath: string, connectTimeoutMs: number, generation: number,
   onTransport: (event: TransportEvent) => void,
   onControl: (event: string) => void,
   onAuth: (event: AuthEvent) => void
 ): string
-export declare function sshAuthPassword(sessionId: string, generation: number, password: string): void
+export declare function sshAuthPassword(
+  sessionId: string, generation: number, layer: string, password: string
+): void
 export declare function sshAuthPrivateKeyPassphrase(
-  sessionId: string, generation: number, passphrase: string
+  sessionId: string, generation: number, layer: string, passphrase: string
 ): void
 export declare function sshAuthKeyboardInteractiveResponses(
-  sessionId: string, generation: number, roundId: number, responses: string[]
+  sessionId: string, generation: number, layer: string, roundId: number, responses: string[]
 ): void
-export declare function sshVerifyHostKey(sessionId: string, accepted: boolean): void
+export declare function sshVerifyHostKey(
+  sessionId: string,
+  generation: number,
+  layer: string,
+  accepted: boolean
+): void
 export declare function sshWrite(sessionId: string, data: string): void
 export declare function sshResize(sessionId: string, cols: number, rows: number): void
 export declare function sshSetOutputPaused(sessionId: string, paused: boolean): void

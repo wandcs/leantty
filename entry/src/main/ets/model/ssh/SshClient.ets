@@ -36,6 +36,7 @@ export class AuthChallengeInfo {
 }
 
 export class HostKeyChangedInfo {
+  layer: string = ''
   algorithm: string = ''
   oldFingerprint: string = ''
   newFingerprint: string = ''
@@ -49,8 +50,10 @@ export class SshClient {
   private generation: number = 0
   private connected: boolean = false
   private waitingAuth: boolean = false
+  private pendingLayer: string = ''
   private pendingKnownHostLine: string = ''
   private privateKeyPath: string = ''
+  private jumpPrivateKeyPath: string = ''
   private pendingAuthChallenge: AuthChallengeInfo | null = null
   private eventCallback: ((event: SshClientEvent, data: string) => void) | null = null
   private dataCallback: ((data: Uint8Array) => void) | null = null
@@ -79,12 +82,18 @@ export class SshClient {
         SshClient.nextGeneration = 1
       }
       this.privateKeyPath = options.privateKeyPath
+      this.jumpPrivateKeyPath = options.jumpPrivateKeyPath
       let id: string = sshNative.sshConnect(
         options.host,
         options.port,
         options.username,
         options.privateKeyPath,
         options.privateKeyRequiresPassphrase,
+        options.jumpHost,
+        options.jumpPort,
+        options.jumpUsername,
+        options.jumpPrivateKeyPath,
+        options.jumpPrivateKeyRequiresPassphrase,
         options.knownHostsPath,
         options.connectTimeoutMs,
         this.generation,
@@ -107,13 +116,14 @@ export class SshClient {
   }
 
   authPassword(password: string): boolean {
-    if (!this.waitingAuth || this.sessionId.length === 0) {
+    if (!this.waitingAuth || this.sessionId.length === 0 || this.pendingLayer.length === 0) {
       this.reportError(new SshError(SshErrorCode.SessionClosed, 'Not waiting for password', '', 'client'))
       return false
     }
     try {
-      sshNative.sshAuthPassword(this.sessionId, this.generation, password)
+      sshNative.sshAuthPassword(this.sessionId, this.generation, this.pendingLayer, password)
       this.waitingAuth = false
+      this.pendingLayer = ''
       this.logger.info('Auth password sent')
       return true
     } catch (e) {
@@ -124,13 +134,16 @@ export class SshClient {
   }
 
   authPrivateKeyPassphrase(passphrase: string): boolean {
-    if (!this.waitingAuth || this.sessionId.length === 0) {
+    if (!this.waitingAuth || this.sessionId.length === 0 || this.pendingLayer.length === 0) {
       this.reportError(new SshError(SshErrorCode.SessionClosed, 'Not waiting for a key passphrase', '', 'client'))
       return false
     }
     try {
-      sshNative.sshAuthPrivateKeyPassphrase(this.sessionId, this.generation, passphrase)
+      sshNative.sshAuthPrivateKeyPassphrase(
+        this.sessionId, this.generation, this.pendingLayer, passphrase
+      )
       this.waitingAuth = false
+      this.pendingLayer = ''
       this.logger.info('Private-key passphrase sent')
       return true
     } catch (e) {
@@ -141,15 +154,16 @@ export class SshClient {
   }
 
   authKeyboardInteractiveResponses(roundId: number, responses: string[]): boolean {
-    if (!this.waitingAuth || this.sessionId.length === 0) {
+    if (!this.waitingAuth || this.sessionId.length === 0 || this.pendingLayer.length === 0) {
       this.reportError(new SshError(SshErrorCode.SessionClosed, 'Not waiting for authentication responses', '', 'client'))
       return false
     }
     try {
       sshNative.sshAuthKeyboardInteractiveResponses(
-        this.sessionId, this.generation, roundId, responses
+        this.sessionId, this.generation, this.pendingLayer, roundId, responses
       )
       this.waitingAuth = false
+      this.pendingLayer = ''
       this.pendingAuthChallenge = null
       this.logger.info('Keyboard-interactive responses sent, roundId=' + roundId.toString())
       return true
@@ -167,13 +181,14 @@ export class SshClient {
   }
 
   verifyHostKey(accepted: boolean): boolean {
-    if (this.sessionId.length === 0) {
+    if (this.sessionId.length === 0 || this.pendingLayer.length === 0) {
       this.reportError(new SshError(SshErrorCode.SessionClosed, 'Session not active', '', 'client'))
       return false
     }
     try {
-      sshNative.sshVerifyHostKey(this.sessionId, accepted)
+      sshNative.sshVerifyHostKey(this.sessionId, this.generation, this.pendingLayer, accepted)
       this.pendingKnownHostLine = ''
+      this.pendingLayer = ''
       return true
     } catch (e) {
       this.reportError(new SshError(SshErrorCode.HostKey, 'Host key response failed', '' + e, 'client'))
@@ -233,6 +248,7 @@ export class SshClient {
     }
     this.connected = false
     this.waitingAuth = false
+    this.pendingLayer = ''
     this.pendingAuthChallenge = null
     this.sessionId = ''
   }
@@ -257,6 +273,10 @@ export class SshClient {
     return this.waitingAuth
   }
 
+  getPendingLayer(): string {
+    return this.pendingLayer
+  }
+
   static parseCloseError(closeResult: string): string | null {
     if (!closeResult.startsWith('ERROR:')) {
       return null
@@ -267,19 +287,21 @@ export class SshClient {
 
   static parseHostKeyChangedInfo(payload: string): HostKeyChangedInfo | null {
     let fields: string[] = payload.split('\t')
-    if (fields.length !== 5) {
+    if (fields.length !== 6) {
       return null
     }
-    let port: number = parseInt(fields[4], 10)
-    if (fields[0].length === 0 || fields[1].length === 0 || fields[2].length === 0 ||
-      fields[3].length === 0 || !/^\d+$/.test(fields[4]) || isNaN(port) || port < 1 || port > 65535) {
+    let port: number = parseInt(fields[5], 10)
+    if ((fields[0] !== 'jump' && fields[0] !== 'target') || fields[1].length === 0 ||
+      fields[2].length === 0 || fields[3].length === 0 || fields[4].length === 0 ||
+      !/^\d+$/.test(fields[5]) || isNaN(port) || port < 1 || port > 65535) {
       return null
     }
     let info: HostKeyChangedInfo = new HostKeyChangedInfo()
-    info.algorithm = fields[0]
-    info.oldFingerprint = fields[1]
-    info.newFingerprint = fields[2]
-    info.host = fields[3]
+    info.layer = fields[0]
+    info.algorithm = fields[1]
+    info.oldFingerprint = fields[2]
+    info.newFingerprint = fields[3]
+    info.host = fields[4]
     info.port = port
     return info
   }
@@ -288,18 +310,21 @@ export class SshClient {
     this.logger.info('rust event: ' + event)
     if (event === 'CONNECTED') {
       this.waitingAuth = false
+      this.pendingLayer = ''
       this.connected = true
       this.logger.info('SSH connected')
       this.emitEvent(SshClientEvent.CONNECTED, '')
     } else if (event.startsWith('HOST_KEY_PROMPT:')) {
       let payload: string = event.substring(16)
-      let separator: number = payload.indexOf('\t')
-      if (separator < 1 || separator >= payload.length - 1) {
+      let fields: string[] = payload.split('\t')
+      if (fields.length !== 3 || (fields[0] !== 'jump' && fields[0] !== 'target') ||
+        fields[1].length === 0 || fields[2].length === 0) {
         this.handleError('HOST_KEY:Invalid host key prompt payload')
         return
       }
-      this.pendingKnownHostLine = payload.substring(separator + 1)
-      this.emitEvent(SshClientEvent.HOST_KEY_PROMPT, payload.substring(0, separator))
+      this.pendingLayer = fields[0]
+      this.pendingKnownHostLine = fields[2]
+      this.emitEvent(SshClientEvent.HOST_KEY_PROMPT, fields[1])
     } else if (event.startsWith('HOST_KEY_CHANGED:')) {
       let info: HostKeyChangedInfo | null = SshClient.parseHostKeyChangedInfo(event.substring(17))
       if (info === null) {
@@ -328,19 +353,26 @@ export class SshClient {
       this.logger.warn('Rejected stale native auth event, kind=' + event.kind)
       return
     }
-    this.logger.info('native auth event kind=' + event.kind)
+    this.logger.info('native auth event kind=' + event.kind + ', layer=' + event.layer)
+    if (event.layer !== 'jump' && event.layer !== 'target') {
+      this.handleError('AUTH:Invalid authentication layer')
+      return
+    }
     if (event.kind === 'banner') {
       this.emitEvent(SshClientEvent.AUTH_BANNER, event.text)
       return
     }
     if (event.kind === 'password') {
+      this.pendingLayer = event.layer
       this.waitingAuth = true
       this.emitEvent(SshClientEvent.PASSWORD_PROMPT, '')
       return
     }
     if (event.kind === 'private_key_passphrase') {
+      this.pendingLayer = event.layer
       this.waitingAuth = true
-      this.emitEvent(SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT, this.privateKeyPath)
+      let keyPath: string = event.layer === 'jump' ? this.jumpPrivateKeyPath : this.privateKeyPath
+      this.emitEvent(SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT, keyPath)
       return
     }
     if (event.kind === 'challenge') {
@@ -361,6 +393,7 @@ export class SshClient {
         challenge.prompts.push(prompt)
       }
       this.pendingAuthChallenge = challenge
+      this.pendingLayer = event.layer
       this.waitingAuth = true
       this.emitEvent(SshClientEvent.AUTH_CHALLENGE, '')
       return
@@ -406,6 +439,7 @@ export class SshClient {
   private handleClose(exitCode: number): void {
     this.connected = false
     this.waitingAuth = false
+    this.pendingLayer = ''
     this.pendingAuthChallenge = null
     this.sessionId = ''
     this.emitEvent(SshClientEvent.CLOSE, exitCode.toString())
@@ -414,6 +448,7 @@ export class SshClient {
   private handleError(errorStr: string): void {
     this.connected = false
     this.waitingAuth = false
+    this.pendingLayer = ''
     this.pendingAuthChallenge = null
     this.sessionId = ''
     let code: SshErrorCode = SshErrorCode.Internal
