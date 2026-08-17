@@ -1,119 +1,109 @@
-# HSL 本地执行环境入口技术方案
+# HSL 本地执行环境入口技术结论
 
-> 状态：WIP；系统接口与真机证据调查已进入当前工作，产品实现仍有条件
+> 状态：进入门禁已完成；1.4 产品级 HSL 专用入口已裁剪
 >
-> 当前 milestone：1.4.0
+> 判定日期：2026-08-17
 >
-> 更新日期：2026-08-17
+> 验证目标：物理 ARM64 HarmonyOS PC（HAD-W32，HarmonyOS 6.1.0.135）
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：[`next-work.md`](../next-work.md) 只授权先完成公开接口与真机进入门禁；门禁
-> 通过并锁定最小用户模型后才授权产品实现
+> 当前授权：不实现 discovery adapter、HSL 专用 UI、命令、Host 数据或 Local Transport；
+> 只有本文“重新进入条件”满足并重新写入 [`next-work.md`](../next-work.md) 后才能恢复产品实现
 
-## 当前事实与证据边界
+## 结论
 
-HarmonyOS PC 当前已经提供 HSL，LeanTTY 不再需要把“系统级 Linux 执行环境”仅作为
-未来假设。但是 HSL 目前不支持像 Windows `wsl` 命令一样从终端直接进入，需要通过
-SSH 访问。
+HSL 当前可以作为本机上的普通 SSH 目标使用，但不能成为 LeanTTY 1.4 的产品级专用入口。
 
-因此现阶段 HSL 是“运行在本机、通过标准 SSH 接入的执行环境”。LeanTTY 已有的 SSH
-Transport 是正确起点，不应仅因为目标位于本机就建立第二套 Local Transport。
+公开资料和目标真机共同确认了以下事实：
 
-本文尚未确认以下真机事实：HSL 的标准发现接口、地址与端口稳定性、SSH 服务启动
-时机、用户与凭据建立方式、主机密钥生命周期、网络隔离、多实例能力和系统升级行为。
-这些内容必须在物理 ARM64 HarmonyOS PC 上验证，不能从“HSL 已存在”继续推断。
+- HSL 地址不固定，官方要求用户进入 Linux 环境后通过 `ipconfig` 或 `ip addr` 自行查看。
+- HSL 不支持 `systemctl`，`sshd` 需要用户在 Linux 环境中手工启动。
+- 当前没有面向三方 HarmonyOS 应用的公开 HSL 发现/状态 API、稳定 Intent，或文档化的
+  loopback SSH endpoint。
+- 系统终端能够显示 openEuler 入口并不构成三方应用接口；真机上的相关进程、网卡名称、
+  Unix socket 和数据目录都是内部实现，不是可分发契约。
 
-## 用户问题与目标
+因此，LeanTTY 无法在正式商店包中可靠区分“HSL 未安装”“HSL 未启动”“endpoint 已变化”
+和“`sshd` 未就绪”，也不能在不依赖私有实现的前提下生成一次有效连接目标。进入门禁按预设
+停止条件判定为**失败**，不进入产品实现。
 
-如果用户仍需手工查找 HSL 的内部 endpoint、拼接 SSH 参数并维护额外配置，HSL 虽然
-已经存在，却没有成为一个打开 LeanTTY 就能工作的本地执行环境入口。
+## 公开资料证据
 
-目标是在不建设 Linux 环境、不削弱 SSH 安全边界的前提下，为 HSL 提供一条清楚、
-可发现、可恢复的进入路径，并让它继续遵循普通 Tab、Pane、Session 和 Terminal
-Surface 行为。
+华为官方《[融合开发引擎（Linux子系统）相关问题](https://consumer.huawei.com/cn/support/content/zh-cn16091898/)》
+适用于 HarmonyOS 6.0/6.1，并明确说明：
 
-## 非目标
+- 当前 HSL IP 不固定，需要在来宾环境中执行 `ipconfig` 或 `ip addr` 查看；
+- 当前不支持 `systemctl`，SSH 示例要求用户执行 `which sshd` 后手工运行
+  `sudo /usr/sbin/sshd`；
+- 网络模式可为 NAT 或 host-only，host-only 只与主机通信；当前不支持 IPv6；
+- 当前只支持 openEuler，并存在主用户、资源回收和系统版本相关约束；
+- HarmonyOS 6.1 与融合开发引擎 1.1.0.0+ 的 `loh [cmd][args]` 用法被限定在 HiShell 页签，
+  文档没有把它定义为三方应用 API 或独立系统命令。
 
-- 不安装、启用、创建、删除、升级或修复 HSL。
-- 不捆绑发行版、BusyBox、Linux 用户空间、包管理器或开发工具链。
-- 不管理 HSL 内部用户、软件包、文件、服务或资源配额。
-- 不通过私有 API、固定弱凭据、跳过主机密钥校验或自动信任换取“零配置”。
-- 不并存 HSL Host 数据库与普通 OpenSSH config 两个权威来源。
-- 不为尚不存在的直接系统终端 API预建 Local Transport 或通用执行环境框架。
+华为官方《[终端应用下拉菜单 openEuler 置灰](https://consumer.huawei.com/cn/support/content/zh-cn16071791/)》
+说明系统终端入口依赖 HarmonyOS 6.0+ 和从应用市场安装的融合开发引擎。它证明系统产品之间
+存在集成，但没有公布三方应用可调用的发现、状态或连接契约。
 
-## 候选用户模型
+截至判定日期，[HarmonyOS SDK 文档中心](https://developer.huawei.com/consumer/cn/doc/) 与
+[应用开发导读](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/application-dev-guide)
+没有 HSL/Fusion Development Engine Kit、API、Intent 或 loopback endpoint 文档。公开文档
+缺失不能单独证明接口不存在，但与包能力和真机服务证据一致，不能授权正式产品依赖。
 
-### A. 普通 SSH Host
+## 物理机证据
 
-用户手工把 HSL endpoint 写入 OpenSSH config，再运行 `ssh <alias>`。这是当前能力的
-基线，不需要产品功能，但发现成本高，也不能给出 HSL 专属的启用/未就绪错误。
+目标机为 HAD-W32，系统版本 `HAD-W24 6.1.0.135(SP11C00E100R13P3log)`，ABI 为
+`arm64-v8a`。验证通过 HDC 只读采集完成；HDC 仅作为诊断工具，不是产品路径。
 
-### B. 系统 HSL 入口
+### 安装包与能力边界
 
-LeanTTY 通过公开系统能力发现 HSL SSH endpoint，并把它映射为一个系统来源的本地
-目标；连接仍进入现有 Host 解析、主机校验、认证和 Session 状态机。此方案是当前
-首选候选，但只有系统 API、endpoint 与凭据边界被验证后才能确定其 UI 和持久化方式。
+- 系统终端 `com.huawei.hmos.hishell` 版本 6.1.1.31，分发类型为 `os_integration`，安装来源为
+  `pre-installed`。其模块 `hasIntent=false`；公开 skill 只有桌面入口和打开 shell 脚本文件，
+  没有 HSL 发现、状态或执行 Intent。该系统包还申请了 `CUSTOM_SANDBOX`、
+  `GET_BUNDLE_INFO_PRIVILEGED` 等普通商店应用不能据此复用的能力。
+- openEuler 镜像包 `com.huawei.developer.rgm.images_openeuler22.03` 版本 1.1.0.7，由 AppGallery
+  安装，`hasIntent=false`，没有请求权限；其可见 Ability 只声明普通桌面入口，没有 HSL
+  endpoint 或状态 skill。
+- 公共系统参数与系统服务注册表中没有 HSL、openEuler、RGM、Linux Fusion 或虚拟机发现项。
 
-系统目标不能悄悄覆盖用户同名 Host。若必须落入 OpenSSH config，应使用清楚、稳定的
-生成规则，并保证用户配置仍是唯一可检查的结果；若系统 endpoint 每次动态变化，则
-只把发现结果作为当前连接输入，不复制为长期 Host 数据库。
+### 当前运行状态不构成接口
 
-### C. 直接本地 transport
+采集时 HSL 正在运行。系统内部可见 `linux_fusion_service`、`hmos_fusion_manager`、
+`rgm_manager`、`stratovirt` 和 `virtiofsd` 等进程；虚拟机命令行使用 `/data/virt_service/...`
+下的私有 QMP、console 与 virtiofs socket。这些路径需要系统服务身份，未出现在公开 SDK。
 
-当前不可行，也不进入 1.4。只有 HarmonyOS 将来提供公开、稳定、可分发的直接 HSL
-终端 API，并证明其明显优于 SSH 时，才单独重新评估。
+当前主机桥为 `172.16.105.1/24`，来宾 `172.16.105.2` 可达且 TCP 22 可连接。这只是本次运行
+快照：地址不是 loopback，且官方明确说明 HSL IP 不固定，因此不能硬编码 `172.16.105.2`、
+根据内部网卡名推导 endpoint，或把一次发现结果长期写入另一套 Host 数据库。
 
-## 初步事件链与所有权
+`loh` 在普通 HDC shell 中不是可执行命令；结合官方只说明 HiShell 页签用法，它属于系统终端
+集成证据，而不是 LeanTTY 正式包可以调用的公开执行边界。
 
-```text
-App Shell: 用户选择进入 HSL
-  → HSL discovery adapter: 只读取公开系统 endpoint/状态
-  → SshConfig/connection policy: 形成一次有效连接目标
-  → Session: 主机校验、认证、取消、断线、重连
-  → SSH Transport → HSL sshd
-  → Terminal Surface
-```
+## 未继续执行的验证
 
-- HSL discovery adapter 只有在公开系统边界真实存在时才成立；它不拥有 Session。
-- Session 继续拥有连接生命周期，Rust/russh 继续拥有 SSH、PTY 和字节流。
-- HSL 与远端 Host 不能共享隐式全局连接或凭据；每个 Pane 仍拥有自己的 Session。
-- System Services 可以报告 HSL 状态，但不能绕过认证或替代 OpenSSH 主机校验。
+门禁第一前提已经失败，因此没有继续改变 HSL 状态、凭据或主机密钥，也没有为满足清单而做
+停止/重启、合盖、锁屏、系统升级和多 Pane 连接矩阵。那些验证只有在公开发现边界成立后才有
+产品意义；现在执行只会证明 HDC 或内部路径可用，不能证明 AppGallery 包可交付。
 
-## 待共同确认与验证
+## 保留的用户路径
 
-- HSL 是否提供三方应用可用的公开发现/状态 API；如果没有，是否存在稳定且文档化的
-  loopback endpoint。
-- SSH endpoint 是固定、动态还是按 HSL 实例变化，是否存在多个 HSL 环境。
-- HSL 的用户、密码/密钥如何初始化，LeanTTY 能否只复用现有 Identity 和认证状态机。
-- HSL sshd 未启动时，系统是否提供可解释状态；LeanTTY 是否有权启动，还是只能引导
-  用户在系统设置中启用。
-- HSL 重建、升级或重置后主机密钥如何变化，如何避免自动信任本机目标。
-- HSL 的启动耗时、合盖、锁屏、系统重启和资源回收对 SSH Session 的影响。
-- 入口名称、位置和快捷键如何保持可发现，同时不增加第二套主机管理界面。
+LeanTTY 继续把 HSL 当作普通 OpenSSH Host：用户在 HSL 中启动 `sshd`、查看当前 IP，并在自己
+的 OpenSSH config 中维护 Host alias，然后从 LeanTTY 执行 `ssh <alias>`。连接继续复用现有
+SSH Transport、Session、认证、Identity 和主机密钥校验，不增加 HSL Host/Identity 权威来源，
+也不自动信任本机目标。
 
-## 验证门禁
+LeanTTY 不安装、启用、启动、停止、升级或修复 HSL，不管理 Linux 用户、凭据、`sshd`、软件包
+或资源，也不从内部网卡、进程、socket、包名或固定地址猜测 endpoint。
 
-### 文档与接口
+## 重新进入条件
 
-- 只采用公开 HarmonyOS/HSL 能力，记录系统版本、API、权限和分发限制。
-- 明确 endpoint、身份、主机密钥和生命周期的权威来源，没有硬编码敏感值。
+只有同时满足以下条件，HSL 产品入口才可重新进入 `next-work.md`：
 
-### 自动化
-
-- 系统目标与用户 Host 不冲突，动态发现结果不写入第二套长期数据库。
-- HSL 未启用、未就绪、endpoint 变化、认证失败、主机密钥变化和取消分类明确。
-- HSL Session 与远端 Session 并行时状态、输出、认证和重连不串联。
-
-### 物理 HarmonyOS PC
-
-- 首次启用、正常进入、关闭/重启 HSL、锁屏、合盖、系统重启和系统升级后的行为。
-- 密码、私钥、`keyboard-interactive`（若 HSL 支持）、主机密钥首次确认与变化恢复。
-- 至少两个 Pane 分别连接 HSL 与远端服务器，验证焦点、输入、输出、剪贴板和生命周期。
-- 确认不依赖开发者模式、HDC、私有权限或商店版本不可用的接口。
-
-## 裁剪与停止条件
-
-如果 HSL 没有公开稳定的发现/接入能力，或产品入口必须绕过主机校验、保存固定凭据、
-依赖私有 API，那么 1.4 不增加专属入口。用户仍可把 HSL 当作普通 SSH Host 手工配置；
-LeanTTY 不为保持 milestone 而接管 HSL 或构造伪本地 shell。
+1. 华为公开并文档化三方应用可使用的 HSL 发现/状态 API、稳定 Intent，或稳定 loopback
+   endpoint，并说明系统版本、权限、生命周期和分发限制；
+2. 普通签名的 production/AppGallery 包可以调用该接口，不依赖 HDC、开发者模式、系统签名、
+   私有权限、内部目录、内部网卡名或固定弱凭据；
+3. 物理 ARM64 HarmonyOS PC 证明 endpoint、`sshd` 就绪、身份、主机密钥和系统生命周期可在
+   不削弱 SSH 安全边界的情况下形成一次连接输入；
+4. 方案继续复用现有 SSH Transport、Session、Host/Identity 和主机校验，不建立 Local
+   Transport、第二套数据库或 HSL 管理器。

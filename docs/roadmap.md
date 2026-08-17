@@ -225,20 +225,16 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 production 产物共同冻结，不再由发布分支承载。`main` 已进入 1.4，后续工作使用聚焦、短期
 topic branch；`release/1.4.0` 只在正式候选准备阶段创建。
 
-## 当前 milestone：1.4 — 启动性能与条件 HSL 本地入口
+## 当前 milestone：1.4 — 启动性能
 
 ### 版本目标
 
-1.4 同时处理一个确定的核心体验问题和一个有严格进入条件的执行环境入口：
+1.4 缩短用户点击 LeanTTY 图标，到本地终端能够正确接收并显示第一个字母的时间。窗口出现、
+页面加载或 ArkWeb ready 只用于定位分段耗时，不能代替这一端到端用户结果。
 
-- **确定交付：** 缩短用户点击 LeanTTY 图标，到本地终端能够正确接收并显示第一个字母的
-  时间。窗口出现、页面加载或 ArkWeb ready 只用于定位分段耗时，不能代替这一端到端用户
-  结果。
-- **条件交付：** 只有 HSL 的公开、稳定、可分发发现和接入边界在物理 ARM64 HarmonyOS PC
-  上成立时，才提供最小 HSL 本地入口；证据不成立时整体裁剪，不阻止启动性能版本发布。
-
-启动性能与 HSL 调查相互独立：不能为了保留 HSL milestone 延迟已经有证据支持的启动
-优化，也不能用更快启动为未经验证的 HSL 私有接入降低门槛。
+原条件 HSL 本地入口已于 2026-08-17 完成公开接口与物理机进入门禁。由于没有三方应用可用的
+公开稳定发现/状态 API、Intent 或文档化 loopback endpoint，该入口按预设停止条件整体裁剪，
+不进入 1.4 产品实现，也不阻止启动性能版本发布。
 
 ### 启动性能用户结果与范围
 
@@ -259,42 +255,22 @@ topic branch；`release/1.4.0` 只在正式候选准备阶段创建。
 常驻后台服务、启动守护进程、第二套状态缓存或需要用户理解的新设置，也不延后必须在首次
 输入前成立的安全与持久化边界。
 
-### 当前系统事实
+### HSL 进入门禁结论
 
-HarmonyOS PC 当前已经提供 HSL，系统级 Linux 执行环境不再只是未来假设。但 HSL
-目前不能像 Windows 的 `wsl` 命令那样由终端直接进入，需要通过 SSH 连接。因此在
-当前系统能力下，LeanTTY 对 HSL 的正确定位是“本机上的标准 SSH 执行环境”，不是新的
-本地 shell transport。
+HarmonyOS PC 已提供 HSL，但当前官方规格要求用户手工启动 `sshd`，并在 Linux 环境中查看
+不固定的 IP。目标 HAD-W32 真机上的系统终端、openEuler 镜像包、内部虚拟化进程、网桥和
+socket 没有形成普通 AppGallery 应用可依赖的公开发现契约；HiShell 的 openEuler 入口和
+`loh` 命令也没有三方应用 API 文档。
 
-上述事实来自当前产品规划输入；进入开发前仍须在目标 ARM64 HarmonyOS PC 上确认
-HSL 的启用方式、SSH endpoint、身份认证、主机密钥、启动/停止和系统升级行为。
+因此 1.4 不增加 discovery adapter、HSL 专用 UI/命令、Host 数据或 Local Transport，不从
+内部网卡名、进程、socket、包名或固定地址猜测 endpoint。用户仍可在 HSL 中手工启动
+`sshd`、查看 IP、维护 OpenSSH Host alias，并通过 LeanTTY 现有 SSH Transport、Session、
+认证和主机校验路径连接；这一普通 SSH 基线不因入口裁剪而退化。
 
-### HSL 用户结果
-
-用户可以从 LeanTTY 清楚、直接地进入本机 HSL，在 HarmonyOS PC 自身完成命令行工作，
-而不必先知道内部地址、端口或手工维护一套与普通 Host 平行的配置。
-
-### HSL 条件范围
-
-- 仍通过现有 SSH Transport、Session、终端和主机校验路径连接 HSL。
-- 提供一个最小、可发现的 HSL 入口；具体是系统发现、本地默认 Host 还是固定命令，
-  由 WIP 方案和真机能力决定，但不得建立第二套 Host/Identity 权威来源。
-- 明确区分“HSL 未启用”“SSH 服务未就绪”“认证失败”“主机密钥变化”和普通网络错误。
-- HSL Session 与远端 SSH Session 使用相同的 Tab、Pane、终端、取消和错误恢复模型。
-
-### HSL 非目标与进入条件
-
-- LeanTTY 不安装、创建、升级或管理 HSL，不捆绑 Linux 用户空间、包管理器或发行版。
-- 不用回环 SSH 包装成伪本地 shell，也不为尚不存在的直接系统 API 建立 Local Transport。
-- 必须先证明 HSL SSH 接口对三方应用公开、稳定、可分发，且无需削弱主机校验、凭据
-  隔离或用户信任边界。
-- 若 HSL 只能依赖私有 API、固定弱凭据或不稳定 endpoint，则保留普通 SSH 手工连接，
-  裁剪产品级 HSL 入口。
-
-技术草案：[`design/hsl-execution-environment.md`](design/hsl-execution-environment.md)。
-HSL 的系统接口与真机证据调查已进入 [`next-work.md`](next-work.md)；产品实现只有在进入
-条件形成明确通过结论后才授权。若条件失败，1.4 继续作为启动性能版本推进，HSL 保持普通
-SSH Host 手工连接基线。
+完整证据与未来重新进入条件见
+[`design/hsl-execution-environment.md`](design/hsl-execution-environment.md)。只有华为公开稳定、
+可分发的三方发现/状态 API、Intent 或 loopback endpoint，并经普通签名 production 包和物理
+ARM64 HarmonyOS PC 验证后，HSL 产品入口才可重新排期。
 
 ## 拟议 milestone：1.5 — OpenSSH ProxyJump
 
