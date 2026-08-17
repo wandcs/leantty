@@ -1,6 +1,6 @@
 # OpenSSH ProxyJump 技术方案
 
-> 状态：Implementing；1.4 范围已确认，技术门禁与嵌套认证模型按活动 TODO 闭合
+> 状态：Implementing；1.4 范围及 transport 门禁已确认，嵌套认证模型按活动 TODO 闭合
 >
 > 当前 milestone：1.4.0
 >
@@ -56,6 +56,32 @@ Pane → Target Session
 - 跳板 channel 关闭必须使目标 Session 进入明确断线状态；目标失败后也必须释放跳板。
 - UI 只渲染结构化阶段和错误，不根据文本猜测当前失败层级。
 
+## Transport 技术门禁结论
+
+2026-08-17 已针对仓库锁定的 russh 0.62.5 建立受控双服务器门禁。该版本公开提供
+`Handle::channel_open_direct_tcpip`、`Channel::into_stream` 与
+`client::connect_stream`，不需要远端 shell 拼接、全局连接池、库 fork 或新增依赖即可形成
+第二层 SSH：
+
+```text
+jump Handle
+  → direct-tcpip Channel
+  → ChannelStream
+  → target client::connect_stream
+```
+
+仓库测试 `ssh-auth-fixture/tests/proxy_jump_transport.rs` 已证明：
+
+- jump 与 target 分别完成 host-key callback 和密码认证，错误层凭据不会被另一层接受；
+- 未授权目的地在建立 channel 前被明确拒绝，批准的目标可完成第二层握手和字节往返；
+- target 正常断开会释放 `direct-tcpip` 隧道；jump 主动断开会终止活动 target 会话并释放隧道；
+- 两个 server key、两个 client handler 和两个 russh Handle 保持独立，嵌套连接可以由最终
+  Target Session 局部拥有，不要求共享或池化跳板连接。
+
+因此 transport 停止条件未触发，可以进入单跳解析与生产 Session 生命周期实现。该门禁只
+证明底层能力和基本资源边界；认证组合、known_hosts、超时、Pane 取消、并行隔离及真机行为
+仍按活动验证清单逐项闭合。
+
 ## 配置与解析
 
 - 单个 `ProxyJump <jump-spec>` 支持 config alias 与标准 `[user@]host[:port]` 形式，并通过与
@@ -82,7 +108,6 @@ Pane → Target Session
   milestone，需要在设计前决定。
 - 跳板与目标同时需要 `keyboard-interactive` 时，终端如何清楚标识当前回答属于哪一层。
 - 跳板连接建立后目标不可达、主机密钥变化或认证失败时的最小错误文案。
-- russh 当前版本对在现有 channel 上建立第二层客户端 SSH 的支持边界与取消行为。
 - `ControlMaster`、agent forwarding、SSH agent 和证书认证不属于当前能力，文档与
   错误如何避免暗示支持。
 
