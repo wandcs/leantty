@@ -51,6 +51,21 @@ export class DurableAssetStore {
     return DurableAssetFormat.decodeText(value)
   }
 
+  async readAsync(path: string): Promise<string | null> {
+    this.validatePath(path)
+    let pointer: Uint8Array | null = await this.querySecretAsync(this.pointerAlias(path))
+    if (pointer === null) {
+      return null
+    }
+    let manifest: DurableAssetManifest = DurableAssetFormat.decodeManifest(pointer)
+    if (manifest.path !== path) {
+      throw new Error('Durable asset pointer path mismatch')
+    }
+    let value: Uint8Array = await this.readGenerationAsync(manifest)
+    DurableAssetFormat.validate(manifest, value)
+    return DurableAssetFormat.decodeText(value)
+  }
+
   remove(path: string): void {
     this.validatePath(path)
     this.removeAlias(DurableAssetFormat.encodeText(this.pointerAlias(path)))
@@ -68,6 +83,22 @@ export class DurableAssetStore {
     let paths: string[] = []
     for (let i = 0; i < aliases.length; i++) {
       let secret: Uint8Array | null = this.querySecretBytes(aliases[i])
+      if (secret === null) {
+        continue
+      }
+      let manifest: DurableAssetManifest = DurableAssetFormat.decodeManifest(secret)
+      if (paths.indexOf(manifest.path) < 0) {
+        paths.push(manifest.path)
+      }
+    }
+    return paths
+  }
+
+  async listPathsAsync(): Promise<string[]> {
+    let aliases: Uint8Array[] = await this.queryAliasesAsync(KIND_POINTER)
+    let paths: string[] = []
+    for (let i = 0; i < aliases.length; i++) {
+      let secret: Uint8Array | null = await this.querySecretBytesAsync(aliases[i])
       if (secret === null) {
         continue
       }
@@ -115,6 +146,19 @@ export class DurableAssetStore {
     return DurableAssetFormat.combine(chunks)
   }
 
+  private async readGenerationAsync(manifest: DurableAssetManifest): Promise<Uint8Array> {
+    let chunks: Uint8Array[] = []
+    for (let i = 0; i < manifest.chunkCount; i++) {
+      let chunk: Uint8Array | null =
+        await this.querySecretAsync(this.chunkAlias(manifest.path, manifest.generation, i))
+      if (chunk === null) {
+        throw new Error('Durable asset generation is incomplete: ' + manifest.path)
+      }
+      chunks.push(chunk)
+    }
+    return DurableAssetFormat.combine(chunks)
+  }
+
   private upsertPointer(path: string, manifest: Uint8Array): void {
     let alias: string = this.pointerAlias(path)
     if (this.querySecret(alias) === null) {
@@ -147,11 +191,37 @@ export class DurableAssetStore {
     return this.querySecretBytes(DurableAssetFormat.encodeText(alias))
   }
 
+  private async querySecretAsync(alias: string): Promise<Uint8Array | null> {
+    return await this.querySecretBytesAsync(DurableAssetFormat.encodeText(alias))
+  }
+
   private querySecretBytes(alias: Uint8Array): Uint8Array | null {
     let query: asset.AssetMap = this.aliasQuery(alias)
     query.set(asset.Tag.RETURN_TYPE, asset.ReturnType.ALL)
     try {
       let results: asset.AssetMap[] = asset.querySync(query)
+      if (results.length !== 1) {
+        throw new Error('Durable asset alias did not resolve uniquely')
+      }
+      let value: asset.Value | undefined = results[0].get(asset.Tag.SECRET)
+      if (!(value instanceof Uint8Array)) {
+        throw new Error('Durable asset secret is missing')
+      }
+      return value
+    } catch (e) {
+      let error: BusinessError = e as BusinessError
+      if (error.code === asset.ErrorCode.NOT_FOUND) {
+        return null
+      }
+      throw new Error('Failed to query durable asset secret: ' + e)
+    }
+  }
+
+  private async querySecretBytesAsync(alias: Uint8Array): Promise<Uint8Array | null> {
+    let query: asset.AssetMap = this.aliasQuery(alias)
+    query.set(asset.Tag.RETURN_TYPE, asset.ReturnType.ALL)
+    try {
+      let results: asset.AssetMap[] = await asset.query(query)
       if (results.length !== 1) {
         throw new Error('Durable asset alias did not resolve uniquely')
       }
@@ -201,6 +271,41 @@ export class DurableAssetStore {
       let page: asset.AssetMap[]
       try {
         page = asset.querySync(query)
+      } catch (e) {
+        let error: BusinessError = e as BusinessError
+        if (error.code === asset.ErrorCode.NOT_FOUND) {
+          return aliases
+        }
+        throw new Error('Failed to enumerate durable assets: ' + e)
+      }
+      for (let i = 0; i < page.length; i++) {
+        let value: asset.Value | undefined = page[i].get(asset.Tag.ALIAS)
+        if (!(value instanceof Uint8Array)) {
+          throw new Error('Durable asset query returned an invalid alias')
+        }
+        aliases.push(value)
+      }
+      if (page.length < QUERY_PAGE_SIZE) {
+        return aliases
+      }
+      offset += page.length
+    }
+  }
+
+  private async queryAliasesAsync(kind: string): Promise<Uint8Array[]> {
+    let aliases: Uint8Array[] = []
+    let offset: number = 0
+    while (true) {
+      let query: asset.AssetMap = new Map<asset.Tag, asset.Value>()
+      query.set(asset.Tag.DATA_LABEL_CRITICAL_1, DurableAssetFormat.encodeText(NAMESPACE))
+      query.set(asset.Tag.DATA_LABEL_CRITICAL_2, DurableAssetFormat.encodeText(kind))
+      query.set(asset.Tag.REQUIRE_ATTR_ENCRYPTED, true)
+      query.set(asset.Tag.RETURN_TYPE, asset.ReturnType.ATTRIBUTES)
+      query.set(asset.Tag.RETURN_LIMIT, QUERY_PAGE_SIZE)
+      query.set(asset.Tag.RETURN_OFFSET, offset)
+      let page: asset.AssetMap[]
+      try {
+        page = await asset.query(query)
       } catch (e) {
         let error: BusinessError = e as BusinessError
         if (error.code === asset.ErrorCode.NOT_FOUND) {

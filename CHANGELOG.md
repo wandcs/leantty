@@ -2,7 +2,28 @@
 
 ## [Unreleased]
 
+## [1.4.0] - In development
+
+### Changed
+
+- Reduced cold startup work before the first interactive `ltty>` prompt. SSH
+  configuration, known-host and key projection now prepares once after the
+  first terminal frame is painted; an SSH-backed command submitted earlier
+  waits for that same preparation and then runs normally. Explicit local help
+  and exit paths remain immediately available, while durable cleanup is
+  deferred to the application background lifecycle without adding a second
+  cache or persistent state model.
+- On the physical ARM64 HarmonyOS PC, the final 20-sample daily cold-start
+  candidate reduced icon-click-to-first-letter paint from the 1.3 P50/P95 of
+  2763/2811 ms to 1491/1519 ms (about 46%). Twenty retained-process warm starts
+  remained effectively unchanged at 482/499 ms versus 474/494 ms on 1.3.
+  In-place 1.3 upgrade, existing SSH assets, readiness failure/retry,
+  background completion, renderer rebuild, focus restoration, and a probe-free
+  Host/Key/input smoke were verified without weakening key protection.
+
 ## [1.3.0] - 2026-08-16
+
+**AppGallery review approved; released to users on 2026-08-17.**
 
 ### Added
 

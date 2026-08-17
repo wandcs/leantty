@@ -927,7 +927,7 @@ function Add-LeanTTYAcceptanceSource {
     $text.session = Set-LeanTTYAcceptanceSourceText `
         $text.session $idleResultAnchor $idleResultReplacement
     foreach ($inputPoint in @(
-        @{ anchor = "  private executeCommandBuffer(): void {"; kind = 'command' },
+        @{ anchor = "  private async executeCommandBuffer(): Promise<void> {"; kind = 'command' },
         @{ anchor = "    this.writeTerminal('\r\n')`n    let pw: string = this.passwordBuffer"; kind = 'password' },
         @{ anchor = '    this.authResponses.push(this.authResponseBuffer)'; kind = 'keyboard-interactive' },
         @{ anchor = "    this.writeTerminal('\r\n')`n    let pass: string = this.pendingKeyPassphrase"; kind = 'private-key-passphrase' }

@@ -250,6 +250,7 @@
     var pendingSnapshotRequestIds = [];
     var snapshotCapturePending = false;
     var initialized = false;
+    var interactiveReadyReported = false;
     var secureInput = false;
     var secureInputClearTimer = 0;
     var requestedRenderer = 'webgl';
@@ -1141,6 +1142,16 @@
 
     }
 
+    function reportInteractiveReadyAfterPaint() {
+      if (interactiveReadyReported) return;
+      interactiveReadyReported = true;
+      requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+          sendBridgeControl('interactiveReady', '');
+        });
+      });
+    }
+
     function writeTerminalPacket(terminalPacket, onComplete) {
       if (!terminalPacket || !term) {
         onComplete();
@@ -1158,6 +1169,7 @@
         sendBridgeControl('writeAck',
           terminalPacket.sequence.toString() + ',' + terminalBytes.byteLength.toString());
         onComplete();
+        reportInteractiveReadyAfterPaint();
       });
     }
 
@@ -1247,6 +1259,7 @@
                   restoringSnapshot = false;
                   sendBridgeControl('restoreComplete', '');
                   reportResize(true);
+                  reportInteractiveReadyAfterPaint();
                 };
                 try {
                   term.write(message.payload, completeRestore);

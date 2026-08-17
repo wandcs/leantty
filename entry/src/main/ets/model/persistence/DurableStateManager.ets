@@ -20,20 +20,31 @@ export class DurableStateManager {
   private static store: DurableAssetStore | null = null
   private static context: common.UIAbilityContext | null = null
   private static legacyMigrationPending: boolean = false
+  private static garbageCollectionCompleted: boolean = false
 
   static initialize(context: common.UIAbilityContext): void {
     DurableStateManager.context = context
     DurableStateManager.store = new DurableAssetStore()
     DurableStateManager.legacyMigrationPending = DurableStateManager.requireStore().read(INITIALIZED_PATH) === null
-    DurableStateManager.restoreSshProjection(context)
+  }
+
+  static async prepareSshProjection(context: common.Context): Promise<void> {
+    await DurableStateManager.restoreSshProjection(context)
+  }
+
+  static collectGarbageOnce(): void {
+    if (DurableStateManager.garbageCollectionCompleted) {
+      return
+    }
     DurableStateManager.requireStore().garbageCollect()
+    DurableStateManager.garbageCollectionCompleted = true
   }
 
   static isLegacyMigrationPending(): boolean {
     return DurableStateManager.legacyMigrationPending
   }
 
-  static finishLegacyMigration(context: common.UIAbilityContext, verifiedKeyNames: string[]): void {
+  static finishLegacyMigration(context: common.Context, verifiedKeyNames: string[]): void {
     if (!DurableStateManager.legacyMigrationPending) {
       return
     }
@@ -46,13 +57,13 @@ export class DurableStateManager {
     DurableStateManager.legacyMigrationPending = false
   }
 
-  static reconcileVerifiedKeys(context: common.Context, verifiedKeyNames: string[]): void {
+  static async reconcileVerifiedKeys(context: common.Context, verifiedKeyNames: string[]): Promise<void> {
     if (DurableStateManager.legacyMigrationPending) {
       return
     }
     for (let i = 0; i < verifiedKeyNames.length; i++) {
       let name: string = verifiedKeyNames[i]
-      if (DurableStateManager.requireStore().read(SSH_KEYPAIR_PREFIX + name) === null) {
+      if (await DurableStateManager.requireStore().readAsync(SSH_KEYPAIR_PREFIX + name) === null) {
         FileUtils.removeFile(FileUtils.getSshDir(context) + '/' + name)
         FileUtils.removeFile(FileUtils.getSshDir(context) + '/' + name + '.pub')
       }
@@ -148,8 +159,8 @@ export class DurableStateManager {
     FileUtils.removeFile(FileUtils.getSshDir(context) + '/' + name + '.pub')
   }
 
-  private static restoreSshProjection(context: common.Context): void {
-    let paths: string[] = DurableStateManager.requireStore().listPaths()
+  private static async restoreSshProjection(context: common.Context): Promise<void> {
+    let paths: string[] = await DurableStateManager.requireStore().listPathsAsync()
     if (!DurableStateManager.legacyMigrationPending) {
       if (paths.indexOf(SSH_CONFIG_PATH) < 0) {
         FileUtils.removeFile(FileUtils.getSshDir(context) + '/config')
@@ -161,25 +172,29 @@ export class DurableStateManager {
     for (let i = 0; i < paths.length; i++) {
       let path: string = paths[i]
       if (path === SSH_CONFIG_PATH) {
-        DurableStateManager.materializeText(context, 'config', path)
+        await DurableStateManager.materializeText(context, 'config', path)
       } else if (path === SSH_KNOWN_HOSTS_PATH) {
-        DurableStateManager.materializeText(context, 'known_hosts', path)
+        await DurableStateManager.materializeText(context, 'known_hosts', path)
       } else if (path.startsWith(SSH_KEYPAIR_PREFIX)) {
-        DurableStateManager.materializeKeyPair(context, path.substring(SSH_KEYPAIR_PREFIX.length), path)
+        await DurableStateManager.materializeKeyPair(context, path.substring(SSH_KEYPAIR_PREFIX.length), path)
       }
     }
   }
 
-  private static materializeText(context: common.Context, fileName: string, path: string): void {
-    let value: string | null = DurableStateManager.requireStore().read(path)
+  private static async materializeText(context: common.Context, fileName: string, path: string): Promise<void> {
+    let value: string | null = await DurableStateManager.requireStore().readAsync(path)
     if (value === null) {
       return
     }
     FileUtils.writeTextFile(FileUtils.getSshDir(context) + '/' + fileName, value)
   }
 
-  private static materializeKeyPair(context: common.Context, name: string, path: string): void {
-    let payload: string | null = DurableStateManager.requireStore().read(path)
+  private static async materializeKeyPair(
+    context: common.Context,
+    name: string,
+    path: string
+  ): Promise<void> {
+    let payload: string | null = await DurableStateManager.requireStore().readAsync(path)
     if (payload === null) {
       return
     }

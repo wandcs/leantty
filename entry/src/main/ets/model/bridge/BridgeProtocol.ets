@@ -42,6 +42,7 @@ export class BridgeProtocol {
   static readonly KIND_SEARCH_STATE: string = 'searchState'
 
   static readonly KIND_READY: string = 'ready'
+  static readonly KIND_INTERACTIVE_READY: string = 'interactiveReady'
   static readonly KIND_RESIZE: string = 'resize'
   static readonly KIND_BELL_ATTENTION: string = 'bellAttention'
   static readonly KIND_ATTENTION_ACKNOWLEDGED: string = 'attentionAcknowledged'
@@ -77,7 +78,8 @@ export class BridgeProtocol {
     }
     let payload: string = raw.substring(kindEnd + 1)
     if ((kind === BridgeProtocol.KIND_BELL_ATTENTION ||
-      kind === BridgeProtocol.KIND_ATTENTION_ACKNOWLEDGED) && payload.length > 0) {
+      kind === BridgeProtocol.KIND_ATTENTION_ACKNOWLEDGED ||
+      kind === BridgeProtocol.KIND_INTERACTIVE_READY) && payload.length > 0) {
       return null
     }
     if (kind === BridgeProtocol.KIND_OPEN_URL &&
@@ -242,6 +244,7 @@ export class BridgeProtocol {
         kind === BridgeProtocol.KIND_SEARCH_CLOSE
     }
     return kind === BridgeProtocol.KIND_READY ||
+      kind === BridgeProtocol.KIND_INTERACTIVE_READY ||
       kind === BridgeProtocol.KIND_RESIZE ||
       kind === BridgeProtocol.KIND_BELL_ATTENTION ||
       kind === BridgeProtocol.KIND_ATTENTION_ACKNOWLEDGED ||

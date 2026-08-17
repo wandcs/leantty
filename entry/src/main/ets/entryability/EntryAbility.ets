@@ -5,9 +5,6 @@ import { Logger } from '../common/logger/Logger';
 import { UserPreferences } from '../model/settings/UserPreferences';
 import { InteractionPolicy } from '../model/ui/InteractionPolicy';
 import { DurableStateManager, DurableWindowRect } from '../model/persistence/DurableStateManager';
-import { SshKeyManager } from '../model/ssh/SshKeyManager';
-import { KeyPairInfo } from '../common/types/SshKeyTypes';
-import { FileUtils } from '../common/utils/FileUtils';
 import webview from '@ohos.web.webview';
 import { BusinessError } from '@ohos.base';
 import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator';
@@ -60,19 +57,6 @@ export default class EntryAbility extends UIAbility {
       TransparencyPolicy.normalize(UserPreferences.loadTransparencyMode()))
     AppStorage.setOrCreate('hasActiveSshSession', false)
     AppStorage.setOrCreate('skipNextTerminateConfirmation', false)
-    let keys: KeyPairInfo[] = SshKeyManager.listKeys(this.context)
-    let keyNames: string[] = []
-    for (let i = 0; i < keys.length; i++) {
-      keyNames.push(FileUtils.fileNameFromPath(keys[i].filePath))
-    }
-    if (DurableStateManager.isLegacyMigrationPending()) {
-      DurableStateManager.finishLegacyMigration(this.context, keyNames)
-    } else {
-      DurableStateManager.reconcileVerifiedKeys(this.context, keyNames)
-    }
-    for (let i = 0; i < keyNames.length; i++) {
-      SshKeyManager.protectKeyFile(this.context, keyNames[i])
-    }
     try {
       webview.WebviewController.setRenderProcessMode(webview.RenderProcessMode.SINGLE)
       webview.WebviewController.setWebDestroyMode(webview.WebDestroyMode.FAST_MODE)
@@ -154,6 +138,11 @@ export default class EntryAbility extends UIAbility {
 
   onBackground(): void {
     AppStorage.setOrCreate('mainWindowVisible', false)
+    try {
+      DurableStateManager.collectGarbageOnce()
+    } catch (e) {
+      logger.warn('Deferred durable garbage collection failed: ' + e)
+    }
     logger.info('Ability onBackground');
   }
 

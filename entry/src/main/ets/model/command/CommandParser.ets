@@ -108,6 +108,22 @@ export class TransferCommandResult {
 }
 
 export class CommandParser {
+  static requiresSshEnvironment(input: string): boolean {
+    let trimmed: string = input.trim()
+    let words: string[] = trimmed.length > 0 ? trimmed.split(/\s+/) : []
+    if (trimmed.length === 0 || trimmed === '?' || trimmed === '？' ||
+      trimmed === '-h' || trimmed === '--help' || words[0] === 'help' ||
+      (words.length >= 2 && words.length <= 3 && words[words.length - 1] === '--help')) {
+      return false
+    }
+    if (words[0] === 'exit' || words[0] === 'scp') {
+      return false
+    }
+    // Default to the gate so a future command cannot accidentally read an
+    // unprepared SSH projection. Only explicit, stable local commands bypass it.
+    return true
+  }
+
   static parseInput(
     input: string,
     sshConfig: SshConfig

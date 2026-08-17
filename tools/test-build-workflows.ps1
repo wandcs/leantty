@@ -71,6 +71,92 @@ try {
         "Acceptance source helper is missing: $acceptanceSourceScript"
     )
     . $acceptanceSourceScript
+    $startupPerformanceSourceScript = Join-Path $PSScriptRoot 'startup-performance-source.ps1'
+    Assert-True (Test-Path -LiteralPath $startupPerformanceSourceScript -PathType Leaf) (
+        "Startup performance source helper is missing: $startupPerformanceSourceScript"
+    )
+    . $startupPerformanceSourceScript
+    $startupWarmSourceScript = Join-Path $PSScriptRoot 'startup-warm-source.ps1'
+    Assert-True (Test-Path -LiteralPath $startupWarmSourceScript -PathType Leaf) (
+        "Startup warm source helper is missing: $startupWarmSourceScript"
+    )
+    . $startupWarmSourceScript
+    $durableStateProductionPath = Join-Path $repoRoot `
+        'entry\src\main\ets\model\persistence\DurableStateManager.ets'
+    $durableStateProductionText = Get-Content -LiteralPath $durableStateProductionPath -Raw
+    $durableInitializeBlock = [regex]::Match(
+        $durableStateProductionText,
+        '(?s)  static initialize\(context: common\.UIAbilityContext\): void \{.*?\r?\n  \}'
+    ).Value
+    Assert-True (-not [string]::IsNullOrWhiteSpace($durableInitializeBlock)) (
+        'Durable state initialize block is missing'
+    )
+    Assert-True (
+        -not $durableInitializeBlock.Contains('.garbageCollect()') -and
+        -not $durableInitializeBlock.Contains('restoreSshProjection') -and
+        $durableStateProductionText.Contains('private static garbageCollectionCompleted: boolean = false') -and
+        $durableStateProductionText.Contains('static collectGarbageOnce(): void') -and
+        $durableStateProductionText.Contains('static async prepareSshProjection(') -and
+        $durableStateProductionText.Contains('await DurableStateManager.requireStore().listPathsAsync()')
+    ) 'Durable SSH projection or garbage collection still blocks startup'
+    $durableAssetStoreText = Get-Content -LiteralPath (
+        Join-Path $repoRoot 'entry\src\main\ets\model\persistence\DurableAssetStore.ets'
+    ) -Raw
+    Assert-True (
+        $durableAssetStoreText.Contains('async readAsync(path: string): Promise<string | null>') -and
+        $durableAssetStoreText.Contains('async listPathsAsync(): Promise<string[]>') -and
+        $durableAssetStoreText.Contains('await asset.query(query)')
+    ) 'SSH projection does not use the non-blocking Asset Store query path'
+    $entryAbilityProductionText = Get-Content -LiteralPath (
+        Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
+    ) -Raw
+    $onBackgroundBlock = [regex]::Match(
+        $entryAbilityProductionText,
+        '(?s)  onBackground\(\): void \{.*?\r?\n  \}'
+    ).Value
+    Assert-True (
+        $onBackgroundBlock.Contains('DurableStateManager.collectGarbageOnce()') -and
+        $onBackgroundBlock.Contains("logger.warn('Deferred durable garbage collection failed: '")
+    ) 'Ability background lifecycle does not own recoverable deferred durable cleanup'
+    $onCreateBlock = [regex]::Match(
+        $entryAbilityProductionText,
+        '(?s)  onCreate\(want: Want, launchParam: AbilityConstant\.LaunchParam\): void \{.*?\r?\n  \}'
+    ).Value
+    Assert-True (
+        -not $onCreateBlock.Contains('SshKeyManager.listKeys') -and
+        -not $onCreateBlock.Contains('finishLegacyMigration') -and
+        -not $onCreateBlock.Contains('reconcileVerifiedKeys')
+    ) 'SSH key projection maintenance still blocks Ability startup'
+    $sshEnvironmentPath = Join-Path $repoRoot `
+        'entry\src\main\ets\model\ssh\SshEnvironment.ets'
+    Assert-True (Test-Path -LiteralPath $sshEnvironmentPath -PathType Leaf) (
+        'Single-flight SSH environment owner is missing'
+    )
+    $sshEnvironmentText = Get-Content -LiteralPath $sshEnvironmentPath -Raw
+    Assert-True (
+        $sshEnvironmentText.Contains('SshEnvironmentReadiness') -and
+        $sshEnvironmentText.Contains('DurableStateManager.prepareSshProjection') -and
+        $sshEnvironmentText.Contains('DurableStateManager.reconcileVerifiedKeys')
+    ) 'SSH environment owner does not contain the complete post-render preparation chain'
+    $sessionViewModelText = Get-Content -LiteralPath (
+        Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
+    ) -Raw
+    Assert-True (
+        $sessionViewModelText.Contains('this.beginSshEnvironmentPreparation()') -and
+        $sessionViewModelText.Contains('await this.ensureSshEnvironment()') -and
+        $sessionViewModelText.Contains('CommandParser.requiresSshEnvironment(cmd)')
+    ) 'Terminal readiness and command execution do not share the SSH environment gate'
+    $bridgeProtocolText = Get-Content -LiteralPath (
+        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
+    ) -Raw
+    $terminalHtmlText = Get-Content -LiteralPath (
+        Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
+    ) -Raw
+    Assert-True (
+        $bridgeProtocolText.Contains("KIND_INTERACTIVE_READY: string = 'interactiveReady'") -and
+        $terminalHtmlText.Contains("sendBridgeControl('interactiveReady', '')") -and
+        $terminalHtmlText.Contains('reportInteractiveReadyAfterPaint();')
+    ) 'Post-paint SSH preparation trigger is missing from the terminal bridge'
     $lfTarget = "first`nsecond`n"
     $lfResult = Set-LeanTTYAcceptanceSourceText `
         -Text $lfTarget `
@@ -98,6 +184,104 @@ try {
     $acceptanceSourceHashes = @{}
     foreach ($path in $acceptanceArkTsPaths) {
         $acceptanceSourceHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+    $startupPerformancePaths = @(
+        Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\model\persistence\DurableStateManager.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\view\components\TerminalPane.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
+        Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
+    )
+    $startupPerformanceHashes = @{}
+    foreach ($path in $startupPerformancePaths) {
+        $startupPerformanceHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+    Invoke-WithLeanTTYStartupPerformanceSource -RepoRoot $repoRoot -Action {
+        $startupPerformanceText = $startupPerformancePaths | ForEach-Object {
+            Get-Content -LiteralPath $_ -Raw
+        }
+        Assert-True (($startupPerformanceText -join "`n").Contains('STARTUP_PERF phase=T1')) (
+            'Startup performance injection omitted the Ability entry marker'
+        )
+        Assert-True (($startupPerformanceText -join "`n").Contains(
+                'STARTUP_PERF segment=on-create-ready elapsedMs='
+            )) 'Startup performance injection omitted the onCreate segment markers'
+        Assert-True (($startupPerformanceText -join "`n").Contains(
+                'STARTUP_PERF durable=initialized-read elapsedMs='
+            )) 'Startup performance injection omitted the durable-state segment markers'
+        Assert-True (-not (($startupPerformanceText -join "`n").Contains(
+                'STARTUP_PERF durable=restore-projection elapsedMs='
+            ))) 'Startup performance injection incorrectly treats SSH projection as startup work'
+        Assert-True (($startupPerformanceText -join "`n").Contains('STARTUP_PERF phase=T3')) (
+            'Startup performance injection omitted the ArkWeb page-end marker'
+        )
+        Assert-True (($startupPerformanceText -join "`n").Contains("sendBridgeControl('startupPerf', phase)")) (
+            'Startup performance injection omitted the painted T4/T5 marker'
+        )
+        Assert-True (($startupPerformanceText -join "`n").Contains('startupExpectedInputCode = 97')) (
+            'Startup performance injection did not gate T5 on the injected ASCII letter echo'
+        )
+        Assert-True (($startupPerformanceText -join "`n").Contains(
+                "KIND_STARTUP_PERF: string = 'startupPerf'"
+            )) 'Startup performance injection omitted the compile-time bridge kind'
+    }
+    foreach ($path in $startupPerformancePaths) {
+        Assert-True (
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $startupPerformanceHashes[$path]
+        ) "Startup performance injection did not restore $path byte-for-byte"
+    }
+    $startupPerformanceVerifier = Join-Path $PSScriptRoot 'verify-startup-performance-pc.ps1'
+    Assert-True (Test-Path -LiteralPath $startupPerformanceVerifier -PathType Leaf) (
+        "Startup performance PC verifier is missing: $startupPerformanceVerifier"
+    )
+    $startupPerformanceVerifierText = Get-Content -LiteralPath $startupPerformanceVerifier -Raw
+    Assert-True (
+        $startupPerformanceVerifierText.Contains('[ValidateRange(3, 100)][int]$SampleCount = 20') -and
+        $startupPerformanceVerifierText.Contains("'aa force-stop com.leantty.app'") -and
+        $startupPerformanceVerifierText.Contains(
+            "'AppCenterAppGrid_AppBubble_com.leantty.app'"
+        ) -and
+        $startupPerformanceVerifierText.Contains('STARTUP_PERF phase=T4') -and
+        $startupPerformanceVerifierText.Contains('uinput -K -d 2017 -u 2017') -and
+        $startupPerformanceVerifierText.Contains('t5RequiresMatchingAsciiEchoAndPaint = $true') -and
+        $startupPerformanceVerifierText.Contains('maxT4ToInputInjectionMs = 250')
+    ) 'Startup performance PC verifier no longer measures cold App Center click through painted input'
+    $startupWarmPath = Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
+    $startupWarmHash = (Get-FileHash -LiteralPath $startupWarmPath -Algorithm SHA256).Hash
+    Invoke-WithLeanTTYStartupWarmSource -RepoRoot $repoRoot -Action {
+        $startupWarmText = Get-Content -LiteralPath $startupWarmPath -Raw
+        Assert-True (
+            $startupWarmText.Contains("sendBridgeControl('perfRender', 'STARTUP_WARM phase=' + phase)") -and
+            $startupWarmText.Contains("data === 'a'") -and
+            $startupWarmText.Contains('terminalBytes.indexOf(97) >= 0') -and
+            $startupWarmText.Contains("scheduleStartupWarmPaint('T4')") -and
+            $startupWarmText.Contains("scheduleStartupWarmPaint('T5')")
+        ) 'Warm startup injection no longer gates T4/T5 on foreground paint and echoed input'
+    }
+    Assert-True (
+        (Get-FileHash -LiteralPath $startupWarmPath -Algorithm SHA256).Hash -eq $startupWarmHash
+    ) 'Warm startup injection did not restore terminal.html byte-for-byte'
+    $startupWarmVerifier = Join-Path $PSScriptRoot 'verify-startup-warm-pc.ps1'
+    Assert-True (Test-Path -LiteralPath $startupWarmVerifier -PathType Leaf) (
+        "Warm startup PC verifier is missing: $startupWarmVerifier"
+    )
+    $startupWarmVerifierText = Get-Content -LiteralPath $startupWarmVerifier -Raw
+    Assert-True (
+        $startupWarmVerifierText.Contains('[ValidateRange(3, 100)][int]$SampleCount = 20') -and
+        $startupWarmVerifierText.Contains("'pidof com.leantty.app'") -and
+        $startupWarmVerifierText.Contains("'AppCenterAppGrid_AppBubble_com.leantty.app'") -and
+        $startupWarmVerifierText.Contains('STARTUP_WARM phase=T4') -and
+        $startupWarmVerifierText.Contains('uinput -K -d 2017 -u 2017') -and
+        $startupWarmVerifierText.Contains('processRetainedForAllSamples = $true')
+    ) 'Warm startup PC verifier no longer measures retained-process foreground input readiness'
+    foreach ($startupVerifierName in @(
+        'verify-startup-upgrade-pc.ps1',
+        'verify-startup-readiness-pc.ps1'
+    )) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $PSScriptRoot $startupVerifierName) -PathType Leaf) (
+            "Startup verification helper is missing: $startupVerifierName"
+        )
     }
     Invoke-WithLeanTTYAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
         $injectedText = $acceptanceArkTsPaths | ForEach-Object {

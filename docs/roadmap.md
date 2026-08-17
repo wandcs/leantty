@@ -2,7 +2,7 @@
 
 > 状态：当前版本路线；采用滚动规划
 >
-> 更新日期：2026-08-08
+> 更新日期：2026-08-17
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -189,7 +189,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 [`design/ui-interaction-polish.md`](design/ui-interaction-polish.md)。上述条件已闭合，
 活动顺序与完成状态只在 [`next-work.md`](next-work.md) 维护。
 
-## 当前 milestone：1.3 — 受约束的单文件交付
+## 已发布 milestone：1.3 — 受约束的单文件交付
 
 ### 用户结果
 
@@ -219,12 +219,45 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 目录浏览、递归、多源、同步、后台队列、覆盖选项、文件预览/打开、任意本地路径和
 第二套 Host/Identity 均不进入范围。
 
-完成方案：[`design/file-transfer.md`](design/file-transfer.md)。1.3 已于 2026-08-08 在
-1.2.0 提交 AppGallery 审核后进入活动开发；到 2026-08-14，产品实现和适用功能矩阵已经
-闭合。剩余候选回归、版本和发布步骤只按 [`next-work.md`](next-work.md) 执行；后续若核心
-可靠性出现直接反证，仍应停止发布，而不是扩大为文件管理器补救。
+完成方案：[`design/file-transfer.md`](design/file-transfer.md)。1.3 已形成不可变
+[`v1.3.0` GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.3.0)，并于
+2026-08-17 通过 AppGallery 审核、正式上架。该发布身份由标签、Release、精确提交和归档
+production 产物共同冻结，不再由发布分支承载。`main` 已进入 1.4，后续工作使用聚焦、短期
+topic branch；`release/1.4.0` 只在正式候选准备阶段创建。
 
-## 拟议 milestone：1.4 — HSL 本地执行环境入口
+## 当前 milestone：1.4 — 启动性能与条件 HSL 本地入口
+
+### 版本目标
+
+1.4 同时处理一个确定的核心体验问题和一个有严格进入条件的执行环境入口：
+
+- **确定交付：** 缩短用户点击 LeanTTY 图标，到本地终端能够正确接收并显示第一个字母的
+  时间。窗口出现、页面加载或 ArkWeb ready 只用于定位分段耗时，不能代替这一端到端用户
+  结果。
+- **条件交付：** 只有 HSL 的公开、稳定、可分发发现和接入边界在物理 ARM64 HarmonyOS PC
+  上成立时，才提供最小 HSL 本地入口；证据不成立时整体裁剪，不阻止启动性能版本发布。
+
+启动性能与 HSL 调查相互独立：不能为了保留 HSL milestone 延迟已经有证据支持的启动
+优化，也不能用更快启动为未经验证的 HSL 私有接入降低门槛。
+
+### 启动性能用户结果与范围
+
+用户点击 LeanTTY 后，可以更快进入真正可工作的 `ltty>`：首个字符不会丢失、延迟到达、
+出现在错误 Pane 或只在空壳界面之后才开始初始化。主指标、基线、分段边界和候选对比见
+[`design/startup-performance.md`](design/startup-performance.md)。
+
+- 以物理 ARM64 HarmonyOS PC 上“点击应用图标 → 第一个字母已由终端正确显示”为主指标。
+- 分开记录冷启动和温启动分布，并把 Ability、页面、ArkWeb/xterm、Bridge、提示符与输入
+  回显作为诊断节点。
+- 1.3 日常冷启动基线与主导阶段已由物理机分段和 A/B 确认；最小方案已经共同锁定并形成
+  20 次真机候选分布，后续补齐温启动、数据规模、迁移和交互护栏。
+- 正确性、安全、密钥与主机信任、首帧可读性、焦点和输入完整性都是硬约束。
+- 只保留有真实端到端收益、没有明显长期复杂度的优化；无收益的预热、缓存、延后或特殊
+  分支应撤回。
+
+启动性能不以更早显示 splash、空窗口、不可输入的提示符或隐藏真实初始化作为完成；不增加
+常驻后台服务、启动守护进程、第二套状态缓存或需要用户理解的新设置，也不延后必须在首次
+输入前成立的安全与持久化边界。
 
 ### 当前系统事实
 
@@ -236,12 +269,12 @@ HarmonyOS PC 当前已经提供 HSL，系统级 Linux 执行环境不再只是�
 上述事实来自当前产品规划输入；进入开发前仍须在目标 ARM64 HarmonyOS PC 上确认
 HSL 的启用方式、SSH endpoint、身份认证、主机密钥、启动/停止和系统升级行为。
 
-### 用户结果
+### HSL 用户结果
 
 用户可以从 LeanTTY 清楚、直接地进入本机 HSL，在 HarmonyOS PC 自身完成命令行工作，
 而不必先知道内部地址、端口或手工维护一套与普通 Host 平行的配置。
 
-### 拟议范围
+### HSL 条件范围
 
 - 仍通过现有 SSH Transport、Session、终端和主机校验路径连接 HSL。
 - 提供一个最小、可发现的 HSL 入口；具体是系统发现、本地默认 Host 还是固定命令，
@@ -249,7 +282,7 @@ HSL 的启用方式、SSH endpoint、身份认证、主机密钥、启动/停止
 - 明确区分“HSL 未启用”“SSH 服务未就绪”“认证失败”“主机密钥变化”和普通网络错误。
 - HSL Session 与远端 SSH Session 使用相同的 Tab、Pane、终端、取消和错误恢复模型。
 
-### 非目标与进入条件
+### HSL 非目标与进入条件
 
 - LeanTTY 不安装、创建、升级或管理 HSL，不捆绑 Linux 用户空间、包管理器或发行版。
 - 不用回环 SSH 包装成伪本地 shell，也不为尚不存在的直接系统 API 建立 Local Transport。
@@ -259,7 +292,9 @@ HSL 的启用方式、SSH endpoint、身份认证、主机密钥、启动/停止
   裁剪产品级 HSL 入口。
 
 技术草案：[`design/hsl-execution-environment.md`](design/hsl-execution-environment.md)。
-该 milestone 已进入路线图，但未进入 `next-work.md`，不授权实现。
+HSL 的系统接口与真机证据调查已进入 [`next-work.md`](next-work.md)；产品实现只有在进入
+条件形成明确通过结论后才授权。若条件失败，1.4 继续作为启动性能版本推进，HSL 保持普通
+SSH Host 手工连接基线。
 
 ## 拟议 milestone：1.5 — OpenSSH ProxyJump
 
