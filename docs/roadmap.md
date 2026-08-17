@@ -272,6 +272,10 @@ socket 没有形成普通 AppGallery 应用可依赖的公开发现契约；HiSh
 可分发的三方发现/状态 API、Intent 或 loopback endpoint，并经普通签名 production 包和物理
 ARM64 HarmonyOS PC 验证后，HSL 产品入口才可重新排期。
 
+2026-08-17 已启动第二轮 HSL 调研，仅复核公开 SDK/Intent、通用网络发现边界、系统终端集成
+和普通签名真机可见性，并评估是否值得提供官方步骤的手工使用指南。该调研不改变 1.4 启动
+性能 milestone，也不授权以内部网卡名、地址扫描、包名或系统权限实现 HSL 专用入口。
+
 ## 拟议 milestone：1.5 — OpenSSH ProxyJump
 
 ### 用户结果

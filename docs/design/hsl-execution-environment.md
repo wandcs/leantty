@@ -1,6 +1,6 @@
 # HSL 本地执行环境入口技术结论
 
-> 状态：进入门禁已完成；1.4 产品级 HSL 专用入口已裁剪
+> 状态：第一轮进入门禁失败；第二轮公开接口与替代接入调研已启动，产品实现仍未授权
 >
 > 判定日期：2026-08-17
 >
@@ -8,8 +8,9 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 当前授权：不实现 discovery adapter、HSL 专用 UI、命令、Host 数据或 Local Transport；
-> 只有本文“重新进入条件”满足并重新写入 [`next-work.md`](../next-work.md) 后才能恢复产品实现
+> 当前授权：只进行公开资料/SDK 调研、最小普通签名测试 HAP 和物理机验证；不实现 discovery
+> adapter、HSL 专用连接入口、Host 数据或 Local Transport。只有本文“重新进入条件”满足后
+> 才能恢复产品实现
 
 ## 结论
 
@@ -27,6 +28,64 @@ HSL 当前可以作为本机上的普通 SSH 目标使用，但不能成为 Lean
 因此，LeanTTY 无法在正式商店包中可靠区分“HSL 未安装”“HSL 未启动”“endpoint 已变化”
 和“`sshd` 未就绪”，也不能在不依赖私有实现的前提下生成一次有效连接目标。进入门禁按预设
 停止条件判定为**失败**，不进入产品实现。
+
+2026-08-17 用户进一步授权启动 HSL 调研项目。该决定重新打开的是证据调查，不是产品实现；
+第一轮门禁结论在出现新的公开、稳定、可分发接口证据前继续有效。
+
+## 第二轮桌面调研
+
+测试 PC 暂不可用期间，已对 HarmonyOS 6.1.1/API 24 本地 DevEco SDK、HarmonyOS SDK 文档
+索引、OpenHarmony 官方源码和 OpenSSH 官方源码进行静态复核。
+
+### API 与源码结果
+
+- ArkTS/JS/NDK SDK 中没有 HSL、openEuler、`loh`、RGM、Linux Fusion 或虚拟机管理接口、
+  Kit、系统能力或 HSL Intent 声明。
+- SDK 中名称相近的 `FusionConnectivity` 是基于蓝牙的伙伴设备发现，`ScenarioFusionKit` 是
+  场景化 UI/文件组件；二者均与 Linux 子系统无关，不能因名称相近复用。
+- Network Kit 的公开 `getAllNets`/`getConnectionProperties` 可以返回通用网络句柄、接口名、
+  地址和路由，但没有 HSL、虚拟机类型、实例 ID 或 `sshd` 状态字段。
+- HarmonyOS 公开 mDNS API 只能发现主动发布的服务；HSL 官方资料没有声明 `_ssh._tcp` 服务，
+  OpenSSH Portable 官方源码也没有内置 mDNS/Avahi 发布逻辑。
+- OpenHarmony 官方源码中没有目标真机上的 `linux_fusion_service`、`hmos_fusion_manager` 或
+  `rgm_manager` 实现，说明这些是当前 HarmonyOS 商业系统内部组件，不是已公开的 OpenHarmony
+  契约。
+- `CUSTOM_SANDBOX` 在 OpenHarmony 权限定义中属于 `system_basic` 的受限权限。即使系统终端
+  拥有该权限，也没有公开接口表明它能授予或代理 HSL endpoint；LeanTTY 不申请与用户结果
+  无直接、文档化关系的受限权限。
+
+### 替代接入模型比较
+
+| 方案 | 当前证据 | 结论 |
+| --- | --- | --- |
+| 公开 HSL API/Intent/loopback | 文档、API 24 SDK 与 OpenHarmony 源码均未发现 | 最理想；等待平台公开后重议 |
+| 显式拉起系统终端/openEuler Ability | 真机包存在桌面入口，但无 HSL Intent、状态或返回值契约 | 最多打开系统界面，不能形成连接目标；不作为专用入口 |
+| Network Kit 枚举接口与路由 | API 公开，但只提供通用网络属性 | 依赖内部网卡名或地址模式才能猜测 HSL，不能区分其他虚拟机；不采用 |
+| 扫描本地网段或 TCP 22 | 可能发现某个 SSH banner | 会探测无关目标，不能证明它是 HSL，也不能解释生命周期；不采用 |
+| mDNS/稳定 hostname | 平台具备 mDNS API，但 HSL/sshd 没有发布契约 | 真机只做一次否证/确认；无官方承诺前不进入产品 |
+| `loh`/HiShell 脚本跳转 | 官方只说明 HiShell 页签，普通 shell 中不存在独立命令 | 系统终端内部集成，不作为 LeanTTY 执行或发现边界 |
+| 用户维护普通 OpenSSH Host | 现有 LeanTTY 已完整支持 | 当前唯一可靠产品路径；保持单一 Host/Identity 权威来源 |
+| 官方步骤的 HSL 使用指南 | 不需要新权限、接口、后台服务或状态模型 | 可独立评估，但必须诚实保留手工启动 `sshd` 和动态 IP 步骤 |
+
+### 当前建议
+
+HSL 项目现阶段应保持为“平台接口调研 + 真机最小探针 + 可选手工使用指南”，而不是进入
+discovery adapter 或专用连接 UI 开发。这样既持续关注平台新能力，又不会把一次真机内部地址、
+包名或系统终端行为固化为长期维护负担。
+
+测试 PC 可用后，只验证可能改变门禁结论的事实：普通签名应用能否获得带 HSL 语义的网络/状态
+信息、HSL 是否发布稳定服务名、显式 Ability 是否有公开结果，以及官方流程中的 endpoint、
+`sshd`、认证和主机密钥生命周期。详细清单以 [`next-work.md`](../next-work.md) 为准。
+
+### 官方支持提问草案
+
+> 面向普通签名并通过 AppGallery 分发的 HarmonyOS PC 三方应用，是否存在公开、稳定的 API、
+> Intent、系统服务或文档化 loopback/hostname，可查询融合开发引擎（HSL）的安装状态、运行
+> 状态、实例、IPv4/SSH endpoint 与生命周期？如果存在，请提供 Kit/API、最低系统版本、权限
+> 等级、分发限制和 endpoint 稳定性说明。`loh` 是否仅供 HiShell 使用，还是有三方应用调用
+> 契约？如果当前没有，是否有公开规划中的替代接口？
+
+该草案只保存在项目文档中；向华为开发者支持提交属于外部沟通，需用户另行确认。
 
 ## 公开资料证据
 

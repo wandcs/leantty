@@ -6,7 +6,8 @@
 >
 > 当前 milestone：[`1.4 — 启动性能`](roadmap.md)
 >
-> 当前阶段：启动性能实现、开发候选验收与 HSL 进入门禁均已完成；活动工作进入 1.4 集成与正式候选准备
+> 当前阶段：启动性能实现与开发候选验收已完成；HSL 后续调研已启动但不授权产品实现，
+> 1.4 集成与正式候选准备保持独立
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -43,7 +44,27 @@ loopback endpoint。1.4 因此不增加 HSL 专用入口，普通 OpenSSH Host �
 完整证据和重新进入条件见
 [`design/hsl-execution-environment.md`](design/hsl-execution-environment.md)。
 
-## 1. 集成、文档与发布
+用户已于 2026-08-17 授权启动第二轮 HSL 调研。该授权只允许复核公开 API、评估不依赖私有
+实现的替代接入模型、准备最小真机探针，以及判断是否值得提供手工引导；没有新的公开证据前，
+不恢复 discovery adapter、HSL 专用连接入口、Host 数据或 Local Transport。
+
+## 1. HSL 后续调研与重新进入验证
+
+1. [ ] 在测试 PC 可用后，用普通签名的最小测试 HAP 验证 Network Kit 的 `getAllNets` 与
+   `getConnectionProperties` 是否能看到 HSL 网络，以及系统是否提供区别于内部网卡名、地址段
+   和端口扫描的稳定语义；HDC 输出只用于对照，不能作为产品能力。
+2. [ ] 验证 HSL/openEuler 是否通过公开 mDNS、稳定 hostname 或其他文档化方式发布 SSH 服务；
+   同时记录未安装、已停止、已启动但 `sshd` 未就绪和 endpoint 变化时的可观察差异。
+3. [ ] 用普通签名测试 HAP 确认系统终端/openEuler 的显式 Ability 是否只能拉起界面，且不能
+   返回 HSL 状态或 endpoint；确认 `loh` 是否确实只属于 HiShell，而不是三方可调用 API。
+4. [ ] 在不修改产品代码的前提下记录一次官方支持流程：网络模式、启动 `sshd`、当前 IP、用户
+   与认证方式、首次主机校验、HSL/系统重启后的地址和主机密钥变化。凭据和主机密钥内容不得
+   进入日志或仓库。
+5. [ ] 根据证据形成单一决策：只有出现公开、稳定、可分发且具有 HSL 语义的接口才重新进入
+   产品实现；若仍只有启发式发现，保持专用入口裁剪，并单独评估是否提供基于官方步骤的手工
+   HSL 使用指南。
+
+## 2. 集成、文档与发布
 
 1. [ ] 把实际用户可见改动记录到 `CHANGELOG.md` 的 `[1.4.0] - In development`；只记录
    启动性能与真实保留的行为，不暗示自动 HSL 入口已经交付。
