@@ -95,7 +95,7 @@ export class SshConfig {
     return this.resolveSourceHost(alias)
   }
 
-  addAlias(alias: string, hostname: string, port: number, user: string): void {
+  addAlias(alias: string, hostname: string, port: number, user: string, proxyJump: string | null = null): void {
     let existing: SshConfigHost | null = null
     for (let i = 0; i < this.hosts.length; i++) {
       if (this.hosts[i].alias === alias) {
@@ -107,11 +107,13 @@ export class SshConfig {
       existing.hostname = hostname
       existing.port = port
       existing.user = user
+      if (proxyJump !== null) { existing.proxyJump = proxyJump }
     } else {
       let host: SshConfigHost = new SshConfigHost(alias)
       host.hostname = hostname
       host.port = port
       host.user = user
+      if (proxyJump !== null) { host.proxyJump = proxyJump }
       this.hosts.push(host)
     }
     this.removePending(this.pendingRemovals, alias)

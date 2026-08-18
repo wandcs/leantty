@@ -14,8 +14,8 @@ const HELP_TEXT: string =
   'Syntax: <...> is required; [...] is optional; <a|b> means choose one.\r\n' +
   '\r\n' +
   'Connection\r\n' +
-  '  ssh [-p <port>] [-i <identity>] <user>@<host>  Connect to a server\r\n' +
-  '  ssh [-p <port>] [-i <identity>] <host-name>    Connect using ~/.ssh/config\r\n' +
+  '  ssh [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
+  '  ssh [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n' +
   '\r\n' +
   'File transfer\r\n' +
   '  put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
@@ -38,17 +38,19 @@ const HELP_TEXT: string =
   '  key rm <key-name>                               Delete a verified key pair\r\n' +
   '\r\n' +
   'Host configuration\r\n' +
-  '  host add <host-name> <user>@<host>[:<port>]    Add a host\r\n' +
-  '  host set <host-name> <user>@<host>[:<port>]    Update a host\r\n' +
+  '  host add <name> <user>@<host>[:<port>] [-J <jump>]  Add a host\r\n' +
+  '  host set <name> <user>@<host>[:<port>] [-J <jump>]  Update a host\r\n' +
   '  host rm <host-name>                            Remove a host\r\n' +
   '  host list                                      List hosts\r\n' +
   '\r\n' +
   '  help [<command>], <command> --help, ?           Show help\r\n' +
   '  exit                                           Close this pane\r\n'
 
-const SSH_HELP: string = '\r\nUsage: ssh [-p <port>] [-i <identity>] <user>@<host>\r\n' +
-  '       ssh [-p <port>] [-i <identity>] <host-name>\r\n\r\n' +
-  'Host settings come from ~/.ssh/config; command options take precedence.\r\n'
+const SSH_HELP: string = '\r\nUsage: ssh [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
+  '       ssh [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n\r\n' +
+  'Host settings, including one ProxyJump, come from ~/.ssh/config; command options take precedence.\r\n' +
+  '<jump> is one saved Host or [user@]host[:port]. Use -J none to bypass a saved ProxyJump.\r\n' +
+  'ProxyCommand and multi-hop chains are not supported.\r\n'
 const KEYGEN_HELP: string = '\r\nUsage: ssh-keygen [-t <ed25519|rsa>] [-f <key-name>] [-C <comment>]\r\n' +
   '       ssh-keygen -y -f <identity>\r\n       ssh-keygen -l -f <identity>[.pub]\r\n' +
   '       ssh-keygen -p -f <identity>\r\n' +
@@ -62,8 +64,10 @@ const KEY_HELP: string =
   'key export <key-name> [<file-name>] | key rm <key-name>\r\n\r\n' +
   '<key-name> is the name shown by "key list". <file-name> is the optional Downloads basename; ' +
   'it defaults to <key-name>. The private key and .pub file are never overwritten.\r\n'
-const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>]\r\n' +
-  '       host rm <host-name>\r\n       host list\r\n\r\nLegacy alias commands remain temporarily supported.\r\n'
+const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>]\r\n' +
+  '       host rm <host-name>\r\n       host list\r\n\r\n' +
+  '-J saves one ProxyJump in the same OpenSSH Host entry; -J none disables it.\r\n' +
+  'Legacy alias commands remain temporarily supported.\r\n'
 const TRANSFER_HELP: string =
   '\r\nUsage: put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
   '       get [-p <port>] [-i <identity>] [--] <host>:<remote-file> [local-path]\r\n\r\n' +
@@ -327,10 +331,12 @@ export class KeyCommandService {
       ctx.writeError(current.errorMessage + '\r\nCheck the matching Host entry in ~/.ssh/config.')
       return
     }
-    config.addAlias(result.keyName, result.sshHost, result.sshPort, result.sshUser)
+    config.addAlias(result.keyName, result.sshHost, result.sshPort, result.sshUser,
+      result.sshJump.length > 0 ? result.sshJump : null)
     config.saveConfig(ctx.context)
     let info: string = result.keyName + ' -> ' + result.sshUser + '@' + result.sshHost
     if (result.sshPort !== 22) { info += ':' + result.sshPort.toString() }
+    if (result.sshJump.length > 0) { info += ' via ' + result.sshJump }
     ctx.writeOutput('\r\n' + LocalCommandOutput.success('Host ' +
       (updated ? 'updated: ' : 'added: ') + KeyCommandService.safeText(info) + '.') +
       '\r\n' + LocalCommandOutput.prompt())

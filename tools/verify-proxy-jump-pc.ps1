@@ -20,6 +20,7 @@ param(
     [switch]$IncludeHostKeyRotation,
     [ValidateSet('Target', 'Jump', 'Both')][string]$HostKeyRotationLayer = 'Both',
     [switch]$ParallelPanes,
+    [switch]$SuspendAfterConnect,
     [ValidateSet(
         'None', 'JumpAuthentication', 'TargetAuthentication',
         'DirectTcpipRejected', 'TargetUnreachable', 'DirectTcpipTimeout',
@@ -45,6 +46,10 @@ if ($IncludeHostKeyRotation -and $FailureScenario -ne 'None') {
 }
 if ($ParallelPanes -and ($IncludeHostKeyRotation -or $FailureScenario -ne 'None')) {
     throw 'Parallel Pane verification must run independently'
+}
+if ($SuspendAfterConnect -and
+    ($ParallelPanes -or $IncludeHostKeyRotation -or $FailureScenario -ne 'None')) {
+    throw 'Suspend/resume verification must run as an independent successful connection scenario'
 }
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + `
     [IO.Path]::DirectorySeparatorChar
@@ -993,6 +998,68 @@ try {
             -TargetShellOpened $true `
             -TargetShellClosedCleanly $false `
             -Lifecycle 'dirty terminal modes enabled; transport closed; terminal state and input recovered; no late CONNECTED'
+        return
+    }
+    if ($SuspendAfterConnect) {
+        Submit-ConnectedProxyInputUntilFixture `
+            -Text 'ltty-terminal-dirty suspend' `
+            -FixtureLog $targetStderr `
+            -ExpectedPattern 'terminal dirty case=suspend result=enabled'
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'suspend-dirty-before.png')
+        & $hdc -t $targetId shell 'power-shell suspend' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to suspend the HarmonyOS PC during ProxyJump' }
+        Start-Sleep -Seconds 5
+        & $hdc -t $targetId shell 'power-shell wakeup' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to wake the HarmonyOS PC during ProxyJump' }
+        Start-Sleep -Seconds 2
+        $resumedPid = (@(& $hdc -t $targetId shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
+        if ($LASTEXITCODE -ne 0 -or $resumedPid -cne $appPid) {
+            throw 'LeanTTY did not retain the same application process across suspend and wake'
+        }
+        $resume = Start-LeanTTYRegressionApp `
+            -Hdc $hdc `
+            -Target $targetId `
+            -CredentialPath (Get-LeanTTYDeviceUnlockPasswordPath) `
+            -RepositoryRoot $repoRoot
+        if ([string]$resume.processId -cne $appPid) {
+            throw 'LeanTTY application process changed while restoring the suspended session'
+        }
+        Wait-LeanTTYTerminalInputLayout `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'suspend-resumed.json') `
+            -TimeoutSeconds 30 | Out-Null
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'suspend-resumed.png')
+        Submit-ConnectedProxyInputUntilFixture `
+            -Text 'ltty-input-check suspendresume' `
+            -FixtureLog $targetStderr `
+            -ExpectedPattern 'input case=suspendresume result=matched'
+        Submit-ConnectedProxyInput -Text 'ltty-exit'
+        Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'suspend-exited-reset.png')
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Write-ProxySummary `
+            -Scenario 'suspend-resume-after-connect' `
+            -Authentication 'both-layer-passwords-accepted-before-suspend' `
+            -HostKeyVerification 'both-first-use-host-keys-confirmed-before-suspend' `
+            -KnownHostReconnect $false `
+            -TargetHostKeyRotationRecovered $false `
+            -JumpHostKeyRotationRecovered $false `
+            -ExpectedFailureLayer '' `
+            -TargetShellOpened $true `
+            -TargetShellClosedCleanly $true `
+            -Lifecycle ('dirty terminal modes and target input survived suspend/wake in process ' +
+                $appPid + '; clean exit reset terminal state')
         return
     }
     Submit-SecretOrDecision -Text 'ltty-exit'

@@ -236,7 +236,7 @@ export class CommandParser {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.ALIAS_LIST
       result.legacySyntax = words[0] === 'alias'
-      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] | ' +
+      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] | ' +
         'host rm <host-name> | host list'
       return result
     }
@@ -900,9 +900,22 @@ export class CommandParser {
     result.kind = KeyCommandKind.ALIAS_ADD
     let parts: string[] = input.split(/\s+/)
     let operation: string = parts.length >= 2 && parts[1] === 'set' ? 'set' : 'add'
-    if (parts.length !== 4) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>]'
+    if (parts.length !== 4 && parts.length !== 6) {
+      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
       return result
+    }
+    if (parts.length === 6) {
+      if (parts[4] !== '-J' || parts[5].length === 0) {
+        result.errorMessage = 'Usage: host ' + operation +
+          ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+        return result
+      }
+      if (parts[5].includes(',') || parts[5].includes('://') || parts[5].includes('%') ||
+        parts[5].includes('$')) {
+        result.errorMessage = 'Unsupported ProxyJump expression: only one [user@]host[:port] is supported'
+        return result
+      }
+      result.sshJump = parts[5]
     }
     result.keyName = parts[2]
     if (!/^[A-Za-z0-9._-]+$/.test(result.keyName)) {
@@ -912,13 +925,13 @@ export class CommandParser {
     let target: string = parts[3]
     let atIdx: number = target.lastIndexOf('@')
     if (atIdx <= 0) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>]'
+      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
       return result
     }
     result.sshUser = target.substring(0, atIdx)
     let hostPort: string = target.substring(atIdx + 1)
     if (hostPort.length === 0) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>]'
+      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
       return result
     }
     if (hostPort.startsWith('[')) {

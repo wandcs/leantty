@@ -1077,6 +1077,18 @@ ssh work</code></pre>
           保存的 Host 写在 <code>~/.ssh/config</code> 中由 LeanTTY 管理的区域。连接前可用
           <code>ssh -G work</code> 查看 LeanTTY 最终会采用哪些配置。
         </p>
+
+        <h3>通过一个 SSH 跳板连接</h3>
+        <pre><code>host add jump gateway@jump.example.com
+host add private deploy@target.example.com -J jump
+ssh private
+ssh -J jump deploy@target.example.com</code></pre>
+        <p>
+          LeanTTY 会分别校验跳板和目标的主机密钥，并分别完成认证；只有目标 PTY 就绪后才打开
+          终端。<code>-J none</code> 可让一次 <code>ssh</code> 绕过已保存的跳板，也可配合
+          <code>host set</code> 关闭该 Host 的跳板。首版只支持一个跳板，不支持
+          <code>ProxyCommand</code> 或逗号分隔的多跳链。
+        </p>
         <p>
           连接成功后，当前 Tab 会显示 <code>用户@Host</code>；如果通过保存的 Host 名称连接，
           标题会保留这个短名称。正常退出远端 Shell、连接失败或取消连接后，标题会恢复为
@@ -1251,7 +1263,7 @@ get work:/reports/latest.csv reports/</code></pre>
             <tbody>
               <tr><td><code>help</code>、<code>?</code></td><td>显示本地帮助，并在末尾给出这份完整指南的链接。</td></tr>
               <tr><td><code>help &lt;command&gt;</code></td><td>显示一个受支持命令的简短帮助。</td></tr>
-              <tr><td><code>ssh …</code></td><td>直接连接，或通过保存的 OpenSSH Host 连接。</td></tr>
+              <tr><td><code>ssh …</code></td><td>直接连接，或通过保存的 OpenSSH Host / 单个 ProxyJump 连接。</td></tr>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>不连接服务器，只显示 LeanTTY 最终会采用的配置。</td></tr>
               <tr><td><code>put …</code></td><td>通过 SFTP 上传 Downloads 中的一个文件。</td></tr>
               <tr><td><code>get …</code></td><td>通过 SFTP 下载一个文件到 Downloads。</td></tr>
@@ -1547,6 +1559,19 @@ ssh work</code></pre>
           Saved hosts use LeanTTY's managed section of <code>~/.ssh/config</code>. Inspect the
           supported effective values before connecting with <code>ssh -G work</code>.
         </p>
+
+        <h3>Connect through one SSH jump host</h3>
+        <pre><code>host add jump gateway@jump.example.com
+host add private deploy@target.example.com -J jump
+ssh private
+ssh -J jump deploy@target.example.com</code></pre>
+        <p>
+          LeanTTY verifies and authenticates the jump host and target separately, then opens the
+          terminal only after the target PTY is ready. Use <code>-J none</code> to bypass a saved jump
+          for one <code>ssh</code> command, or with <code>host set</code> to disable it for that Host.
+          The first version supports one jump only; <code>ProxyCommand</code> and comma-separated
+          chains are not supported.
+        </p>
         <p>
           After a successful connection, the current Tab shows <code>user@Host</code> and keeps a saved
           Host alias when one was used. After a normal remote-shell exit, a failed connection or a
@@ -1725,7 +1750,7 @@ get work:/reports/latest.csv reports/</code></pre>
             <tbody>
               <tr><td><code>help</code>, <code>?</code></td><td>Show local help and the link to this complete guide.</td></tr>
               <tr><td><code>help &lt;command&gt;</code></td><td>Show concise help for one supported command.</td></tr>
-              <tr><td><code>ssh …</code></td><td>Connect directly or through a saved OpenSSH Host.</td></tr>
+              <tr><td><code>ssh …</code></td><td>Connect directly or through a saved OpenSSH Host / single ProxyJump.</td></tr>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>Show the supported effective configuration without connecting.</td></tr>
               <tr><td><code>put …</code></td><td>Upload one Downloads file through SFTP.</td></tr>
               <tr><td><code>get …</code></td><td>Download one SFTP file into Downloads.</td></tr>

@@ -1,6 +1,6 @@
 # SSH Session 终端状态隔离方案
 
-> 状态：Implementing；开发候选已实现并通过聚焦真机验证，完整自动化与物理矩阵仍待闭合
+> 状态：Verified（开发候选）；自动化与物理矩阵已闭合，正式 production 候选待发布流程复验
 >
 > 当前 milestone：1.4.0
 >
@@ -8,8 +8,8 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已进入 [`next-work.md`](../next-work.md)；本项未闭合前不得准备或发布
-> 1.4 正式候选
+> 实现授权：已按原 [`next-work.md`](../next-work.md) 门禁闭合；完成事实保留在本文，正式候选
+> 仍按当前活动清单与发布流程准备
 
 ## 用户问题
 
@@ -283,8 +283,9 @@ SSH Transport / PTY closes
 - policy harness 覆盖唯一 reset 入口、迟到 SSH 字节/输入门禁、snapshot commit floor、
   renderer 离线时只由 snapshot reset 后缀恢复状态、typed viewport allowlist，以及 viewport
   必须等待全部较早输出 ACK。
-- ArkTS 单元测试与日常 ARM64 debug HAP 构建通过。尚未把错误/断网、reconnect、旧回执和
-  两 Pane/Tab 并行全部提升为运行期自动化，因此本节整体仍未闭合。
+- ArkTS 单元测试与日常 ARM64 debug HAP 构建通过。运行期又覆盖已连接错误/断线、reconnect、
+  renderer 中断期间的旧 Bridge/reset 回执，以及两 Pane/Tab 并行；旧 Session 的迟到事件不能
+  重新取得 Terminal Surface 所有权，本节自动化完成条件已经闭合。
 
 ### 3. 物理 ARM64 HarmonyOS PC
 
@@ -320,20 +321,35 @@ SSH Transport / PTY closes
   随后在新 Tab 中用 dirty alternate buffer 退出，切回原双 Pane Tab 后原右侧连接继续执行并
   显示 `TAB1_SURVIVED`。验收后已关闭新增 Tab/Pane 并正常退出剩余 SSH，恢复单 Tab/Pane。
 
-仍待物理机闭合：第二台普通 SSH 服务器、强制断网/error、方向键/粘贴/鼠标/focus/颜色的
-逐项交互、连续连接两台服务器以及合盖/锁屏。因此这些聚焦证据不把方案状态提升为
-`Verified`。
+后续物理矩阵又完成：
+
+- 受控 target 与 jump 分别在 alternate buffer、隐藏光标、mouse、focus、bracketed paste、
+  OSC 颜色均活跃时被强制断开；同一 normal scrollback、可见默认光标、本地输入和后续重连
+  均恢复，且没有迟到 `CONNECTED`。
+- 普通 SSH fixture 通过物理方向键、Ctrl 组合键、Tab、粘贴、1 MiB 输入、持续大输出、resize、
+  Pane 关闭、native close 可观测和重连输入；随后连接 HSL 与真实 ProxyJump 目标，形成连续不同
+  服务器与直连/跳板路径的非继承证据。
+- reconnect 保留旧 normal buffer 并建立新 generation；renderer 在旧 reset ACK 窗口被终止时，
+  本地关闭输出只提交一次，Bridge 恢复后输入立即可用。
+- 真实 `power-shell suspend` 覆盖挂起、唤醒、锁定与解锁：活跃 SSH 在同一应用进程内合法保留
+  dirty 终端模式并继续接收目标输入；远端随后正常退出时才执行边界 reset，恢复 `ltty>`。
+- 真实 tmux、vim、Helix 与 Codex TUI 在 ProxyJump 目标中完成进入、交互、resize 和返回同一
+  shell；结合固定 xterm 6.0.0 的 mouse/focus/paste/颜色矩阵，证明修复没有禁用活跃 Session
+  的标准 TUI 模式。复制选择沿用 1.3 已发布物理基线，相关实现未被本修复改写。
+
+至此第二服务器、错误/断线、键盘/粘贴/mouse/focus/颜色、连续连接、Pane/Tab、renderer 与
+挂起/锁屏矩阵均闭合，本方案提升为开发候选 `Verified`。这不替代正式 production 候选上的
+完整发布回归、签名包与最终人工确认。
 
 ## 1.4 发布门禁
 
 本方案不是一项新的用户功能，而是 1.4 必须关闭的终端正确性缺陷。执行顺序固定为：
 
-1. 完成当前 1.4 ProxyJump 开发与日常验证，避免两条跨 Session/Terminal Surface 事件链
-   并行修改。
-2. 完成本方案的失败基线、实现、自动化与物理机验收。
-3. 只有上述两项都形成真实完成证据，才能从干净精确提交准备 1.4 production 候选。
-4. 本缺陷不得以“只影响 HSL”、“只是光标外观”或“新 Tab 没问题”为理由延后到 1.4
-   发布之后。
+1. ProxyJump 开发与日常验证已完成。
+2. 本方案的失败基线、实现、自动化与物理机验收已完成。
+3. 下一步可以从干净、已推送的精确提交准备 1.4 production 候选；日常 debug HAP 与上述证据
+   不代替正式门禁。
+4. 本缺陷已经在正式候选前关闭，不以“只影响 HSL”、“只是光标外观”或“新 Tab 没问题”延后。
 
 ## 非目标与停止条件
 

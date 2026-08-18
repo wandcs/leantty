@@ -1,6 +1,6 @@
 # OpenSSH ProxyJump 技术方案
 
-> 状态：Implementing；1.4 范围及 transport 门禁已确认，嵌套认证模型按活动 TODO 闭合
+> 状态：Verified（开发候选）；实现、自动化与聚焦物理机矩阵已闭合，正式 production 候选待发布流程复验
 >
 > 当前 milestone：1.4.0
 >
@@ -78,9 +78,8 @@ jump Handle
 - 两个 server key、两个 client handler 和两个 russh Handle 保持独立，嵌套连接可以由最终
   Target Session 局部拥有，不要求共享或池化跳板连接。
 
-因此 transport 停止条件未触发，可以进入单跳解析与生产 Session 生命周期实现。该门禁只
-证明底层能力和基本资源边界；认证组合、known_hosts、超时、Pane 取消、并行隔离及真机行为
-仍按活动验证清单逐项闭合。
+因此 transport 停止条件未触发，并已沿该边界完成单跳解析与生产 Session 生命周期实现。
+本节只记录最初的底层门禁；完整完成证据见下文。
 
 ## 配置与解析
 
@@ -145,6 +144,30 @@ jump Handle
 - 物理键盘完成两层主机确认与认证，错误明确指出 jump 或 target。
 - 合盖、锁屏、最小化、网络中断、目标退出和跳板退出后的确定恢复行为。
 - Shell、tmux、vim、Agent TUI、复制粘贴、resize 和大输出与直连一致。
+
+## 2026-08-18 开发候选完成证据
+
+- config `ProxyJump`、一次性 `-J`、`-J none`、安全 `ssh -G`、循环/自引用/多跳/未知参数拒绝
+  均由 ArkTS 自动化覆盖；`host add|set ... -J` 把普通用户入口写回同一 OpenSSH config，help
+  与 Tab 补全复用同一 Host alias 来源。
+- 当前签名 debug HAP 又在物理 PC 上通过 `host add jump ...`、`host add target ... -J jump`、
+  `ssh -G target` 与 `help ssh`，实际显示有效 jump alias/hostname/user/port；验收后两个临时 Host
+  均删除并二次确认不存在。
+- 仓库双服务器 fixture 覆盖直连非退化、单跳握手、密码/私钥/keyboard-interactive 在 jump
+  与 target 两层的代表性组合、两层首次信任/已知匹配/指纹变化恢复，以及 target 不可达、
+  `direct-tcpip` 拒绝和超时、两层认证失败、取消、跳板/目标断线与资源清理。
+- 两个 Pane 通过不同跳板并行连接时使用四组独立认证输入；关闭一条路由后另一条仍能交互，
+  输出、回答、Session 状态和清理均不串联。普通直连 fixture 同时通过 1 MiB 粘贴、持续大输出、
+  resize、Pane 关闭、native close 可观测、重连与后续物理键盘输入。
+- 真实用户管理的 HSL 双服务器拓扑通过目标信任与 PTY、tmux、vim 9.0、Helix、Codex TUI、
+  154x42→76x42→154x42 resize、OSC 52 剪贴板往返、约 1.14 MB 大输出，以及同一进程/Session
+  的真实挂起、唤醒、锁定和解锁后继续输入。
+- 受控路径逐项确认 jump/target 提示与错误层级；正常退出、目标断开、跳板断开和挂起后退出
+  均回收两层资源并把同一 Pane 恢复到可输入的 `ltty>`。没有为此增加第二套认证 UI、共享跳板
+  连接、远端 shell 拼接或产品专用服务器适配。
+
+这些证据把本方案提升为开发候选 `Verified`，但不等于 1.4 已形成 production 包、GitHub
+Release 或 AppGallery 交付。正式候选仍须在干净、已推送的精确提交上执行完整发布门禁。
 
 ## 裁剪与停止条件
 

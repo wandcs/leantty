@@ -744,10 +744,28 @@ export default function interactionFixesTest() {
         CommandParser.parseInput('host add prod root@example.com', new SshConfig())
       let alias: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('alias add prod root@example.com', new SshConfig())
+      let jumped: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput('host add private deploy@target.example.com -J jump', new SshConfig())
       expect(host instanceof KeyCommandResult).assertEqual(true)
       expect(alias instanceof KeyCommandResult).assertEqual(true)
       if (host instanceof KeyCommandResult) { expect(host.legacySyntax).assertEqual(false) }
       if (alias instanceof KeyCommandResult) { expect(alias.legacySyntax).assertEqual(true) }
+      expect(jumped instanceof KeyCommandResult).assertEqual(true)
+      if (jumped instanceof KeyCommandResult) { expect(jumped.sshJump).assertEqual('jump') }
+    })
+
+    it('persistsProxyJumpInTheSingleManagedHostConfig', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('')
+      config.addAlias('jump', 'jump.example.com', 22, 'gateway')
+      config.addAlias('private', 'target.example.com', 2222, 'deploy', 'jump')
+      let text: string = config.previewConfigText()
+      expect(text.includes('Host private\n')).assertEqual(true)
+      expect(text.includes('  ProxyJump jump\n')).assertEqual(true)
+      config.addAlias('private', 'new-target.example.com', 2200, 'deploy')
+      expect(config.previewConfigText().includes('  ProxyJump jump\n')).assertEqual(true)
+      config.addAlias('private', 'new-target.example.com', 2200, 'deploy', 'none')
+      expect(config.previewConfigText().includes('  ProxyJump none\n')).assertEqual(true)
     })
 
     it('rejectsInvalidKnownCommandSyntaxExplicitly', 0, () => {
@@ -778,9 +796,16 @@ export default function interactionFixesTest() {
 
     it('completesHostsOnlyForSupportedHostTakingCommands', 0, () => {
       let vm: CommandBarViewModel = new CommandBarViewModel()
-      vm.getSshConfig().loadFromText('Host prod\n  HostName prod.example.com\n  User deploy\n')
+      vm.getSshConfig().loadFromText('Host prod\n  HostName prod.example.com\n  User deploy\n' +
+        'Host jump\n  HostName jump.example.com\n  User gateway\n')
       vm.setInputText('ssh -G pr')
       expect(vm.tryTabComplete()[0]).assertEqual('ssh -G prod')
+      vm.setInputText('ssh -J ju pr')
+      expect(vm.tryTabComplete()[0]).assertEqual('ssh -J ju prod')
+      vm.setInputText('ssh -J ju')
+      expect(vm.tryTabComplete()[0]).assertEqual('ssh -J jump')
+      vm.setInputText('ssh -G -J jump pr')
+      expect(vm.tryTabComplete()[0]).assertEqual('ssh -G -J jump prod')
       vm.setInputText('host set pr')
       expect(vm.tryTabComplete()[0]).assertEqual('host set prod')
       vm.setInputText('host rm pr')
