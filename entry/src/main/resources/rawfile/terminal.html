@@ -469,6 +469,7 @@
         kind === 'fit' || kind === 'fontSize' || kind === 'copySelection' ||
         kind === 'secondaryAction' || (kind === 'copyOrInterrupt' && payload.length === 0) ||
         kind === 'snapshotRequest' || kind === 'restoreSnapshot' ||
+        (kind === 'sessionResetViewport' && payload.length === 0) ||
         (kind === 'inputSecurity' && (payload === 'plain' || payload === 'masked')) ||
         ((kind === 'searchOpen' || kind === 'searchClose') && payload.length === 0);
     }
@@ -1267,6 +1268,11 @@
                   completeRestore();
                 }
               }
+              break;
+            case 'sessionResetViewport':
+              if (message.channel !== BRIDGE_CONTROL || message.payload.length !== 0) break;
+              if (term) { term.scrollToBottom(); }
+              sendBridgeControl('sessionResetComplete', '');
               break;
             case 'searchOpen':
               if (message.channel !== BRIDGE_CONTROL || message.payload.length !== 0) break;

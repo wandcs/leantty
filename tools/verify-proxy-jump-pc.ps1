@@ -950,6 +950,15 @@ try {
         -Target $targetId `
         -LocalPath (Join-Path $EvidenceDirectory 'connected.png')
     if ($FailureScenario -in @('TargetDisconnected', 'JumpDisconnected')) {
+        $disconnectName = $FailureScenario -eq 'TargetDisconnected' ? 'target' : 'jump'
+        Submit-ConnectedProxyInputUntilFixture `
+            -Text "ltty-terminal-dirty $disconnectName" `
+            -FixtureLog $targetStderr `
+            -ExpectedPattern "terminal dirty case=$disconnectName result=enabled"
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory "$disconnectName-dirty-before-disconnect.png")
         if ($FailureScenario -eq 'TargetDisconnected') {
             Stop-ProxyFixture -Process $targetProcess -LinuxPid $targetLinuxPid
             $targetProcess = $null
@@ -965,7 +974,6 @@ try {
             $jumpFixture = $null
         }
         Wait-ProxyLog -Pattern 'SSH closed, exitCode=-1'
-        $disconnectName = $FailureScenario -eq 'TargetDisconnected' ? 'target' : 'jump'
         Save-LeanTTYDeviceScreenshot `
             -Hdc $hdc `
             -Target $targetId `
@@ -984,7 +992,7 @@ try {
             -ExpectedFailureLayer $disconnectName `
             -TargetShellOpened $true `
             -TargetShellClosedCleanly $false `
-            -Lifecycle 'transport closed, input recovered, no late CONNECTED'
+            -Lifecycle 'dirty terminal modes enabled; transport closed; terminal state and input recovered; no late CONNECTED'
         return
     }
     Submit-SecretOrDecision -Text 'ltty-exit'

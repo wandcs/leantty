@@ -1745,6 +1745,8 @@ export default function interactionFixesTest() {
       output.append(new Uint8Array([1, 2]))
       output.markDetached()
       expect(output.getSnapshot()).assertEqual('\u001b[31mold')
+      output.markSessionReset('\u001b[?25h')
+      expect(output.getSnapshot()).assertEqual('\u001b[31mold\u001b[?25h')
       output.append(new Uint8Array([3, 4]))
       expect(output.takeDetachedChunks()[0][1]).assertEqual(4)
       output.replaceSnapshot('\u001b[32mnew')

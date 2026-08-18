@@ -39,6 +39,7 @@ const PERF_MAX_LINE_WIDTH: usize = 160;
 const PERF_OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
 const PASTE_PREPARE_COMMAND: &str = "ltty-paste-prepare";
 const INPUT_CHECK_COMMAND: &str = "ltty-input-check";
+const TERMINAL_DIRTY_COMMAND: &str = "ltty-terminal-dirty";
 const EXIT_COMMAND: &str = "ltty-exit";
 const BELL_COMMAND: &str = "ltty-bell";
 const BELL_MIN_DELAY_MS: u64 = 100;
@@ -814,6 +815,13 @@ impl Handler for FixtureServer {
                 let response = format!("\r\nLTTY_INPUT_OK:{case_id}\r\nfixture> ");
                 session.data(channel, response.into_bytes())?;
             }
+            Some(FixtureCommand::TerminalDirty(case_id)) => {
+                eprintln!("terminal dirty case={case_id} result=enabled");
+                let response = format!(
+                    "\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?1003h\x1b[?1006h\x1b[?1004h\x1b[?2004h\x1b]0;LTTY_DIRTY:{case_id}\x07\x1b[38;5;196mLTTY_DIRTY:{case_id}\x1b[0m"
+                );
+                session.data(channel, response.into_bytes())?;
+            }
             Some(FixtureCommand::Exit) => {
                 eprintln!("shell command=exit result=closed");
                 session.data(channel, b"logout\r\n".as_slice())?;
@@ -894,6 +902,7 @@ enum FixtureCommand {
     Perf(PerfCommand),
     Paste(PasteRequest),
     InputCheck(String),
+    TerminalDirty(String),
     Exit,
     Bell(BellRequest),
 }
@@ -912,6 +921,10 @@ fn parse_fixture_command(input: &[u8]) -> Option<FixtureCommand> {
     if kind == INPUT_CHECK_COMMAND {
         return (parts.next().is_none() && is_valid_perf_case_id(case_id))
             .then(|| FixtureCommand::InputCheck(case_id.to_string()));
+    }
+    if kind == TERMINAL_DIRTY_COMMAND {
+        return (parts.next().is_none() && is_valid_perf_case_id(case_id))
+            .then(|| FixtureCommand::TerminalDirty(case_id.to_string()));
     }
     if kind == BELL_COMMAND {
         let delay_ms = parts.next()?.parse::<u64>().ok()?;
@@ -1689,6 +1702,11 @@ mod tests {
             Some(FixtureCommand::InputCheck("input01".to_string()))
         );
         assert_eq!(parse_fixture_command(b"ltty-input-check bad:id"), None);
+        assert_eq!(
+            parse_fixture_command(b"ltty-terminal-dirty dirty01"),
+            Some(FixtureCommand::TerminalDirty("dirty01".to_string()))
+        );
+        assert_eq!(parse_fixture_command(b"ltty-terminal-dirty bad:id"), None);
         assert_eq!(
             parse_fixture_command(b"ltty-exit"),
             Some(FixtureCommand::Exit)

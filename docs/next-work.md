@@ -2,12 +2,13 @@
 
 > 状态：唯一有效的项目 TODO
 >
-> 更新日期：2026-08-17
+> 更新日期：2026-08-18
 >
 > 当前 milestone：[`1.4 — 启动性能与 OpenSSH ProxyJump`](roadmap.md)
 >
 > 当前阶段：启动性能实现与开发候选验收、HSL 门禁结论均已完成；
-> 原 1.5 ProxyJump 已并入 1.4，当前工作转入 ProxyJump 技术门禁与实现
+> 原 1.5 ProxyJump 已并入 1.4；SSH Session 状态隔离开发候选已完成，当前继续闭合
+> ProxyJump 与状态隔离的剩余验证门禁
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -41,6 +42,10 @@ Release、精确提交和已归档产物是恢复与追溯基线。
 校验、可恢复错误和正式包边界。启动优化的开发候选已经完成；正式候选仍需按发布流程复验。
 详细方案见 [`design/startup-performance.md`](design/startup-performance.md) 与
 [`design/proxy-jump.md`](design/proxy-jump.md)。
+
+此外，1.4 发布前必须修复同一 Pane 跨 SSH Session 继承上一个远端 PTY 终端运行态的
+正确性缺陷。该项不是第三项功能交付，但是正式候选的必备门禁；完整方案见
+[`design/terminal-session-state-isolation.md`](design/terminal-session-state-isolation.md)。
 
 HSL 公开接口与物理机进入门禁已形成失败结论：当前系统只提供动态地址、手工启动的
 `sshd` 和系统终端内部集成，没有三方应用可依赖的公开稳定发现/状态 API、Intent 或文档化
@@ -77,11 +82,29 @@ HSL 调研已经闭合；HSL 只作为普通 SSH 服务器使用，不增加专�
    清楚，jump/target 错误可区分；Shell、tmux、vim、Agent TUI、复制粘贴、resize、大输出、
    合盖/锁屏和任一层退出后的行为与所有权一致。
 
-## 3. 集成、文档与发布
+## 3. SSH Session 终端状态隔离（1.4 发布阻断）
+
+> 固定 xterm 6.0.0 失败基线、唯一 Session-boundary reset、输出 ACK 排序、snapshot
+> 边界和聚焦 HSL/hx/dirty alternate-buffer 真机路径已经形成开发候选证据；本节剩余矩阵
+> 闭合前，不得进入 1.4 正式候选准备。问题、契约、完成证据与停止条件见
+> [`design/terminal-session-state-isolation.md`](design/terminal-session-state-isolation.md)。
+
+1. [ ] 自动化覆盖已连接错误/断网、reconnect、旧回执与两 Pane/Tab 并行；补齐运行期证据，
+   并证明活跃 Session 内 vim、Helix、tmux、Agent TUI、鼠标和粘贴仍可合法切换模式，
+   新 Session 不继承旧 PTY 状态。正常退出、取消、迟到输出、snapshot 边界与固定 xterm
+   live/restore 状态矩阵已有开发候选证据，不重复维护第二份完成清单。
+2. [ ] 在物理 ARM64 HarmonyOS PC 上闭合第二台普通 SSH 服务器、强制 error/断网、方向键、粘贴、
+   鼠标、focus、颜色、scrollback 保留、连续连接两台服务器与合盖/锁屏矩阵；HSL/hx、dirty
+   alternate buffer、renderer 活跃恢复及 renderer/SSH 结束竞态、双 Pane/Tab 隔离、默认光标
+   恢复和首次本地输入已有聚焦证据，安装、启动、看到 `ltty>` 或一次 SSH 成功不能代替剩余矩阵。
+
+## 4. 集成、文档与发布
 
 1. [ ] ProxyJump 用户行为和门禁形成真实完成证据后，更新 `CHANGELOG.md` 的 1.4
-   `In development`、离线用户指南、命令 help/补全和长期设计约束；规划文档不能提前声明交付。
-2. [ ] 从干净、已推送的精确提交准备正式 1.4 候选，运行 `tools/test-regression.ps1`、
+   `In development`、离线用户指南、命令 help/补全和长期设计约束；同步记录 Session 终端
+   状态隔离的真实修复与验收结论，规划文档不能提前声明交付。
+2. [ ] 只有 ProxyJump 与上述 Session 终端状态隔离全部闭合后，才能从干净、已推送的精确
+   提交准备正式 1.4 候选，运行 `tools/test-regression.ps1`、
    `tools/verify-pc.ps1` 和完整适用的物理机矩阵，冻结同一候选、签名角色、manifest 和哈希。
 3. [ ] 在同一 production 候选上，从真实桌面图标完成冷启动到首字母输入，并通过真实双服务器
    完成 ProxyJump 两层信任/认证、目标 PTY 和错误层级的最终人工确认；安装、启动、一次直连或
@@ -101,6 +124,8 @@ HSL 调研已经闭合；HSL 只作为普通 SSH 服务器使用，不增加专�
   Host 数据库、Local Transport 或通用执行环境框架。
 - ProxyJump 不扩张为 `ProxyCommand`、远端 shell 拼接、任意多跳、通用端口转发、SOCKS、
   VPN、堡垒机资产管理、共享凭据、连接池或第二套 Host/Identity/认证模型。
+- Session 终端状态隔离不扩张为 xterm 升级、renderer 替换、终端重建、新用户设置或
+  `hx`/HSL 专用兼容分支；不用清屏或清 scrollback 代替状态隔离。
 - 重新编号后的 1.5 Mosh、1.6 SSH 配置/诊断/资产互操作和未排期的大粘贴安全体验不进入 1.4。
 
 ## 维护规则

@@ -128,6 +128,9 @@ export class SessionViewModel {
   private sshEnvironmentPreparation: Promise<void> | null = null
   private sshEnvironmentReady: boolean = false
   private sshEnvironmentCommandPending: boolean = false
+  private acceptingSshOutput: boolean = false
+  private terminalResetPending: boolean = false
+  private terminalBoundaryGeneration: number = 0
 
   getSession(): SshSession {
     return this.session
@@ -241,6 +244,9 @@ export class SessionViewModel {
   }
 
   private async connectResolved(request: CommandParseResult): Promise<void> {
+    this.terminalBoundaryGeneration++
+    this.terminalResetPending = false
+    this.acceptingSshOutput = true
     this.clearAuthChallenge()
     this.setMode(TerminalMode.CONNECTING)
     this.session.setState(SshSessionState.CONNECTING)
@@ -292,10 +298,11 @@ export class SessionViewModel {
       this.session.setState(SshSessionState.FAILED)
       this.session.setErrorMessage('' + e)
       this.setMode(TerminalMode.IDLE)
-      this.releaseDisconnectedFlowControl()
       this.logger.warn('SSH connection start failed: ' + e)
-      this.writeError('The SSH connection could not start.',
-        'Check the Host, network and credentials, then try again.')
+      this.finishSshTerminalOwnership(() => {
+        this.writeError('The SSH connection could not start.',
+          'Check the Host, network and credentials, then try again.')
+      })
       this.notifyStateChange()
     }
   }
@@ -310,6 +317,9 @@ export class SessionViewModel {
     if (this.sshClient.hasActiveSession()) {
       await this.sshClient.disconnect()
     }
+    this.acceptingSshOutput = false
+    this.terminalResetPending = false
+    this.terminalBoundaryGeneration++
     this.session.setState(SshSessionState.DISCONNECTED)
     this.clearAuthChallenge()
     let cancelledKeyPassphraseChange: boolean =
@@ -340,6 +350,9 @@ export class SessionViewModel {
     previousClient.onEvent(() => {})
     previousClient.onData(() => {})
     await previousClient.disconnect()
+    await new Promise<void>((resolve: () => void) => {
+      this.finishSshTerminalOwnership(resolve)
+    })
     this.sshClient = new SshClient()
     this.session.setState(SshSessionState.RECONNECTING)
     await this.connectResolved(request)
@@ -365,9 +378,10 @@ export class SessionViewModel {
     this.clearKeypushState()
     this.session.setState(SshSessionState.DISCONNECTED)
     this.setMode(TerminalMode.IDLE)
-    this.releaseDisconnectedFlowControl()
-    this.writeTerminal('^C')
-    this.writePrompt()
+    this.finishSshTerminalOwnership(() => {
+      this.writeTerminal('^C')
+      this.writePrompt()
+    })
     this.notifyStateChange()
   }
 
@@ -518,11 +532,38 @@ export class SessionViewModel {
     }
   }
 
+  private finishSshTerminalOwnership(onReset: () => void): void {
+    this.acceptingSshOutput = false
+    this.releaseDisconnectedFlowControl()
+    this.terminalBoundaryGeneration++
+    let boundaryGeneration: number = this.terminalBoundaryGeneration
+    this.terminalResetPending = true
+    let completeReset: () => void = () => {
+      if (boundaryGeneration !== this.terminalBoundaryGeneration) {
+        return
+      }
+      this.terminalResetPending = false
+    }
+    if (this.terminalSurface === null) {
+      onReset()
+      completeReset()
+      return
+    }
+    this.terminalSurface.resetSessionState(() => {
+      if (boundaryGeneration === this.terminalBoundaryGeneration) {
+        onReset()
+      }
+    }, completeReset)
+  }
+
   private applyOutputPause(paused: boolean): void {
     this.sshClient.setOutputPaused(paused)
   }
 
   private onSshData(data: Uint8Array): void {
+    if (!this.acceptingSshOutput) {
+      return
+    }
     let observedText: string = this.outputObserverDecoder.decodeToString(data, { stream: true })
     this.observePerfOutput(observedText)
     this.observeKeypushOutput(observedText)
@@ -560,6 +601,9 @@ export class SessionViewModel {
   }
 
   private onSshClose(exitCode: number): void {
+    if (!this.acceptingSshOutput) {
+      return
+    }
     this.clearAuthChallenge()
     if (this.pendingKeypush) {
       this.failKeypush('Connection closed before key installation completed.')
@@ -570,17 +614,21 @@ export class SessionViewModel {
     this.session.setState(SshSessionState.DISCONNECTED)
     this.session.setExitCode(exitCode)
     this.setMode(TerminalMode.IDLE)
-    this.releaseDisconnectedFlowControl()
-    this.writeTerminal('\r\n' + ConnectionControl.describeClose(exitCode))
-    this.writePrompt()
-    if (this.terminalSurface !== null) {
-      this.terminalSurface.captureSnapshot()
-    }
+    this.finishSshTerminalOwnership(() => {
+      this.writeTerminal('\r\n' + ConnectionControl.describeClose(exitCode))
+      this.writePrompt()
+      if (this.terminalSurface !== null) {
+        this.terminalSurface.captureSnapshot()
+      }
+    })
     this.notifyStateChange()
     this.logger.info('SSH closed, exitCode=' + exitCode.toString())
   }
 
   private onSshError(errorDetail: string): void {
+    if (!this.acceptingSshOutput) {
+      return
+    }
     this.clearAuthChallenge()
     if (this.pendingKeypush) {
       this.logger.warn('Key installation SSH error: ' + errorDetail)
@@ -592,13 +640,14 @@ export class SessionViewModel {
     this.session.setState(SshSessionState.FAILED)
     this.session.setErrorMessage(errorDetail)
     this.setMode(TerminalMode.IDLE)
-    this.releaseDisconnectedFlowControl()
     this.logger.warn('SSH error: ' + errorDetail)
-    this.writeError(SessionViewModel.sshFailureTitle(errorDetail),
-      'Check the Host, network and credentials, then try again.')
-    if (this.terminalSurface !== null) {
-      this.terminalSurface.captureSnapshot()
-    }
+    this.finishSshTerminalOwnership(() => {
+      this.writeError(SessionViewModel.sshFailureTitle(errorDetail),
+        'Check the Host, network and credentials, then try again.')
+      if (this.terminalSurface !== null) {
+        this.terminalSurface.captureSnapshot()
+      }
+    })
     this.notifyStateChange()
   }
 
@@ -632,10 +681,11 @@ export class SessionViewModel {
     this.session.setState(SshSessionState.FAILED)
     this.session.setErrorMessage('Remote host identification has changed')
     this.setMode(TerminalMode.IDLE)
-    this.releaseDisconnectedFlowControl()
-    this.writeError(SessionViewModel.buildHostKeyChangedWarning(
-      info.host, info.port, info.algorithm, info.oldFingerprint, info.newFingerprint,
-      this.session.getJumpHostname().length > 0 ? info.layer : ''))
+    this.finishSshTerminalOwnership(() => {
+      this.writeError(SessionViewModel.buildHostKeyChangedWarning(
+        info.host, info.port, info.algorithm, info.oldFingerprint, info.newFingerprint,
+        this.session.getJumpHostname().length > 0 ? info.layer : ''))
+    })
     this.notifyStateChange()
   }
 
@@ -707,6 +757,9 @@ export class SessionViewModel {
   }
 
   handleTerminalInput(data: string): void {
+    if (this.terminalResetPending) {
+      return
+    }
     if (this.mode === TerminalMode.KEY_PASSPHRASE_CHANGE_INPUT && data === '\u0003') {
       this.cancelKeyPassphraseChange()
       return
@@ -980,9 +1033,10 @@ export class SessionViewModel {
     if (!accepted) {
       this.session.setState(SshSessionState.FAILED)
       this.setMode(TerminalMode.IDLE)
-      this.releaseDisconnectedFlowControl()
-      this.writeError('The host key was not trusted.',
-        'Reconnect when you are ready to verify the fingerprint.')
+      this.finishSshTerminalOwnership(() => {
+        this.writeError('The host key was not trusted.',
+          'Reconnect when you are ready to verify the fingerprint.')
+      })
       this.notifyStateChange()
     }
   }
@@ -1961,19 +2015,20 @@ export class SessionViewModel {
     this.sshClient = new SshClient()
     this.session.setState(status === 0 ? SshSessionState.DISCONNECTED : SshSessionState.FAILED)
     this.setMode(TerminalMode.IDLE)
-    this.releaseDisconnectedFlowControl()
-    if (status === 0) {
-      this.writeTerminal('\r\n' + LocalCommandOutput.success('Key installed.') + '\r\n' +
-        '  Verify with: ssh ' + SessionViewModel.terminalSafeText(username) + '@' +
-        SessionViewModel.terminalSafeText(hostname) + ' -i ' +
-        SessionViewModel.terminalSafeText(keyPath) + '\r\n' + LocalCommandOutput.prompt())
-    } else if (status < 0) {
-      this.writeError('The server did not confirm key installation before the timeout.',
-        'Check the server before running ssh-copy-id again.')
-    } else {
-      this.writeError('Key installation failed with remote exit status ' + status.toString() + '.',
-        'Check the remote ~/.ssh permissions, then try again.')
-    }
+    this.finishSshTerminalOwnership(() => {
+      if (status === 0) {
+        this.writeTerminal('\r\n' + LocalCommandOutput.success('Key installed.') + '\r\n' +
+          '  Verify with: ssh ' + SessionViewModel.terminalSafeText(username) + '@' +
+          SessionViewModel.terminalSafeText(hostname) + ' -i ' +
+          SessionViewModel.terminalSafeText(keyPath) + '\r\n' + LocalCommandOutput.prompt())
+      } else if (status < 0) {
+        this.writeError('The server did not confirm key installation before the timeout.',
+          'Check the server before running ssh-copy-id again.')
+      } else {
+        this.writeError('Key installation failed with remote exit status ' + status.toString() + '.',
+          'Check the remote ~/.ssh permissions, then try again.')
+      }
+    })
     this.notifyStateChange()
   }
 
@@ -1981,8 +2036,9 @@ export class SessionViewModel {
     this.clearKeypushState()
     this.session.setState(SshSessionState.FAILED)
     this.setMode(TerminalMode.IDLE)
-    this.releaseDisconnectedFlowControl()
-    this.writeError(message)
+    this.finishSshTerminalOwnership(() => {
+      this.writeError(message)
+    })
     this.notifyStateChange()
   }
 

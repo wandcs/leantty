@@ -5,6 +5,7 @@ export class TerminalOutputBuffer {
   private detachedBackpressured: boolean = false
   private attached: boolean = false
   private snapshot: string = ''
+  private snapshotStateSuffix: string = ''
   private readonly hiddenHighWaterBytes: number
 
   constructor(hiddenHighWaterBytes: number = 768 * 1024) {
@@ -68,10 +69,15 @@ export class TerminalOutputBuffer {
 
   replaceSnapshot(snapshot: string): void {
     this.snapshot = snapshot
+    this.snapshotStateSuffix = ''
+  }
+
+  markSessionReset(resetSequence: string): void {
+    this.snapshotStateSuffix = resetSequence
   }
 
   getSnapshot(): string {
-    return this.snapshot
+    return this.snapshot + this.snapshotStateSuffix
   }
 
   releaseDisconnectedFlowControl(): void {
