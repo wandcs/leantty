@@ -150,6 +150,29 @@ enum SftpFault {
     Unavailable,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum DirectTcpipBehavior {
+    #[default]
+    Disabled,
+    ConnectFailed,
+    Forward(SocketAddr),
+    Stall,
+}
+
+impl DirectTcpipBehavior {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "none" => Ok(Self::Disabled),
+            "connect-failed" => Ok(Self::ConnectFailed),
+            "stall" => Ok(Self::Stall),
+            _ => value.parse::<SocketAddr>().map(Self::Forward).map_err(|_| {
+                "direct-tcpip-target must be none, connect-failed, stall or an IP socket address"
+                    .to_string()
+            }),
+        }
+    }
+}
+
 impl SftpFault {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -180,7 +203,7 @@ struct FixtureServer {
     sftp_root: Arc<PathBuf>,
     sftp_delay: Duration,
     sftp_fault: SftpFault,
-    direct_tcpip_target: Option<SocketAddr>,
+    direct_tcpip_behavior: DirectTcpipBehavior,
 }
 
 impl FixtureServer {
@@ -199,7 +222,7 @@ impl FixtureServer {
             sftp_root,
             Duration::ZERO,
             SftpFault::None,
-            None,
+            DirectTcpipBehavior::Disabled,
         )
     }
 
@@ -208,7 +231,7 @@ impl FixtureServer {
         sftp_root: Arc<PathBuf>,
         sftp_delay: Duration,
         sftp_fault: SftpFault,
-        direct_tcpip_target: Option<SocketAddr>,
+        direct_tcpip_behavior: DirectTcpipBehavior,
     ) -> Self {
         Self {
             credentials,
@@ -223,7 +246,7 @@ impl FixtureServer {
             sftp_root,
             sftp_delay,
             sftp_fault,
-            direct_tcpip_target,
+            direct_tcpip_behavior,
         }
     }
 
@@ -450,7 +473,7 @@ impl Server for FixtureServer {
             Arc::clone(&self.sftp_root),
             self.sftp_delay,
             self.sftp_fault,
-            self.direct_tcpip_target,
+            self.direct_tcpip_behavior,
         )
     }
 
@@ -535,12 +558,24 @@ impl Handler for FixtureServer {
                 .ok()
                 .map(|port| SocketAddr::new(address, port))
         });
-        let Some(allowed_target) = self.direct_tcpip_target else {
-            eprintln!("direct-tcpip result=deny reason=disabled");
-            reply
-                .reject(ChannelOpenFailure::AdministrativelyProhibited)
-                .await;
-            return Ok(());
+        let allowed_target = match self.direct_tcpip_behavior {
+            DirectTcpipBehavior::Disabled => {
+                eprintln!("direct-tcpip result=deny reason=disabled");
+                reply
+                    .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                    .await;
+                return Ok(());
+            }
+            DirectTcpipBehavior::ConnectFailed => {
+                eprintln!("direct-tcpip result=connect-failed reason=injected");
+                reply.reject(ChannelOpenFailure::ConnectFailed).await;
+                return Ok(());
+            }
+            DirectTcpipBehavior::Stall => {
+                eprintln!("direct-tcpip result=stall");
+                return std::future::pending::<Result<(), Self::Error>>().await;
+            }
+            DirectTcpipBehavior::Forward(target) => target,
         };
         if requested_target != Some(allowed_target) {
             eprintln!(
@@ -1223,7 +1258,7 @@ struct Arguments {
     ready_path: Option<PathBuf>,
     sftp_delay_ms: u64,
     sftp_fault: SftpFault,
-    direct_tcpip_target: Option<SocketAddr>,
+    direct_tcpip_behavior: DirectTcpipBehavior,
 }
 
 fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Arguments, String> {
@@ -1267,19 +1302,11 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         .map(|value| SftpFault::parse(&value))
         .transpose()?
         .unwrap_or_default();
-    let direct_tcpip_target = arguments
+    let direct_tcpip_behavior = arguments
         .next()
-        .map(|value| {
-            if value == "none" {
-                Ok(None)
-            } else {
-                value.parse::<SocketAddr>().map(Some).map_err(|_| {
-                    "direct-tcpip-target must be none or an IP socket address".to_string()
-                })
-            }
-        })
+        .map(|value| DirectTcpipBehavior::parse(&value))
         .transpose()?
-        .flatten();
+        .unwrap_or_default();
     if arguments.next().is_some() {
         return Err(usage());
     }
@@ -1290,7 +1317,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         ready_path,
         sftp_delay_ms,
         sftp_fault,
-        direct_tcpip_target,
+        direct_tcpip_behavior,
     })
 }
 
@@ -1320,7 +1347,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(sftp_root),
         Duration::from_millis(arguments.sftp_delay_ms),
         arguments.sftp_fault,
-        arguments.direct_tcpip_target,
+        arguments.direct_tcpip_behavior,
     );
     let running = fixture.run_on_socket(config, &socket);
     let handle = running.handle();
@@ -1410,7 +1437,7 @@ mod tests {
         .unwrap();
         assert_eq!(parsed.sftp_delay_ms, 125);
         assert_eq!(parsed.sftp_fault, SftpFault::PutWriteRemove);
-        assert_eq!(parsed.direct_tcpip_target, None);
+        assert_eq!(parsed.direct_tcpip_behavior, DirectTcpipBehavior::Disabled);
 
         let jump = parse_arguments(
             [
@@ -1428,8 +1455,48 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            jump.direct_tcpip_target,
-            Some("127.0.0.1:22223".parse().unwrap())
+            jump.direct_tcpip_behavior,
+            DirectTcpipBehavior::Forward("127.0.0.1:22223".parse().unwrap())
+        );
+
+        let stalled_jump = parse_arguments(
+            [
+                "fixture",
+                "127.0.0.1:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "0",
+                "none",
+                "stall",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert_eq!(
+            stalled_jump.direct_tcpip_behavior,
+            DirectTcpipBehavior::Stall
+        );
+
+        let unreachable_jump = parse_arguments(
+            [
+                "fixture",
+                "127.0.0.1:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "0",
+                "none",
+                "connect-failed",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert_eq!(
+            unreachable_jump.direct_tcpip_behavior,
+            DirectTcpipBehavior::ConnectFailed
         );
 
         for (value, expected) in [
@@ -1507,15 +1574,15 @@ mod tests {
             Arc::new(PathBuf::from("/tmp/leantty-sftp-root")),
             Duration::ZERO,
             SftpFault::PutWriteRemove,
-            Some("127.0.0.1:22223".parse().unwrap()),
+            DirectTcpipBehavior::Forward("127.0.0.1:22223".parse().unwrap()),
         );
 
         let client = fixture.new_client(None);
 
         assert_eq!(client.sftp_fault, SftpFault::PutWriteRemove);
         assert_eq!(
-            client.direct_tcpip_target,
-            Some("127.0.0.1:22223".parse().unwrap())
+            client.direct_tcpip_behavior,
+            DirectTcpipBehavior::Forward("127.0.0.1:22223".parse().unwrap())
         );
     }
 

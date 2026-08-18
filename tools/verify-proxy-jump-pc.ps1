@@ -19,7 +19,8 @@ param(
     [ValidateSet('Target', 'Jump', 'Both')][string]$HostKeyRotationLayer = 'Both',
     [ValidateSet(
         'None', 'JumpAuthentication', 'TargetAuthentication',
-        'DirectTcpipRejected', 'CancelAtTargetAuthentication'
+        'DirectTcpipRejected', 'TargetUnreachable', 'DirectTcpipTimeout',
+        'CancelAtTargetAuthentication', 'TargetDisconnected', 'JumpDisconnected'
     )]
     [string]$FailureScenario = 'None'
 )
@@ -252,6 +253,7 @@ function Submit-JumpPasswordUntilResult {
         [Parameter(Mandatory = $true)][string]$Command,
         [Parameter(Mandatory = $true)][string]$JumpPassword,
         [Parameter(Mandatory = $true)][string]$ExpectedPattern,
+        [int]$TimeoutSeconds = 15,
         [switch]$CurrentPrompt
     )
     for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -262,7 +264,7 @@ function Submit-JumpPasswordUntilResult {
         Submit-SecretOrDecision -Text $JumpPassword
         $logs = Wait-ProxyLogText -Pattern (
             $ExpectedPattern + '|rust event: AUTH:jump:authentication was rejected'
-        )
+        ) -TimeoutSeconds $TimeoutSeconds
         if ($logs -match $ExpectedPattern) { return }
     }
     throw '[harness] Jump password injection was rejected after three connection attempts'
@@ -309,6 +311,24 @@ function Submit-CurrentTargetPasswordWithRetry {
         -TargetPassword $TargetPassword
 }
 
+function Assert-ProxyCommandInputRecovered {
+    param([Parameter(Mandatory = $true)][string]$ScreenshotName)
+    $idleProbe = "ssh -G -J password@127.0.0.1:$JumpPort password@127.0.0.1"
+    Submit-ProxyCommand -Command $idleProbe
+    try {
+        Wait-ProxyLog -Pattern 'rust event: CONNECTED' -TimeoutSeconds 2
+        throw 'Finished ProxyJump work emitted a late CONNECTED event'
+    } catch {
+        if ($_.Exception.Message -eq 'Finished ProxyJump work emitted a late CONNECTED event') {
+            throw
+        }
+    }
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $script:proxyHdc `
+        -Target $script:proxyTarget `
+        -LocalPath (Join-Path $EvidenceDirectory $ScreenshotName)
+}
+
 function Write-ProxySummary {
     param(
         [Parameter(Mandatory = $true)][string]$Scenario,
@@ -319,7 +339,8 @@ function Write-ProxySummary {
         [Parameter(Mandatory = $true)][bool]$JumpHostKeyRotationRecovered,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ExpectedFailureLayer,
         [Parameter(Mandatory = $true)][bool]$TargetShellOpened,
-        [Parameter(Mandatory = $true)][bool]$TargetShellClosedCleanly
+        [Parameter(Mandatory = $true)][bool]$TargetShellClosedCleanly,
+        [string]$Lifecycle = ''
     )
     $script:result = 'passed'
     $summary = [ordered]@{
@@ -339,6 +360,7 @@ function Write-ProxySummary {
         expectedFailureLayer = $ExpectedFailureLayer
         targetShellOpened = $TargetShellOpened
         targetShellClosedCleanly = $TargetShellClosedCleanly
+        lifecycle = $Lifecycle
         hapSha256 = (Get-FileHash -LiteralPath $script:proxyHapPath -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $summaryPath = Join-Path $EvidenceDirectory 'summary.json'
@@ -373,12 +395,18 @@ try {
     $targetFixture = Wait-ProxyFixture -Process $targetProcess -ControlDirectory $targetControl
     $targetLinuxPid = $targetFixture.linuxPid
 
+    $jumpDirectTarget = switch ($FailureScenario) {
+        'DirectTcpipRejected' { 'none' }
+        'TargetUnreachable' { 'connect-failed' }
+        'DirectTcpipTimeout' { 'stall' }
+        default { "127.0.0.1:$TargetPort" }
+    }
     $jumpProcess = Start-ProxyFixture `
         -ControlDirectory $jumpControl `
         -StdoutPath $jumpStdout `
         -StderrPath $jumpStderr `
         -Port $JumpPort `
-        -DirectTarget ($FailureScenario -eq 'DirectTcpipRejected' ? 'none' : "127.0.0.1:$TargetPort")
+        -DirectTarget $jumpDirectTarget
     $jumpFixture = Wait-ProxyFixture -Process $jumpProcess -ControlDirectory $jumpControl
     $jumpLinuxPid = $jumpFixture.linuxPid
 
@@ -485,6 +513,59 @@ try {
             -TargetShellClosedCleanly $false
         return
     }
+    if ($FailureScenario -in @('TargetUnreachable', 'DirectTcpipTimeout')) {
+        $expectedEvent = if ($FailureScenario -eq 'TargetUnreachable') {
+            'rust event: CHANNEL:jump:direct-tcpip failed'
+        } else {
+            'rust event: CHANNEL:jump:direct-tcpip timed out after \d+ ms'
+        }
+        Submit-JumpPasswordUntilResult `
+            -Command $proxyCommand `
+            -JumpPassword $jumpFixture.password `
+            -ExpectedPattern $expectedEvent `
+            -TimeoutSeconds ($FailureScenario -eq 'DirectTcpipTimeout' ? 25 : 15) `
+            -CurrentPrompt
+        Wait-ProxyLog -Pattern 'SSH error: jump:direct-tcpip (failed|timed out)'
+        $fixturePattern = if ($FailureScenario -eq 'TargetUnreachable') {
+            'direct-tcpip result=connect-failed'
+        } else {
+            'direct-tcpip result=stall'
+        }
+        Wait-ProxyFixtureLog `
+            -Path $jumpStderr `
+            -Pattern $fixturePattern `
+            -TimeoutSeconds 20
+        $failureLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+        if ($failureLogs -match 'native auth event kind=\S+, layer=target|rust event: CONNECTED') {
+            throw "$FailureScenario continued into the target layer"
+        }
+        $failureScreenshot = if ($FailureScenario -eq 'TargetUnreachable') {
+            'target-unreachable.png'
+        } else {
+            'direct-tcpip-timeout.png'
+        }
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory $failureScreenshot)
+        Assert-ProxyCommandInputRecovered `
+            -ScreenshotName ($FailureScenario.ToLowerInvariant() + '-recovered.png')
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Write-ProxySummary `
+            -Scenario ($FailureScenario -eq 'TargetUnreachable' ?
+                'target-unreachable' : 'direct-tcpip-timeout') `
+            -Authentication 'jump-password-accepted-before-target-route-failure' `
+            -HostKeyVerification 'jump-first-use-confirmed-before-target-route-failure' `
+            -KnownHostReconnect $false `
+            -TargetHostKeyRotationRecovered $false `
+            -JumpHostKeyRotationRecovered $false `
+            -ExpectedFailureLayer 'jump' `
+            -TargetShellOpened $false `
+            -TargetShellClosedCleanly $false `
+            -Lifecycle 'pending route work ended, input recovered, no late CONNECTED'
+        return
+    }
     Submit-JumpPasswordUntilResult `
         -Command $proxyCommand `
         -JumpPassword $jumpFixture.password `
@@ -567,6 +648,44 @@ try {
         -Hdc $hdc `
         -Target $targetId `
         -LocalPath (Join-Path $EvidenceDirectory 'connected.png')
+    if ($FailureScenario -in @('TargetDisconnected', 'JumpDisconnected')) {
+        if ($FailureScenario -eq 'TargetDisconnected') {
+            Stop-ProxyFixture -Process $targetProcess -LinuxPid $targetLinuxPid
+            $targetProcess = $null
+            $targetLinuxPid = 0
+            $targetFixture = $null
+            Wait-ProxyFixtureLog `
+                -Path $jumpStderr `
+                -Pattern 'direct-tcpip result=closed'
+        } else {
+            Stop-ProxyFixture -Process $jumpProcess -LinuxPid $jumpLinuxPid
+            $jumpProcess = $null
+            $jumpLinuxPid = 0
+            $jumpFixture = $null
+        }
+        Wait-ProxyLog -Pattern 'SSH closed, exitCode=-1'
+        $disconnectName = $FailureScenario -eq 'TargetDisconnected' ? 'target' : 'jump'
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc `
+            -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory "$disconnectName-disconnected.png")
+        Assert-ProxyCommandInputRecovered `
+            -ScreenshotName "$disconnectName-disconnected-recovered.png"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Write-ProxySummary `
+            -Scenario "$disconnectName-disconnected-after-connect" `
+            -Authentication 'both-layer-passwords-accepted-before-injected-disconnect' `
+            -HostKeyVerification 'both-first-use-host-keys-confirmed-before-injected-disconnect' `
+            -KnownHostReconnect $false `
+            -TargetHostKeyRotationRecovered $false `
+            -JumpHostKeyRotationRecovered $false `
+            -ExpectedFailureLayer $disconnectName `
+            -TargetShellOpened $true `
+            -TargetShellClosedCleanly $false `
+            -Lifecycle 'transport closed, input recovered, no late CONNECTED'
+        return
+    }
     Submit-SecretOrDecision -Text 'ltty-exit'
     Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
 
@@ -697,6 +816,33 @@ try {
     }
     try { Stop-ProxyFixture -Process $jumpProcess -LinuxPid $jumpLinuxPid } catch {}
     try { Stop-ProxyFixture -Process $targetProcess -LinuxPid $targetLinuxPid } catch {}
+    foreach ($fixtureLog in @(
+        @{ Source = $jumpStdout; Name = 'jump-fixture-stdout.log' },
+        @{ Source = $jumpStderr; Name = 'jump-fixture-stderr.log' },
+        @{ Source = $targetStdout; Name = 'target-fixture-stdout.log' },
+        @{ Source = $targetStderr; Name = 'target-fixture-stderr.log' }
+    )) {
+        try {
+            if (Test-Path -LiteralPath $fixtureLog.Source -PathType Leaf) {
+                Copy-Item `
+                    -LiteralPath $fixtureLog.Source `
+                    -Destination (Join-Path $EvidenceDirectory $fixtureLog.Name) `
+                    -Force
+            }
+        } catch {}
+    }
+    if (-not [string]::IsNullOrWhiteSpace($appPid)) {
+        try {
+            $appLogs = Get-LeanTTYAppLogs `
+                -Hdc $script:proxyHdc `
+                -Target $script:proxyTarget `
+                -ProcessId $appPid
+            [IO.File]::WriteAllText(
+                (Join-Path $EvidenceDirectory 'device-app.log'),
+                $appLogs + "`n"
+            )
+        } catch {}
+    }
     if ($awakeLeaseActive) {
         Stop-LeanTTYDeviceAwakeLease -Hdc $script:proxyHdc -Target $script:proxyTarget
     }
