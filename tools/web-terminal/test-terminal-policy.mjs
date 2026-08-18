@@ -663,6 +663,9 @@ assert.match(sessionViewModel,
   /private onSshData[\s\S]*?if \(!this\.acceptingSshOutput\)[\s\S]*?return/,
   'late remote bytes must be rejected once Session terminal ownership ends');
 assert.match(sessionViewModel,
+  /private onSshClose[\s\S]*?if \(!this\.acceptingSshOutput\)[\s\S]*?SSH closed, exitCode=[\s\S]*?terminal ownership already released[\s\S]*?return/,
+  'a locally released Session must keep native close observable without reclaiming terminal ownership');
+assert.match(sessionViewModel,
   /handleTerminalInput\(data: string\): void \{[\s\S]*?if \(this\.terminalResetPending\)[\s\S]*?return/,
   'local input must wait until Session reset completion');
 assert.match(sessionViewModel,

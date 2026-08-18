@@ -602,6 +602,8 @@ export class SessionViewModel {
 
   private onSshClose(exitCode: number): void {
     if (!this.acceptingSshOutput) {
+      this.logger.info('SSH closed, exitCode=' + exitCode.toString() +
+        ', terminal ownership already released')
       return
     }
     this.clearAuthChallenge()
