@@ -7,8 +7,7 @@
 > 当前 milestone：[`1.4 — 启动性能与 OpenSSH ProxyJump`](roadmap.md)
 >
 > 当前阶段：启动性能、ProxyJump、SSH Session 状态隔离的实现、日常自动化、聚焦物理机验收
-> 与用户文档均已完成；当前先完成本地收口，待允许依赖 GitHub 时推送精确提交并进入
-> 1.4 正式候选准备
+> 与用户文档均已完成；下一步从已合入 `main` 且已推送的精确提交准备 1.4 正式候选
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
