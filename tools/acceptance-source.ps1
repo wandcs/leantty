@@ -95,6 +95,14 @@ function Add-LeanTTYAcceptanceSource {
     let navigationAction: WorkspaceNavigationAction = InteractionPolicy.workspaceNavigationAction(
 '@
     $keyEventReplacement = @'
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event.keyCode === 2033) {
+      this.interruptSessionResetForAcceptance()
+      return true
+    }
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event.keyCode === 2034) {
+      this.reconnectForAcceptance()
+      return true
+    }
     if (ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event.keyCode === 2038) {
       this.pasteClipboardForAcceptance()
       return true
@@ -118,6 +126,47 @@ function Add-LeanTTYAcceptanceSource {
     $text.index = Set-LeanTTYAcceptanceSourceText `
         $text.index $keyEventAnchor $keyEventReplacement
     $rendererMethod = @'
+  private interruptSessionResetForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    let runtime: PaneRuntime | null = this.activePaneRuntime()
+    if (runtime === null) {
+      logger.error('Acceptance interrupted Session reset has no active pane')
+      return
+    }
+    let paneId: string = runtime.id
+    let localWrites: number = 0
+    let completions: number = 0
+    runtime.surface.resetSessionState(() => {
+      localWrites++
+      logger.info('ACCEPTANCE_SESSION_RESET localWrites=' + localWrites.toString() + ',pane=' + paneId)
+    }, () => {
+      completions++
+      logger.info('ACCEPTANCE_SESSION_RESET completions=' + completions.toString() + ',pane=' + paneId)
+    })
+    let terminated: boolean = runtime.surface.terminateRendererForAcceptance()
+    logger.info('ACCEPTANCE_SESSION_RESET rendererTerminated=' + terminated.toString() + ',pane=' + paneId)
+  }
+
+  private reconnectForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    let runtime: PaneRuntime | null = this.activePaneRuntime()
+    if (runtime === null) {
+      logger.error('Acceptance Session reconnect has no active pane')
+      return
+    }
+    let paneId: string = runtime.id
+    logger.info('Acceptance Session reconnect requested=true,pane=' + paneId)
+    runtime.viewModel.reconnect().then(() => {
+      logger.info('Acceptance Session reconnect completed=true,pane=' + paneId)
+    }).catch((error: Error) => {
+      logger.error('Acceptance Session reconnect completed=false,pane=' + paneId + ',error=' + error.message)
+    })
+  }
+
   private rebuildRendererForAcceptance(): void {
     if (!ACCEPTANCE_TESTS) {
       return

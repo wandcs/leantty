@@ -15,6 +15,7 @@ param(
     [int]$SftpDelayMilliseconds = 0,
     [ValidateSet('none', 'put-write-remove', 'permission-denied', 'rename-unsupported', 'unavailable')]
     [string]$SftpFault = 'none',
+    [string]$DirectTcpipTarget = 'none',
     [string]$ControlDirectory = '',
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO
 )
@@ -74,7 +75,7 @@ try {
         '-p', 'leantty-ssh-auth-fixture', '--', $ListenAddress, $wslCredentialsPath,
         $RunSeconds.ToString([Globalization.CultureInfo]::InvariantCulture), $wslReadyPath,
         $SftpDelayMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture),
-        $SftpFault
+        $SftpFault, $DirectTcpipTarget
     )
 } finally {
     if (Test-Path -LiteralPath $fixtureDirectory) {

@@ -45,6 +45,7 @@ export class FileTransferClient {
   private generation: number = 0
   private paneId: string = ''
   private waitingAuth: boolean = false
+  private pendingLayer: string = ''
   private privateKeyPath: string = ''
   private pendingKnownHostLine: string = ''
   private pendingAuthChallenge: AuthChallengeInfo | null = null
@@ -96,11 +97,18 @@ export class FileTransferClient {
     return this.transferId.length > 0
   }
 
+  getPendingLayer(): string {
+    return this.pendingLayer
+  }
+
   authPassword(password: string): boolean {
-    if (!this.waitingAuth || this.transferId.length === 0) { return false }
+    if (!this.waitingAuth || this.transferId.length === 0 || this.pendingLayer !== 'target') {
+      return false
+    }
     try {
-      sshNative.sshAuthPassword(this.transferId, this.generation, password)
+      sshNative.sshAuthPassword(this.transferId, this.generation, this.pendingLayer, password)
       this.waitingAuth = false
+      this.pendingLayer = ''
       return true
     } catch (e) {
       this.logger.error('Transfer password response failed: ' + e)
@@ -109,10 +117,15 @@ export class FileTransferClient {
   }
 
   authPrivateKeyPassphrase(passphrase: string): boolean {
-    if (!this.waitingAuth || this.transferId.length === 0) { return false }
+    if (!this.waitingAuth || this.transferId.length === 0 || this.pendingLayer !== 'target') {
+      return false
+    }
     try {
-      sshNative.sshAuthPrivateKeyPassphrase(this.transferId, this.generation, passphrase)
+      sshNative.sshAuthPrivateKeyPassphrase(
+        this.transferId, this.generation, this.pendingLayer, passphrase
+      )
       this.waitingAuth = false
+      this.pendingLayer = ''
       return true
     } catch (e) {
       this.logger.error('Transfer key passphrase response failed: ' + e)
@@ -121,12 +134,15 @@ export class FileTransferClient {
   }
 
   authKeyboardInteractiveResponses(roundId: number, responses: string[]): boolean {
-    if (!this.waitingAuth || this.transferId.length === 0) { return false }
+    if (!this.waitingAuth || this.transferId.length === 0 || this.pendingLayer !== 'target') {
+      return false
+    }
     try {
       sshNative.sshAuthKeyboardInteractiveResponses(
-        this.transferId, this.generation, roundId, responses
+        this.transferId, this.generation, this.pendingLayer, roundId, responses
       )
       this.waitingAuth = false
+      this.pendingLayer = ''
       this.pendingAuthChallenge = null
       return true
     } catch (e) {
@@ -142,10 +158,11 @@ export class FileTransferClient {
   }
 
   verifyHostKey(accepted: boolean): boolean {
-    if (this.transferId.length === 0) { return false }
+    if (this.transferId.length === 0 || this.pendingLayer !== 'target') { return false }
     try {
-      sshNative.sshVerifyHostKey(this.transferId, accepted)
+      sshNative.sshVerifyHostKey(this.transferId, this.generation, this.pendingLayer, accepted)
       this.pendingKnownHostLine = ''
+      this.pendingLayer = ''
       return true
     } catch (e) {
       this.logger.error('Transfer host-key response failed: ' + e)
@@ -169,10 +186,12 @@ export class FileTransferClient {
   private handleRustEvent(event: string): void {
     if (event.startsWith('HOST_KEY_PROMPT:')) {
       let payload: string = event.substring(16)
-      let separator: number = payload.indexOf('\t')
-      if (separator < 1 || separator >= payload.length - 1) { return }
-      this.pendingKnownHostLine = payload.substring(separator + 1)
-      this.emitEvent(SshClientEvent.HOST_KEY_PROMPT, payload.substring(0, separator))
+      let fields: string[] = payload.split('\t')
+      if (fields.length !== 3 || fields[0] !== 'target' || fields[1].length === 0 ||
+        fields[2].length === 0) { return }
+      this.pendingLayer = fields[0]
+      this.pendingKnownHostLine = fields[2]
+      this.emitEvent(SshClientEvent.HOST_KEY_PROMPT, fields[1])
     } else if (event.startsWith('HOST_KEY_CHANGED:')) {
       let info: HostKeyChangedInfo | null = SshClient.parseHostKeyChangedInfo(event.substring(17))
       if (info !== null) {
@@ -190,12 +209,18 @@ export class FileTransferClient {
       this.logger.warn('Rejected stale transfer auth event, kind=' + event.kind)
       return
     }
+    if (event.layer !== 'target') {
+      this.logger.warn('Rejected transfer authentication event for layer=' + event.layer)
+      return
+    }
     if (event.kind === 'banner') {
       this.emitEvent(SshClientEvent.AUTH_BANNER, event.text)
     } else if (event.kind === 'password') {
+      this.pendingLayer = event.layer
       this.waitingAuth = true
       this.emitEvent(SshClientEvent.PASSWORD_PROMPT, '')
     } else if (event.kind === 'private_key_passphrase') {
+      this.pendingLayer = event.layer
       this.waitingAuth = true
       this.emitEvent(SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT, this.privateKeyPath)
     } else if (event.kind === 'challenge') {
@@ -211,6 +236,7 @@ export class FileTransferClient {
         challenge.prompts.push(prompt)
       }
       this.pendingAuthChallenge = challenge
+      this.pendingLayer = event.layer
       this.waitingAuth = true
       this.emitEvent(SshClientEvent.AUTH_CHALLENGE, '')
     }
@@ -237,6 +263,7 @@ export class FileTransferClient {
     if (event.kind === 'completed' || event.kind === 'failed' || event.kind === 'cancelled') {
       this.transferId = ''
       this.waitingAuth = false
+      this.pendingLayer = ''
       this.pendingAuthChallenge = null
     }
   }

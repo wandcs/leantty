@@ -2,6 +2,16 @@ import webview from '@ohos.web.webview'
 import { BridgeProtocol, BridgeMessage } from './BridgeProtocol'
 import { Logger } from '../../common/logger/Logger'
 
+class PendingTerminalWrite {
+  data: Uint8Array
+  onWritten: ((written: boolean) => void) | null
+
+  constructor(data: Uint8Array, onWritten: ((written: boolean) => void) | null) {
+    this.data = data
+    this.onWritten = onWritten
+  }
+}
+
 export class TerminalBridge {
   private webCtrl: webview.WebviewController
   private msgPort: webview.WebMessagePort | null = null
@@ -9,7 +19,7 @@ export class TerminalBridge {
   private onReadyHandler: (() => void) | null = null
   private onBackpressureHandler: ((paused: boolean) => void) | null = null
   private ready: boolean = false
-  private pendingData: Uint8Array[] = []
+  private pendingData: PendingTerminalWrite[] = []
   private pendingDataHead: number = 0
   private pendingBytes: number = 0
   private pendingTheme: string = ''
@@ -20,10 +30,13 @@ export class TerminalBridge {
   private pendingSnapshotRequestIds: number[] = []
   private pendingSearchOpen: boolean = false
   private awaitingRestoreComplete: boolean = false
+  private sessionResetViewportCompletion: ((completed: boolean) => void) | null = null
+  private sessionResetViewportSent: boolean = false
   private readyHandlerNotified: boolean = false
   private inFlightBytes: number = 0
   private inFlightMessages: number = 0
   private inFlightSequences: number[] = []
+  private inFlightWrites: PendingTerminalWrite[] = []
   private nextSequence: number = 1
   private receivedBytes: number = 0
   private acknowledgedBytes: number = 0
@@ -62,6 +75,10 @@ export class TerminalBridge {
 
   destroy(): void {
     this.logMetrics('destroy')
+    let interruptedWrites: PendingTerminalWrite[] = this.inFlightWrites.concat(
+      this.pendingData.slice(this.pendingDataHead))
+    let interruptedViewportCompletion: ((completed: boolean) => void) | null =
+      this.sessionResetViewportCompletion
     if (this.msgPort !== null) {
       try {
         this.msgPort.close()
@@ -84,12 +101,24 @@ export class TerminalBridge {
     this.pendingSnapshotRequestIds = []
     this.pendingSearchOpen = false
     this.awaitingRestoreComplete = false
+    this.sessionResetViewportCompletion = null
+    this.sessionResetViewportSent = false
     this.readyHandlerNotified = false
     this.inFlightBytes = 0
     this.inFlightMessages = 0
     this.inFlightSequences = []
+    this.inFlightWrites = []
     this.backpressured = false
     this.lastPongTime = 0
+    for (let i = 0; i < interruptedWrites.length; i++) {
+      let handler: ((written: boolean) => void) | null = interruptedWrites[i].onWritten
+      if (handler !== null) {
+        handler(false)
+      }
+    }
+    if (interruptedViewportCompletion !== null) {
+      interruptedViewportCompletion(false)
+    }
   }
 
   ping(): void {
@@ -118,16 +147,16 @@ export class TerminalBridge {
     this.onBackpressureHandler = handler
   }
 
-  write(data: Uint8Array): void {
+  write(data: Uint8Array, onWritten: ((written: boolean) => void) | null = null): void {
     this.receivedBytes += data.byteLength
-    if (this.pendingBytes + data.byteLength > TerminalBridge.MAX_PENDING_BYTES) {
+    if (onWritten === null && this.pendingBytes + data.byteLength > TerminalBridge.MAX_PENDING_BYTES) {
       this.droppedBytes += data.byteLength
       this.setBackpressured(true)
       this.logger.error('PERF bridge overflow dropped=' + data.byteLength.toString() +
         ' buffered=' + this.pendingBytes.toString())
       return
     }
-    this.queueData(data)
+    this.queueData(new PendingTerminalWrite(data, onWritten))
     this.updateBackpressure()
     this.pumpPendingData()
   }
@@ -222,6 +251,16 @@ export class TerminalBridge {
     this.pumpSnapshotRequests()
   }
 
+  restoreSessionViewport(onComplete: (completed: boolean) => void): void {
+    if (!this.ready || this.sessionResetViewportCompletion !== null) {
+      onComplete(false)
+      return
+    }
+    this.sessionResetViewportCompletion = onComplete
+    this.sessionResetViewportSent = false
+    this.pumpSessionResetViewport()
+  }
+
   private postTerminalPacket(data: Uint8Array): number {
     if (this.msgPort === null) {
       return 0
@@ -297,9 +336,14 @@ export class TerminalBridge {
           return
         }
         this.inFlightSequences.shift()
+        let completedWrite: PendingTerminalWrite | undefined = this.inFlightWrites.shift()
         this.inFlightBytes = Math.max(0, this.inFlightBytes - acknowledged)
         this.inFlightMessages = Math.max(0, this.inFlightMessages - 1)
+        if (completedWrite !== undefined && completedWrite.onWritten !== null) {
+          completedWrite.onWritten(true)
+        }
         this.pumpPendingData()
+        this.pumpSessionResetViewport()
         this.pumpSnapshotRequests()
         this.acknowledgedBytes += acknowledged
         this.updateBackpressure()
@@ -328,6 +372,7 @@ export class TerminalBridge {
         this.pendingRestoreSnapshot = ''
       }
       this.pumpPendingData()
+      this.pumpSessionResetViewport()
       this.pumpSnapshotRequests()
       this.pumpSearchOpen()
       this.logger.info('Web terminal ready, flushed ' + pendingCount.toString() + ' pending chunks')
@@ -342,6 +387,16 @@ export class TerminalBridge {
         this.pumpSnapshotRequests()
         this.pumpSearchOpen()
         this.notifyReadyHandler()
+      }
+      return
+    }
+    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_SESSION_RESET_COMPLETE) {
+      let completion: ((completed: boolean) => void) | null = this.sessionResetViewportCompletion
+      this.sessionResetViewportCompletion = null
+      this.sessionResetViewportSent = false
+      if (completion !== null) {
+        completion(true)
       }
       return
     }
@@ -375,6 +430,21 @@ export class TerminalBridge {
     this.pendingSnapshotRequestIds = []
   }
 
+  private pumpSessionResetViewport(): void {
+    if (this.sessionResetViewportCompletion === null || this.sessionResetViewportSent || !this.ready ||
+      this.awaitingRestoreComplete || this.pendingDataHead < this.pendingData.length || this.inFlightMessages > 0) {
+      return
+    }
+    this.sessionResetViewportSent = this.send(BridgeProtocol.sessionResetViewport())
+    if (!this.sessionResetViewportSent) {
+      let completion: ((completed: boolean) => void) | null = this.sessionResetViewportCompletion
+      this.sessionResetViewportCompletion = null
+      if (completion !== null) {
+        completion(false)
+      }
+    }
+  }
+
   private pumpSearchOpen(): void {
     if (!this.pendingSearchOpen || !this.ready || this.awaitingRestoreComplete) {
       return
@@ -401,16 +471,17 @@ export class TerminalBridge {
     while (this.pendingDataHead < this.pendingData.length &&
       this.inFlightBytes < TerminalBridge.HIGH_WATER_BYTES &&
       this.inFlightMessages < TerminalBridge.MAX_IN_FLIGHT_MESSAGES) {
-      let data: Uint8Array = this.pendingData[this.pendingDataHead]
-      let sequence: number = this.postTerminalPacket(data)
+      let pendingWrite: PendingTerminalWrite = this.pendingData[this.pendingDataHead]
+      let sequence: number = this.postTerminalPacket(pendingWrite.data)
       if (sequence === 0) {
         return
       }
       this.pendingDataHead++
-      this.pendingBytes -= data.byteLength
-      this.inFlightBytes += data.byteLength
+      this.pendingBytes -= pendingWrite.data.byteLength
+      this.inFlightBytes += pendingWrite.data.byteLength
       this.inFlightMessages++
       this.inFlightSequences.push(sequence)
+      this.inFlightWrites.push(pendingWrite)
     }
     this.compactPendingData()
     this.updateBackpressure()
@@ -425,9 +496,9 @@ export class TerminalBridge {
     }
   }
 
-  private queueData(data: Uint8Array): void {
-    this.pendingData.push(data)
-    this.pendingBytes += data.byteLength
+  private queueData(pendingWrite: PendingTerminalWrite): void {
+    this.pendingData.push(pendingWrite)
+    this.pendingBytes += pendingWrite.data.byteLength
   }
 
   private setBackpressured(paused: boolean): void {

@@ -11,6 +11,7 @@ export class SshConfigHost {
   port: number
   user: string
   identityFile: string
+  proxyJump: string
   errorMessage: string
 
   constructor(alias: string) {
@@ -19,6 +20,7 @@ export class SshConfigHost {
     this.port = 22
     this.user = ''
     this.identityFile = ''
+    this.proxyJump = ''
     this.errorMessage = ''
   }
 }
@@ -93,7 +95,7 @@ export class SshConfig {
     return this.resolveSourceHost(alias)
   }
 
-  addAlias(alias: string, hostname: string, port: number, user: string): void {
+  addAlias(alias: string, hostname: string, port: number, user: string, proxyJump: string | null = null): void {
     let existing: SshConfigHost | null = null
     for (let i = 0; i < this.hosts.length; i++) {
       if (this.hosts[i].alias === alias) {
@@ -105,11 +107,13 @@ export class SshConfig {
       existing.hostname = hostname
       existing.port = port
       existing.user = user
+      if (proxyJump !== null) { existing.proxyJump = proxyJump }
     } else {
       let host: SshConfigHost = new SshConfigHost(alias)
       host.hostname = hostname
       host.port = port
       host.user = user
+      if (proxyJump !== null) { host.proxyJump = proxyJump }
       this.hosts.push(host)
     }
     this.removePending(this.pendingRemovals, alias)
@@ -174,6 +178,9 @@ export class SshConfig {
     }
     if (host.identityFile.length > 0) {
       text += '  IdentityFile ' + host.identityFile + newline
+    }
+    if (host.proxyJump.length > 0) {
+      text += '  ProxyJump ' + host.proxyJump + newline
     }
     return text + newline
   }
@@ -301,6 +308,7 @@ export class SshConfig {
     let portSet: boolean = false
     let userSet: boolean = false
     let identitySet: boolean = false
+    let proxyJumpSet: boolean = false
     let active: boolean = true
     let lines: string[] = this.sourceText.split(/\r?\n/)
     for (let i = 0; i < lines.length; i++) {
@@ -364,8 +372,17 @@ export class SshConfig {
         }
         resolved.identityFile = value
         identitySet = true
+      } else if (lowerName === 'proxyjump' && !proxyJumpSet) {
+        if (value.length === 0) {
+          if (resolved.errorMessage.length === 0) {
+            resolved.errorMessage = this.configError(alias, name, i + 1, 'missing value')
+          }
+          continue
+        }
+        resolved.proxyJump = value
+        proxyJumpSet = true
       } else if (lowerName !== 'hostname' && lowerName !== 'port' && lowerName !== 'user' &&
-        lowerName !== 'identityfile' && resolved.errorMessage.length === 0) {
+        lowerName !== 'identityfile' && lowerName !== 'proxyjump' && resolved.errorMessage.length === 0) {
         resolved.errorMessage = this.configError(alias, name, i + 1, 'directive is not supported')
       }
     }
@@ -432,7 +449,7 @@ export class SshConfig {
 
   private configError(alias: string, directive: string, line: number, reason: string): string {
     return 'SSH config error for ' + alias + ' at line ' + line.toString() + ': ' +
-      directive + ' ' + reason + '. Supported directives: Host, HostName, User, Port, IdentityFile.'
+      directive + ' ' + reason + '. Supported directives: Host, HostName, User, Port, IdentityFile, ProxyJump.'
   }
 
   private stripInlineComment(line: string): string {

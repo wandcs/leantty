@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import './test-font-cell-width.mjs';
 import { runTerminalSearchTests } from './test-terminal-search.mjs';
+import {
+  runTerminalSessionResetTests,
+  SESSION_BOUNDARY_RESET_SEQUENCE
+} from './test-terminal-session-reset.mjs';
 import '../../entry/src/main/resources/rawfile/terminal-policy.js';
 
 const policy = globalThis.LeanTTYTerminalPolicy;
@@ -361,6 +365,9 @@ assert.match(terminalHtml,
   /function requestTerminalSnapshot[\s\S]*?term\.write\('',[\s\S]*?serializeTerminalSnapshot/,
   'snapshot capture must wait for all queued terminal writes to finish');
 assert.match(terminalHtml,
+  /kind === 'sessionResetViewport' && payload\.length === 0[\s\S]*?case 'sessionResetViewport':[\s\S]*?term\.scrollToBottom\(\)[\s\S]*?sendBridgeControl\('sessionResetComplete', ''\)/,
+  'Session reset must expose the preserved normal buffer before acknowledging local prompt ownership');
+assert.match(terminalHtml,
   /var scrollback = 0[\s\S]*?snapshot\.length > availableLength[\s\S]*?return bestSnapshot[\s\S]*?Math\.min\(scrollback \* 2, TERMINAL_SCROLLBACK_LINES\)/,
   'checkpoint allocation must grow from the visible screen instead of serializing all scrollback first');
 assert.doesNotMatch(terminalHtml, /scrollback = Math\.floor\(scrollback \/ 2\)/,
@@ -550,12 +557,22 @@ assert.doesNotThrow(() => {
   });
 }, 'the pinned terminal option must unlock the official addon decoration path');
 await runTerminalSearchTests(globalThis.Terminal, globalThis.SearchAddon.SearchAddon);
+await runTerminalSessionResetTests(globalThis.Terminal, globalThis.SerializeAddon.SerializeAddon);
 
 const terminalBridge = readFileSync(
   new URL('../../entry/src/main/ets/model/bridge/TerminalBridge.ets', import.meta.url), 'utf8');
 assert.match(terminalBridge,
   /awaitingRestoreComplete[\s\S]*?KIND_RESTORE_COMPLETE[\s\S]*?notifyReadyHandler/,
   'native focus and ready handling must wait for the web restore acknowledgement');
+assert.match(terminalBridge,
+  /restoreSessionViewport\(onComplete:[\s\S]*?sessionResetViewportCompletion = onComplete[\s\S]*?pumpSessionResetViewport\(\)[\s\S]*?KIND_SESSION_RESET_COMPLETE[\s\S]*?completion\(true\)/,
+  'the reset viewport operation must retain one bounded completion until ArkWeb acknowledges it');
+assert.match(terminalBridge,
+  /private pumpSessionResetViewport[\s\S]*?BridgeProtocol\.sessionResetViewport\(\)/,
+  'the queued viewport operation must use the typed bridge control');
+assert.match(terminalBridge,
+  /pumpPendingData\(\)[\s\S]*?pumpSessionResetViewport\(\)[\s\S]*?private pumpSessionResetViewport[\s\S]*?pendingDataHead < this\.pendingData\.length \|\| this\.inFlightMessages > 0/,
+  'the viewport restore must wait until all earlier terminal writes are acknowledged');
 assert.match(terminalBridge,
   /pendingSearchOpen[\s\S]*private pumpSearchOpen[\s\S]*!this\.ready \|\| this\.awaitingRestoreComplete[\s\S]*BridgeProtocol\.searchOpen\(\)/,
   'search open must wait for the current bridge and framebuffer restore boundary');
@@ -626,6 +643,9 @@ assert.match(bridgeProtocol,
   /KIND_INPUT_SECURITY:\s*string = 'inputSecurity'[\s\S]*payload !== 'plain' && payload !== 'masked'/,
   'input security must be a typed native-to-web control with a closed payload set');
 assert.match(bridgeProtocol,
+  /KIND_SESSION_RESET_VIEWPORT:\s*string = 'sessionResetViewport'[\s\S]*KIND_SESSION_RESET_COMPLETE:\s*string = 'sessionResetComplete'[\s\S]*KIND_SESSION_RESET_VIEWPORT[\s\S]*payload\.length > 0/,
+  'Session viewport restore and completion must use empty-payload typed controls');
+assert.match(bridgeProtocol,
   /KIND_COPY_OR_INTERRUPT:\s*string = 'copyOrInterrupt'[\s\S]*KIND_COPY_OR_INTERRUPT && payload\.length > 0[\s\S]*copyOrInterrupt\(\): BridgeMessage/,
   'copy-or-interrupt must be a typed empty-payload native-to-web control');
 
@@ -634,8 +654,20 @@ const sessionViewModel = readFileSync(
 assert.doesNotMatch(sessionViewModel, /KIND_BELL_ATTENTION|case BridgeProtocol\.KIND_(?:BELL|TITLE)\b/,
   'bell attention belongs to the terminal surface and app shell, not the SSH session');
 assert.match(sessionViewModel,
-  /private onSshClose[\s\S]*?releaseDisconnectedFlowControl\(\)[\s\S]*?writeTerminal\([\s\S]*?writePrompt\(\)/,
-  'disconnect cleanup must release output flow control before appending the local close message and prompt');
+  /private onSshClose[\s\S]*?finishSshTerminalOwnership\(\(\) => \{[\s\S]*?writeTerminal\([\s\S]*?writePrompt\(\)/,
+  'disconnect cleanup must complete the shared Session boundary before appending local close output');
+assert.match(sessionViewModel,
+  /private finishSshTerminalOwnership[\s\S]*?acceptingSshOutput = false[\s\S]*?releaseDisconnectedFlowControl\(\)[\s\S]*?resetSessionState\(\(\) => \{[\s\S]*?onReset\(\)[\s\S]*?\}, completeReset\)/,
+  'the Session boundary must stop remote ownership and release flow control before requesting reset');
+assert.match(sessionViewModel,
+  /private onSshData[\s\S]*?if \(!this\.acceptingSshOutput\)[\s\S]*?return/,
+  'late remote bytes must be rejected once Session terminal ownership ends');
+assert.match(sessionViewModel,
+  /private onSshClose[\s\S]*?if \(!this\.acceptingSshOutput\)[\s\S]*?SSH closed, exitCode=[\s\S]*?terminal ownership already released[\s\S]*?return/,
+  'a locally released Session must keep native close observable without reclaiming terminal ownership');
+assert.match(sessionViewModel,
+  /handleTerminalInput\(data: string\): void \{[\s\S]*?if \(this\.terminalResetPending\)[\s\S]*?return/,
+  'local input must wait until Session reset completion');
 assert.match(sessionViewModel,
   /private setMode\(newMode: TerminalMode\): void \{[\s\S]*?let returningToLocalPrompt: boolean = this\.mode !== TerminalMode\.IDLE &&[\s\S]*?newMode === TerminalMode\.IDLE[\s\S]*?if \(returningToLocalPrompt\) \{[\s\S]*?this\.notifyTitleChange\('ltty'\)/,
   'every remote, failed or cancelled flow that returns to the local prompt must restore the local Tab title');
@@ -676,6 +708,21 @@ assert.match(sessionViewModel,
 
 const terminalSurfaceController = readFileSync(
   new URL('../../entry/src/main/ets/model/terminal/TerminalSurfaceController.ets', import.meta.url), 'utf8');
+assert.ok(terminalSurfaceController.includes(SESSION_BOUNDARY_RESET_SEQUENCE
+  .replaceAll('\u001b', '\\u001b').replaceAll('\u0007', '\\u0007')),
+  'the native Session boundary must send the xterm-proven bounded reset sequence');
+assert.match(terminalSurfaceController,
+  /resetSessionState\(writeLocalOutput: \(\) => void, onComplete: \(\) => void\): void[\s\S]*?writeSessionReset[\s\S]*?writeLocalOutput\(\)[\s\S]*?restoreSessionViewport\(onComplete\)/,
+  'the Terminal Surface must reset, write local output, then restore the viewport before completion');
+assert.match(terminalSurfaceController,
+  /activeBridge\.write\(resetBytes[\s\S]*?if \(written && this\.bridge === activeBridge\)[\s\S]*?onReset\(\)/,
+  'the Session reset callback must wait for the ordered xterm write ACK');
+assert.match(terminalSurfaceController,
+  /if \(sourceBridge === null\) \{\s*onReset\(\)\s*return\s*\}/,
+  'an offline renderer must use the snapshot reset suffix instead of queueing duplicate reset bytes');
+assert.match(terminalSurfaceController,
+  /snapshotCommitFloor = this\.nextSnapshotRequestId[\s\S]*?markSessionReset[\s\S]*?requestId >= this\.snapshotCommitFloor/,
+  'a Session reset must reject older snapshot commits and retain reset state for renderer recovery');
 assert.match(terminalSurfaceController,
   /msg\.kind === BridgeProtocol\.KIND_BELL_ATTENTION[\s\S]*onBellAttentionHandler/,
   'the terminal surface must consume bell attention before generic session message routing');
@@ -685,8 +732,8 @@ assert.match(terminalSurfaceController,
 assert.match(terminalSurfaceController, /openSearch\(\)[\s\S]*this\.bridge\.openSearch\(\)/,
   'the terminal surface must expose only a local search-open intent');
 assert.match(terminalSurfaceController,
-  /detach\(\): void \{[\s\S]*?this\.bridge\.destroy\(\)[\s\S]*?this\.bridge = null/,
-  'surface detach must make the old bridge unable to dispatch into a replacement generation');
+  /detach\(\): void \{[\s\S]*?let detachedBridge[\s\S]*?this\.bridge = null[\s\S]*?markDetached\(\)[\s\S]*?detachedBridge\.destroy\(\)/,
+  'surface detach must sever the old bridge before interrupted reset callbacks can be replayed');
 assert.doesNotMatch(terminalSurfaceController, /getHistoryChunks|queueReplay|replayedHistory/,
   'the rejected raw byte history replay buffer must not return');
 assert.match(terminalSurfaceController,
@@ -835,6 +882,12 @@ assert.doesNotMatch(acceptanceSource, /Debug Material|Acceptance: Open Search|BA
   'debug builds must reuse production material and Search controls');
 assert.match(acceptanceSource, /terminateRendererForAcceptance/,
   'debug build transformation must own the renderer termination trigger');
+assert.match(acceptanceSource,
+  /ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event\.keyCode === 2034[\s\S]*?reconnectForAcceptance\(\)[\s\S]*?runtime\.viewModel\.reconnect\(\)/,
+  'debug build transformation must expose the production Session reconnect path without a release entry');
+assert.match(acceptanceSource,
+  /event\.keyCode === 2033[\s\S]*?interruptSessionResetForAcceptance\(\)[\s\S]*?surface\.resetSessionState\([\s\S]*?localWrites\+\+[\s\S]*?completions\+\+[\s\S]*?terminateRendererForAcceptance\(\)/,
+  'debug build transformation must exercise an interrupted production reset without a release entry');
 assert.match(acceptanceSource, /pasteClipboardForAcceptance/,
   'debug build transformation must own the clipboard paste trigger');
 assert.match(acceptanceSource, /ACCEPTANCE_DOWNLOADS_NOREPLACE/,

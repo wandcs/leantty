@@ -10,6 +10,11 @@ export class CommandParseResult {
   username: string
   isAlias: boolean
   identityFile: string
+  jumpHost: string
+  jumpDisplayHost: string
+  jumpPort: number
+  jumpUsername: string
+  jumpIdentityFile: string
   errorMessage: string
 
   constructor() {
@@ -20,6 +25,11 @@ export class CommandParseResult {
     this.username = ''
     this.isAlias = false
     this.identityFile = ''
+    this.jumpHost = ''
+    this.jumpDisplayHost = ''
+    this.jumpPort = 22
+    this.jumpUsername = ''
+    this.jumpIdentityFile = ''
     this.errorMessage = ''
   }
 }
@@ -54,6 +64,7 @@ export class KeyCommandResult {
   sshHost: string
   sshPort: number
   sshUser: string
+  sshJump: string
   errorMessage: string
   legacySyntax: boolean
 
@@ -66,6 +77,7 @@ export class KeyCommandResult {
     this.sshHost = ''
     this.sshPort = 22
     this.sshUser = ''
+    this.sshJump = ''
     this.errorMessage = ''
     this.legacySyntax = false
   }
@@ -152,8 +164,14 @@ export class CommandParser {
     if (words[0] === 'ssh' && words[1] === '-G') {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.SSH_CONFIG
-      if (words.length !== 3) { result.errorMessage = 'Usage: ssh -G <host-name>'; return result }
-      result.keyName = words[2]
+      if (words.length === 3) {
+        result.keyName = words[2]
+      } else if (words.length === 5 && words[2] === '-J') {
+        result.sshJump = words[3]
+        result.keyName = words[4]
+      } else {
+        result.errorMessage = 'Usage: ssh -G [-J <jump-spec>] <host-name>'
+      }
       return result
     }
     if (words[0] === 'ssh-keygen') {
@@ -218,7 +236,7 @@ export class CommandParser {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.ALIAS_LIST
       result.legacySyntax = words[0] === 'alias'
-      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] | ' +
+      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] | ' +
         'host rm <host-name> | host list'
       return result
     }
@@ -249,6 +267,8 @@ export class CommandParser {
     let target: string = ''
     let explicitPort: number = 0
     let identitySpecified: boolean = false
+    let explicitJump: string = ''
+    let jumpSpecified: boolean = false
     for (let i = 0; i < args.length; i++) {
       if (args[i] === '-p') {
         if (i + 1 >= args.length) { result.errorMessage = 'Missing port after -p'; return result }
@@ -263,6 +283,12 @@ export class CommandParser {
         if (identitySpecified) { result.errorMessage = 'Duplicate SSH option: -i'; return result }
         result.identityFile = args[i + 1]
         identitySpecified = true
+        i++
+      } else if (args[i] === '-J') {
+        if (i + 1 >= args.length) { result.errorMessage = 'Missing jump host after -J'; return result }
+        if (jumpSpecified) { result.errorMessage = 'Duplicate SSH option: -J'; return result }
+        explicitJump = args[i + 1]
+        jumpSpecified = true
         i++
       } else if (args[i].startsWith('-')) {
         result.errorMessage = 'Unsupported SSH option: ' + args[i]; return result
@@ -285,6 +311,8 @@ export class CommandParser {
       result.username = host.user
       if (result.identityFile.length === 0) { result.identityFile = host.identityFile }
       result.isAlias = true
+      CommandParser.applyProxyJump(jumpSpecified ? explicitJump : host.proxyJump, sshConfig, result)
+      if (result.errorMessage.length > 0) { result.isValid = false }
       return result
     }
 
@@ -298,7 +326,89 @@ export class CommandParser {
     result.isValid = result.username.length > 0 && result.host.length > 0
     if (result.isValid) { result.displayHost = result.host }
     if (!result.isValid) { result.errorMessage = 'Invalid SSH target' }
+    if (result.isValid) {
+      CommandParser.applyProxyJump(jumpSpecified ? explicitJump : '', sshConfig, result)
+      if (result.errorMessage.length > 0) { result.isValid = false }
+    }
     return result
+  }
+
+  private static applyProxyJump(spec: string, sshConfig: SshConfig, result: CommandParseResult): void {
+    let trimmed: string = spec.trim()
+    if (trimmed.length === 0 || trimmed.toLowerCase() === 'none') { return }
+    if (trimmed.includes(',') || trimmed.includes('://') || trimmed.includes('%') ||
+      trimmed.includes('$') || /\s/.test(trimmed)) {
+      result.errorMessage = 'Unsupported ProxyJump expression: only one [user@]host[:port] is supported'
+      return
+    }
+
+    let explicitUser: string = ''
+    let hostPort: string = trimmed
+    let atIndex: number = trimmed.lastIndexOf('@')
+    if (atIndex >= 0) {
+      if (atIndex === 0 || atIndex === trimmed.length - 1 || trimmed.substring(0, atIndex).includes('@')) {
+        result.errorMessage = 'Invalid ProxyJump user or host'
+        return
+      }
+      explicitUser = trimmed.substring(0, atIndex)
+      hostPort = trimmed.substring(atIndex + 1)
+    }
+
+    let parsed: CommandParseResult = new CommandParseResult()
+    CommandParser.parseHostPort(hostPort, parsed)
+    if (parsed.errorMessage.length > 0) {
+      result.errorMessage = 'ProxyJump: ' + parsed.errorMessage
+      return
+    }
+    if (parsed.host.length === 0) {
+      result.errorMessage = 'ProxyJump host must not be empty'
+      return
+    }
+
+    let explicitJumpPort: boolean = CommandParser.hasExplicitPort(hostPort)
+    let jumpAlias: SshConfigHost | null = sshConfig.findHost(parsed.host)
+    let jumpHost: string = parsed.host
+    let jumpPort: number = parsed.port
+    let jumpUser: string = explicitUser
+    let jumpIdentity: string = ''
+    let jumpDisplayHost: string = parsed.host
+    if (jumpAlias !== null) {
+      if (jumpAlias.errorMessage.length > 0) {
+        result.errorMessage = jumpAlias.errorMessage
+        return
+      }
+      if (jumpAlias.proxyJump.length > 0 && jumpAlias.proxyJump.toLowerCase() !== 'none') {
+        result.errorMessage = 'ProxyJump chain is not supported for jump host: ' + parsed.host
+        return
+      }
+      jumpHost = jumpAlias.hostname
+      jumpPort = explicitJumpPort ? parsed.port : jumpAlias.port
+      jumpUser = explicitUser.length > 0 ? explicitUser : jumpAlias.user
+      jumpIdentity = jumpAlias.identityFile
+    }
+    if (jumpUser.length === 0) {
+      result.errorMessage = 'ProxyJump host must define User: ' + jumpDisplayHost
+      return
+    }
+    if (jumpHost.toLowerCase() === result.host.toLowerCase() && jumpPort === result.port) {
+      result.errorMessage = 'ProxyJump cannot use the target endpoint itself: ' + jumpDisplayHost
+      return
+    }
+
+    result.jumpHost = jumpHost
+    result.jumpDisplayHost = jumpDisplayHost
+    result.jumpPort = jumpPort
+    result.jumpUsername = jumpUser
+    result.jumpIdentityFile = jumpIdentity
+  }
+
+  private static hasExplicitPort(hostPort: string): boolean {
+    if (hostPort.startsWith('[')) {
+      let closingBracket: number = hostPort.indexOf(']')
+      return closingBracket > 0 && closingBracket + 1 < hostPort.length
+    }
+    let firstColon: number = hostPort.indexOf(':')
+    return firstColon > 0 && firstColon === hostPort.lastIndexOf(':')
   }
 
   static parseTransfer(input: string, sshConfig: SshConfig): TransferCommandResult {
@@ -790,9 +900,22 @@ export class CommandParser {
     result.kind = KeyCommandKind.ALIAS_ADD
     let parts: string[] = input.split(/\s+/)
     let operation: string = parts.length >= 2 && parts[1] === 'set' ? 'set' : 'add'
-    if (parts.length !== 4) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>]'
+    if (parts.length !== 4 && parts.length !== 6) {
+      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
       return result
+    }
+    if (parts.length === 6) {
+      if (parts[4] !== '-J' || parts[5].length === 0) {
+        result.errorMessage = 'Usage: host ' + operation +
+          ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+        return result
+      }
+      if (parts[5].includes(',') || parts[5].includes('://') || parts[5].includes('%') ||
+        parts[5].includes('$')) {
+        result.errorMessage = 'Unsupported ProxyJump expression: only one [user@]host[:port] is supported'
+        return result
+      }
+      result.sshJump = parts[5]
     }
     result.keyName = parts[2]
     if (!/^[A-Za-z0-9._-]+$/.test(result.keyName)) {
@@ -802,13 +925,13 @@ export class CommandParser {
     let target: string = parts[3]
     let atIdx: number = target.lastIndexOf('@')
     if (atIdx <= 0) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>]'
+      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
       return result
     }
     result.sshUser = target.substring(0, atIdx)
     let hostPort: string = target.substring(atIdx + 1)
     if (hostPort.length === 0) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>]'
+      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
       return result
     }
     if (hostPort.startsWith('[')) {

@@ -58,6 +58,7 @@ Create a short Host name with:
 ```text
 host add work user@example.com
 host add lab user@example.com:2222
+host add private deploy@target.example.com -J jump
 host set work user@new.example.com:2222
 host list
 host rm work
@@ -81,6 +82,7 @@ The current documented `ssh_config` subset is:
 | `User` | Required when connecting by Host name |
 | `Port` | Defaults to 22 |
 | `IdentityFile` | Selects a verified LeanTTY key by supported reference |
+| `ProxyJump` | Uses one saved Host or one `[user@]host[:port]` jump |
 
 OpenSSH first-value behavior is preserved for these fields. An unknown or
 unsupported directive in a matching Host block causes `ssh` and `ssh -G` to
@@ -95,6 +97,22 @@ Inspect the effective supported fields without connecting:
 ```text
 ssh -G work
 ```
+
+For a target that is reachable only through one standard SSH jump host, save
+both hosts in the same configuration or use a one-time `-J` override:
+
+```text
+host add jump gateway@jump.example.com
+host add private deploy@target.example.com -J jump
+ssh private
+ssh -J jump deploy@target.example.com
+```
+
+LeanTTY verifies and authenticates the jump host and target separately. The
+terminal opens only after the target PTY is ready. `-J none` bypasses a saved
+`ProxyJump` for one command or disables it when used with `host set`. The first
+version supports one jump only; `ProxyCommand` and comma-separated chains fail
+explicitly.
 
 ## Key management
 

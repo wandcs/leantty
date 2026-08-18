@@ -77,7 +77,9 @@ Assert-Contains -Source $rust -Boundary 'Rust authentication exchange' -Markers 
   'pub fn ssh_auth_password('
   'pub fn ssh_auth_private_key_passphrase('
   'pub fn ssh_auth_keyboard_interactive_responses('
+  'pub fn ssh_verify_host_key('
   'is_current_auth_generation('
+  'stale host-key generation'
 )
 
 Assert-Contains -Source $sshClient -Boundary 'ArkTS SSH authentication bridge' -Markers @(
@@ -86,9 +88,10 @@ Assert-Contains -Source $sshClient -Boundary 'ArkTS SSH authentication bridge' -
   "event.kind === 'password'"
   "event.kind === 'private_key_passphrase'"
   "event.kind === 'challenge'"
-  'sshNative.sshAuthPassword(this.sessionId, this.generation, password)'
-  'sshNative.sshAuthPrivateKeyPassphrase(this.sessionId, this.generation, passphrase)'
-  'this.sessionId, this.generation, roundId, responses'
+  'sshNative.sshAuthPassword(this.sessionId, this.generation, this.pendingLayer, password)'
+  'this.sessionId, this.generation, this.pendingLayer, passphrase'
+  'this.sessionId, this.generation, this.pendingLayer, roundId, responses'
+  'sshNative.sshVerifyHostKey(this.sessionId, this.generation, this.pendingLayer, accepted)'
   'this.pendingAuthChallenge = null'
 )
 
@@ -111,12 +114,14 @@ if ([regex]::Matches($viewModel, '\.addToHistory\(').Count -ne 1) {
 
 Assert-Contains -Source $preferences -Boundary 'Local preferences projection' -Markers @(
   "const TERMINAL_FONT_SIZE_KEY: string = 'terminal_font_size'"
+  "const TERMINAL_TRANSPARENCY_MODE_KEY: string = 'terminal_transparency_mode'"
   'UserPreferences.store.putSync(TERMINAL_FONT_SIZE_KEY, fontSize)'
+  'UserPreferences.store.putSync(TERMINAL_TRANSPARENCY_MODE_KEY, value)'
 )
 
-if ([regex]::Matches($preferences, '\.putSync\(').Count -ne 1 -or
+if ([regex]::Matches($preferences, '\.putSync\(').Count -ne 2 -or
     $preferences -match '(?i)password|passphrase|token|authresponse|challenge') {
-  throw 'Local Preferences must remain a font-size-only projection.'
+  throw 'Local Preferences must remain limited to approved non-secret terminal display settings.'
 }
 
 if ($rust.Contains('send_control(&control_callback, "PASSWORD_PROMPT")') -or

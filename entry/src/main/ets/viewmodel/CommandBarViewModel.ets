@@ -39,11 +39,11 @@ export class CommandBarViewModel {
   completionSet(): LocalCompletionSet {
     let transferMatches: string[] | null = this.transferCompletions()
     if (transferMatches !== null) { return this.finishCompletions(transferMatches) }
+    let sshMatches: string[] | null = this.sshCompletions()
+    if (sshMatches !== null) { return this.finishCompletions(sshMatches) }
     let trimmed: string = this.inputText.trim()
     let hostPrefix: string = ''
-    if (this.inputText.startsWith('ssh -G ')) { hostPrefix = 'ssh -G ' }
-    else if (this.inputText.startsWith('ssh ')) { hostPrefix = 'ssh ' }
-    else if (this.inputText.startsWith('host set ')) { hostPrefix = 'host set ' }
+    if (this.inputText.startsWith('host set ')) { hostPrefix = 'host set ' }
     else if (this.inputText.startsWith('host rm ')) { hostPrefix = 'host rm ' }
     if (hostPrefix.length > 0) {
       let partial: string = this.inputText.substring(hostPrefix.length).trim()
@@ -63,6 +63,40 @@ export class CommandBarViewModel {
       if (commands[i].startsWith(trimmed)) { matches.push(commands[i]) }
     }
     return this.finishCompletions(matches)
+  }
+
+  private sshCompletions(): string[] | null {
+    let tokens: CompletionToken[] = CommandBarViewModel.tokenizeForCompletion(this.inputText)
+    if (tokens.length === 0 || tokens[0].value !== 'ssh') { return null }
+    if (tokens.length === 1 && !this.inputText.endsWith(' ')) { return null }
+    let current: CompletionToken = tokens[tokens.length - 1]
+    let expectValue: string = ''
+    let targetSeen: boolean = false
+    for (let index: number = 1; index < tokens.length - 1; index++) {
+      let value: string = tokens[index].value
+      if (expectValue.length > 0) { expectValue = ''; continue }
+      if (value === '-p' || value === '-i' || value === '-J') { expectValue = value; continue }
+      if (value === '-G') { continue }
+      if (value.startsWith('-')) { return [] }
+      if (targetSeen) { return [] }
+      targetSeen = true
+    }
+    if (expectValue === '-J') { return this.sshHostCompletions(current) }
+    if (expectValue === '-i') { return this.keyCompletions(current) }
+    if (expectValue === '-p' || targetSeen || current.value.startsWith('-')) { return [] }
+    return this.sshHostCompletions(current)
+  }
+
+  private sshHostCompletions(token: CompletionToken): string[] {
+    if (token.value.includes('@') || token.value.includes(':')) { return [] }
+    let aliases: string[] = this.sshConfig.getHostAliases()
+    let matches: string[] = []
+    for (let index: number = 0; index < aliases.length; index++) {
+      if (CommandBarViewModel.safeCompletionValue(aliases[index]) && aliases[index].startsWith(token.value)) {
+        matches.push(this.inputText.substring(0, token.start) + aliases[index])
+      }
+    }
+    return matches
   }
 
   private finishCompletions(matches: string[]): LocalCompletionSet {

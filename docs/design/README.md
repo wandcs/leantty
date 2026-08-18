@@ -28,6 +28,7 @@
 | 桌面终端界面与交互收敛 | Verified / 1.2–1.3 | 1.2–1.3 | [`ui-interaction-polish.md`](ui-interaction-polish.md) |
 | 最小单文件传输 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`file-transfer.md`](file-transfer.md) |
 | 终端输入调度与大粘贴连续可用性 | Verified / GitHub、AppGallery 已发布 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
+| SSH Session 终端状态隔离 | Implementing / 开发候选与聚焦真机路径通过，完整矩阵待闭合 | 1.4 | [`terminal-session-state-isolation.md`](terminal-session-state-isolation.md) |
 | 本地命令提示符与输出规范 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`local-command-output.md`](local-command-output.md) |
 | 本地命令 Tab 补全 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`tab-completion.md`](tab-completion.md) |
 | 启动到首次输入性能 | Verified 开发候选 / 正式发布门禁待执行 | 1.4 | [`startup-performance.md`](startup-performance.md) |

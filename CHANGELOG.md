@@ -4,6 +4,18 @@
 
 ## [1.4.0] - In development
 
+### Added
+
+- Added one-hop OpenSSH `ProxyJump` connections through either a saved Host or
+  the standard `ssh -J <jump> <target>` override. LeanTTY verifies and
+  authenticates jump and target hosts independently, carries only the target
+  shell through the terminal, reports failures by layer, and keeps cancellation,
+  timeout and Pane ownership within the existing SSH Session model. `host
+  add|set ... -J <jump>` persists the same setting in the single OpenSSH config;
+  `ssh -G` explains the effective jump without exposing secrets. Multi-hop
+  chains, `ProxyCommand`, forwarding and a second host or credential store remain
+  outside this version.
+
 ### Changed
 
 - Reduced cold startup work before the first interactive `ltty>` prompt. SSH
@@ -25,6 +37,16 @@
   a normal close. Removed the second durable window-rectangle store and the
   post-content move/resize sequence that caused a visible startup jump; window
   geometry is intentionally no longer retained across uninstall/reinstall.
+
+### Fixed
+
+- Reset remote PTY terminal modes only when an SSH Session releases its Pane's
+  Terminal Surface. Alternate buffers, cursor and color changes, mouse/focus
+  reporting, bracketed paste and keypad modes remain available inside an active
+  Session, while normal exit, error, disconnect and reconnect no longer leak
+  them into `ltty>` or the next server. The boundary preserves normal scrollback,
+  rejects stale output/reset acknowledgements, and remains isolated across
+  renderer recovery, tabs, panes and suspend/wake.
 
 ## [1.3.0] - 2026-08-16
 
