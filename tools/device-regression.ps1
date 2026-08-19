@@ -401,10 +401,10 @@ function Invoke-LeanTTYDeviceText {
         [Parameter(Mandatory = $true)][string]$Text
     )
 
-    # The physical regression PC has dropped one key from 24-character secure
-    # input as well as truncating a 50-character invocation. Keep each
+    # The physical regression PC has dropped one key from 16- and 24-character
+    # secure input batches as well as truncating longer commands. Keep each
     # device-side uinput batch below the smallest observed unreliable size.
-    $chunkLength = 16
+    $chunkLength = 8
     for ($offset = 0; $offset -lt $Text.Length; $offset += $chunkLength) {
         $length = [Math]::Min($chunkLength, $Text.Length - $offset)
         $chunk = $Text.Substring($offset, $length)
