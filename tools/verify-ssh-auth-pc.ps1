@@ -447,13 +447,15 @@ function Wait-FixtureLogMatchCount {
     throw "Timed out waiting for a new SSH fixture event: $Pattern"
 }
 
-function Invoke-SerializedAuthText {
+function Invoke-SecretKeyEventText {
     param([Parameter(Mandatory = $true)][string]$Value)
+    if ($Value -notmatch '^[a-z0-9]+$') {
+        throw '[harness] Generated authentication secret is outside the numeric key-event alphabet'
+    }
     foreach ($character in $Value.ToCharArray()) {
-        Invoke-LeanTTYDeviceText `
-            -Hdc $hdc `
-            -Target $Target `
-            -Text ([string]$character)
+        $ascii = [int]$character
+        $keyCode = if ($ascii -ge 97) { 2017 + $ascii - 97 } else { 2000 + $ascii - 48 }
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode $keyCode
     }
 }
 
@@ -464,7 +466,7 @@ function Submit-AuthValue {
     )
     Focus-ActiveCommandInput -LayoutName ($LayoutName + '.focus.json')
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-SerializedAuthText -Value $Value
+    Invoke-SecretKeyEventText -Value $Value
     Assert-NoSecretExposure -LayoutName $LayoutName
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     Wait-AuthLog -Pattern 'ACCEPTANCE_INPUT_SUBMIT' -TimeoutSeconds 10
@@ -1176,8 +1178,8 @@ function Write-AuthEvidence {
             failure = $awakeLeaseFailure
         }
         input = [ordered]@{
-            method = 'raw-physical-key-events'
-            secretInjection = 'device-paced-runtime-generated-printable-ascii-serialized-per-character'
+            method = 'raw-physical-and-harmony-uitest-key-events'
+            secretInjection = 'harmony-uitest-keyevent-runtime-generated-lowercase-alphanumeric-per-character'
             textCommandCharacters = 'complete-value'
             deviceProgramIntervalMilliseconds = 500
             submitTelemetry = 'compile-time-acceptance-marker-with-sequence-and-kind-only'
@@ -1718,7 +1720,7 @@ try {
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-cancel-auth-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-SerializedAuthText -Value $credentials.second_token
+    Invoke-SecretKeyEventText -Value $credentials.second_token
     Assert-NoSecretExposure -LayoutName 'layout-cancel-auth-hidden-token.json'
     Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
     Assert-NoSecretExposure -LayoutName 'layout-cancel-auth-cleared.json'
@@ -1741,7 +1743,7 @@ try {
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-close-auth-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-SerializedAuthText -Value $credentials.second_token
+    Invoke-SecretKeyEventText -Value $credentials.second_token
     Assert-NoSecretExposure -LayoutName 'layout-close-auth-hidden-token.json'
     Invoke-ActivePaneCloseButton -LayoutName 'layout-close-auth-button.json'
     Invoke-ClosePaneDialog -LayoutName 'layout-close-auth-dialog.json'
@@ -1818,7 +1820,7 @@ try {
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-minimize-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
-    Invoke-SerializedAuthText -Value $credentials.second_token
+    Invoke-SecretKeyEventText -Value $credentials.second_token
     Assert-NoSecretExposure -LayoutName 'layout-minimize-hidden-token.json'
     Minimize-RegressionWindow
     Restore-RegressionWindow
@@ -1837,7 +1839,7 @@ try {
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-cancel-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
-    Invoke-SerializedAuthText -Value $credentials.second_token
+    Invoke-SecretKeyEventText -Value $credentials.second_token
     Assert-NoSecretExposure -LayoutName 'layout-cancel-hidden-token.json'
     Restart-RegressionApp
     Assert-NoSecretExposure -LayoutName 'layout-cancel-restarted.json'
