@@ -502,7 +502,7 @@ function Focus-ActiveCommandInput {
         -Target $Target `
         -InputNode $inputNode `
         -LocalPath $layoutPath `
-        -TimeoutSeconds 10 | Out-Null
+        -TimeoutSeconds 30 | Out-Null
 }
 
 function Submit-FocusedDeviceCommand {

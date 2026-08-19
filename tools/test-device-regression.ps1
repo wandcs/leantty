@@ -330,7 +330,7 @@ Assert-True (
     $script:focusClickCalls = [Collections.Generic.List[object]]::new()
     $focusLayouts = @(
         (@'
-{"attributes":{"bounds":"[0,0][3120,1955]","hint":""},"children":[{"attributes":{"bounds":"[127,495][145,536]","hint":"Terminal input","focused":"false"},"children":[]},{"attributes":{"bounds":"[1694,135][1712,176]","hint":"Terminal input","focused":"true"},"children":[]}]}
+{"attributes":{"bounds":"[0,0][0,0]","hint":""},"children":[]}
 '@ | ConvertFrom-Json -Depth 20),
         (@'
 {"attributes":{"bounds":"[0,0][3120,1955]","hint":""},"children":[{"attributes":{"bounds":"[127,495][145,536]","hint":"Terminal input","focused":"true"},"children":[]},{"attributes":{"bounds":"[1694,135][1712,176]","hint":"Terminal input","focused":"false"},"children":[]}]}
@@ -367,6 +367,12 @@ Assert-True (
         $focusedNodes[0].attributes.bounds -eq '[127,495][145,536]'
     ) 'Terminal focus gate did not wait for two stable focused snapshots of the clicked input'
 }
+
+Assert-True (
+    $deviceRegressionSource.Contains(
+        '[ValidateRange(1, 60)][int]$TimeoutSeconds = 30'
+    )
+) 'Terminal focus gate does not allow a slow HarmonyOS layout capture to retry'
 
 foreach ($scriptName in @(
     'device-regression.ps1',
