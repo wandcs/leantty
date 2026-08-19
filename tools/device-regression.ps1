@@ -223,7 +223,7 @@ function Set-LeanTTYTerminalInputFocus {
         [Parameter(Mandatory = $true)][string]$Target,
         [Parameter(Mandatory = $true)]$InputNode,
         [Parameter(Mandatory = $true)][string]$LocalPath,
-        [ValidateRange(1, 30)][int]$TimeoutSeconds = 10
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 30
     )
 
     $inputBounds = [string]$InputNode.attributes.bounds
