@@ -532,7 +532,24 @@ function Focus-ActiveCommandInput {
     Invoke-LeanTTYDeviceClick `
         -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
         -Operation 'LeanTTY terminal input focus'
-    return $inputNode
+
+    $focusStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $focusedLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc `
+            -Target $Target `
+            -LocalPath $layoutPath
+        $focusedInputs = @(Get-LeanTTYTerminalInputNodes -Layout $focusedLayout | Where-Object {
+            [string]$_.attributes.focused -eq 'true'
+        })
+        if ($focusedInputs.Count -eq 1) {
+            return $focusedInputs[0]
+        }
+        if ($focusStopwatch.Elapsed.TotalSeconds -lt 10) {
+            Start-Sleep -Milliseconds 200
+        }
+    } while ($focusStopwatch.Elapsed.TotalSeconds -lt 10)
+    throw '[environment] Timed out waiting for one focused LeanTTY terminal input'
 }
 
 function Submit-FocusedDeviceCommand {
