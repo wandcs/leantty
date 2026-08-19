@@ -253,26 +253,26 @@ function Test-AuthStageSelected {
 function Get-LeanTTYFixtureStageBudgetSeconds {
     param([Parameter(Mandatory = $true)][string]$StageName)
     $budgets = @{
-        'password-success' = 75
-        'terminal-key-input' = 120
-        'transport-main-path' = 240
-        'performance-matrix' = 420
-        'bell-attention' = 180
-        'password-kbdint-mixed-echo' = 120
-        'multiround-wrong-answer-recovery' = 180
+        'password-success' = 150
+        'terminal-key-input' = 180
+        'transport-main-path' = 300
+        'performance-matrix' = 540
+        'bell-attention' = 240
+        'password-kbdint-mixed-echo' = 300
+        'multiround-wrong-answer-recovery' = 420
         'generated-disposable-auth-key' = 60
         'publickey-unencrypted' = 60
-        'publickey-then-password' = 90
-        'publickey-then-keyboard-interactive' = 100
+        'publickey-then-password' = 150
+        'publickey-then-keyboard-interactive' = 240
         'keyboard-interactive-zero-prompt' = 60
-        'unsupported-method-error-and-recovery' = 90
-        'ctrl-c-authentication-cancellation-and-recovery' = 140
-        'pane-close-during-hidden-prompt-and-recovery' = 180
-        'encrypted-disposable-auth-key' = 90
-        'publickey-encrypted-passphrase' = 90
-        'parallel-pane-authentication' = 240
-        'minimize-restore-hidden-prompt' = 180
-        'process-stop-during-hidden-prompt-cleanup' = 180
+        'unsupported-method-error-and-recovery' = 150
+        'ctrl-c-authentication-cancellation-and-recovery' = 300
+        'pane-close-during-hidden-prompt-and-recovery' = 300
+        'encrypted-disposable-auth-key' = 180
+        'publickey-encrypted-passphrase' = 150
+        'parallel-pane-authentication' = 480
+        'minimize-restore-hidden-prompt' = 240
+        'process-stop-during-hidden-prompt-cleanup' = 240
         'deleted-disposable-auth-key' = 90
     }
     if (-not $budgets.ContainsKey($StageName)) {

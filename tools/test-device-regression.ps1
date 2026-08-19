@@ -466,6 +466,9 @@ foreach ($scriptName in @(
             $content.Contains('Get-LeanTTYFixtureStageBudgetSeconds') -and
             $content.Contains('Get-LeanTTYFixtureRunSeconds') -and
             $content.Contains('selectedStageBudgetsSeconds') -and
+            $content.Contains("'password-kbdint-mixed-echo' = 300") -and
+            $content.Contains("'multiround-wrong-answer-recovery' = 420") -and
+            $content.Contains("'parallel-pane-authentication' = 480") -and
             $content.Contains("'diagnostic'") -and
             $content.Contains("'acceptance'")
         ) 'SSH authentication harness lacks targeted diagnostics or auditable live evidence'
