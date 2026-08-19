@@ -422,7 +422,11 @@ foreach ($scriptName in @(
             $content.Contains("'failure-fixture-stderr.txt'") -and
             $content.Contains("'[REDACTED]'") -and
             -not $content.Contains('Device auth input delivery length mismatch') -and
-            -not $content.Contains("SessionViewModel: D: 1 chars, mode=") -and
+            $content.Contains("SessionViewModel: D: 1 chars, mode=") -and
+            $content.Contains('function Invoke-AcknowledgedAuthText') -and
+            ([regex]::Matches($content, 'Invoke-AcknowledgedAuthText').Count -ge 6) -and
+            $content.Contains('Authentication input character was not acknowledged after three attempts') -and
+            $content.Contains('device-paced-runtime-generated-printable-ascii-with-per-character-nonsecret-ack') -and
             $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
             $content.Contains('[regex]::Escape($Command)') -and
@@ -462,6 +466,9 @@ foreach ($scriptName in @(
             $content.Contains('Get-LeanTTYFixtureStageBudgetSeconds') -and
             $content.Contains('Get-LeanTTYFixtureRunSeconds') -and
             $content.Contains('selectedStageBudgetsSeconds') -and
+            $content.Contains("'password-kbdint-mixed-echo' = 300") -and
+            $content.Contains("'multiround-wrong-answer-recovery' = 420") -and
+            $content.Contains("'parallel-pane-authentication' = 480") -and
             $content.Contains("'diagnostic'") -and
             $content.Contains("'acceptance'")
         ) 'SSH authentication harness lacks targeted diagnostics or auditable live evidence'
