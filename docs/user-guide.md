@@ -2,9 +2,9 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-17
+> Last updated: 2026-08-19
 >
-> Applies to: the current repository 1.4.0 in-development behavior. AppGallery
+> Applies to: the current repository 1.4.0 release-candidate behavior. AppGallery
 > currently distributes 1.3.0; check the matching GitHub Release and
 > `CHANGELOG.md` before relying on behavior that has not yet shipped.
 
