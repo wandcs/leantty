@@ -500,6 +500,11 @@ foreach ($scriptName in @(
             $content.Contains("'transport-main-path'") -and
             $content.Contains("'ltty-input-check russhmain'") -and
             $content.Contains("'ltty-paste-prepare russhmain 1048576'") -and
+            ([regex]::Matches($content, 'Submit-ConnectedInputUntilFixtureEvent').Count -ge 8) -and
+            ([regex]::Matches($content, 'Submit-ConnectedInputUntilAuthEvent').Count -ge 2) -and
+            $content.Contains('Device did not deliver connected input after three attempts') -and
+            $content.Contains('Connected input did not produce the expected application event after three attempts') -and
+            -not $content.Contains("Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'") -and
             $content.Contains("'Clipboard paste ok,1048576'") -and
             $content.Contains("'D: 1048576 chars'") -and
             $content.Contains("'paste case=russhmain bytes=1048576 result=matched'") -and
