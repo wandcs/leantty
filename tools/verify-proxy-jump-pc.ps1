@@ -206,8 +206,12 @@ function Wait-ProxyLogText {
 
 function Submit-SecretOrDecision {
     param([Parameter(Mandatory = $true)][string]$Text)
-    Focus-ProxyCommandInput
-    Invoke-LeanTTYDeviceText -Hdc $script:proxyHdc -Target $script:proxyTarget -Text $Text
+    $inputNode = Focus-ProxyCommandInput
+    Invoke-LeanTTYDeviceText `
+        -Hdc $script:proxyHdc `
+        -Target $script:proxyTarget `
+        -Text $Text `
+        -InputNode $inputNode
     Invoke-LeanTTYDeviceKey -Hdc $script:proxyHdc -Target $script:proxyTarget -KeyCode 2054
 }
 
@@ -232,7 +236,7 @@ function Focus-ProxyCommandInput {
         }
         if ($null -ne $inputNode) {
             if ([string]$inputNode.attributes.focused -eq 'true') {
-                return
+                return $inputNode
             }
             Set-LeanTTYTerminalInputFocus `
                 -Hdc $script:proxyHdc `
@@ -240,7 +244,7 @@ function Focus-ProxyCommandInput {
                 -InputNode $inputNode `
                 -LocalPath $layoutPath `
                 -TimeoutSeconds 10 | Out-Null
-            return
+            return $inputNode
         }
         Start-Sleep -Milliseconds 200
     } while ($stopwatch.Elapsed.TotalSeconds -lt 10)
@@ -300,11 +304,12 @@ function Focus-ProxyPane {
 
 function Submit-ConnectedProxyInput {
     param([Parameter(Mandatory = $true)][string]$Text)
-    Focus-ProxyCommandInput
+    $inputNode = Focus-ProxyCommandInput
     Invoke-LeanTTYDeviceText `
         -Hdc $script:proxyHdc `
         -Target $script:proxyTarget `
-        -Text $Text
+        -Text $Text `
+        -InputNode $inputNode
     Invoke-LeanTTYDeviceKey `
         -Hdc $script:proxyHdc `
         -Target $script:proxyTarget `
@@ -340,21 +345,50 @@ function Submit-ProxyCommand {
         'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         Invoke-LeanTTYDeviceCtrlC -Hdc $script:proxyHdc -Target $script:proxyTarget
-        Focus-ProxyCommandInput
+        $inputNode = Focus-ProxyCommandInput
         Clear-LeanTTYAppLogs -Hdc $script:proxyHdc -Target $script:proxyTarget
-        Submit-LeanTTYDeviceCommand `
+        Invoke-LeanTTYDeviceText `
             -Hdc $script:proxyHdc `
             -Target $script:proxyTarget `
-            -Command $Command
-        try {
-            Wait-ProxyLog -Pattern $submittedPattern -TimeoutSeconds 10
-            return
-        } catch {
-            if ($attempt -ge 3) {
-                throw 'Device did not submit the exact ProxyJump verification command'
+            -Text $Command `
+            -InputNode $inputNode
+        $bufferLogs = Wait-ProxyLogText `
+            -Pattern 'ACCEPTANCE_IDLE_RESULT kind=' `
+            -TimeoutSeconds 10
+        $bufferRecords = @([regex]::Matches(
+                $bufferLogs,
+                'ACCEPTANCE_IDLE_RESULT kind=\d+,input=(?<input>[^\r\n]*),' +
+                'completionActive=(?:true|false),menuActive=(?:true|false)'
+            ))
+        $actualBuffer = if ($bufferRecords.Count -gt 0) {
+            $bufferRecords[$bufferRecords.Count - 1].Groups['input'].Value
+        } else {
+            ''
+        }
+        if ($actualBuffer -ceq $Command) {
+            Invoke-LeanTTYDeviceKey `
+                -Hdc $script:proxyHdc `
+                -Target $script:proxyTarget `
+                -KeyCode 2054
+            try {
+                Wait-ProxyLog -Pattern $submittedPattern -TimeoutSeconds 10
+                return
+            } catch {
+                throw '[harness] ProxyJump command submission outcome is unknown; the scenario must be restarted'
             }
         }
+
+        Write-Host (
+            '[proxy-jump] RETRY inexact command buffer ' +
+            "attempt=$attempt expectedLength=$($Command.Length) " +
+            "actualLength=$($actualBuffer.Length) actual=$actualBuffer"
+        ) -ForegroundColor Yellow
+        Invoke-LeanTTYDeviceCtrlC -Hdc $script:proxyHdc -Target $script:proxyTarget
+        Wait-ProxyLog `
+            -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' `
+            -TimeoutSeconds 10
     }
+    throw '[environment] HarmonyOS input could not prepare the exact ProxyJump command buffer'
 }
 
 function Submit-HostKeyDecisionUntilResult {

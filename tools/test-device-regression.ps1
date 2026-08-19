@@ -483,7 +483,8 @@ foreach ($scriptName in @(
     'preflight-device.ps1',
     'verify-key-passphrase-pc.ps1',
     'verify-ssh-auth-pc.ps1',
-    'verify-terminal-search-pc.ps1'
+    'verify-terminal-search-pc.ps1',
+    'verify-proxy-jump-pc.ps1'
 )) {
     $scriptPath = Join-Path $PSScriptRoot $scriptName
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
@@ -832,6 +833,19 @@ foreach ($scriptName in @(
             $activeSurfaces.Count -eq 1 -and
             [string]$activeSurfaces[0].attributes.zIndex -eq '1'
         ) 'Renderer-rebuilt layout did not retain one observable active terminal Surface'
+    }
+    if ($scriptName -eq 'verify-proxy-jump-pc.ps1') {
+        Assert-True (
+            $content.Contains('function Submit-ProxyCommand') -and
+            $content.Contains('$inputNode = Focus-ProxyCommandInput') -and
+            $content.Contains('-InputNode $inputNode') -and
+            $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
+            $content.Contains('$actualBuffer -ceq $Command') -and
+            $content.Contains('[regex]::Escape($Command)') -and
+            $content.Contains('ProxyJump command submission outcome is unknown; the scenario must be restarted') -and
+            $content.Contains("-Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true'") -and
+            $content.Contains('HarmonyOS input could not prepare the exact ProxyJump command buffer')
+        ) 'ProxyJump physical scenario can submit an unverified command buffer'
     }
 }
 
