@@ -222,7 +222,9 @@ Assert-True (
 ) 'Device input cleanup still uses inferred backspaces'
 Assert-True (
     $deviceRegressionText -match '-IntervalMilliseconds 500(?:\s|$)' -and
-    $deviceRegressionText.Contains('$chunkLength = 8')
+    $deviceRegressionText.Contains('$chunkLength = 8') -and
+    $deviceRegressionText.Contains('$postInjectionSettleMilliseconds = 500') -and
+    $deviceRegressionText.Contains('Start-Sleep -Milliseconds $postInjectionSettleMilliseconds')
 ) 'Device raw-key text injection does not preserve pacing and bounded batches'
 Assert-True (
     $deviceRegressionText -notmatch 'shell\s+run-as\s+com\.leantty\.app' -and

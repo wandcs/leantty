@@ -405,6 +405,7 @@ function Invoke-LeanTTYDeviceText {
     # secure input batches as well as truncating longer commands. Keep each
     # device-side uinput batch below the smallest observed unreliable size.
     $chunkLength = 8
+    $postInjectionSettleMilliseconds = 500
     for ($offset = 0; $offset -lt $Text.Length; $offset += $chunkLength) {
         $length = [Math]::Min($chunkLength, $Text.Length - $offset)
         $chunk = $Text.Substring($offset, $length)
@@ -414,6 +415,9 @@ function Invoke-LeanTTYDeviceText {
         & $Hdc -t $Target shell $shellCommand 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS raw key text injection failed' }
     }
+    # uinput returns after injecting events, before ArkWeb necessarily consumes
+    # the final key. Do not let the next layout dump or Enter race that event.
+    Start-Sleep -Milliseconds $postInjectionSettleMilliseconds
 }
 
 function Invoke-LeanTTYDeviceKey {
