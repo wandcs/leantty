@@ -440,13 +440,18 @@ foreach ($scriptName in @(
             -not $content.Contains('Invoke-AcknowledgedAuthText') -and
             -not $content.Contains('Invoke-SerializedAuthText') -and
             -not $content.Contains('Invoke-SecretKeyEventText') -and
+            -not $content.Contains('Invoke-LeanTTYDeviceText') -and
+            $content.Contains('function Invoke-AuthUiText') -and
+            ([regex]::Matches($content, 'Invoke-AuthUiText').Count -ge 6) -and
+            $content.Contains('& $hdc -t $Target shell uitest uiInput text $Text') -and
             $content.Contains('function Invoke-TemporaryFixtureAuthText') -and
             ([regex]::Matches($content, 'Invoke-TemporaryFixtureAuthText').Count -ge 6) -and
             $content.Contains("'^[a-z0-9]+$'") -and
-            $content.Contains('& $hdc -t $Target shell uitest uiInput text $Value') -and
             $content.Contains('repository-only-test-values-not-user-or-production-credentials') -and
             $content.Contains('harmony-uitest-complete-text-runtime-generated-temporary-fixture-values') -and
-            $content.Contains("method = 'raw-physical-and-harmony-uitest-text'") -and
+            $content.Contains("method = 'harmony-uitest-text-and-raw-physical-special-keys'") -and
+            $content.Contains("ordinaryTextInjection = 'harmony-uitest-complete-text'") -and
+            $content.Contains("physicalKeyInjection = 'raw-key-events-special-keys-only'") -and
             $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
             $content.Contains('[regex]::Escape($Command)') -and
@@ -461,8 +466,7 @@ foreach ($scriptName in @(
             $content.Contains('Focus-ActiveCommandInput') -and
             $content.Contains('Set-LeanTTYTerminalInputFocus') -and
             $content.Contains('businessOutcomeRequired = $true') -and
-            $content.Contains('fixedDelayUsedAsVerdict = $false') -and
-            $content.Contains('deviceProgramIntervalMilliseconds = 500')
+            $content.Contains('fixedDelayUsedAsVerdict = $false')
         ) 'SSH authentication scenario does not enforce the layout/log secret boundary'
         Assert-True (
             $content.Contains("'terminal-key-input'") -and
@@ -570,7 +574,7 @@ foreach ($scriptName in @(
             $content.Contains("'performance-matrix'") -and
             $content.Contains("@('Off', 'Low', 'Medium', 'High', 'Extreme')") -and
             $content.Contains('Invoke-AuthPerfSample -CaseId $caseId') -and
-            $content.Contains("' bytes=\d+ state=prepared'") -and
+            $content.Contains("' lines=12000 width=80 bytes=\d+ state=prepared'") -and
             $content.Contains('Fixture did not accept the PERF prepare command') -and
             $content.Contains('Fixture did not accept the PERF run command') -and
             $content.Contains('commandAttempts') -and
