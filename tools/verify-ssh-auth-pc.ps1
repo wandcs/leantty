@@ -570,6 +570,48 @@ function Submit-ConnectedInput {
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
 }
 
+function Submit-ConnectedInputUntilFixtureEvent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Pattern,
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 10
+    )
+    for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++) {
+        $matchCount = Get-FixtureLogMatchCount -Pattern $Pattern
+        Submit-ConnectedInput -Text $Text
+        try {
+            Wait-FixtureLogMatchCount `
+                -Pattern $Pattern `
+                -GreaterThan $matchCount `
+                -TimeoutSeconds $TimeoutSeconds | Out-Null
+            return
+        } catch {
+            if ($inputAttempt -ge 3) {
+                throw '[harness] Device did not deliver connected input after three attempts'
+            }
+        }
+    }
+}
+
+function Submit-ConnectedInputUntilAuthEvent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Pattern,
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 10
+    )
+    for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++) {
+        Submit-ConnectedInput -Text $Text
+        try {
+            Wait-AuthLog -Pattern $Pattern -TimeoutSeconds $TimeoutSeconds
+            return
+        } catch {
+            if ($inputAttempt -ge 3) {
+                throw '[harness] Connected input did not produce the expected application event after three attempts'
+            }
+        }
+    }
+}
+
 function Invoke-LeanTTYPasteShortcut {
     # HAD-W32 does not synthesize a trusted ArkWeb paste event for a two-key
     # automation chord. Alt is ignored by the Web Ctrl+V route while allowing
@@ -1367,12 +1409,15 @@ try {
     Submit-AuthValue -Value $credentials.password -LayoutName 'layout-transport-password.json'
     Wait-AuthLog -Pattern 'SSH session connected'
 
-    Submit-ConnectedInput -Text 'ltty-input-check russhmain'
-    Wait-FixtureLog -Pattern 'input case=russhmain result=matched' | Out-Null
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check russhmain' `
+        -Pattern 'input case=russhmain result=matched'
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'
-    Wait-AuthLog -Pattern 'OSC 52 clipboard write success=true,length=1048576' -TimeoutSeconds 30
+    Submit-ConnectedInputUntilAuthEvent `
+        -Text 'ltty-paste-prepare russhmain 1048576' `
+        -Pattern 'OSC 52 clipboard write success=true,length=1048576' `
+        -TimeoutSeconds 30
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-LeanTTYPasteShortcut
     Wait-AuthLog -Pattern 'Clipboard paste ok,1048576' -TimeoutSeconds 30
@@ -1390,8 +1435,9 @@ try {
         -GreaterThan $resizeCount `
         -TimeoutSeconds 30 | Out-Null
     Focus-AuthPane -Side 'left' -LayoutName 'layout-transport-left-connected.json'
-    Submit-ConnectedInput -Text 'ltty-input-check afterperf'
-    Wait-FixtureLog -Pattern 'input case=afterperf result=matched' | Out-Null
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check afterperf' `
+        -Pattern 'input case=afterperf result=matched'
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-ActivePaneCloseButton -LayoutName 'layout-transport-close-connected.json'
@@ -1403,8 +1449,9 @@ try {
     Wait-AuthLog -Pattern 'native auth event kind=password'
     Submit-AuthValue -Value $credentials.password -LayoutName 'layout-transport-reconnect-password.json'
     Wait-AuthLog -Pattern 'SSH session connected'
-    Submit-ConnectedInput -Text 'ltty-input-check reconnect'
-    Wait-FixtureLog -Pattern 'input case=reconnect result=matched' | Out-Null
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check reconnect' `
+        -Pattern 'input case=reconnect result=matched'
     Close-FixtureShell
     Complete-AuthStage -Name 'transport-main-path'
     }
@@ -1470,7 +1517,9 @@ try {
     Wait-AuthLog -Pattern 'SSH session connected'
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Submit-ConnectedInput -Text 'ltty-bell active01 500'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-bell active01 500' `
+        -Pattern 'bell case=active01 delay_ms=500 state=scheduled'
     Start-Sleep -Milliseconds 1600
     $activeLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
     Save-SafeDiagnosticText -Text $activeLogs -FileName 'bell-active-app-logs.txt'
@@ -1483,8 +1532,9 @@ try {
     $bellEvidence.screenshots += 'bell-active-after-pulse.png'
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Submit-ConnectedInput -Text 'ltty-bell inactive01 5000'
-    Wait-FixtureLog -Pattern 'bell case=inactive01 delay_ms=5000 state=scheduled' -TimeoutSeconds 10 | Out-Null
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-bell inactive01 5000' `
+        -Pattern 'bell case=inactive01 delay_ms=5000 state=scheduled'
     Invoke-AuthWorkspaceShortcut -Action 'new-tab'
     Wait-AuthTabCount -Count 2 -LayoutName 'layout-bell-inactive-new-tab.json' | Out-Null
     Wait-FixtureLog -Pattern 'bell case=inactive01 state=sent' -TimeoutSeconds 10 | Out-Null
@@ -1502,8 +1552,9 @@ try {
     Wait-AuthTabCount -Count 1 -LayoutName 'layout-bell-inactive-tab-cleaned.json' | Out-Null
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Submit-ConnectedInput -Text 'ltty-bell split01 5000'
-    Wait-FixtureLog -Pattern 'bell case=split01 delay_ms=5000 state=scheduled' -TimeoutSeconds 10 | Out-Null
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-bell split01 5000' `
+        -Pattern 'bell case=split01 delay_ms=5000 state=scheduled'
     Split-AuthPane
     Wait-FixtureLog -Pattern 'bell case=split01 state=sent' -TimeoutSeconds 10 | Out-Null
     Wait-AuthLog -Pattern 'Pane attention set:' -TimeoutSeconds 15
@@ -1517,10 +1568,12 @@ try {
     $bellEvidence.splitPaneSourceClearedOnFocus = $true
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Submit-ConnectedInput -Text 'ltty-bell flood01 5000'
-    Submit-ConnectedInput -Text 'ltty-bell flood02 5000'
-    Wait-FixtureLog -Pattern 'bell case=flood01 delay_ms=5000 state=scheduled' -TimeoutSeconds 10 | Out-Null
-    Wait-FixtureLog -Pattern 'bell case=flood02 delay_ms=5000 state=scheduled' -TimeoutSeconds 10 | Out-Null
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-bell flood01 5000' `
+        -Pattern 'bell case=flood01 delay_ms=5000 state=scheduled'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-bell flood02 5000' `
+        -Pattern 'bell case=flood02 delay_ms=5000 state=scheduled'
     Invoke-AuthWorkspaceShortcut -Action 'focus-right'
     Wait-FixtureLog -Pattern 'bell case=flood01 state=sent' -TimeoutSeconds 10 | Out-Null
     Wait-FixtureLog -Pattern 'bell case=flood02 state=sent' -TimeoutSeconds 10 | Out-Null
