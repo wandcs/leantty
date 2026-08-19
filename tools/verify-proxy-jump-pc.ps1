@@ -3,14 +3,15 @@
   Verify password ProxyJump success, host-key rotation and layered authentication failures on a physical HarmonyOS PC.
 .DESCRIPTION
   Starts two repository-only temporary SSH fixtures in WSL. The jump fixture
-  permits direct-tcpip only to the target fixture. It deploys the current
-  signed development HAP, drives the real LeanTTY command/authentication path,
-  captures bounded evidence, and removes the HDC mapping, temporary credentials
-  and known_hosts entries.
+  permits direct-tcpip only to the target fixture. It deploys an explicitly
+  selected signed HAP or the current signed development HAP, drives the real
+  LeanTTY command/authentication path, captures bounded evidence, and removes
+  the HDC mapping, temporary credentials and known_hosts entries.
 #>
 [CmdletBinding()]
 param(
     [string]$Target = '',
+    [string]$HapPath = '',
     [ValidateRange(1024, 65535)][int]$JumpPort = 22222,
     [ValidateRange(1024, 65535)][int]$TargetPort = 22223,
     [ValidateRange(1024, 65535)][int]$SecondJumpPort = 22224,
@@ -34,6 +35,18 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+
+$selectedHapPath = if ([string]::IsNullOrWhiteSpace($HapPath)) {
+    Join-Path $repoRoot 'entry\build\default\outputs\default\entry-default-signed.hap'
+} else {
+    [IO.Path]::GetFullPath($HapPath)
+}
+if (-not (Test-Path -LiteralPath $selectedHapPath -PathType Leaf)) {
+    throw "ProxyJump signed HAP is missing: $selectedHapPath"
+}
+if ((Split-Path $selectedHapPath -Leaf) -match '(?i)unsigned') {
+    throw 'ProxyJump verification requires a signed HAP'
+}
 
 $uniqueFixturePorts = @(
     @($JumpPort, $TargetPort, $SecondJumpPort, $SecondTargetPort) | Select-Object -Unique
@@ -339,10 +352,55 @@ function Submit-ConnectedProxyInputUntilFixture {
     }
 }
 
+function Get-ProxyCommandInputText {
+    param([Parameter(Mandatory = $true)]$Layout)
+    $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $Layout)
+    $focusedNodes = @($nodes | Where-Object {
+        [string]$_.attributes.focused -eq 'true'
+    })
+    $inputNode = if ($focusedNodes.Count -eq 1) {
+        $focusedNodes[0]
+    } elseif ($nodes.Count -eq 1) {
+        $nodes[0]
+    } else {
+        $null
+    }
+    if ($null -eq $inputNode) {
+        throw '[environment] Active ProxyJump command input was not unique while verifying its buffer'
+    }
+    $originalText = [string]$inputNode.attributes.originalText
+    if (-not [string]::IsNullOrEmpty($originalText)) { return $originalText }
+    return [string]$inputNode.attributes.text
+}
+
+function Wait-ProxyCommandInputText {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Expected,
+        [Parameter(Mandatory = $true)][string]$LayoutName,
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 10
+    )
+    $path = Join-Path $EvidenceDirectory $LayoutName
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $layout = Get-LeanTTYDeviceLayout `
+            -Hdc $script:proxyHdc `
+            -Target $script:proxyTarget `
+            -LocalPath $path
+        try {
+            $actual = Get-ProxyCommandInputText -Layout $layout
+            if ($actual -ceq $Expected) { return $actual }
+        } catch {
+            if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { throw }
+        }
+        if ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+            Start-Sleep -Milliseconds 200
+        }
+    } while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    throw '[environment] Timed out waiting for the expected ProxyJump command buffer'
+}
+
 function Submit-ProxyCommand {
     param([Parameter(Mandatory = $true)][string]$Command)
-    $submittedPattern =
-        'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         Invoke-LeanTTYDeviceCtrlC -Hdc $script:proxyHdc -Target $script:proxyTarget
         $inputNode = Focus-ProxyCommandInput
@@ -352,26 +410,20 @@ function Submit-ProxyCommand {
             -Target $script:proxyTarget `
             -Text $Command `
             -InputNode $inputNode
-        $bufferLogs = Wait-ProxyLogText `
-            -Pattern 'ACCEPTANCE_IDLE_RESULT kind=' `
-            -TimeoutSeconds 10
-        $bufferRecords = @([regex]::Matches(
-                $bufferLogs,
-                'ACCEPTANCE_IDLE_RESULT kind=\d+,input=(?<input>[^\r\n]*),' +
-                'completionActive=(?:true|false),menuActive=(?:true|false)'
-            ))
-        $actualBuffer = if ($bufferRecords.Count -gt 0) {
-            $bufferRecords[$bufferRecords.Count - 1].Groups['input'].Value
-        } else {
-            ''
-        }
+        $typedLayout = Get-LeanTTYDeviceLayout `
+            -Hdc $script:proxyHdc `
+            -Target $script:proxyTarget `
+            -LocalPath (Join-Path $EvidenceDirectory "command-buffer-$attempt.json")
+        $actualBuffer = Get-ProxyCommandInputText -Layout $typedLayout
         if ($actualBuffer -ceq $Command) {
             Invoke-LeanTTYDeviceKey `
                 -Hdc $script:proxyHdc `
                 -Target $script:proxyTarget `
                 -KeyCode 2054
             try {
-                Wait-ProxyLog -Pattern $submittedPattern -TimeoutSeconds 10
+                Wait-ProxyCommandInputText `
+                    -Expected '' `
+                    -LayoutName "command-submitted-$attempt.json" | Out-Null
                 return
             } catch {
                 throw '[harness] ProxyJump command submission outcome is unknown; the scenario must be restarted'
@@ -384,9 +436,9 @@ function Submit-ProxyCommand {
             "actualLength=$($actualBuffer.Length) actual=$actualBuffer"
         ) -ForegroundColor Yellow
         Invoke-LeanTTYDeviceCtrlC -Hdc $script:proxyHdc -Target $script:proxyTarget
-        Wait-ProxyLog `
-            -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' `
-            -TimeoutSeconds 10
+        Wait-ProxyCommandInputText `
+            -Expected '' `
+            -LayoutName "command-cleared-$attempt.json" | Out-Null
     }
     throw '[environment] HarmonyOS input could not prepare the exact ProxyJump command buffer'
 }
@@ -626,14 +678,13 @@ try {
     Start-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $targetId
     $awakeLeaseActive = $true
 
-    $hapPath = Join-Path $repoRoot 'entry\build\default\outputs\default\entry-default-signed.hap'
-    $script:proxyHapPath = $hapPath
+    $script:proxyHapPath = $selectedHapPath
     & (Join-Path $PSScriptRoot 'dev-pc.ps1') `
         -Target $targetId `
-        -HapPath $hapPath `
+        -HapPath $selectedHapPath `
         -SkipBuild `
         -NoLaunch
-    if ($LASTEXITCODE -ne 0) { throw 'ProxyJump development HAP deployment failed' }
+    if ($LASTEXITCODE -ne 0) { throw 'ProxyJump selected HAP deployment failed' }
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
     $start = Start-LeanTTYRegressionApp `
         -Hdc $hdc `
