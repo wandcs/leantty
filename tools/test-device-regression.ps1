@@ -133,6 +133,68 @@ Assert-True (-not (Test-HdcCommandFailure -Output 'Forwardport result:OK')) (
 }
 
 & {
+    function Get-HdcTargets {
+        return @([pscustomobject]@{
+                key = 'regression-device'; transport = 'USB'; status = 'Offline'; raw = ''
+            })
+    }
+    $message = ''
+    try {
+        Resolve-LeanTTYRegressionTarget -Hdc 'unused'
+    } catch {
+        $message = $_.Exception.Message
+    }
+    Assert-True ($message.StartsWith('[infrastructure]')) (
+        'No ready device was not classified as an infrastructure stop'
+    )
+}
+
+& {
+    function Get-HdcTargets {
+        return @(
+            [pscustomobject]@{ key = 'device-a'; transport = 'USB'; status = 'Ready'; raw = '' },
+            [pscustomobject]@{ key = 'device-b'; transport = 'USB'; status = 'Ready'; raw = '' }
+        )
+    }
+    $message = ''
+    try {
+        Resolve-LeanTTYRegressionTarget -Hdc 'unused'
+    } catch {
+        $message = $_.Exception.Message
+    }
+    Assert-True ($message.StartsWith('[environment]')) (
+        'Ambiguous ready targets were not classified as an environment stop'
+    )
+}
+
+$devicePreflightPath = Join-Path $PSScriptRoot 'preflight-device.ps1'
+Assert-True (Test-Path -LiteralPath $devicePreflightPath -PathType Leaf) (
+    'Standalone device control preflight is missing'
+)
+$preflightTokens = $null
+$preflightErrors = $null
+[void][Management.Automation.Language.Parser]::ParseFile(
+    $devicePreflightPath,
+    [ref]$preflightTokens,
+    [ref]$preflightErrors
+)
+Assert-True ($preflightErrors.Count -eq 0) 'Standalone device control preflight has invalid syntax'
+$devicePreflightText = Get-Content -LiteralPath $devicePreflightPath -Raw
+Assert-True (
+    $devicePreflightText.Contains('Resolve-LeanTTYRegressionTarget') -and
+    $devicePreflightText.Contains('Assert-HdcTargetReady') -and
+    $devicePreflightText.Contains('Invoke-HdcChecked') -and
+    $devicePreflightText.Contains('Get-LeanTTYDeviceLayout') -and
+    $devicePreflightText.Contains("gate = 'device-control-preflight'") -and
+    $devicePreflightText.Contains('acceptanceEligible = $false') -and
+    $devicePreflightText.Contains('productBehaviorClaimed = $false') -and
+    $devicePreflightText.Contains('Get-PreflightFailureDomain') -and
+    -not $devicePreflightText.Contains('aa start') -and
+    -not $devicePreflightText.Contains('power-shell wakeup') -and
+    -not $devicePreflightText.Contains('Start-LeanTTYRegressionApp')
+) 'Device preflight mutates product state, repairs the target, or claims product acceptance'
+
+& {
     $script:injectedText = ''
     $script:submittedKeyCodes = [Collections.Generic.List[int]]::new()
     function Invoke-LeanTTYDeviceText {
@@ -406,6 +468,7 @@ Assert-True (
 
 foreach ($scriptName in @(
     'device-regression.ps1',
+    'preflight-device.ps1',
     'verify-key-passphrase-pc.ps1',
     'verify-ssh-auth-pc.ps1',
     'verify-terminal-search-pc.ps1'

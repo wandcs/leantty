@@ -15,9 +15,9 @@ function Resolve-LeanTTYRegressionTarget {
     $candidates = if ($usbTargets.Count -gt 0) { $usbTargets } else { $readyTargets }
     if ($candidates.Count -eq 1) { return $candidates[0].key }
     if ($candidates.Count -eq 0) {
-        throw 'No ready physical HarmonyOS PC found for device regression'
+        throw '[infrastructure] No ready physical HarmonyOS PC found for device regression'
     }
-    throw 'Multiple HarmonyOS PCs are connected; pass -Target explicitly'
+    throw '[environment] Multiple HarmonyOS PCs are connected; pass -Target explicitly'
 }
 
 function Start-LeanTTYDeviceAwakeLease {

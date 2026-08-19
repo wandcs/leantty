@@ -63,11 +63,12 @@ Then use this sequence:
 All Rust formatting, compilation, clippy and tests run in WSL. Windows supplies
 the OHOS SDK tools but is not a Rust build host.
 
-Routine feature work and bug fixes MUST NOT run `tools/test-regression.ps1`,
-`tools/verify-pc.ps1` or every named `verify-*-pc.ps1` scenario. Documentation-
-only changes MAY stop at L0. Dependency or architecture changes run the tests
-owned by the affected dependency or boundary; they do not become L4 until a
-formal release is being prepared.
+Routine feature work and bug fixes use `tools/test-regression.ps1 -Group ...`
+only with the explicitly mapped local groups. They MUST NOT run the ungrouped
+full gate, `tools/verify-pc.ps1` or every named `verify-*-pc.ps1` scenario.
+Documentation-only changes MAY stop at L0. Dependency or architecture changes
+run the tests owned by the affected dependency or boundary; they do not become
+L4 until a formal release is being prepared.
 
 ### Feature completion record
 
@@ -89,7 +90,8 @@ described as feature acceptance unless it is the actual mapped postcondition.
 Only when preparing a formal new version MUST the maintainer enter L4:
 
 1. freeze an exact clean committed source identity;
-2. run `tools/test-regression.ps1` and `tools/verify-pc.ps1`;
+2. run `tools/verify-pc.ps1`, which executes one complete ungrouped
+   `tools/test-regression.ps1` before building the candidate;
 3. retain the exact signed ARM64 candidate and run every applicable named
    `verify-*-pc.ps1` acceptance scenario against that unchanged HAP;
 4. run the production/review, signing and publication checks required by
@@ -140,21 +142,45 @@ are not substitutes for a physical interaction result.
 Routine change-scoped examples (select only those mapped to the change):
 
 ```powershell
+.\tools\test-regression.ps1 -Group policy,tooling
 .\tools\test-acceptance-harness.ps1
 .\tools\dev-pc.ps1
 ```
 
-`dev-pc.ps1` is the normal build/install/launch loop when the affected behavior
-needs a device build; it is not an acceptance result. Named diagnostic stages
-are focused evidence and MUST NOT be presented as complete release acceptance.
+The focused software groups are `policy`, `tooling`, `ssh-flow`, `web`,
+`arkts`, `rust-core`, `rust-native` and `ssh-fixture`. Select them from the
+changed event chain rather than running every group. Focused JSON evidence is
+marked `software-focused`, `mode=focused` and `releaseEligible=false`.
 
-Formal release software gate:
+| Group | Select when the changed chain owns |
+| --- | --- |
+| `policy` | Public-source policy, edited text and diff integrity; normally include before commit |
+| `tooling` | Build/release scripts, candidate handling, HDC helpers or physical harness logic |
+| `ssh-flow` | ArkTS/native SSH ordering or asynchronous key-generation control flow |
+| `web` | Packaged terminal HTML/xterm policy or the offline user guide |
+| `arkts` | Application state, parser, ownership, persistence, interaction or platform policy |
+| `rust-core` | Host-testable SSH, known-host, key/file or protocol semantics |
+| `rust-native` | N-API/OHOS native boundary and production feature isolation |
+| `ssh-fixture` | Controlled authentication server behavior and fixture E2E |
+
+File paths may suggest groups, but the event chain is authoritative. A change
+crossing multiple owners selects multiple groups; an automatic diff heuristic
+must never silently omit a boundary.
+
+`dev-pc.ps1` is the normal build/install/launch loop when the affected behavior
+needs a device build; it is not an acceptance result. Before a named physical
+scenario, run the bounded, non-repairing control-channel preflight:
 
 ```powershell
-.\tools\test-regression.ps1
+.\tools\preflight-device.ps1
 ```
 
-Formal release candidate build/deployment and named physical scenarios:
+A preflight pass proves only the ready HDC command channel, serialized UiTest
+layout capture and an interactive screen layout. It does not install, launch,
+unlock or prove LeanTTY behavior. Named diagnostic stages are focused evidence
+and MUST NOT be presented as complete release acceptance.
+
+Formal release software gate, candidate build and deployment use one command:
 
 ```powershell
 .\tools\verify-pc.ps1
@@ -162,10 +188,11 @@ Formal release candidate build/deployment and named physical scenarios:
 .\tools\verify-ssh-auth-pc.ps1
 ```
 
-`test-regression.ps1` runs public-source policy, workflow/helper tests, Web
-terminal policy, trusted ArkTS tests, WSL Rust fmt/clippy/core tests and diff
-checks. It writes a local JSON result under `build/verification/` even when a
-check fails.
+`test-regression.ps1` without `-Group` runs public-source policy,
+workflow/helper tests, Web terminal policy, trusted ArkTS tests, WSL Rust
+fmt/clippy/core tests and diff checks. It writes full release-eligible local JSON
+under `build/verification/` even when a check fails. A grouped invocation uses
+the same check registry but is routine focused evidence only.
 
 `verify-pc.ps1` is the formal release candidate gate. It reruns the software
 gate, verifies generated-native source policy,
@@ -321,6 +348,9 @@ controlled server or a necessarily subjective judgment.
 Every automated physical scenario MUST:
 
 - resolve a ready physical ARM64 PC at runtime and never commit its identifier;
+- pass `preflight-device.ps1`, or perform the same ready-target, checked HDC and
+  serialized layout controls internally, before installing or creating test
+  state. The preflight MUST NOT launch, unlock or repair an unavailable device;
 - install an exact retained candidate and record its SHA-256 before interaction;
 - acquire a bounded screen-timeout override before launch and restore the prior
   device policy in `finally`, so unattended execution cannot silently relock;
@@ -381,6 +411,16 @@ UI automation MUST model each consequential interaction as an explicit state
 transition: action, expected dialog, confirmation action and observable
 postcondition. Clicking a close/delete control without handling and verifying
 its confirmation state is incomplete automation.
+
+Each named scenario declares one primary oracle for its claimed result. SSH and
+transfer claims use the controlled server or final file/state; input-integrity
+claims use actual echo or received bytes; UI/focus claims use the current layout
+plus the resulting operation; visual claims use a screenshot or bounded human
+review; performance claims use device-clock events. HDC exit codes, launch/PID,
+hidden textarea values and HiLog line counts are setup or diagnostic evidence,
+never a primary pass oracle. Add a second boundary observation only when risk or
+ambiguity requires it; collecting every expensive observation at every poll is
+not acceptance rigor.
 
 Physical keyboard injection MAY be used only for a scenario whose contract is
 the physical shortcut or special-key path, after the script verifies the focused

@@ -27,11 +27,14 @@ execution policy.
 ## Development and verification
 
 ```powershell
-# Routine change, only when the affected behavior needs a device build
+# Routine local checks: select only groups mapped by docs/quality-strategy.md
+.\tools\test-regression.ps1 -Group policy,tooling
+
+# Routine device work, only when the affected behavior requires a physical PC
+.\tools\preflight-device.ps1
 .\tools\dev-pc.ps1
 
-# Formal release-package preparation only
-.\tools\test-regression.ps1
+# Formal release-package preparation only; includes the complete software gate
 .\tools\verify-pc.ps1
 ```
 
@@ -40,9 +43,16 @@ For each feature iteration or bug fix, run only the checks directly related to
 the changed event chain and the smallest stable main-path smoke checks that
 finish quickly. Do not run unrelated suites or the complete physical matrix.
 
-`test-regression.ps1` and `verify-pc.ps1` are full gates reserved for preparing
-a formal release package. The latter runs the full software gate, Rust
-formatting, a clean ARM64 native/debug HAP build and real-PC deployment.
+`test-regression.ps1 -Group ...` uses the same check registry for focused local
+evidence and cannot be promoted to release acceptance. Ungrouped
+`test-regression.ps1` is a full gate and is invoked once by `verify-pc.ps1` while
+preparing a formal release package. The latter also runs Rust formatting, a
+clean ARM64 native/debug HAP build and real-PC deployment.
+
+`preflight-device.ps1` only proves that the ready HDC command and serialized
+UiTest layout channels are usable. It does not install, launch, unlock or repair
+the PC, and it does not prove product behavior. After it passes, run only the
+named physical scenario mapped to the changed claim.
 
 During formal release verification, use `-SkipDevice` only when device-visible
 validation is not required and no device is available. A physical PC remains

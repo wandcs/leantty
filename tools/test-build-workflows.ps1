@@ -638,6 +638,37 @@ try {
         Test-Path -LiteralPath (Join-Path $PSScriptRoot 'test-acceptance-harness.ps1') -PathType Leaf
     ) 'Focused acceptance-harness regression command is missing'
 
+    $softwareGateText = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'test-regression.ps1'
+    ) -Raw
+    Assert-True (
+        $softwareGateText.Contains("[string[]]`$Group = @()") -and
+        $softwareGateText.Contains("'policy'") -and
+        $softwareGateText.Contains("'tooling'") -and
+        $softwareGateText.Contains("'ssh-flow'") -and
+        $softwareGateText.Contains("'web'") -and
+        $softwareGateText.Contains("'arkts'") -and
+        $softwareGateText.Contains("'rust-core'") -and
+        $softwareGateText.Contains("'rust-native'") -and
+        $softwareGateText.Contains("'ssh-fixture'") -and
+        $softwareGateText.Contains("gate = `$(if (`$script:regressionMode -eq 'full')") -and
+        $softwareGateText.Contains(
+            'releaseEligible = ($script:regressionMode -eq ''full'' -and $passed)'
+        ) -and
+        $softwareGateText.Contains("'software-focused'")
+    ) 'Software gate does not distinguish explicit focused groups from the full release gate'
+    Assert-True (
+        ([regex]::Matches($softwareGateText, 'Invoke-RegressionCheck -Name')).Count -eq
+            ([regex]::Matches($softwareGateText, 'Invoke-RegressionCheck -Name[^\r\n]+-Groups')).Count
+    ) 'Software checks are not all owned by the single grouped regression registry'
+    $verifyPcText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'verify-pc.ps1') -Raw
+    Assert-True (
+        $verifyPcText.Contains("'preflight-device.ps1'") -and
+        $verifyPcText.Contains("'test-regression.ps1'") -and
+        $verifyPcText.Contains("-EvidencePath `$softwareEvidencePath") -and
+        -not $verifyPcText.Contains("-Group")
+    ) 'Formal PC candidate gate no longer owns exactly one complete software gate'
+
     $workerPath = Join-Path $testRoot 'lock-worker.ps1'
     $workerSource = @'
 param(
