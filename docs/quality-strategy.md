@@ -2,7 +2,7 @@
 
 > Status: mandatory cross-version engineering standard
 >
-> Last updated: 2026-08-04
+> Last updated: 2026-08-19
 >
 > Product acceptance: [`vision-acceptance.md`](vision-acceptance.md)
 
@@ -12,54 +12,93 @@ It turns the reliability and trust principles into repeatable evidence. `MUST`,
 feature-specific acceptance belongs in one technical design, while executable
 gaps belong only in [`next-work.md`](next-work.md).
 
-## Mandatory workflow
+## Test levels and mandatory workflow
 
-Testing has two policy tiers.
+Testing has five evidence levels. Select the lowest set that completely covers
+the affected event chain; do not run a higher or unrelated level merely because
+it exists.
 
-### Feature iteration and bug-fix verification
+| Level | Trigger | Required evidence | Boundary |
+| --- | --- | --- | --- |
+| **L0 — documentation and static policy** | Every change; documentation-only changes may stop here | Authority/status/link consistency, public-source and prohibited-artifact policy when affected, plus `git diff --check` | Does not prove compiled or runtime behavior |
+| **L1 — unit and helper** | Pure Rust, ArkTS, Web, parser, state-machine or PowerShell helper logic changes | Direct owner tests, newly exposed negative/recovery cases and the smallest related helper suite | Does not prove cross-language, package or device integration |
+| **L2 — subsystem integration** | A change crosses Bridge/native/fixture/storage/build/package boundaries | Affected fixture/integration/workflow tests and, when the compiled boundary changes, the smallest applicable ARM64 build | Does not prove focus, keyboard, window or other physical behavior |
+| **L3 — named physical scenario** | The changed result is visible only on a HarmonyOS PC or depends on real keyboard, clipboard, window, ArkWeb, lifecycle, filesystem service or SSH interoperability | Only the named physical scenario(s) that exercise the changed chain, plus their required setup/cleanup and a small main-path smoke | Is diagnostic/change-scoped evidence unless run against a formal retained candidate in acceptance mode |
+| **L4 — formal release gate** | Only while preparing a new formal version for release | Full software gate, exact clean ARM64 candidate, complete applicable physical matrix, production/review identity, signing and release checks | The only level that may claim complete release acceptance |
 
-Every routine code change MUST use this sequence:
+Risk increases the depth of the affected-chain evidence, not the breadth of
+unrelated regression. A small host-trust or terminal-byte change can require
+strong L1–L3 negative and recovery coverage; it still does not authorize the L4
+matrix during ordinary development.
 
-1. Before implementation, map the affected event chains to the
-   [change-to-evidence matrix](#change-to-evidence-matrix). Add or update tests
-   for every newly exposed failure mode in those chains.
-2. During and after implementation, run only the unit, helper, fixture, build or
-   physical-PC checks that directly exercise the changed behavior, its relevant
-   negative/recovery paths and its trust boundaries. All Rust formatting,
-   compilation, clippy and tests MUST run in WSL; Windows supplies the OHOS SDK
-   tools but is not a Rust build host.
-3. Also run the smallest stable main-path smoke checks that finish quickly in
-   the current environment. Examples are application startup and, when the
-   change already requires a device/SSH session, one direct connect, basic
-   input/output and clean-close path. Do not expand this smoke into unrelated
-   suites or a complete physical matrix.
-4. Before committing, run `git diff --check` and record the focused commands,
-   concise results and any evidence paths. A failed or interrupted required
+### Change-scoped feature and bug-fix verification
+
+Before implementation, identify this event chain:
+
+```text
+user or external input
+→ parser/UI entry
+→ owning state model
+→ Bridge/native/platform/server boundary
+→ observable result
+→ failure, cancellation, recovery and cleanup
+```
+
+Then use this sequence:
+
+1. Map every changed owner and crossed boundary to the
+   [change-to-evidence matrix](#change-to-evidence-matrix). Add or update a test
+   for each newly exposed failure mode before or with the fix.
+2. Run the affected L0–L3 checks only. Include positive behavior and the
+   applicable failure, cancellation, recovery, stale-event, security and cleanup
+   paths; omit unrelated feature suites.
+3. Run the smallest stable main-path smoke that is already available in the
+   selected environment. If the change requires a device or SSH session, this
+   may include launch, one direct connection, basic input/output and clean close;
+   it MUST NOT grow into a complete physical matrix.
+4. Before committing, run `git diff --check` and record the selected commands,
+   concise results and evidence paths. A failed, skipped or interrupted required
    check is not a pass.
 
-Routine iteration and bug-fix verification MUST NOT run
-`tools/test-regression.ps1`, `tools/verify-pc.ps1` or every named physical-PC
-scenario merely because they are available. A high-risk or device-visible
-change still requires its directly affected physical scenario; risk expands the
-depth of the affected-chain test, not the breadth of unrelated regression.
+All Rust formatting, compilation, clippy and tests run in WSL. Windows supplies
+the OHOS SDK tools but is not a Rust build host.
 
-Documentation-only changes MAY stop after their mapped documentation gate.
+Routine feature work and bug fixes MUST NOT run `tools/test-regression.ps1`,
+`tools/verify-pc.ps1` or every named `verify-*-pc.ps1` scenario. Documentation-
+only changes MAY stop at L0. Dependency or architecture changes run the tests
+owned by the affected dependency or boundary; they do not become L4 until a
+formal release is being prepared.
+
+### Feature completion record
+
+A feature or fix is complete for routine development only when its design,
+commit or PR record states:
+
+- the affected event chain and trust boundaries;
+- the selected L0–L3 checks and why each is required;
+- the relevant tests intentionally not run, especially the deferred L4 gate;
+- the exact commands, results and retained evidence paths; and
+- any boundary that can be verified only during formal release acceptance.
+
+“All tests passed” without the selected scope is not an acceptable result. A
+build, install, launch, screenshot or single successful connection MUST NOT be
+described as feature acceptance unless it is the actual mapped postcondition.
 
 ### Formal release-package verification
 
-Only when preparing a formal release package MUST the maintainer:
+Only when preparing a formal new version MUST the maintainer enter L4:
 
-1. run `tools/test-regression.ps1` and `tools/verify-pc.ps1` from an exact clean
-   committed identity;
-2. retain the clean signed ARM64 candidate and run the complete applicable
-   `verify-*-pc.ps1` release matrix against that unchanged HAP;
-3. run the release/signing checks required by
+1. freeze an exact clean committed source identity;
+2. run `tools/test-regression.ps1` and `tools/verify-pc.ps1`;
+3. retain the exact signed ARM64 candidate and run every applicable named
+   `verify-*-pc.ps1` acceptance scenario against that unchanged HAP;
+4. run the production/review, signing and publication checks required by
    [`release-process.md`](release-process.md); and
-4. report the candidate SHA-256, verification mode, commands, results and
-   evidence paths. Required remote checks MUST pass.
+5. report the candidate SHA-256, harness identity, commands, results, evidence
+   paths and cleanup outcome. Required remote checks MUST pass.
 
-A full test run before a formal package is built does not waive this release
-gate. Administrative bypasses are not acceptance evidence.
+An earlier development full run, a set of diagnostics or an administrative
+bypass never waives this release gate.
 
 ## Quality model
 
@@ -141,41 +180,112 @@ records JSON evidence and never rebuilds the HAP.
 Public CI independently repeats the public subset. Neither CI nor a clean HAP
 automatically proves a physical scenario.
 
-## Execution and rerun policy
+## Formal checkpoints and rerun policy
 
-Evidence uses three execution levels inside the two policy tiers:
+Full release testing is checkpointed work, not one indivisible terminal command.
+A failure response is determined by evidence identity and affected state, not by
+how expensive the previous run was.
 
-1. **Change-scoped verification:** affected unit/helper/fixture checks, the
-   smallest quick main-path smoke and, when needed, one affected physical
-   scenario. It MAY use `runMode=diagnostic` and MUST NOT promote release
-   candidate evidence.
-2. **Formal release candidate:** one full software gate and clean signed ARM64
-   build when a formal package is being prepared. This creates the HAP SHA-256
-   used by all release physical evidence.
-3. **Formal release acceptance:** the complete applicable physical matrix
-   against that exact HAP, followed by required remote checks and an independent
-   cleanup audit. Only this level may claim complete release acceptance.
+### Formal checkpoints
 
-After one harness failure, inspect its screenshot, layout, live status and
-failure domain. During routine work, continue only with the affected diagnostic
-stage. During formal release verification, after the same boundary fails twice,
-stop rerunning the complete matrix and reduce to the named diagnostic stage
-until the harness precondition is proved. A passing diagnostic never removes
-the release requirement for one final complete matrix.
+| Checkpoint | Required output | Reusable when |
+| --- | --- | --- |
+| **C0 — release source** | Clean committed commit/tree, finalized version and packaged resources; the same identity must be pushed before production/review release work | The exact source identity remains unchanged |
+| **C1 — software gate** | Passing `test-regression.ps1` evidence bound to C0 | No source, dependency, workflow or required-toolchain input changed |
+| **C2 — retained candidate** | Passing `verify-pc.ps1`, signed ARM64 HAP SHA-256 and manifest | C0/C1 remain valid and the candidate file/hash is unchanged |
+| **C3 — physical stage** | Named acceptance result, candidate/harness identity, attempt identity and successful cleanup | The stage is independent, all identities still match and no shared state was contaminated |
+| **C4 — production/review artifacts** | Matching source/tree/version/ABI/native identity, signatures, hashes and artifact roles | No release input or artifact bytes changed |
 
-Each physical stage declares its own conservative fixture budget; the fixture
-lifetime is the sum of selected stages plus setup/cleanup margin, not a uniform
-per-stage estimate. The invoking terminal/agent timeout MUST exceed that
-published lifetime plus cleanup margin. A client-side pipe timeout or `EPIPE` is an
-interrupted run, not a product result; inspect `live-status.json`, let bounded
-cleanup finish when possible, then rerun only the affected diagnostic stage.
+“Complete applicable physical matrix” means every required C3 stage has a valid
+Pass for one C2 candidate and a compatible clean harness. It does not require
+one uninterrupted wall-clock process. It does require explicit checkpoint
+evidence; operator memory, console scrollback or a diagnostic result cannot be
+combined into release acceptance.
 
-Candidate source identity and harness source identity are separate. Reuse is
+Checkpoint reuse is allowed only when the owning script/evidence format can
+record and validate it. Until a scenario supports acceptance-mode resume, rerun
+the smallest enclosing acceptance script rather than manually promoting an
+`-Only`/`runMode=diagnostic` result.
+
+### What “restart from the beginning” means
+
+Use these four scopes explicitly in reports and decisions:
+
+1. **R1 — rerun the current stage:** restore that stage's declared initial state
+   and execute only the failed named stage.
+2. **R2 — continue from the failed checkpoint:** rerun the failed stage, retain
+   earlier independent C3 passes, then execute only the remaining stages.
+3. **R3 — rerun the full physical matrix on the same candidate:** retain C0–C2,
+   invalidate all C3 results and rerun every applicable physical scenario.
+4. **R4 — create a new candidate and restart the formal gate:** invalidate C1–C4,
+   freeze the corrected source, rerun the software gate, build a new candidate
+   and execute the complete physical and release gates.
+
+Do not use the ambiguous instruction “rerun everything” without naming R1–R4.
+
+### Evidence reuse prerequisites
+
+R1 or R2 is permitted only when all of these are true:
+
+- release commit/tree and candidate HAP SHA-256 are unchanged;
+- the clean harness is identical or differs only through the scenario's explicit
+  compatible harness/document allowlist;
+- the failure domain is known and does not invalidate earlier observations;
+- the failed stage can restore and verify its initial state;
+- run-scoped accounts, keys, files, port mappings, sessions and application
+  state were removed or restored; and
+- earlier stages do not depend on state mutated by the failed stage.
+
+If any prerequisite is unknown, do not guess. Escalate to R3; if product or
+candidate identity changed, escalate to R4.
+
+### Failure-to-rerun decision table
+
+| Failure or change | Required response | Scope |
+| --- | --- | --- |
+| Routine L0–L3 test exposes a product defect | Fix the product and rerun the affected development tests; do not start L4 merely because a test failed | Change-scoped only |
+| Formal product assertion fails and product code/resources/dependencies must change | Stop acceptance, discard the old candidate and verify the corrected source | **R4** |
+| Harness defect is local to one named stage and earlier evidence did not use the faulty path | Commit the harness fix, prove it with a diagnostic, then rerun that stage in acceptance mode and continue | **R1/R2** |
+| Harness defect affects shared input, layout, logging, fixture, cleanup or verdict logic used across physical scenarios | Keep the unchanged candidate only if compatibility is proven; invalidate prior physical verdicts | **R3** |
+| Environment/infrastructure fails before or during one stage and cleanup is verified | Restore the precondition, rerun that stage and continue from its checkpoint | **R1/R2** |
+| A consequential action was sent but its result is unknown | Never resend blindly; reset and verify the stage state, then rerun the stage | **R1**, or **R3** if reset/cleanup cannot be proven |
+| Cleanup failed, shared state may remain, or evidence cannot identify what executed | Independently remove/verify state and invalidate all possibly affected physical evidence | **R3** by default; **R4** if candidate identity is also uncertain |
+| Device reboot, OS update, application-data reset, test-device trust/permission change, or controlled server reset changes a matrix-wide precondition | Keep the same verified HAP only when its hash remains exact, then renew all physical evidence | **R3** |
+| Source, dependency, lockfile, packaged resource, version, manifest, native library, HAP bytes or candidate hash changes | Build and verify a new formal candidate | **R4** |
+| C1 software gate fails before a candidate exists | Diagnose with the smallest failing check, fix it, then rerun the complete C1 gate from a clean identity | Restart **C1**; no C3 work exists to repeat |
+| Production/review build or signing fails for an external configuration reason while source/native identity and successful counterpart artifacts remain exact | Repair the external input and retry the failed build/checkpoint using the reuse options in `release-process.md` | Retry **C4**, not product tests |
+| Evidence copy, report generation, GitHub upload or AppGallery network transfer fails while immutable artifacts and hashes remain intact | Retry only the failed external operation | No test rerun |
+| AppGallery rejects a version after its GitHub Release was published | Preserve the immutable release, advance the version and follow the complete new release process | New version, **R4** |
+
+### Failure handling procedure
+
+At the first failure:
+
+1. stop the enclosing matrix before executing unrelated later stages;
+2. capture the stage, candidate/harness/attempt identities, failure domain,
+   live status, relevant layout/screenshot/log evidence and cleanup result;
+3. choose the smallest diagnostic that distinguishes product, harness,
+   environment, infrastructure and unknown-outcome hypotheses;
+4. do not repeat the same full matrix while the failing precondition is still
+   unproved; and
+5. after correction, apply the table above and record R1–R4 explicitly.
+
+Repeated diagnostics are useful only when each run tests a different hypothesis
+or establishes a missing precondition. A passing diagnostic never becomes
+release acceptance by itself.
+
+Each physical stage declares a conservative fixture budget. Fixture lifetime is
+the sum of selected stages plus setup/cleanup margin, and the invoking terminal
+or agent timeout MUST exceed that published lifetime plus cleanup margin. A
+client-side pipe timeout or `EPIPE` is an interrupted run, not a product result;
+inspect `live-status.json`, allow bounded cleanup to finish when possible and
+apply the same R1–R4 rules.
+
+Candidate source and harness identities are separate. Candidate reuse is
 allowed only when the candidate commit is an ancestor of the clean harness and
 every intervening path is on the scenario's explicit harness/document allowlist.
-Any ArkTS, Rust, packaged resource, dependency, build input or other product
-path change invalidates release-candidate reuse and requires a new formal
-release candidate.
+Any ArkTS, Rust, Web/package resource, dependency or build-input change requires
+R4.
 
 ## Candidate and evidence states
 
@@ -289,29 +399,33 @@ rendered digits and diverge from the native buffer.
   condition invalidated interaction while the device and tools remained usable.
 - **Infrastructure failure:** the device, server, SDK, signing or transport
   could not establish the required precondition.
+- **Unknown outcome:** a consequential action may have executed but its required
+  acknowledgement or postcondition could not be observed; blind retry is unsafe.
 - **Invalid/interrupted:** the candidate changed, evidence identity is missing,
   cleanup makes the result ambiguous, or the run stopped early.
 
 Only **Pass** counts as acceptance. Infrastructure failures must be repaired and
 rerun; they must not be relabeled as product passes or product regressions.
+Unknown outcomes require a verified state reset before R1, otherwise R3.
 
 ## Change-to-evidence matrix
 
-| Change area | Minimum additional evidence |
-| --- | --- |
-| Parser/help/config semantics | Parser tests, help/reference update, supported/unsupported cases and no side effect before validation |
-| SSH host-key/auth/session lifecycle | Controlled server, positive and negative protocol cases, cancellation/stale event cases, ARM64 build and physical keyboard/session validation |
-| Terminal bytes/xterm/Bridge | Raw-byte and malformed-message tests, flow-control/snapshot regression, large TUI output and physical renderer interaction |
-| Tab/Pane/focus/shortcuts | Ownership tests plus physical keyboard, system/IME conflict, selection and cross-Tab isolation |
-| Clipboard or URL effects | Policy tests for allowed/denied payloads plus physical system-service behavior and privacy/security review |
-| Persistent assets/migration | Format and failure-injection tests, atomic commit/delete/recovery, ordinary uninstall/reinstall, lock/reboot and different-signature physical matrix |
-| Window/theme/font/lifecycle | ArkTS policy tests, clean build and physical minimize/background/restore/restart behavior |
-| Dependency upgrade | Lockfile/license/source checks plus all behavior owned by that dependency; xterm/russh updates require their terminal/SSH regression areas |
-| Release or signing workflow | Script regression, clean detached checkout, version alignment, signed manifest/hash verification and candidate continuity |
-| Documentation-only | Link/reference, status/authority, TODO uniqueness, wording consistency and `git diff --check`; no build unless the document changes generated/package behavior |
+| Change area | Routine minimum level | Minimum additional evidence |
+| --- | --- | --- |
+| Parser/help/config semantics | L0–L1 | Parser tests, help/reference update, supported/unsupported cases and no side effect before validation |
+| SSH host-key/auth/session lifecycle | L0–L3 | Controlled server, positive and negative protocol cases, cancellation/stale event cases, affected ARM64 boundary and named physical keyboard/session scenario |
+| Terminal bytes/xterm/Bridge | L0–L3 | Raw-byte and malformed-message tests, flow-control/snapshot regression, large TUI output and affected physical renderer interaction |
+| Tab/Pane/focus/shortcuts | L0–L3 | Ownership tests plus named physical keyboard, system/IME conflict, selection or cross-Tab scenario affected by the change |
+| Clipboard or URL effects | L0–L3 | Policy tests for allowed/denied payloads plus affected physical system-service behavior and privacy/security review |
+| Persistent assets/migration | L0–L3 | Format and failure-injection tests, atomic commit/delete/recovery and only the affected uninstall/reinstall, lock/reboot or different-signature physical scenario |
+| Window/theme/font/lifecycle | L0–L3 | ArkTS policy tests, affected build boundary and named physical minimize/background/restore/restart behavior |
+| Dependency upgrade | L0–L2, plus L3 when device behavior is owned | Lockfile/license/source checks plus all behavior owned by that dependency; xterm/russh updates require their affected terminal/SSH areas |
+| Release or signing workflow | L0–L2 during development; L4 only for a release | Script regression, clean detached-checkout preflight, version alignment and the affected manifest/hash/candidate-continuity rules |
+| Documentation-only | L0 | Link/reference, status/authority, TODO uniqueness, wording consistency and `git diff --check`; no build unless the document changes generated/package behavior |
 
-Risk raises the gate. A tiny code diff in host trust, authentication, terminal
-bytes, persistence or release identity remains high risk.
+Risk raises the depth of the mapped L0–L3 evidence. A tiny code diff in host
+trust, authentication, terminal bytes, persistence or release identity remains
+high risk, but routine risk alone does not authorize L4.
 
 ## Permanent automated regression areas
 
