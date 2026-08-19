@@ -573,6 +573,8 @@ foreach ($scriptName in @(
             $content.Contains("process identity was unavailable while `$Action") -and
             $content.Contains('Focus-ActiveCommandInput') -and
             $content.Contains('Invoke-LeanTTYDeviceClick') -and
+            $content.Contains('if ($focusedInputs.Count -eq 1)') -and
+            $content.Contains('return $focusedInputs[0]') -and
             $content.Contains('businessOutcomeRequired = $true') -and
             $content.Contains('fixedDelayUsedAsVerdict = $false')
         ) 'SSH authentication scenario does not enforce the layout/log secret boundary'
