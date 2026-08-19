@@ -211,6 +211,12 @@ Assert-True (
 $deviceRegressionText = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'device-regression.ps1'
 ) -Raw
+$authFixtureLauncherText = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'start-ssh-auth-fixture.ps1'
+) -Raw
+Assert-True (
+    $authFixtureLauncherText.Contains('[ValidateRange(1, 7200)]')
+) 'SSH authentication fixture does not allow the bounded full acceptance budget'
 Assert-True (
     $deviceRegressionText -notmatch 'hilog\s+-x[^\r\n]*\s-z\s'
 ) 'Device log query combines mutually exclusive hilog exit and tail modes'
