@@ -118,6 +118,7 @@ if (-not $DiagnosticHap) {
             'tools/verify-ssh-auth-pc.ps1',
             'tools/verify-terminal-search-pc.ps1',
             'tools/device-regression.ps1',
+            'tools/start-ssh-auth-fixture.ps1',
             'tools/test-device-regression.ps1',
             'tools/candidate-store.ps1',
             'tools/package-policy.ps1',
