@@ -3,8 +3,8 @@
   Verify interactive SSH authentication on a HarmonyOS PC test package.
 .DESCRIPTION
   Starts the repository-only SSH fixture with temporary credentials, maps one
-  device loopback port to it, drives LeanTTY through raw keyboard events, and
-  records non-secret behavior evidence. By default, the retained HAP is
+  device loopback port to it, drives LeanTTY through HarmonyOS platform input,
+  and records non-secret behavior evidence. By default, the retained HAP is
   installed without rebuilding. -DiagnosticHap permits an explicit current
   test package without promoting its evidence to a retained release candidate.
   -VerifyPreferencesUnchanged compares an in-memory SHA-256 before and after
@@ -447,15 +447,14 @@ function Wait-FixtureLogMatchCount {
     throw "Timed out waiting for a new SSH fixture event: $Pattern"
 }
 
-function Invoke-SecretKeyEventText {
+function Invoke-TemporaryFixtureAuthText {
     param([Parameter(Mandatory = $true)][string]$Value)
     if ($Value -notmatch '^[a-z0-9]+$') {
-        throw '[harness] Generated authentication secret is outside the numeric key-event alphabet'
+        throw '[harness] Generated authentication test value is outside the safe UI text alphabet'
     }
-    foreach ($character in $Value.ToCharArray()) {
-        $ascii = [int]$character
-        $keyCode = if ($ascii -ge 97) { 2017 + $ascii - 97 } else { 2000 + $ascii - 48 }
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode $keyCode
+    & $hdc -t $Target shell uitest uiInput text $Value | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw '[environment] HarmonyOS UI text input rejected a temporary fixture authentication value'
     }
 }
 
@@ -466,7 +465,7 @@ function Submit-AuthValue {
     )
     Focus-ActiveCommandInput -LayoutName ($LayoutName + '.focus.json')
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-SecretKeyEventText -Value $Value
+    Invoke-TemporaryFixtureAuthText -Value $Value
     Assert-NoSecretExposure -LayoutName $LayoutName
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     Wait-AuthLog -Pattern 'ACCEPTANCE_INPUT_SUBMIT' -TimeoutSeconds 10
@@ -1164,6 +1163,7 @@ function Write-AuthEvidence {
             endpoint = "127.0.0.1:$FixturePort"
             transport = 'hdc-reverse-to-repository-only-russh-server'
             credentials = 'runtime-generated-temporary-values'
+            credentialClassification = 'repository-only-test-values-not-user-or-production-credentials'
             runSeconds = $fixtureRunSeconds
             selectedStageBudgetsSeconds = @($selectedStageNames | ForEach-Object {
                 [ordered]@{
@@ -1178,8 +1178,8 @@ function Write-AuthEvidence {
             failure = $awakeLeaseFailure
         }
         input = [ordered]@{
-            method = 'raw-physical-and-harmony-uitest-key-events'
-            secretInjection = 'harmony-uitest-keyevent-runtime-generated-lowercase-alphanumeric-per-character'
+            method = 'raw-physical-and-harmony-uitest-text'
+            secretInjection = 'harmony-uitest-complete-text-runtime-generated-temporary-fixture-values'
             textCommandCharacters = 'complete-value'
             deviceProgramIntervalMilliseconds = 500
             submitTelemetry = 'compile-time-acceptance-marker-with-sequence-and-kind-only'
@@ -1720,7 +1720,7 @@ try {
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-cancel-auth-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-SecretKeyEventText -Value $credentials.second_token
+    Invoke-TemporaryFixtureAuthText -Value $credentials.second_token
     Assert-NoSecretExposure -LayoutName 'layout-cancel-auth-hidden-token.json'
     Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
     Assert-NoSecretExposure -LayoutName 'layout-cancel-auth-cleared.json'
@@ -1743,7 +1743,7 @@ try {
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-close-auth-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-SecretKeyEventText -Value $credentials.second_token
+    Invoke-TemporaryFixtureAuthText -Value $credentials.second_token
     Assert-NoSecretExposure -LayoutName 'layout-close-auth-hidden-token.json'
     Invoke-ActivePaneCloseButton -LayoutName 'layout-close-auth-button.json'
     Invoke-ClosePaneDialog -LayoutName 'layout-close-auth-dialog.json'
@@ -1820,7 +1820,7 @@ try {
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-minimize-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
-    Invoke-SecretKeyEventText -Value $credentials.second_token
+    Invoke-TemporaryFixtureAuthText -Value $credentials.second_token
     Assert-NoSecretExposure -LayoutName 'layout-minimize-hidden-token.json'
     Minimize-RegressionWindow
     Restore-RegressionWindow
@@ -1839,7 +1839,7 @@ try {
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-cancel-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
-    Invoke-SecretKeyEventText -Value $credentials.second_token
+    Invoke-TemporaryFixtureAuthText -Value $credentials.second_token
     Assert-NoSecretExposure -LayoutName 'layout-cancel-hidden-token.json'
     Restart-RegressionApp
     Assert-NoSecretExposure -LayoutName 'layout-cancel-restarted.json'
