@@ -104,6 +104,29 @@ impl Credentials {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CredentialMismatchSummary {
+    expected_bytes: usize,
+    received_bytes: usize,
+    overlap_mismatches: usize,
+    length_delta: i64,
+}
+
+fn credential_mismatch_summary(expected: &str, received: &str) -> CredentialMismatchSummary {
+    let expected_bytes = expected.as_bytes();
+    let received_bytes = received.as_bytes();
+    CredentialMismatchSummary {
+        expected_bytes: expected_bytes.len(),
+        received_bytes: received_bytes.len(),
+        overlap_mismatches: expected_bytes
+            .iter()
+            .zip(received_bytes.iter())
+            .filter(|(expected, received)| expected != received)
+            .count(),
+        length_delta: received_bytes.len() as i64 - expected_bytes.len() as i64,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Scenario {
     Password,
     PublicKey,
@@ -297,7 +320,14 @@ impl FixtureServer {
             return Self::reject(&[], false);
         };
         if password != self.credentials.password {
-            eprintln!("auth method=password scenario={scenario:?} result=reject");
+            let mismatch = credential_mismatch_summary(&self.credentials.password, password);
+            eprintln!(
+                "auth method=password scenario={scenario:?} result=reject expected_bytes={} received_bytes={} overlap_mismatches={} length_delta={}",
+                mismatch.expected_bytes,
+                mismatch.received_bytes,
+                mismatch.overlap_mismatches,
+                mismatch.length_delta
+            );
             return Self::reject(&[MethodKind::Password], self.public_key_complete);
         }
 
@@ -1430,6 +1460,21 @@ mod tests {
             }
             _ => panic!("expected rejection"),
         }
+    }
+
+    #[test]
+    fn summarizes_credential_mismatch_without_secret_values() {
+        let substituted = credential_mismatch_summary("abcd", "abxd");
+        assert_eq!(substituted.expected_bytes, 4);
+        assert_eq!(substituted.received_bytes, 4);
+        assert_eq!(substituted.overlap_mismatches, 1);
+        assert_eq!(substituted.length_delta, 0);
+
+        let truncated = credential_mismatch_summary("abcd", "abc");
+        assert_eq!(truncated.expected_bytes, 4);
+        assert_eq!(truncated.received_bytes, 3);
+        assert_eq!(truncated.overlap_mismatches, 0);
+        assert_eq!(truncated.length_delta, -1);
     }
 
     #[test]
