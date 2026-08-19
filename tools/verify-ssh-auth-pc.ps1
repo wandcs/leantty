@@ -1720,7 +1720,7 @@ try {
     if (Test-AuthStageSelected -Name 'unsupported-method-error-and-recovery') {
     Start-AuthStage -Name 'unsupported-method-error-and-recovery'
     Start-AuthCommand -User 'unsupported'
-    Wait-AuthLog -Pattern 'rust event: AUTH:no supported authentication method is available'
+    Wait-AuthLog -Pattern 'rust event: AUTH:target:no supported authentication method is available'
     Assert-NoSecretExposure -LayoutName 'layout-unsupported-method.json'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Start-AuthCommand -User 'password'
