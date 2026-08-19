@@ -9,7 +9,7 @@
 [CmdletBinding()]
 param(
     [string]$ListenAddress = '0.0.0.0:22222',
-    [ValidateRange(1, 3600)]
+    [ValidateRange(1, 7200)]
     [int]$RunSeconds = 900,
     [ValidateRange(0, 5000)]
     [int]$SftpDelayMilliseconds = 0,
