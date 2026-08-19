@@ -456,9 +456,88 @@ function Invoke-TerminalWorkspaceChord {
 
 function Invoke-LocalTerminalCommand {
     param([Parameter(Mandatory = $true)][string]$Command)
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    Start-Sleep -Milliseconds 500
+
+    $submittedPattern =
+        'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $layoutPath = Join-Path $EvidenceDirectory (
+            "layout-local-command-$attempt-" + [Guid]::NewGuid().ToString('N') + '.json'
+        )
+        $layout = Get-LeanTTYDeviceLayout `
+            -Hdc $hdc `
+            -Target $Target `
+            -LocalPath $layoutPath
+        $terminalInputs = @(Get-LeanTTYActiveTerminalInputNodes -Layout $layout)
+        $focusedInputs = @($terminalInputs | Where-Object {
+            [string]$_.attributes.focused -eq 'true'
+        })
+        $inputNode = if ($focusedInputs.Count -eq 1) {
+            $focusedInputs[0]
+        } elseif ($terminalInputs.Count -eq 1) {
+            $terminalInputs[0]
+        } else {
+            $null
+        }
+        if ($null -eq $inputNode) {
+            throw '[environment] Unable to identify the active terminal input before local command submission'
+        }
+        if ([string]$inputNode.attributes.focused -ne 'true') {
+            $layout = Set-LeanTTYTerminalInputFocus `
+                -Hdc $hdc `
+                -Target $Target `
+                -InputNode $inputNode `
+                -LocalPath $layoutPath `
+                -TimeoutSeconds 10
+            $focusedInputs = @(Get-LeanTTYActiveTerminalInputNodes -Layout $layout | Where-Object {
+                [string]$_.attributes.focused -eq 'true'
+            })
+            if ($focusedInputs.Count -ne 1) {
+                throw '[environment] Local command input focus was not unique'
+            }
+            $inputNode = $focusedInputs[0]
+        }
+
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-LeanTTYDeviceText `
+            -Hdc $hdc `
+            -Target $Target `
+            -Text $Command `
+            -InputNode $inputNode
+        $bufferLogs = Wait-SearchAppLog `
+            -Pattern 'ACCEPTANCE_IDLE_RESULT kind=' `
+            -TimeoutSeconds 10
+        $bufferRecords = @([regex]::Matches(
+                $bufferLogs,
+                'ACCEPTANCE_IDLE_RESULT kind=\d+,input=(?<input>[^\r\n]*),' +
+                'completionActive=(?:true|false),menuActive=(?:true|false)'
+            ))
+        $actualBuffer = if ($bufferRecords.Count -gt 0) {
+            $bufferRecords[$bufferRecords.Count - 1].Groups['input'].Value
+        } else {
+            ''
+        }
+        if ($actualBuffer -ceq $Command) {
+            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+            try {
+                Wait-SearchAppLog -Pattern $submittedPattern -TimeoutSeconds 10 | Out-Null
+                Start-Sleep -Milliseconds 500
+                return
+            } catch {
+                throw '[harness] Local command submission outcome is unknown; the scenario must be restarted'
+            }
+        }
+
+        Write-Host (
+            '[terminal-search] RETRY inexact local command buffer ' +
+            "attempt=$attempt expectedLength=$($Command.Length) " +
+            "actualLength=$($actualBuffer.Length) actual=$actualBuffer"
+        ) -ForegroundColor Yellow
+        Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+        Wait-SearchAppLog `
+            -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' `
+            -TimeoutSeconds 10 | Out-Null
+    }
+    throw '[environment] HarmonyOS input could not prepare the exact local command buffer'
 }
 
 function Invoke-LeanTTYLayoutNodeClick {

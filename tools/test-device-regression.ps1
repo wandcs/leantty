@@ -739,6 +739,13 @@ foreach ($scriptName in @(
             $content.Contains("'Acceptance: Rebuild Renderer'") -and
             $content.Contains("'EnhanceMinimizeBtn'") -and
             $content.Contains("Invoke-LocalTerminalCommand -Command 'help'") -and
+            $content.Contains('function Invoke-LocalTerminalCommand') -and
+            $content.Contains('Get-LeanTTYActiveTerminalInputNodes -Layout $layout') -and
+            $content.Contains('-InputNode $inputNode') -and
+            $content.Contains('ACCEPTANCE_IDLE_RESULT kind=') -and
+            $content.Contains('$actualBuffer -ceq $Command') -and
+            $content.Contains('[regex]::Escape($Command)') -and
+            $content.Contains('Local command submission outcome is unknown; the scenario must be restarted') -and
             $content.Contains('rightPaneRejectedLeftScrollbackQuery = $true') -and
             $content.Contains('secondTabRejectedFirstTabScrollbackQuery = $true') -and
             $content.Contains("'pane-scroll-after-focus-switch.png'") -and
