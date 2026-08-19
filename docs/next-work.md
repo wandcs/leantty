@@ -7,8 +7,8 @@
 > 当前 milestone：[`1.4 — 启动性能与 OpenSSH ProxyJump`](roadmap.md)
 >
 > 当前阶段：启动性能、ProxyJump、SSH Session 状态隔离的实现、日常自动化、聚焦物理机验收
-> 与用户文档均已完成；正在从 `release/1.4.0` 封板版本源与用户指南，合入后以精确的
-> `main` 提交准备 1.4 正式候选
+> 与用户文档均已完成；正式候选前先收敛物理机测试通道的确定性、观测成本和失败归因，再从
+> `release/1.4.0` 封板版本源与用户指南
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -63,7 +63,17 @@ ProxyJump 的实现、受控双服务器 fixture、两层信任/认证/失败、
 [`design/terminal-session-state-isolation.md`](design/terminal-session-state-isolation.md)。完成项已从
 本文件删除，不再维护第二份历史 checkbox。
 
-## 1. 正式候选与发布
+## 1. 物理机测试通道稳定性收尾
+
+1. [ ] 将 HDC/UiTest/HiLog/fixture 的前置条件和失败分类收敛为单一入口：普通完整文本使用
+   一次完整 UiTest 文本输入，物理键事件只覆盖快捷键和特殊键；有副作用的输入在结果未知时不得盲目
+   重发。减少重复全量 layout 与 HiLog 拉取，保活时长覆盖所选测试阶段，并在退出时恢复系统
+   设置。设备没电等明确的外部环境中断只报告并停止，不增加自动恢复或产品兼容逻辑。
+2. [ ] 先以本地 helper/harness 回归锁定上述契约；测试机恢复后再通过通道资格检查、聚焦 SSH
+   场景和一次完整适用矩阵，证明文字不重不漏、特殊键语义正确、UI/日志/fixture 观测一致，且
+   通道异常不会被误报为产品失败。只有这些证据闭合后才进入正式候选封板。
+
+## 2. 正式候选与发布
 
 1. [ ] 按 `release-process.md` 在 `release/1.4.0` 封板 Changelog、离线用户指南与全部版本源，
    通过 PR 合入并推送；记录合并后的精确 `main` 提交，后续候选不再修改产品源或随包资源。

@@ -4,7 +4,10 @@ function Resolve-LeanTTYRegressionTarget {
         [string]$Target = ''
     )
 
-    if (-not [string]::IsNullOrWhiteSpace($Target)) { return $Target }
+    if (-not [string]::IsNullOrWhiteSpace($Target)) {
+        Assert-HdcTargetReady -Hdc $Hdc -Target $Target | Out-Null
+        return $Target
+    }
     $readyTargets = @(Get-HdcTargets -Hdc $Hdc | Where-Object {
         $_.transport -match '^(USB|TCP)$' -and $_.status -match '^(Ready|Connected)$'
     })
@@ -21,15 +24,20 @@ function Start-LeanTTYDeviceAwakeLease {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
         [Parameter(Mandatory = $true)][string]$Target,
-        [ValidateRange(60000, 1800000)][int]$TimeoutMilliseconds = 900000
+        [ValidateRange(60000, 28800000)][int]$TimeoutMilliseconds = 1800000
     )
 
-    & $Hdc -t $Target shell 'power-shell wakeup' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to wake the HarmonyOS regression PC' }
-    $output = @(
-        & $Hdc -t $Target shell "power-shell timeout -o $TimeoutMilliseconds" 2>&1
-    ) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Override screen off time') {
+    Invoke-HdcChecked `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('shell', 'power-shell wakeup') `
+        -Operation 'HarmonyOS regression PC wakeup' | Out-Null
+    $output = Invoke-HdcChecked `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('shell', "power-shell timeout -o $TimeoutMilliseconds") `
+        -Operation 'HarmonyOS regression screen-timeout lease'
+    if ($output -notmatch 'Override screen off time') {
         throw 'Unable to acquire the HarmonyOS regression screen-timeout lease'
     }
 }
@@ -40,8 +48,12 @@ function Stop-LeanTTYDeviceAwakeLease {
         [Parameter(Mandatory = $true)][string]$Target
     )
 
-    $output = @(& $Hdc -t $Target shell 'power-shell timeout -r 0' 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Restore screen off time') {
+    $output = Invoke-HdcChecked `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('shell', 'power-shell timeout -r 0') `
+        -Operation 'HarmonyOS regression screen-timeout restore'
+    if ($output -notmatch 'Restore screen off time') {
         throw 'Unable to restore the HarmonyOS regression screen timeout'
     }
 }
@@ -171,6 +183,61 @@ function Get-LeanTTYBoundsCenter {
     }
 }
 
+function Invoke-LeanTTYSerializedUiTest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$Operation
+    )
+
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $targetHash = [Convert]::ToHexString(
+            $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($Target.ToLowerInvariant()))
+        ).Substring(0, 16)
+    } finally {
+        $sha256.Dispose()
+    }
+    $mutex = [Threading.Mutex]::new($false, "Local\LeanTTY.UiTest.$targetHash")
+    $acquired = $false
+    try {
+        try {
+            $acquired = $mutex.WaitOne(60000)
+        } catch [Threading.AbandonedMutexException] {
+            $acquired = $true
+        }
+        if (-not $acquired) {
+            throw '[harness] UiTest control channel remained busy for 60 seconds'
+        }
+        return Invoke-HdcChecked `
+            -Hdc $Hdc `
+            -Target $Target `
+            -Arguments (@('shell', 'uitest') + $Arguments) `
+            -Operation $Operation `
+            -FailureDomain 'environment'
+    } finally {
+        if ($acquired) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
+function Invoke-LeanTTYDeviceClick {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][int]$X,
+        [Parameter(Mandatory = $true)][int]$Y,
+        [string]$Operation = 'HarmonyOS UI click'
+    )
+
+    Invoke-LeanTTYSerializedUiTest `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('uiInput', 'click', $X, $Y) `
+        -Operation $Operation | Out-Null
+}
+
 function Get-LeanTTYDeviceLayout {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
@@ -178,19 +245,33 @@ function Get-LeanTTYDeviceLayout {
         [Parameter(Mandatory = $true)][string]$LocalPath
     )
 
-    $remotePath = '/data/local/tmp/leantty-layout-' + [Guid]::NewGuid().ToString('N') + '.json'
-    try {
-        & $Hdc -t $Target shell uitest dumpLayout -p $remotePath -a -b com.leantty.app | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS UI layout capture failed' }
-        & $Hdc -t $Target file recv $remotePath $LocalPath | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS UI layout transfer failed' }
-        if (-not (Test-Path -LiteralPath $LocalPath -PathType Leaf)) {
-            throw 'HarmonyOS UI layout transfer produced no local file'
+    for ($captureAttempt = 1; $captureAttempt -le 2; $captureAttempt++) {
+        $remotePath = '/data/local/tmp/leantty-layout-' + [Guid]::NewGuid().ToString('N') + '.json'
+        try {
+            Invoke-LeanTTYSerializedUiTest `
+                -Hdc $Hdc `
+                -Target $Target `
+                -Arguments @(
+                    'dumpLayout', '-p', $remotePath, '-a', '-b', 'com.leantty.app'
+                ) `
+                -Operation 'HarmonyOS UI layout capture' | Out-Null
+            Invoke-HdcChecked `
+                -Hdc $Hdc `
+                -Target $Target `
+                -Arguments @('file', 'recv', $remotePath, $LocalPath) `
+                -Operation 'HarmonyOS UI layout transfer' `
+                -FailureDomain 'environment' | Out-Null
+            if (-not (Test-Path -LiteralPath $LocalPath -PathType Leaf)) {
+                throw 'HarmonyOS UI layout transfer produced no local file'
+            }
+            $layout = Get-Content -LiteralPath $LocalPath -Raw | ConvertFrom-Json -Depth 100
+            if (@($layout.children).Count -gt 0) { return $layout }
+        } finally {
+            & $Hdc -t $Target shell rm -f $remotePath 2>$null | Out-Null
         }
-    } finally {
-        & $Hdc -t $Target shell rm -f $remotePath 2>$null | Out-Null
+        if ($captureAttempt -lt 2) { Start-Sleep -Milliseconds 500 }
     }
-    return Get-Content -LiteralPath $LocalPath -Raw | ConvertFrom-Json -Depth 100
+    throw '[environment] HarmonyOS UI layout remained empty after two captures'
 }
 
 function Get-LeanTTYTerminalInputText {
@@ -228,12 +309,10 @@ function Set-LeanTTYTerminalInputFocus {
 
     $inputBounds = [string]$InputNode.attributes.bounds
     $center = Get-LeanTTYBoundsCenter -Bounds $inputBounds
-    & $Hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw '[environment] Unable to focus the LeanTTY terminal input'
-    }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $Hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'LeanTTY terminal input focus'
 
-    $stableFocusedSnapshots = 0
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     do {
         $layout = Get-LeanTTYDeviceLayout `
@@ -245,16 +324,13 @@ function Set-LeanTTYTerminalInputFocus {
             [string]$_.attributes.focused -eq 'true'
         })
         if ($focusedTarget.Count -eq 1) {
-            $stableFocusedSnapshots++
-            if ($stableFocusedSnapshots -ge 2) { return $layout }
-        } else {
-            $stableFocusedSnapshots = 0
+            return $layout
         }
         if ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
             Start-Sleep -Milliseconds 200
         }
     } while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
-    throw '[environment] Timed out waiting for stable LeanTTY terminal input focus'
+    throw '[environment] Timed out waiting for LeanTTY terminal input focus'
 }
 
 function Wait-LeanTTYTerminalInputCount {
@@ -318,82 +394,6 @@ function Assert-LeanTTYLayoutExcludesValues {
     }
 }
 
-function ConvertTo-LeanTTYDeviceTextKeyCommand {
-    param(
-        [Parameter(Mandatory = $true)][string]$Text,
-        [ValidateRange(0, 1000)][int]$IntervalMilliseconds = 0
-    )
-
-    if ($Text -notmatch '^[\x20-\x7E]*$') {
-        throw 'Device regression text must be printable ASCII'
-    }
-    $punctuation = @{
-        32 = @(2050, $false)
-        33 = @(2001, $true)
-        34 = @(2063, $true)
-        35 = @(2003, $true)
-        36 = @(2004, $true)
-        37 = @(2005, $true)
-        38 = @(2007, $true)
-        39 = @(2063, $false)
-        40 = @(2009, $true)
-        41 = @(2000, $true)
-        42 = @(2008, $true)
-        43 = @(2058, $true)
-        44 = @(2043, $false)
-        45 = @(2057, $false)
-        46 = @(2044, $false)
-        47 = @(2064, $false)
-        58 = @(2062, $true)
-        59 = @(2062, $false)
-        60 = @(2043, $true)
-        61 = @(2058, $false)
-        62 = @(2044, $true)
-        63 = @(2064, $true)
-        64 = @(2002, $true)
-        91 = @(2059, $false)
-        92 = @(2061, $false)
-        93 = @(2060, $false)
-        94 = @(2006, $true)
-        95 = @(2057, $true)
-        96 = @(2056, $false)
-        123 = @(2059, $true)
-        124 = @(2061, $true)
-        125 = @(2060, $true)
-        126 = @(2056, $true)
-    }
-    $parts = [Collections.Generic.List[string]]::new()
-    $parts.Add('uinput -K')
-    if ($IntervalMilliseconds -gt 0) {
-        $parts.Add("-i $IntervalMilliseconds")
-    }
-    foreach ($character in $Text.ToCharArray()) {
-        $ascii = [int]$character
-        $keyCode = 0
-        $shift = $false
-        if ($ascii -ge 97 -and $ascii -le 122) {
-            $keyCode = 2017 + $ascii - 97
-        } elseif ($ascii -ge 65 -and $ascii -le 90) {
-            $keyCode = 2017 + $ascii - 65
-            $shift = $true
-        } elseif ($ascii -ge 48 -and $ascii -le 57) {
-            $keyCode = 2000 + $ascii - 48
-        } elseif ($punctuation.ContainsKey($ascii)) {
-            $mapping = $punctuation[$ascii]
-            $keyCode = [int]$mapping[0]
-            $shift = [bool]$mapping[1]
-        } else {
-            throw "Device regression text contains unsupported ASCII code: $ascii"
-        }
-        if ($shift) {
-            $parts.Add("-d 2047 -d $keyCode -u $keyCode -u 2047")
-        } else {
-            $parts.Add("-d $keyCode -u $keyCode")
-        }
-    }
-    return $parts -join ' '
-}
-
 function Invoke-LeanTTYDeviceText {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
@@ -401,23 +401,14 @@ function Invoke-LeanTTYDeviceText {
         [Parameter(Mandatory = $true)][string]$Text
     )
 
-    # The physical regression PC has dropped one key from 16- and 24-character
-    # secure input batches as well as truncating longer commands. Keep each
-    # device-side uinput batch below the smallest observed unreliable size.
-    $chunkLength = 8
-    $postInjectionSettleMilliseconds = 500
-    for ($offset = 0; $offset -lt $Text.Length; $offset += $chunkLength) {
-        $length = [Math]::Min($chunkLength, $Text.Length - $offset)
-        $chunk = $Text.Substring($offset, $length)
-        $shellCommand = ConvertTo-LeanTTYDeviceTextKeyCommand `
-            -Text $chunk `
-            -IntervalMilliseconds 500
-        & $Hdc -t $Target shell $shellCommand 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS raw key text injection failed' }
+    if ($Text -match '[\r\n\x00]') {
+        throw '[harness] HarmonyOS UI text input does not accept command separators'
     }
-    # uinput returns after injecting events, before ArkWeb necessarily consumes
-    # the final key. Do not let the next layout dump or Enter race that event.
-    Start-Sleep -Milliseconds $postInjectionSettleMilliseconds
+    Invoke-LeanTTYSerializedUiTest `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('uiInput', 'text', $Text) `
+        -Operation 'HarmonyOS complete UI text input' | Out-Null
 }
 
 function Invoke-LeanTTYDeviceKey {
@@ -427,8 +418,11 @@ function Invoke-LeanTTYDeviceKey {
         [Parameter(Mandatory = $true)][int]$KeyCode
     )
 
-    & $Hdc -t $Target shell "uitest uiInput keyEvent $KeyCode" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "HarmonyOS key injection failed: $KeyCode" }
+    Invoke-LeanTTYSerializedUiTest `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('uiInput', 'keyEvent', $KeyCode) `
+        -Operation "HarmonyOS key injection $KeyCode" | Out-Null
 }
 
 function Invoke-LeanTTYDeviceCtrlC {
@@ -530,8 +524,11 @@ function Clear-LeanTTYAppLogs {
         [Parameter(Mandatory = $true)][string]$Target
     )
 
-    & $Hdc -t $Target shell 'hilog -r -t app' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to clear HarmonyOS application logs' }
+    Invoke-HdcChecked `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('shell', 'hilog -r -t app') `
+        -Operation 'HarmonyOS application log clear' | Out-Null
 }
 
 function Get-LeanTTYAppLogs {
@@ -541,19 +538,18 @@ function Get-LeanTTYAppLogs {
         [Parameter(Mandatory = $true)][string]$ProcessId
     )
 
-    $output = @(
-        & $Hdc -t $Target shell (
-            "hilog -z 500 -t app -P $ProcessId " +
-            '-T SessionViewModel,KeyCommandService,SshClient,FileTransferClient,EntryAbility,Index,' +
-            'TerminalSurfaceController,TerminalBridge,AppViewModel'
-        ) 2>&1
-    )
-    $exitCode = $LASTEXITCODE
-    $logs = $output -join "`n"
-    if ($exitCode -ne 0 -or $logs -match 'Mutlti commands can''t be used') {
-        throw 'HarmonyOS application log query failed'
-    }
-    return $logs
+    return Invoke-HdcChecked `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @(
+            'shell',
+            (
+                "hilog -z 500 -t app -P $ProcessId " +
+                '-T SessionViewModel,KeyCommandService,SshClient,FileTransferClient,EntryAbility,Index,' +
+                'TerminalSurfaceController,TerminalBridge,AppViewModel'
+            )
+        ) `
+        -Operation 'HarmonyOS application log query'
 }
 
 function Wait-LeanTTYAppLog {
@@ -569,7 +565,7 @@ function Wait-LeanTTYAppLog {
     while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
         $logs = Get-LeanTTYAppLogs -Hdc $Hdc -Target $Target -ProcessId $ProcessId
         if ($logs -match $Pattern) { return $logs }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 1000
     }
     throw "Timed out waiting for LeanTTY device state: $Pattern"
 }
@@ -645,8 +641,9 @@ function Invoke-LeanTTYDialogButton {
     } | Select-Object -First 1)
     if ($buttonNode.Count -ne 1) { throw "Dialog button was not found: $ButtonText" }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$buttonNode[0].attributes.bounds)
-    & $Hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Dialog button click failed: $ButtonText" }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $Hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation "LeanTTY dialog button '$ButtonText'"
 }
 
 function Save-LeanTTYDeviceScreenshot {
@@ -658,10 +655,15 @@ function Save-LeanTTYDeviceScreenshot {
 
     $remotePath = '/data/local/tmp/leantty-screen-' + [Guid]::NewGuid().ToString('N') + '.png'
     try {
-        & $Hdc -t $Target shell uitest screenCap -p $remotePath | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS screenshot capture failed' }
-        & $Hdc -t $Target file recv $remotePath $LocalPath | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS screenshot transfer failed' }
+        Invoke-LeanTTYSerializedUiTest `
+            -Hdc $Hdc -Target $Target `
+            -Arguments @('screenCap', '-p', $remotePath) `
+            -Operation 'HarmonyOS screenshot capture' | Out-Null
+        Invoke-HdcChecked `
+            -Hdc $Hdc -Target $Target `
+            -Arguments @('file', 'recv', $remotePath, $LocalPath) `
+            -Operation 'HarmonyOS screenshot transfer' `
+            -FailureDomain 'environment' | Out-Null
         if (-not (Test-Path -LiteralPath $LocalPath -PathType Leaf)) {
             throw 'HarmonyOS screenshot transfer produced no local file'
         }

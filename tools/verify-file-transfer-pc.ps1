@@ -73,8 +73,9 @@ if ($moreButton.Count -ne 1) { throw 'LeanTTY four-dot menu button was not found
 $moreCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$moreButton[0].attributes.bounds)
 
 Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-& $hdc -t $Target shell "uitest uiInput click $($moreCenter.x) $($moreCenter.y)" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'LeanTTY four-dot menu could not be opened' }
+Invoke-LeanTTYDeviceClick `
+    -Hdc $hdc -Target $Target -X $moreCenter.x -Y $moreCenter.y `
+    -Operation 'LeanTTY four-dot menu open'
 Start-Sleep -Milliseconds 300
 
 $menuLayoutPath = Join-Path $EvidenceDirectory 'layout-menu.json'
@@ -88,8 +89,9 @@ if ($probeNode.Count -ne 1) {
     throw 'The debug package does not expose the bounded Downloads no-replace action'
 }
 $probeCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$probeNode[0].attributes.bounds)
-& $hdc -t $Target shell "uitest uiInput click $($probeCenter.x) $($probeCenter.y)" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'The Downloads no-replace action could not be triggered' }
+Invoke-LeanTTYDeviceClick `
+    -Hdc $hdc -Target $Target -X $probeCenter.x -Y $probeCenter.y `
+    -Operation 'Downloads no-replace action'
 
 $pattern = 'ACCEPTANCE_DOWNLOADS_NOREPLACE passed=true'
 $stopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -101,12 +103,13 @@ do {
     if ($logs -match 'ACCEPTANCE_DOWNLOADS_NOREPLACE passed=false') {
         throw 'The Downloads no-replace probe reported failure'
     }
-    Start-Sleep -Milliseconds 200
+    Start-Sleep -Milliseconds 1000
 } while ($stopwatch.Elapsed.TotalSeconds -lt 10)
 if ($matchingLine.Count -ne 1) { throw 'Timed out waiting for the Downloads no-replace result' }
 
-& $hdc -t $Target shell "uitest uiInput click $($moreCenter.x) $($moreCenter.y)" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'LeanTTY four-dot menu could not be reopened' }
+Invoke-LeanTTYDeviceClick `
+    -Hdc $hdc -Target $Target -X $moreCenter.x -Y $moreCenter.y `
+    -Operation 'LeanTTY four-dot menu reopen'
 Start-Sleep -Milliseconds 300
 $fdMenuLayoutPath = Join-Path $EvidenceDirectory 'layout-fd-menu.json'
 $fdMenuLayout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $fdMenuLayoutPath
@@ -119,8 +122,9 @@ if ($fdProbeNode.Count -ne 1) {
     throw 'The debug package does not expose the bounded Downloads FD action'
 }
 $fdProbeCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$fdProbeNode[0].attributes.bounds)
-& $hdc -t $Target shell "uitest uiInput click $($fdProbeCenter.x) $($fdProbeCenter.y)" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'The Downloads FD action could not be triggered' }
+Invoke-LeanTTYDeviceClick `
+    -Hdc $hdc -Target $Target -X $fdProbeCenter.x -Y $fdProbeCenter.y `
+    -Operation 'Downloads FD action'
 
 $fdPattern = 'ACCEPTANCE_DOWNLOADS_FD passed=true'
 $fdStopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -132,12 +136,13 @@ do {
     if ($logs -match 'ACCEPTANCE_DOWNLOADS_FD passed=false') {
         throw 'The Downloads FD probe reported failure'
     }
-    Start-Sleep -Milliseconds 200
+    Start-Sleep -Milliseconds 1000
 } while ($fdStopwatch.Elapsed.TotalSeconds -lt 10)
 if ($fdMatchingLine.Count -ne 1) { throw 'Timed out waiting for the Downloads FD result' }
 
-& $hdc -t $Target shell "uitest uiInput click $($moreCenter.x) $($moreCenter.y)" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'LeanTTY four-dot menu could not be reopened for the manager probe' }
+Invoke-LeanTTYDeviceClick `
+    -Hdc $hdc -Target $Target -X $moreCenter.x -Y $moreCenter.y `
+    -Operation 'LeanTTY four-dot menu manager probe'
 Start-Sleep -Milliseconds 300
 $managerMenuLayoutPath = Join-Path $EvidenceDirectory 'layout-manager-menu.json'
 $managerMenuLayout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $managerMenuLayoutPath
@@ -150,8 +155,9 @@ if ($managerProbeNode.Count -ne 1) {
     throw 'The debug package does not expose the production Downloads manager boundary action'
 }
 $managerProbeCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$managerProbeNode[0].attributes.bounds)
-& $hdc -t $Target shell "uitest uiInput click $($managerProbeCenter.x) $($managerProbeCenter.y)" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'The Downloads manager boundary action could not be triggered' }
+Invoke-LeanTTYDeviceClick `
+    -Hdc $hdc -Target $Target -X $managerProbeCenter.x -Y $managerProbeCenter.y `
+    -Operation 'Downloads manager boundary action'
 
 $managerPattern = 'ACCEPTANCE_DOWNLOADS_MANAGER passed=true'
 $managerStopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -163,7 +169,7 @@ do {
     if ($logs -match 'ACCEPTANCE_DOWNLOADS_MANAGER passed=false') {
         throw 'The production Downloads manager boundary probe reported failure'
     }
-    Start-Sleep -Milliseconds 200
+    Start-Sleep -Milliseconds 1000
 } while ($managerStopwatch.Elapsed.TotalSeconds -lt 300)
 if ($managerMatchingLine.Count -ne 1) { throw 'Timed out waiting for the Downloads manager boundary result' }
 

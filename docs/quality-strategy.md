@@ -214,18 +214,24 @@ Every automated physical scenario MUST:
 - install an exact retained candidate and record its SHA-256 before interaction;
 - acquire a bounded screen-timeout override before launch and restore the prior
   device policy in `finally`, so unattended execution cannot silently relock;
+  its duration MUST cover the sum of selected stage budgets plus setup/cleanup
+  margin rather than use a shorter fixed default;
 - when HarmonyOS explicitly reports a locked screen, unlock only the dedicated
   test PC from a current-user plaintext credential stored outside the repository;
   inject numeric physical-key events without putting plaintext in commands,
   logs or evidence, and never type a credential on an already unlocked device;
 - preflight every control and observation channel, including application PID,
-  structured logs, layout capture and focused terminal input, before creating
-  disposable device state;
+  structured logs, layout capture, focused terminal input and any HDC reverse
+  mapping, before creating disposable device state; repeat the cheap target and
+  mapping checks at stage boundaries. An `Offline`/missing target is an
+  infrastructure stop, not authorization to restart HDC or repair the device;
 - locate UI controls from current layout semantics and native bounds, not stale
   screenshots or Windows-scaled coordinates;
-- inject terminal commands as deterministic numeric physical-key events, cover
-  the complete printable-ASCII mapping, and require the command's structured
-  result or actual side effect before proceeding;
+- inject ordinary terminal text as one complete serialized UiTest text operation;
+  reserve numeric physical-key events for shortcuts, modifiers and special-key
+  semantics. Layout, click, text, key and screenshot operations MUST share one
+  device-scoped UiTest mutex because the platform interface is not concurrent;
+  require the command's structured result or actual side effect before proceeding;
 - activate the application, locate the current active terminal input and prove
   focus immediately before each command or hidden response; a system
   notification, dialog or foreground-window change invalidates that input
@@ -233,7 +239,13 @@ Every automated physical scenario MUST:
 - generate disposable names and secrets at runtime, keep secret input non-echoing
   and scan captured layouts/logs for disclosure;
 - wait on observable state or a non-secret structured log marker; fixed sleeps
-  MAY pace polling but MUST NOT decide success;
+  MAY pace polling but MUST NOT decide success. Full layout dumps and bounded
+  HiLog snapshots are diagnostic observations: do not repeat them faster than
+  their platform cost or request them when a cheaper stage postcondition exists;
+- when a consequential input has been sent but its acknowledgement is missing,
+  classify the outcome as unknown and restart that isolated scenario from a
+  known state. Never blindly resend a command, secret, confirmation or fixture
+  mutation that may already have taken effect;
 - never treat the count of repeated hilog lines as lossless keyboard delivery.
   Acceptance-only input telemetry may confirm one submitted input event with a
   monotonic sequence and non-secret kind, but the stage verdict MUST still use
@@ -258,11 +270,12 @@ transition: action, expected dialog, confirmation action and observable
 postcondition. Clicking a close/delete control without handling and verifying
 its confirmation state is incomplete automation.
 
-Physical keyboard injection MAY be used only when the script verifies the
-focused application, uses the covered numeric key mapping without an IME text
-path, and verifies the resulting operation. ArkWeb's accessibility textarea is
-useful for focus preflight and disclosure scans, but is not exact input evidence:
-on the target PC it can omit rendered digits and diverge from the native buffer.
+Physical keyboard injection MAY be used only for a scenario whose contract is
+the physical shortcut or special-key path, after the script verifies the focused
+application and the resulting operation. Ordinary text uses the single UiTest
+text path. ArkWeb's accessibility textarea is useful for focus preflight and
+disclosure scans, but is not exact input evidence: on the target PC it can omit
+rendered digits and diverge from the native buffer.
 
 ## Result classification
 

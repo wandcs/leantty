@@ -117,7 +117,11 @@ if (-not $DiagnosticHap) {
         -AllowedHarnessPaths @(
             'tools/verify-ssh-auth-pc.ps1',
             'tools/verify-terminal-search-pc.ps1',
+            'tools/verify-file-transfer-pc.ps1',
+            'tools/verify-put-get-pc.ps1',
+            'tools/verify-proxy-jump-pc.ps1',
             'tools/device-regression.ps1',
+            'tools/hdc-common.ps1',
             'tools/start-ssh-auth-fixture.ps1',
             'tools/test-device-regression.ps1',
             'tools/candidate-store.ps1',
@@ -292,6 +296,7 @@ function Get-LeanTTYFixtureRunSeconds {
 }
 
 $fixtureRunSeconds = Get-LeanTTYFixtureRunSeconds -StageNames $selectedStageNames
+$awakeLeaseMilliseconds = ($fixtureRunSeconds + 300) * 1000
 
 function Write-AuthLiveStatus {
     param(
@@ -354,8 +359,21 @@ function Start-AuthStage {
     Write-Host "[device-auth] START $Name"
     $script:currentStage = $Name
     Write-AuthLiveStatus -State 'running' -Stage $Name
+    Assert-AuthControlChannels
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     $script:stageStartedAt = [Diagnostics.Stopwatch]::StartNew()
+}
+
+function Assert-AuthControlChannels {
+    Assert-HdcTargetReady -Hdc $hdc -Target $Target | Out-Null
+    $mappings = Invoke-HdcChecked `
+        -Hdc $hdc `
+        -Target $Target `
+        -Arguments @('fport', 'ls') `
+        -Operation 'HDC reverse-mapping inspection'
+    if ($mappings -notmatch "(?m)tcp:$FixturePort\s+tcp:$FixturePort\s+\[Reverse\]") {
+        throw "[infrastructure] HDC reverse mapping disappeared for fixture port $FixturePort"
+    }
 }
 
 function Assert-NoSecretExposure {
@@ -449,13 +467,7 @@ function Wait-FixtureLogMatchCount {
 
 function Invoke-AuthUiText {
     param([Parameter(Mandatory = $true)][string]$Text)
-    if ($Text -match '[\r\n\x00]') {
-        throw '[harness] HarmonyOS UI text input does not accept command separators'
-    }
-    & $hdc -t $Target shell uitest uiInput text $Text | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw '[environment] HarmonyOS UI text input failed'
-    }
+    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Text
 }
 
 function Invoke-TemporaryFixtureAuthText {
@@ -504,12 +516,10 @@ function Focus-ActiveCommandInput {
     if ($null -eq $inputNode) {
         throw '[environment] Unable to identify the active terminal input before command submission'
     }
-    Set-LeanTTYTerminalInputFocus `
-        -Hdc $hdc `
-        -Target $Target `
-        -InputNode $inputNode `
-        -LocalPath $layoutPath `
-        -TimeoutSeconds 30 | Out-Null
+    $center = Get-LeanTTYBoundsCenter -Bounds ([string]$inputNode.attributes.bounds)
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'LeanTTY terminal input focus'
 }
 
 function Submit-FocusedDeviceCommand {
@@ -519,19 +529,14 @@ function Submit-FocusedDeviceCommand {
     )
     $submittedCommandPattern =
         'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
-    for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
-        Focus-ActiveCommandInput -LayoutName $LayoutName
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Invoke-AuthUiText -Text $Command
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-        try {
-            Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
-            return
-        } catch {
-            if ($commandAttempt -ge 3) {
-                throw '[harness] Device did not submit the focused command after three attempts'
-            }
-        }
+    Focus-ActiveCommandInput -LayoutName $LayoutName
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Invoke-AuthUiText -Text $Command
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    try {
+        Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
+    } catch {
+        throw '[harness] Command submission outcome is unknown; the scenario must be restarted'
     }
 }
 
@@ -567,18 +572,12 @@ function Start-AuthCommand {
 }
 
 function Close-FixtureShell {
-    for ($exitAttempt = 1; $exitAttempt -le 3; $exitAttempt++) {
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Submit-ConnectedInput -Text 'ltty-exit'
-        try {
-            Wait-FixtureLog -Pattern 'shell command=exit result=closed' -TimeoutSeconds 10 | Out-Null
-            break
-        } catch {
-            if ($exitAttempt -ge 3) {
-                throw '[harness] Device did not submit the fixture exit command after three attempts'
-            }
-            Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
-        }
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Submit-ConnectedInput -Text 'ltty-exit'
+    try {
+        Wait-FixtureLog -Pattern 'shell command=exit result=closed' -TimeoutSeconds 10 | Out-Null
+    } catch {
+        throw '[harness] Fixture exit outcome is unknown; the scenario must be restarted'
     }
     Wait-AuthLog -Pattern 'SSH closed, exitCode=0'
 }
@@ -595,20 +594,15 @@ function Submit-ConnectedInputUntilFixtureEvent {
         [Parameter(Mandatory = $true)][string]$Pattern,
         [ValidateRange(1, 60)][int]$TimeoutSeconds = 10
     )
-    for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++) {
-        $matchCount = Get-FixtureLogMatchCount -Pattern $Pattern
-        Submit-ConnectedInput -Text $Text
-        try {
-            Wait-FixtureLogMatchCount `
-                -Pattern $Pattern `
-                -GreaterThan $matchCount `
-                -TimeoutSeconds $TimeoutSeconds | Out-Null
-            return
-        } catch {
-            if ($inputAttempt -ge 3) {
-                throw '[harness] Device did not deliver connected input after three attempts'
-            }
-        }
+    $matchCount = Get-FixtureLogMatchCount -Pattern $Pattern
+    Submit-ConnectedInput -Text $Text
+    try {
+        Wait-FixtureLogMatchCount `
+            -Pattern $Pattern `
+            -GreaterThan $matchCount `
+            -TimeoutSeconds $TimeoutSeconds | Out-Null
+    } catch {
+        throw '[harness] Connected input outcome is unknown; the scenario must be restarted'
     }
 }
 
@@ -618,16 +612,11 @@ function Submit-ConnectedInputUntilAuthEvent {
         [Parameter(Mandatory = $true)][string]$Pattern,
         [ValidateRange(1, 60)][int]$TimeoutSeconds = 10
     )
-    for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++) {
-        Submit-ConnectedInput -Text $Text
-        try {
-            Wait-AuthLog -Pattern $Pattern -TimeoutSeconds $TimeoutSeconds
-            return
-        } catch {
-            if ($inputAttempt -ge 3) {
-                throw '[harness] Connected input did not produce the expected application event after three attempts'
-            }
-        }
+    Submit-ConnectedInput -Text $Text
+    try {
+        Wait-AuthLog -Pattern $Pattern -TimeoutSeconds $TimeoutSeconds
+    } catch {
+        throw '[harness] Connected input application outcome is unknown; the scenario must be restarted'
     }
 }
 
@@ -723,8 +712,9 @@ function Wait-AuthTabCount {
 function Invoke-AuthLayoutNodeClick {
     param([Parameter(Mandatory = $true)]$Node)
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$Node.attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw '[environment] HarmonyOS layout node click failed' }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'LeanTTY layout node click'
 }
 
 function Open-AuthToolMenu {
@@ -864,42 +854,37 @@ function Get-AuthPerfRenderRecord {
 
 function Invoke-AuthPerfSample {
     param([Parameter(Mandatory = $true)][string]$CaseId)
-    for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
-        $preparedPattern = 'perf case=' + [regex]::Escape($CaseId) +
-            ' lines=12000 width=80 bytes=\d+ state=prepared'
-        $preparedCount = Get-FixtureLogMatchCount -Pattern $preparedPattern
-        Submit-ConnectedInput -Text "ltty-perf-prepare $CaseId 12000 80"
-        try {
-            Wait-FixtureLogMatchCount `
-                -Pattern $preparedPattern `
-                -GreaterThan $preparedCount `
-                -TimeoutSeconds 15 | Out-Null
-        } catch {
-            if ($commandAttempt -lt 3) { continue }
-            throw "[harness] Fixture did not accept the PERF prepare command for $CaseId after three attempts"
-        }
-
-        $runPattern = "perf case=$CaseId state=run"
-        $runCount = Get-FixtureLogMatchCount -Pattern ([regex]::Escape($runPattern))
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Submit-ConnectedInput -Text "ltty-perf-run $CaseId"
-        try {
-            Wait-FixtureLogMatchCount `
-                -Pattern ([regex]::Escape($runPattern)) `
-                -GreaterThan $runCount `
-                -TimeoutSeconds 8 | Out-Null
-        } catch {
-            if ($commandAttempt -lt 3) { continue }
-            throw "[harness] Fixture did not accept the PERF run command for $CaseId after three attempts"
-        }
-        Wait-AuthLog `
-            -Pattern ('PERF render .*"caseId":"' + $CaseId + '".*"completenessPercent":100') `
-            -TimeoutSeconds 30
-        $record = Get-AuthPerfRenderRecord -CaseId $CaseId
-        $record | Add-Member -NotePropertyName commandAttempts -NotePropertyValue $commandAttempt
-        return $record
+    $preparedPattern = 'perf case=' + [regex]::Escape($CaseId) +
+        ' lines=12000 width=80 bytes=\d+ state=prepared'
+    $preparedCount = Get-FixtureLogMatchCount -Pattern $preparedPattern
+    Submit-ConnectedInput -Text "ltty-perf-prepare $CaseId 12000 80"
+    try {
+        Wait-FixtureLogMatchCount `
+            -Pattern $preparedPattern `
+            -GreaterThan $preparedCount `
+            -TimeoutSeconds 15 | Out-Null
+    } catch {
+        throw "[harness] PERF prepare outcome is unknown for $CaseId; the scenario must be restarted"
     }
-    throw "[harness] PERF sample did not complete for $CaseId"
+
+    $runPattern = "perf case=$CaseId state=run"
+    $runCount = Get-FixtureLogMatchCount -Pattern ([regex]::Escape($runPattern))
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Submit-ConnectedInput -Text "ltty-perf-run $CaseId"
+    try {
+        Wait-FixtureLogMatchCount `
+            -Pattern ([regex]::Escape($runPattern)) `
+            -GreaterThan $runCount `
+            -TimeoutSeconds 8 | Out-Null
+    } catch {
+        throw "[harness] PERF run outcome is unknown for $CaseId; the scenario must be restarted"
+    }
+    Wait-AuthLog `
+        -Pattern ('PERF render .*"caseId":"' + $CaseId + '".*"completenessPercent":100') `
+        -TimeoutSeconds 30
+    $record = Get-AuthPerfRenderRecord -CaseId $CaseId
+    $record | Add-Member -NotePropertyName commandAttempts -NotePropertyValue 1
+    return $record
 }
 
 function Wait-AuthPaneCount {
@@ -925,8 +910,9 @@ function Focus-AuthPane {
     $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
     $index = if ($Side -eq 'left') { 0 } else { 1 }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$nodes[$index].attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "[environment] Unable to focus $Side LeanTTY pane" }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation "LeanTTY $Side pane focus"
 
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     do {
@@ -976,8 +962,9 @@ function Invoke-ActivePaneCloseButton {
     } | Select-Object -First 1)
     if ($button.Count -ne 1) { throw '[harness] LeanTTY active-pane close button was not found' }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$button[0].attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to click the LeanTTY active-pane close button' }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'LeanTTY active-pane close button'
 }
 
 function Ensure-SingleAuthPane {
@@ -1010,8 +997,9 @@ function Minimize-RegressionWindow {
     if ($button.Count -ne 1) { throw 'HarmonyOS system minimize button was not found' }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$button[0].attributes.bounds)
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS system minimize click failed' }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'HarmonyOS system minimize'
     Wait-AuthLog -Pattern 'Window visibility changed: visible=false'
     Assert-RegressionProcessUnchanged -Action 'minimizing'
 }
@@ -1295,6 +1283,7 @@ try {
     $currentStage = 'fixture-and-device-preflight'
     Write-AuthLiveStatus -State 'running' -Stage $currentStage
     $preflight = [Diagnostics.Stopwatch]::StartNew()
+    Assert-HdcTargetReady -Hdc $hdc -Target $Target | Out-Null
     $pwshPath = (Get-Process -Id $PID).Path
     $fixtureArguments = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
@@ -1334,7 +1323,11 @@ try {
         throw "Unable to create HDC reverse mapping: $mappingOutput"
     }
     $mappingActive = $true
-    Start-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $Target
+    Assert-AuthControlChannels
+    Start-LeanTTYDeviceAwakeLease `
+        -Hdc $hdc `
+        -Target $Target `
+        -TimeoutMilliseconds $awakeLeaseMilliseconds
     $awakeLeaseActive = $true
     $awakeLeaseResult = 'acquired'
     & (Join-Path $PSScriptRoot 'dev-pc.ps1') `

@@ -80,10 +80,15 @@ if (-not $DiagnosticHap) {
         -AllowedHarnessPaths @(
             'tools/verify-ssh-auth-pc.ps1',
             'tools/verify-terminal-search-pc.ps1',
+            'tools/verify-file-transfer-pc.ps1',
+            'tools/verify-put-get-pc.ps1',
+            'tools/verify-proxy-jump-pc.ps1',
             'tools/device-regression.ps1',
+            'tools/hdc-common.ps1',
             'tools/start-ssh-auth-fixture.ps1',
             'tools/test-device-regression.ps1',
             'leantty_ssh/ssh-auth-fixture/src/main.rs',
+            'docs/quality-strategy.md',
             'docs/design/terminal-search.md',
             'docs/design/ui-interaction-polish.md',
             'docs/next-work.md'
@@ -459,8 +464,9 @@ function Invoke-LocalTerminalCommand {
 function Invoke-LeanTTYLayoutNodeClick {
     param([Parameter(Mandatory = $true)]$Node)
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$Node.attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw '[environment] HarmonyOS layout node click failed' }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'LeanTTY layout node click'
 }
 
 function Invoke-TerminalMenuAction {

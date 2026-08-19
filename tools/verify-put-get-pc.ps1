@@ -163,7 +163,7 @@ function Wait-FixtureReady {
                 return
             }
         }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 1000
     }
     throw 'Timed out waiting for the temporary SFTP fixture'
 }
@@ -997,7 +997,9 @@ function Invoke-TransferFixtureAction {
     if ($moreButton.Count -ne 1) { throw 'LeanTTY four-dot menu button was not found' }
     $moreCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$moreButton[0].attributes.bounds)
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    & $hdc -t $Target shell "uitest uiInput click $($moreCenter.x) $($moreCenter.y)" | Out-Null
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $moreCenter.x -Y $moreCenter.y `
+        -Operation 'LeanTTY transfer fixture menu open'
     Start-Sleep -Milliseconds 300
     $menuPath = Join-Path $EvidenceDirectory ($Stage + '-menu.json')
     $menu = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $menuPath
@@ -1007,13 +1009,15 @@ function Invoke-TransferFixtureAction {
     } | Select-Object -First 1)
     if ($node.Count -ne 1) { throw 'The debug package does not expose the transfer fixture action' }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$node[0].attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'LeanTTY transfer fixture action'
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $logs = ''
     do {
         $logs = (@(& $hdc -t $Target shell "hilog -z 1200 -t app -P $appProcessId" 2>&1) -join "`n")
         if ($logs -match 'ACCEPTANCE_TRANSFER_FIXTURE state=(prepared|cleaned|failed)') { break }
-        Start-Sleep -Milliseconds 200
+        Start-Sleep -Milliseconds 1000
     } while ($stopwatch.Elapsed.TotalSeconds -lt 10)
     if ($logs -notmatch 'ACCEPTANCE_TRANSFER_FIXTURE state=(prepared|cleaned|failed)') {
         throw 'Timed out waiting for the transfer fixture action'
@@ -1041,8 +1045,9 @@ function Invoke-SystemApplicationClose {
         throw 'GET reached a terminal state while locating the system close button'
     }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$button[0].attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS system close click failed' }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'HarmonyOS system close'
 }
 
 function Minimize-LeanTTYTransferWindow {
@@ -1053,8 +1058,9 @@ function Minimize-LeanTTYTransferWindow {
     } | Select-Object -First 1)
     if ($button.Count -ne 1) { throw 'HarmonyOS system minimize button was not found' }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$button[0].attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS system minimize click failed' }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'HarmonyOS system minimize'
     Wait-LeanTTYAppLog `
         -Hdc $hdc -Target $Target -ProcessId $appProcessId `
         -Pattern 'Window visibility changed: visible=false' -TimeoutSeconds 10 | Out-Null
@@ -1095,8 +1101,9 @@ function Confirm-SystemApplicationClose {
                 -LocalPath (Join-Path $EvidenceDirectory 'application-close-dialog.png')
             $center = Get-LeanTTYBoundsCenter -Bounds ([string]$button[0].attributes.bounds)
             $closeStopwatch = [Diagnostics.Stopwatch]::StartNew()
-            & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Close LeanTTY dialog button click failed' }
+            Invoke-LeanTTYDeviceClick `
+                -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+                -Operation 'LeanTTY close confirmation'
             return $closeStopwatch
         }
         Start-Sleep -Milliseconds 200
@@ -1166,8 +1173,9 @@ function Split-And-FocusTransferPane {
     $layout = Wait-PaneCount -Count 2 -LayoutName 'pane-close-after-split.json'
     $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$nodes[0].attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to focus the transfer Pane before close' }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'LeanTTY transfer Pane focus before close'
     $path = Join-Path $EvidenceDirectory 'pane-close-focused.json'
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt 10) {
@@ -1190,8 +1198,9 @@ function Focus-TransferPaneByIndex {
         (Get-LeanTTYBoundsCenter -Bounds ([string]$_.attributes.bounds)).x
     })
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$nodes[$Index].attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to focus transfer Pane index $Index" }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation "LeanTTY transfer Pane $Index focus"
     $path = Join-Path $EvidenceDirectory ($LayoutName + '-focused.json')
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt 10) {
@@ -1221,8 +1230,9 @@ function Invoke-ActivePaneClose {
         throw 'GET reached a terminal state while locating the Pane close button'
     }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$buttons[0].attributes.bounds)
-    & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to click the LeanTTY active-Pane close button' }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+        -Operation 'LeanTTY active-Pane close button'
 }
 
 function Confirm-ActivePaneClose {
@@ -1245,8 +1255,9 @@ function Confirm-ActivePaneClose {
                 -LocalPath (Join-Path $EvidenceDirectory 'pane-close-dialog.png')
             $center = Get-LeanTTYBoundsCenter -Bounds ([string]$button[0].attributes.bounds)
             $closeStopwatch = [Diagnostics.Stopwatch]::StartNew()
-            & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw 'Close pane dialog button click failed' }
+            Invoke-LeanTTYDeviceClick `
+                -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
+                -Operation 'LeanTTY Pane close confirmation'
             return $closeStopwatch
         }
         Start-Sleep -Milliseconds 200
@@ -1255,7 +1266,12 @@ function Confirm-ActivePaneClose {
 }
 
 try {
-    Start-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $Target -TimeoutMilliseconds 900000
+    $fixtureRunSeconds = 900
+    $awakeLeaseMilliseconds = ($fixtureRunSeconds + 300) * 1000
+    Start-LeanTTYDeviceAwakeLease `
+        -Hdc $hdc `
+        -Target $Target `
+        -TimeoutMilliseconds $awakeLeaseMilliseconds
     $awakeLease = $true
 
     $deployArgs = @{ Target = $Target; NoLaunch = $true }
@@ -1276,7 +1292,7 @@ try {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         (Join-Path $PSScriptRoot 'start-ssh-auth-fixture.ps1'),
         '-ListenAddress', "0.0.0.0:$FixturePort",
-        '-RunSeconds', '900',
+        '-RunSeconds', $fixtureRunSeconds.ToString(),
         '-ControlDirectory', $fixtureRoot,
         '-SftpDelayMilliseconds', $SftpDelayMilliseconds.ToString(
             [Globalization.CultureInfo]::InvariantCulture
