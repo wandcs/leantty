@@ -499,7 +499,12 @@ foreach ($scriptName in @(
             $content.Contains("'publickey-then-keyboard-interactive'") -and
             $content.Contains("'keyboard-interactive-zero-prompt'") -and
             $content.Contains("'unsupported-method-error-and-recovery'") -and
-            $content.Contains('AUTH:no supported authentication method is available') -and
+            $content.Contains(
+                "Wait-AuthLog -Pattern 'rust event: AUTH:target:no supported authentication method is available'"
+            ) -and
+            -not $content.Contains(
+                "Wait-AuthLog -Pattern 'rust event: AUTH:no supported authentication method is available'"
+            ) -and
             $content.Contains("'ctrl-c-authentication-cancellation-and-recovery'") -and
             $content.Contains('Invoke-LeanTTYDeviceCtrlC') -and
             $content.Contains("'pane-close-during-hidden-prompt-and-recovery'") -and
