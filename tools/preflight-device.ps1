@@ -106,7 +106,8 @@ try {
     $layout = Get-LeanTTYDeviceLayout `
         -Hdc $hdc `
         -Target $resolvedTarget `
-        -LocalPath $temporaryLayoutPath
+        -LocalPath $temporaryLayoutPath `
+        -BundleName ''
     $allNodes = @(Get-LeanTTYLayoutNodes -Node $layout)
     $rootBounds = [string]$layout.attributes.bounds
     $boundsMatch = [regex]::Match(

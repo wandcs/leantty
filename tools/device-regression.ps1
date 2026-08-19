@@ -242,18 +242,21 @@ function Get-LeanTTYDeviceLayout {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
         [Parameter(Mandatory = $true)][string]$Target,
-        [Parameter(Mandatory = $true)][string]$LocalPath
+        [Parameter(Mandatory = $true)][string]$LocalPath,
+        [string]$BundleName = 'com.leantty.app'
     )
 
     for ($captureAttempt = 1; $captureAttempt -le 2; $captureAttempt++) {
         $remotePath = '/data/local/tmp/leantty-layout-' + [Guid]::NewGuid().ToString('N') + '.json'
         try {
+            $layoutArguments = @('dumpLayout', '-p', $remotePath, '-a')
+            if (-not [string]::IsNullOrWhiteSpace($BundleName)) {
+                $layoutArguments += @('-b', $BundleName)
+            }
             Invoke-LeanTTYSerializedUiTest `
                 -Hdc $Hdc `
                 -Target $Target `
-                -Arguments @(
-                    'dumpLayout', '-p', $remotePath, '-a', '-b', 'com.leantty.app'
-                ) `
+                -Arguments $layoutArguments `
                 -Operation 'HarmonyOS UI layout capture' | Out-Null
             Invoke-HdcChecked `
                 -Hdc $Hdc `

@@ -253,6 +253,7 @@ $appLogParameters = (Get-Command Get-LeanTTYAppLogs).Parameters.Keys
 $waitLogParameters = (Get-Command Wait-LeanTTYAppLog).Parameters.Keys
 $waitLogSource = (Get-Command Wait-LeanTTYAppLog).Definition
 $layoutCaptureSource = (Get-Command Get-LeanTTYDeviceLayout).Definition
+$layoutCaptureParameters = (Get-Command Get-LeanTTYDeviceLayout).Parameters
 $physicalKeySource = (Get-Command Invoke-LeanTTYDevicePhysicalKey).Definition
 Assert-True (
     $appLogParameters -notcontains 'Pid' -and
@@ -265,6 +266,12 @@ Assert-True (
     $layoutCaptureSource.Contains('for ($captureAttempt = 1; $captureAttempt -le 2; $captureAttempt++)') -and
     $layoutCaptureSource.Contains('HarmonyOS UI layout remained empty after two captures')
 ) 'Transient empty UiTest layouts are not handled by one bounded idempotent retry'
+Assert-True (
+    $layoutCaptureParameters.ContainsKey('BundleName') -and
+    $layoutCaptureSource.Contains("[string]`$BundleName = 'com.leantty.app'") -and
+    $layoutCaptureSource.Contains("if (-not [string]::IsNullOrWhiteSpace(`$BundleName))") -and
+    $devicePreflightText.Contains("-BundleName ''")
+) 'Generic device preflight cannot request a global layout without launching LeanTTY'
 
 $awakeLeaseParameter = (Get-Command Start-LeanTTYDeviceAwakeLease).Parameters['TimeoutMilliseconds']
 Assert-True (
