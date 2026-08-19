@@ -550,6 +550,7 @@ foreach ($scriptName in @(
             -not $content.Contains('Invoke-SecretKeyEventText') -and
             $content.Contains('function Invoke-AuthUiText') -and
             ([regex]::Matches($content, 'Invoke-AuthUiText').Count -ge 6) -and
+            $content.Contains("'layout-auth-text-focus-' + [Guid]::NewGuid().ToString('N') + '.json'") -and
             $content.Contains('-Hdc $hdc -Target $Target -Text $Text -InputNode $InputNode') -and
             $content.Contains('function Invoke-TemporaryFixtureAuthText') -and
             ([regex]::Matches($content, 'Invoke-TemporaryFixtureAuthText').Count -ge 6) -and
@@ -652,7 +653,10 @@ foreach ($scriptName in @(
             $content.Contains("'docs/design/terminal-search.md'") -and
             $content.Contains("'docs/next-work.md'") -and
             $content.Contains('Command submission outcome is unknown; the scenario must be restarted') -and
-            -not $content.Contains('for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++)')
+            $content.Contains('for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++)') -and
+            $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
+            $content.Contains("-Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true'") -and
+            $content.Contains('HarmonyOS input could not prepare the exact SSH command buffer')
         ) 'SSH authentication scenario does not declare its bounded physical coverage'
         Assert-True (
             $content.Contains("'transport-main-path'") -and
