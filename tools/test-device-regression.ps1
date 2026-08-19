@@ -77,9 +77,9 @@ Assert-Throws -Action {
     Invoke-LeanTTYDeviceText `
         -Hdc 'Invoke-FakeHdc' `
         -Target 'regression-device' `
-        -Text 'echo LEANTTY_SMOKE'
+        -Text 'echo LTTY'
     $expectedCommand = ConvertTo-LeanTTYDeviceTextKeyCommand `
-        -Text 'echo LEANTTY_SMOKE' `
+        -Text 'echo LTTY' `
         -IntervalMilliseconds 500
     Assert-True (
         $script:capturedHdcCalls.Count -eq 1 -and
@@ -91,23 +91,22 @@ Assert-Throws -Action {
     ) 'Device text injection did not use one device-paced raw-key command'
 
     $script:capturedHdcCalls.Clear()
-    $longText = 'a' * 87
+    $secretLengthText = 't' + ('a' * 23)
     Invoke-LeanTTYDeviceText `
         -Hdc 'Invoke-FakeHdc' `
         -Target 'regression-device' `
-        -Text $longText
+        -Text $secretLengthText
     Assert-True (
-        $script:capturedHdcCalls.Count -eq 3 -and
+        $script:capturedHdcCalls.Count -eq 2 -and
         $script:capturedHdcCalls[0][3] -eq (
-            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 40) -IntervalMilliseconds 500
+            ConvertTo-LeanTTYDeviceTextKeyCommand `
+                -Text ('t' + ('a' * 15)) `
+                -IntervalMilliseconds 500
         ) -and
         $script:capturedHdcCalls[1][3] -eq (
-            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 40) -IntervalMilliseconds 500
-        ) -and
-        $script:capturedHdcCalls[2][3] -eq (
-            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 7) -IntervalMilliseconds 500
+            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 8) -IntervalMilliseconds 500
         )
-    ) 'Long device text injection was not split below the physical uinput boundary'
+    ) 'Secret-length device text injection was not split below the observed physical uinput boundary'
 }
 
 & {
@@ -216,7 +215,7 @@ Assert-True (
 ) 'Device input cleanup still uses inferred backspaces'
 Assert-True (
     $deviceRegressionText -match '-IntervalMilliseconds 500(?:\s|$)' -and
-    $deviceRegressionText.Contains('$chunkLength = 40')
+    $deviceRegressionText.Contains('$chunkLength = 16')
 ) 'Device raw-key text injection does not preserve pacing and bounded batches'
 Assert-True (
     $deviceRegressionText -notmatch 'shell\s+run-as\s+com\.leantty\.app' -and
