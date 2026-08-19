@@ -439,11 +439,14 @@ foreach ($scriptName in @(
             -not $content.Contains('Authentication input character was not acknowledged after three attempts') -and
             -not $content.Contains('Invoke-AcknowledgedAuthText') -and
             -not $content.Contains('Invoke-SerializedAuthText') -and
-            $content.Contains('function Invoke-SecretKeyEventText') -and
-            ([regex]::Matches($content, 'Invoke-SecretKeyEventText').Count -ge 6) -and
+            -not $content.Contains('Invoke-SecretKeyEventText') -and
+            $content.Contains('function Invoke-TemporaryFixtureAuthText') -and
+            ([regex]::Matches($content, 'Invoke-TemporaryFixtureAuthText').Count -ge 6) -and
             $content.Contains("'^[a-z0-9]+$'") -and
-            $content.Contains('harmony-uitest-keyevent-runtime-generated-lowercase-alphanumeric-per-character') -and
-            $content.Contains("method = 'raw-physical-and-harmony-uitest-key-events'") -and
+            $content.Contains('& $hdc -t $Target shell uitest uiInput text $Value') -and
+            $content.Contains('repository-only-test-values-not-user-or-production-credentials') -and
+            $content.Contains('harmony-uitest-complete-text-runtime-generated-temporary-fixture-values') -and
+            $content.Contains("method = 'raw-physical-and-harmony-uitest-text'") -and
             $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
             $content.Contains('[regex]::Escape($Command)') -and
