@@ -468,8 +468,13 @@ function Wait-FixtureLogMatchCount {
 function Invoke-AuthUiText {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
-        [Parameter(Mandatory = $true)]$InputNode
+        $InputNode = $null
     )
+    if ($null -eq $InputNode) {
+        $InputNode = Focus-ActiveCommandInput -LayoutName (
+            'layout-auth-text-focus-' + [Guid]::NewGuid().ToString('N') + '.json'
+        )
+    }
     Invoke-LeanTTYDeviceText `
         -Hdc $hdc -Target $Target -Text $Text -InputNode $InputNode
 }
@@ -537,15 +542,46 @@ function Submit-FocusedDeviceCommand {
     )
     $submittedCommandPattern =
         'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
-    $inputNode = Focus-ActiveCommandInput -LayoutName $LayoutName
-    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-AuthUiText -Text $Command -InputNode $inputNode
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    try {
-        Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
-    } catch {
-        throw '[harness] Command submission outcome is unknown; the scenario must be restarted'
+    for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
+        $inputNode = Focus-ActiveCommandInput -LayoutName $LayoutName
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Invoke-AuthUiText -Text $Command -InputNode $inputNode
+
+        $bufferLogs = Wait-LeanTTYAppLog `
+            -Hdc $hdc `
+            -Target $Target `
+            -ProcessId $appPid `
+            -Pattern 'ACCEPTANCE_IDLE_RESULT kind=' `
+            -TimeoutSeconds 10
+        $bufferRecords = @([regex]::Matches(
+                $bufferLogs,
+                'ACCEPTANCE_IDLE_RESULT kind=\d+,input=(?<input>[^\r\n]*),' +
+                'completionActive=(?:true|false),menuActive=(?:true|false)'
+            ))
+        $actualBuffer = if ($bufferRecords.Count -gt 0) {
+            $bufferRecords[$bufferRecords.Count - 1].Groups['input'].Value
+        } else {
+            ''
+        }
+        if ($actualBuffer -ceq $Command) {
+            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+            try {
+                Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
+                return
+            } catch {
+                throw '[harness] Command submission outcome is unknown; the scenario must be restarted'
+            }
+        }
+
+        Write-Host (
+            '[device-auth] RETRY inexact command buffer ' +
+            "attempt=$commandAttempt expectedLength=$($Command.Length) " +
+            "actualLength=$($actualBuffer.Length) actual=$actualBuffer"
+        ) -ForegroundColor Yellow
+        Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+        Wait-AuthLog -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' -TimeoutSeconds 10
     }
+    throw '[environment] HarmonyOS input could not prepare the exact SSH command buffer'
 }
 
 function Assert-AuthCommandLoopbackTarget {
