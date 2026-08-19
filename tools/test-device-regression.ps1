@@ -64,18 +64,23 @@ Assert-True (
     Invoke-LeanTTYDeviceText `
         -Hdc 'Invoke-FakeHdc' `
         -Target 'regression-device' `
-        -Text 'echo LTTY'
+        -Text 'ssh-keygen -p -f regression_key' `
+        -InputNode ([pscustomobject]@{
+            attributes = [pscustomobject]@{ bounds = '[10,20][110,70]' }
+        })
     Assert-True (
         $script:capturedHdcCalls.Count -eq 1 -and
-        $script:capturedHdcCalls[0].Count -eq 7 -and
+        $script:capturedHdcCalls[0].Count -eq 9 -and
         $script:capturedHdcCalls[0][0] -eq '-t' -and
         $script:capturedHdcCalls[0][1] -eq 'regression-device' -and
         $script:capturedHdcCalls[0][2] -eq 'shell' -and
         $script:capturedHdcCalls[0][3] -eq 'uitest' -and
         $script:capturedHdcCalls[0][4] -eq 'uiInput' -and
-        $script:capturedHdcCalls[0][5] -eq 'text' -and
-        $script:capturedHdcCalls[0][6] -eq 'echo LTTY'
-    ) 'Ordinary device text did not use one complete serialized UiTest input operation'
+        $script:capturedHdcCalls[0][5] -eq 'inputText' -and
+        $script:capturedHdcCalls[0][6] -eq 60 -and
+        $script:capturedHdcCalls[0][7] -eq 45 -and
+        $script:capturedHdcCalls[0][8] -eq 'ssh-keygen -p -f regression_key'
+    ) 'Device text did not target the selected terminal input through UiTest inputText'
 }
 
 & {
@@ -325,10 +330,10 @@ Assert-True (
     $deviceRegressionText -notmatch 'terminal-line cleanup|backspaceCount'
 ) 'Device input cleanup still uses inferred backspaces'
 Assert-True (
-    $deviceRegressionText.Contains("@('uiInput', 'text', `$Text)") -and
+    $deviceRegressionText.Contains("@('uiInput', 'inputText', `$center.x, `$center.y, `$Text)") -and
     -not $deviceRegressionText.Contains('ConvertTo-LeanTTYDeviceTextKeyCommand') -and
-    -not $deviceRegressionText.Contains('$chunkLength = 8')
-) 'Ordinary device text is not isolated from the raw physical-key path'
+    $deviceRegressionText.Contains('Start-Sleep -Milliseconds 500')
+) 'Ordinary device text does not use the targeted serialized UiTest path'
 Assert-True (
     $deviceRegressionText.Contains('function Invoke-LeanTTYSerializedUiTest') -and
     $deviceRegressionText.Contains('[Threading.Mutex]::new') -and
@@ -545,14 +550,14 @@ foreach ($scriptName in @(
             -not $content.Contains('Invoke-SecretKeyEventText') -and
             $content.Contains('function Invoke-AuthUiText') -and
             ([regex]::Matches($content, 'Invoke-AuthUiText').Count -ge 6) -and
-            $content.Contains('Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Text') -and
+            $content.Contains('-Hdc $hdc -Target $Target -Text $Text -InputNode $InputNode') -and
             $content.Contains('function Invoke-TemporaryFixtureAuthText') -and
             ([regex]::Matches($content, 'Invoke-TemporaryFixtureAuthText').Count -ge 6) -and
             $content.Contains("'^[a-z0-9]+$'") -and
             $content.Contains('repository-only-test-values-not-user-or-production-credentials') -and
-            $content.Contains('harmony-uitest-complete-text-runtime-generated-temporary-fixture-values') -and
+            $content.Contains('harmony-uitest-targeted-inputText-runtime-generated-temporary-fixture-values') -and
             $content.Contains("method = 'harmony-uitest-text-and-raw-physical-special-keys'") -and
-            $content.Contains("ordinaryTextInjection = 'harmony-uitest-complete-text'") -and
+            $content.Contains("ordinaryTextInjection = 'harmony-uitest-targeted-inputText'") -and
             $content.Contains("physicalKeyInjection = 'raw-key-events-special-keys-only'") -and
             $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
@@ -822,8 +827,9 @@ $deviceRegressionText = Get-Content -LiteralPath (
 ) -Raw
 Assert-True (
     $deviceRegressionText.Contains("return 't' + [Guid]::NewGuid()") -and
-    $deviceRegressionText.Contains("@('uiInput', 'text', `$Text)")
-) 'Device secret injection is not restricted to stable lowercase input with complete UiTest delivery'
+    $deviceRegressionText.Contains("@('uiInput', 'inputText', `$center.x, `$center.y, `$Text)") -and
+    $deviceRegressionText.Contains('Start-Sleep -Milliseconds 500')
+) 'Device secret injection is not restricted to stable lowercase input with targeted UiTest delivery'
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $sessionViewModel = Get-Content -LiteralPath (

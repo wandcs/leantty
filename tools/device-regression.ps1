@@ -401,17 +401,31 @@ function Invoke-LeanTTYDeviceText {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
         [Parameter(Mandatory = $true)][string]$Target,
-        [Parameter(Mandatory = $true)][string]$Text
+        [Parameter(Mandatory = $true)][string]$Text,
+        $InputNode = $null
     )
 
     if ($Text -match '[\r\n\x00]') {
         throw '[harness] HarmonyOS UI text input does not accept command separators'
     }
-    Invoke-LeanTTYSerializedUiTest `
-        -Hdc $Hdc `
-        -Target $Target `
-        -Arguments @('uiInput', 'text', $Text) `
-        -Operation 'HarmonyOS complete UI text input' | Out-Null
+
+    if ($null -eq $InputNode) {
+        Invoke-LeanTTYSerializedUiTest `
+            -Hdc $Hdc `
+            -Target $Target `
+            -Arguments @('uiInput', 'text', $Text) `
+            -Operation 'HarmonyOS focused UI text input' | Out-Null
+    } else {
+        $center = Get-LeanTTYBoundsCenter -Bounds ([string]$InputNode.attributes.bounds)
+        Invoke-LeanTTYSerializedUiTest `
+            -Hdc $Hdc `
+            -Target $Target `
+            -Arguments @('uiInput', 'inputText', $center.x, $center.y, $Text) `
+            -Operation 'HarmonyOS targeted UI text input' | Out-Null
+    }
+    # Both text operations return before ArkWeb necessarily consumes the final
+    # event. Do not let Enter, layout capture, or a verdict race that event.
+    Start-Sleep -Milliseconds 500
 }
 
 function Invoke-LeanTTYDeviceKey {
