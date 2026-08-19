@@ -466,16 +466,23 @@ function Wait-FixtureLogMatchCount {
 }
 
 function Invoke-AuthUiText {
-    param([Parameter(Mandatory = $true)][string]$Text)
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Text
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)]$InputNode
+    )
+    Invoke-LeanTTYDeviceText `
+        -Hdc $hdc -Target $Target -Text $Text -InputNode $InputNode
 }
 
 function Invoke-TemporaryFixtureAuthText {
-    param([Parameter(Mandatory = $true)][string]$Value)
+    param(
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)]$InputNode
+    )
     if ($Value -notmatch '^[a-z0-9]+$') {
         throw '[harness] Generated authentication test value is outside the safe UI text alphabet'
     }
-    Invoke-AuthUiText -Text $Value
+    Invoke-AuthUiText -Text $Value -InputNode $InputNode
 }
 
 function Submit-AuthValue {
@@ -483,9 +490,9 @@ function Submit-AuthValue {
         [Parameter(Mandatory = $true)][string]$Value,
         [Parameter(Mandatory = $true)][string]$LayoutName
     )
-    Focus-ActiveCommandInput -LayoutName ($LayoutName + '.focus.json')
+    $inputNode = Focus-ActiveCommandInput -LayoutName ($LayoutName + '.focus.json')
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-TemporaryFixtureAuthText -Value $Value
+    Invoke-TemporaryFixtureAuthText -Value $Value -InputNode $inputNode
     Assert-NoSecretExposure -LayoutName $LayoutName
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     Wait-AuthLog -Pattern 'ACCEPTANCE_INPUT_SUBMIT' -TimeoutSeconds 10
@@ -520,6 +527,7 @@ function Focus-ActiveCommandInput {
     Invoke-LeanTTYDeviceClick `
         -Hdc $hdc -Target $Target -X $center.x -Y $center.y `
         -Operation 'LeanTTY terminal input focus'
+    return $inputNode
 }
 
 function Submit-FocusedDeviceCommand {
@@ -529,9 +537,9 @@ function Submit-FocusedDeviceCommand {
     )
     $submittedCommandPattern =
         'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
-    Focus-ActiveCommandInput -LayoutName $LayoutName
+    $inputNode = Focus-ActiveCommandInput -LayoutName $LayoutName
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-AuthUiText -Text $Command
+    Invoke-AuthUiText -Text $Command -InputNode $inputNode
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     try {
         Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
@@ -1191,9 +1199,10 @@ function Write-AuthEvidence {
         }
         input = [ordered]@{
             method = 'harmony-uitest-text-and-raw-physical-special-keys'
-            secretInjection = 'harmony-uitest-complete-text-runtime-generated-temporary-fixture-values'
+            secretInjection = 'harmony-uitest-targeted-inputText-runtime-generated-temporary-fixture-values'
             textCommandCharacters = 'complete-value'
-            ordinaryTextInjection = 'harmony-uitest-complete-text'
+            ordinaryTextInjection = 'harmony-uitest-targeted-inputText'
+            postInputSettleMilliseconds = 500
             physicalKeyInjection = 'raw-key-events-special-keys-only'
             submitTelemetry = 'compile-time-acceptance-marker-with-sequence-and-kind-only'
             businessOutcomeRequired = $true
@@ -1738,7 +1747,11 @@ try {
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-cancel-auth-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-TemporaryFixtureAuthText -Value $credentials.second_token
+    $cancelInputNode = Focus-ActiveCommandInput `
+        -LayoutName 'layout-cancel-auth-hidden-token-focus.json'
+    Invoke-TemporaryFixtureAuthText `
+        -Value $credentials.second_token `
+        -InputNode $cancelInputNode
     Assert-NoSecretExposure -LayoutName 'layout-cancel-auth-hidden-token.json'
     Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
     Assert-NoSecretExposure -LayoutName 'layout-cancel-auth-cleared.json'
@@ -1761,7 +1774,11 @@ try {
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-close-auth-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-TemporaryFixtureAuthText -Value $credentials.second_token
+    $closeInputNode = Focus-ActiveCommandInput `
+        -LayoutName 'layout-close-auth-hidden-token-focus.json'
+    Invoke-TemporaryFixtureAuthText `
+        -Value $credentials.second_token `
+        -InputNode $closeInputNode
     Assert-NoSecretExposure -LayoutName 'layout-close-auth-hidden-token.json'
     Invoke-ActivePaneCloseButton -LayoutName 'layout-close-auth-button.json'
     Invoke-ClosePaneDialog -LayoutName 'layout-close-auth-dialog.json'
@@ -1838,7 +1855,11 @@ try {
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-minimize-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
-    Invoke-TemporaryFixtureAuthText -Value $credentials.second_token
+    $minimizeInputNode = Focus-ActiveCommandInput `
+        -LayoutName 'layout-minimize-hidden-token-focus.json'
+    Invoke-TemporaryFixtureAuthText `
+        -Value $credentials.second_token `
+        -InputNode $minimizeInputNode
     Assert-NoSecretExposure -LayoutName 'layout-minimize-hidden-token.json'
     Minimize-RegressionWindow
     Restore-RegressionWindow
@@ -1857,7 +1878,11 @@ try {
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-AuthValue -Value $credentials.account -LayoutName 'layout-cancel-account.json'
     Wait-AuthLog -Pattern 'native auth event kind=challenge'
-    Invoke-TemporaryFixtureAuthText -Value $credentials.second_token
+    $processStopInputNode = Focus-ActiveCommandInput `
+        -LayoutName 'layout-cancel-hidden-token-focus.json'
+    Invoke-TemporaryFixtureAuthText `
+        -Value $credentials.second_token `
+        -InputNode $processStopInputNode
     Assert-NoSecretExposure -LayoutName 'layout-cancel-hidden-token.json'
     Restart-RegressionApp
     Assert-NoSecretExposure -LayoutName 'layout-cancel-restarted.json'

@@ -153,7 +153,11 @@ function Submit-Command {
             -InputNode $inputNodes[0] `
             -LocalPath $layoutPath `
             -TimeoutSeconds 10 | Out-Null
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command
+        Invoke-LeanTTYDeviceText `
+            -Hdc $hdc `
+            -Target $Target `
+            -Text $Command `
+            -InputNode $inputNodes[0]
 
         $bufferLogs = Wait-LeanTTYAppLog `
             -Hdc $hdc `
@@ -198,7 +202,29 @@ function Submit-Secret {
     param([string]$Value = '')
 
     if (-not [string]::IsNullOrEmpty($Value)) {
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Value
+        $focusPath = Join-Path $EvidenceDirectory (
+            'layout-secret-focus-' + [Guid]::NewGuid().ToString('N') + '.json'
+        )
+        $focusLayout = Wait-LeanTTYTerminalInputLayout `
+            -Hdc $hdc `
+            -Target $Target `
+            -LocalPath $focusPath `
+            -TimeoutSeconds 10
+        $inputNodes = @(Get-LeanTTYTerminalInputNodes -Layout $focusLayout)
+        if ($inputNodes.Count -ne 1) {
+            throw '[environment] Unable to identify the terminal input before secret submission'
+        }
+        Set-LeanTTYTerminalInputFocus `
+            -Hdc $hdc `
+            -Target $Target `
+            -InputNode $inputNodes[0] `
+            -LocalPath $focusPath `
+            -TimeoutSeconds 10 | Out-Null
+        Invoke-LeanTTYDeviceText `
+            -Hdc $hdc `
+            -Target $Target `
+            -Text $Value `
+            -InputNode $inputNodes[0]
         $layoutPath = Join-Path $EvidenceDirectory (
             'layout-secret-' + [Guid]::NewGuid().ToString('N') + '.json'
         )
@@ -302,9 +328,9 @@ function Write-BehaviorEvidence {
             failure = $awakeLeaseFailure
         }
         input = [ordered]@{
-            commandInjection = 'device-paced-raw-physical-key-events-with-pre-submit-buffer-verification'
-            secretInjection = 'device-paced-runtime-generated-printable-ascii'
-            deviceProgramIntervalMilliseconds = 500
+            commandInjection = 'harmony-uitest-targeted-inputText-with-pre-submit-buffer-verification'
+            secretInjection = 'harmony-uitest-targeted-inputText-runtime-generated-printable-ascii'
+            postInputSettleMilliseconds = 500
             fixedDelayUsedAsVerdict = $false
         }
         checks = @($checks)
@@ -429,7 +455,27 @@ try {
     Start-BehaviorStage -Name 'ctrl-c-cancelled-and-cleared-secret-input'
     Submit-Command -Command "ssh-keygen -p -f $keyName"
     Wait-State -Pattern 'KEY_PASSPHRASE_CHANGE stage=old'
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $secretB
+    $cancelFocusPath = Join-Path $EvidenceDirectory 'layout-cancel-secret-focus.json'
+    $cancelFocusLayout = Wait-LeanTTYTerminalInputLayout `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath $cancelFocusPath `
+        -TimeoutSeconds 10
+    $cancelInputNodes = @(Get-LeanTTYTerminalInputNodes -Layout $cancelFocusLayout)
+    if ($cancelInputNodes.Count -ne 1) {
+        throw '[environment] Unable to identify the terminal input before cancellation secret'
+    }
+    Set-LeanTTYTerminalInputFocus `
+        -Hdc $hdc `
+        -Target $Target `
+        -InputNode $cancelInputNodes[0] `
+        -LocalPath $cancelFocusPath `
+        -TimeoutSeconds 10 | Out-Null
+    Invoke-LeanTTYDeviceText `
+        -Hdc $hdc `
+        -Target $Target `
+        -Text $secretB `
+        -InputNode $cancelInputNodes[0]
     $cancelLayoutPath = Join-Path $EvidenceDirectory 'layout-cancel-secret.json'
     $cancelLayout = Get-LeanTTYDeviceLayout `
         -Hdc $hdc `
