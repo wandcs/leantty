@@ -415,6 +415,7 @@ foreach ($scriptName in @(
         Assert-True (
             $content.Contains('SSH authentication harness requires a clean committed tree') -and
             $content.Contains('Assert-LeanTTYCandidateHarnessCompatibility') -and
+            $content.Contains("'tools/start-ssh-auth-fixture.ps1'") -and
             $content.Contains('harness = [ordered]@{')
         ) 'SSH authentication evidence does not separate candidate and harness identity safely'
         Assert-True (
@@ -617,6 +618,7 @@ foreach ($scriptName in @(
             $content.Contains("'layout-search-closed.json'") -and
             $content.Contains("'explicit-unretained-diagnostic-hap'") -and
             $content.Contains('Assert-LeanTTYCandidateHarnessCompatibility') -and
+            $content.Contains("'tools/start-ssh-auth-fixture.ps1'") -and
             $content.Contains("'retained-verified-candidate'") -and
             $content.Contains('Save-LeanTTYVerifiedCandidate') -and
             $content.Contains('harness = [ordered]@{') -and
