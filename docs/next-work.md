@@ -6,9 +6,9 @@
 >
 > 当前 milestone：[`1.4 — 启动性能与 OpenSSH ProxyJump`](roadmap.md)
 >
-> 当前阶段：启动性能、ProxyJump、SSH Session 状态隔离的实现、日常自动化、聚焦物理机验收和
-> 物理机控制通道均已完成；正在收敛本地优先、真机按需的测试执行流程，完成后从
-> `release/1.4.0` 封板版本源与用户指南
+> 当前阶段：启动性能、ProxyJump、SSH Session 状态隔离、日常自动化、聚焦物理机验收、
+> 物理机控制通道与本地优先、真机按需的测试执行流程均已完成；正在从 `release/1.4.0`
+> 封板版本源与用户指南
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -63,18 +63,7 @@ ProxyJump 的实现、受控双服务器 fixture、两层信任/认证/失败、
 [`design/terminal-session-state-isolation.md`](design/terminal-session-state-isolation.md)。完成项已从
 本文件删除，不再维护第二份历史 checkbox。
 
-## 1. 测试执行流程收敛
-
-本地软件门禁现已在同一检查注册表上支持显式分组，focused 证据不可提升为正式候选；
-`preflight-device.ps1` 只检查 Ready HDC、受检命令通道、串行 UiTest layout 与屏幕 bounds，
-不会安装、启动、解锁或修复设备。日常与正式入口、主判据和重复软件门禁也已按
-[`quality-strategy.md`](quality-strategy.md) 收敛。
-
-1. [ ] 测试机恢复 Ready 后，先运行 `tools/preflight-device.ps1`，再运行一个现有命名真机场景；
-   证明预检证据保持 `acceptanceEligible=false`、场景使用真实产品结果作为主判据、两者失败域
-   不混淆且清理闭合。只验证这条衔接，不运行完整物理矩阵。
-
-## 2. 正式候选与发布
+## 1. 正式候选与发布
 
 1. [ ] 按 `release-process.md` 在 `release/1.4.0` 封板 Changelog、离线用户指南与全部版本源，
    通过 PR 合入并推送；记录合并后的精确 `main` 提交，后续候选不再修改产品源或随包资源。
