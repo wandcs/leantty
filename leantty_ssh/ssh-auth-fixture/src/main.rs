@@ -789,8 +789,8 @@ impl Handler for FixtureServer {
             Some(FixtureCommand::Perf(PerfCommand::Prepare(request))) => {
                 let expected_bytes = perf_stream_expected_bytes(&request);
                 eprintln!(
-                    "perf case={} bytes={} state=prepared",
-                    request.case_id, expected_bytes
+                    "perf case={} lines={} width={} bytes={} state=prepared",
+                    request.case_id, request.lines, request.line_width, expected_bytes
                 );
                 let begin = format!(
                     "\x1b]0;LTTY_PERF_BEGIN__:{}:{}\x07\r\nfixture> ",

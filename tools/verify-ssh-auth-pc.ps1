@@ -447,15 +447,23 @@ function Wait-FixtureLogMatchCount {
     throw "Timed out waiting for a new SSH fixture event: $Pattern"
 }
 
+function Invoke-AuthUiText {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    if ($Text -match '[\r\n\x00]') {
+        throw '[harness] HarmonyOS UI text input does not accept command separators'
+    }
+    & $hdc -t $Target shell uitest uiInput text $Text | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw '[environment] HarmonyOS UI text input failed'
+    }
+}
+
 function Invoke-TemporaryFixtureAuthText {
     param([Parameter(Mandatory = $true)][string]$Value)
     if ($Value -notmatch '^[a-z0-9]+$') {
         throw '[harness] Generated authentication test value is outside the safe UI text alphabet'
     }
-    & $hdc -t $Target shell uitest uiInput text $Value | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw '[environment] HarmonyOS UI text input rejected a temporary fixture authentication value'
-    }
+    Invoke-AuthUiText -Text $Value
 }
 
 function Submit-AuthValue {
@@ -514,7 +522,7 @@ function Submit-FocusedDeviceCommand {
     for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
         Focus-ActiveCommandInput -LayoutName $LayoutName
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command
+        Invoke-AuthUiText -Text $Command
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         try {
             Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
@@ -523,7 +531,6 @@ function Submit-FocusedDeviceCommand {
             if ($commandAttempt -ge 3) {
                 throw '[harness] Device did not submit the focused command after three attempts'
             }
-            Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
         }
     }
 }
@@ -578,7 +585,7 @@ function Close-FixtureShell {
 
 function Submit-ConnectedInput {
     param([Parameter(Mandatory = $true)][string]$Text)
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Text
+    Invoke-AuthUiText -Text $Text
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
 }
 
@@ -858,7 +865,8 @@ function Get-AuthPerfRenderRecord {
 function Invoke-AuthPerfSample {
     param([Parameter(Mandatory = $true)][string]$CaseId)
     for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
-        $preparedPattern = 'perf case=' + [regex]::Escape($CaseId) + ' bytes=\d+ state=prepared'
+        $preparedPattern = 'perf case=' + [regex]::Escape($CaseId) +
+            ' lines=12000 width=80 bytes=\d+ state=prepared'
         $preparedCount = Get-FixtureLogMatchCount -Pattern $preparedPattern
         Submit-ConnectedInput -Text "ltty-perf-prepare $CaseId 12000 80"
         try {
@@ -1194,10 +1202,11 @@ function Write-AuthEvidence {
             failure = $awakeLeaseFailure
         }
         input = [ordered]@{
-            method = 'raw-physical-and-harmony-uitest-text'
+            method = 'harmony-uitest-text-and-raw-physical-special-keys'
             secretInjection = 'harmony-uitest-complete-text-runtime-generated-temporary-fixture-values'
             textCommandCharacters = 'complete-value'
-            deviceProgramIntervalMilliseconds = 500
+            ordinaryTextInjection = 'harmony-uitest-complete-text'
+            physicalKeyInjection = 'raw-key-events-special-keys-only'
             submitTelemetry = 'compile-time-acceptance-marker-with-sequence-and-kind-only'
             businessOutcomeRequired = $true
             fixedDelayUsedAsVerdict = $false
@@ -1346,7 +1355,7 @@ try {
     if (-not (Test-AuthStageSelected -Name 'password-success')) {
         Start-AuthCommand -User 'password'
         Wait-AuthLog -Pattern 'rust event: HOST_KEY_PROMPT:'
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'yes'
+        Invoke-AuthUiText -Text 'yes'
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         Wait-AuthLog -Pattern 'native auth event kind=password'
         Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
@@ -1365,7 +1374,7 @@ try {
     Start-AuthStage -Name 'password-success'
     Start-AuthCommand -User 'password'
     Wait-AuthLog -Pattern 'rust event: HOST_KEY_PROMPT:'
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'yes'
+    Invoke-AuthUiText -Text 'yes'
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     Wait-AuthLog -Pattern 'native auth event kind=password'
     Submit-AuthValue -Value $credentials.password -LayoutName 'layout-password-value.json'
