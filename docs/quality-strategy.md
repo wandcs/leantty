@@ -227,11 +227,13 @@ Every automated physical scenario MUST:
   infrastructure stop, not authorization to restart HDC or repair the device;
 - locate UI controls from current layout semantics and native bounds, not stale
   screenshots or Windows-scaled coordinates;
+- never run two physical scenarios against the same target concurrently;
 - inject ordinary terminal text as one complete serialized UiTest text operation;
   reserve numeric physical-key events for shortcuts, modifiers and special-key
-  semantics. Layout, click, text, key and screenshot operations MUST share one
-  device-scoped UiTest mutex because the platform interface is not concurrent;
-  require the command's structured result or actual side effect before proceeding;
+  semantics. Common helper-driven layout, click, text, key and screenshot
+  operations MUST share one device-scoped UiTest mutex because the platform
+  interface is not concurrent; require the command's structured result or actual
+  side effect before proceeding;
 - activate the application, locate the current active terminal input and prove
   focus immediately before each command or hidden response; a system
   notification, dialog or foreground-window change invalidates that input
