@@ -1568,7 +1568,7 @@ try {
     $wrongAnswer = New-LeanTTYRegressionSecret
     $secrets += $wrongAnswer
     Submit-AuthValue -Value $wrongAnswer -LayoutName 'layout-multiround-wrong.json'
-    Wait-AuthLog -Pattern 'rust event: AUTH:authentication was rejected'
+    Wait-AuthLog -Pattern 'rust event: AUTH:target:authentication was rejected'
     Assert-NoSecretExposure -LayoutName 'layout-multiround-rejected.json'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Start-AuthCommand -User 'kbdint-multiround'
