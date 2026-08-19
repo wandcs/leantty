@@ -455,6 +455,9 @@ foreach ($scriptName in @(
             $content.Contains('Assert-AuthCommandLoopbackTarget') -and
             $content.Contains("'[environment] Device key injection changed the SSH command target'") -and
             $content.Contains('Activate-RegressionWindow') -and
+            $content.Contains('function Assert-RegressionProcessUnchanged') -and
+            ([regex]::Matches($content, 'Assert-RegressionProcessUnchanged -Action').Count -eq 3) -and
+            $content.Contains("process identity was unavailable while `$Action") -and
             $content.Contains('Focus-ActiveCommandInput') -and
             $content.Contains('Set-LeanTTYTerminalInputFocus') -and
             $content.Contains('businessOutcomeRequired = $true') -and
@@ -530,7 +533,7 @@ foreach ($scriptName in @(
             $content.Contains("'EnhanceMinimizeBtn'") -and
             $content.Contains('LeanTTY active-pane close button was not found') -and
             -not $content.Contains("Invoke-AuthShortcut -Action 'close-pane'") -and
-            $content.Contains('LeanTTY process changed while activating its window') -and
+            $content.Contains('LeanTTY process changed while $Action') -and
             $content.Contains("'process-stop-during-hidden-prompt-cleanup'") -and
             $content.Contains("'tools/verify-terminal-search-pc.ps1'") -and
             $content.Contains("'docs/design/terminal-search.md'") -and

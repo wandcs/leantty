@@ -936,8 +936,26 @@ function Focus-AuthPane {
 function Activate-RegressionWindow {
     & $hdc -t $Target shell 'aa start -a EntryAbility -b com.leantty.app' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to activate LeanTTY regression window' }
-    $activatedPid = (@(& $hdc -t $Target shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
-    if ($activatedPid -ne $appPid) { throw '[environment] LeanTTY process changed while activating its window' }
+    Assert-RegressionProcessUnchanged -Action 'activating its window'
+}
+
+function Assert-RegressionProcessUnchanged {
+    param([Parameter(Mandatory = $true)][string]$Action)
+
+    $lastObservedPid = ''
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $lastObservedPid = (@(
+            & $hdc -t $Target shell 'pidof com.leantty.app' 2>&1
+        ) -join "`n").Trim()
+        if ($LASTEXITCODE -eq 0 -and $lastObservedPid -eq $appPid) { return }
+        if ($stopwatch.Elapsed.TotalSeconds -lt 5) { Start-Sleep -Milliseconds 200 }
+    } while ($stopwatch.Elapsed.TotalSeconds -lt 5)
+
+    if ($lastObservedPid -match '^\d+$') {
+        throw "[environment] LeanTTY process changed while $Action"
+    }
+    throw "[environment] LeanTTY process identity was unavailable while $Action"
 }
 
 function Invoke-ActivePaneCloseButton {
@@ -987,8 +1005,7 @@ function Minimize-RegressionWindow {
     & $hdc -t $Target shell "uitest uiInput click $($center.x) $($center.y)" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS system minimize click failed' }
     Wait-AuthLog -Pattern 'Window visibility changed: visible=false'
-    $minimizedPid = (@(& $hdc -t $Target shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
-    if ($minimizedPid -ne $appPid) { throw 'LeanTTY process changed while minimizing' }
+    Assert-RegressionProcessUnchanged -Action 'minimizing'
 }
 
 function Restore-RegressionWindow {
@@ -996,8 +1013,7 @@ function Restore-RegressionWindow {
     & $hdc -t $Target shell 'aa start -a EntryAbility -b com.leantty.app' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to restore minimized LeanTTY window' }
     Wait-AuthLog -Pattern 'Window visibility changed: visible=true'
-    $restoredPid = (@(& $hdc -t $Target shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
-    if ($restoredPid -ne $appPid) { throw 'LeanTTY process changed while restoring' }
+    Assert-RegressionProcessUnchanged -Action 'restoring'
     Wait-AuthPaneCount -Count 1 -LayoutName 'layout-after-restore.json' | Out-Null
 }
 
