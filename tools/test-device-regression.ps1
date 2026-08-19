@@ -432,9 +432,12 @@ foreach ($scriptName in @(
             -not $content.Contains('Get-AuthInputEventCount') -and
             -not $content.Contains('Authentication input character was not acknowledged after three attempts') -and
             -not $content.Contains('Invoke-AcknowledgedAuthText') -and
-            $content.Contains('function Invoke-SerializedAuthText') -and
-            ([regex]::Matches($content, 'Invoke-SerializedAuthText').Count -ge 6) -and
-            $content.Contains('device-paced-runtime-generated-printable-ascii-serialized-per-character') -and
+            -not $content.Contains('Invoke-SerializedAuthText') -and
+            $content.Contains('function Invoke-SecretKeyEventText') -and
+            ([regex]::Matches($content, 'Invoke-SecretKeyEventText').Count -ge 6) -and
+            $content.Contains("'^[a-z0-9]+$'") -and
+            $content.Contains('harmony-uitest-keyevent-runtime-generated-lowercase-alphanumeric-per-character') -and
+            $content.Contains("method = 'raw-physical-and-harmony-uitest-key-events'") -and
             $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
             $content.Contains('[regex]::Escape($Command)') -and
