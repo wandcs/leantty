@@ -104,10 +104,14 @@ signing; they do not compile Rust with a native Windows toolchain.
 Complete formal-release gates:
 
 ```powershell
-.\tools\test-regression.ps1
 .\tools\verify-pc.ps1
 .\tools\verify-key-passphrase-pc.ps1
 ```
+
+`verify-pc.ps1` runs the complete ungrouped software gate once before the clean
+candidate build. Routine work instead selects affected local groups, for example
+`.\tools\test-regression.ps1 -Group policy,tooling`, and runs
+`.\tools\preflight-device.ps1` only when a named physical scenario is required.
 
 For PowerShell, use semantic variable names and avoid case-insensitive collisions
 with automatic/read-only variables such as `$PID`, `$HOME` and `$Error`. Long

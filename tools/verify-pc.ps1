@@ -83,6 +83,7 @@ foreach ($scriptName in @(
         'build-all.ps1',
         'dev-build.ps1',
         'hdc-common.ps1',
+        'preflight-device.ps1',
         'dev-pc.ps1',
         'deploy-usb.ps1',
         'verify-pc.ps1'

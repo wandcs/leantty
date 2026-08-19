@@ -6,9 +6,9 @@
 >
 > 当前 milestone：[`1.4 — 启动性能与 OpenSSH ProxyJump`](roadmap.md)
 >
-> 当前阶段：启动性能、ProxyJump、SSH Session 状态隔离的实现、日常自动化、聚焦物理机验收
-> 与用户文档均已完成；正在从 `release/1.4.0` 封板版本源与用户指南，合入后以精确的
-> `main` 提交准备 1.4 正式候选
+> 当前阶段：启动性能、ProxyJump、SSH Session 状态隔离、日常自动化、聚焦物理机验收、
+> 物理机控制通道与本地优先、真机按需的测试执行流程均已完成；正在从 `release/1.4.0`
+> 封板版本源与用户指南
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 
@@ -67,8 +67,9 @@ ProxyJump 的实现、受控双服务器 fixture、两层信任/认证/失败、
 
 1. [ ] 按 `release-process.md` 在 `release/1.4.0` 封板 Changelog、离线用户指南与全部版本源，
    通过 PR 合入并推送；记录合并后的精确 `main` 提交，后续候选不再修改产品源或随包资源。
-2. [ ] 从该干净、已推送的精确提交运行 `tools/test-regression.ps1`、`tools/verify-pc.ps1` 和
-   完整适用的物理机矩阵，冻结同一候选、签名角色、manifest、哈希与证据。
+2. [ ] 从该干净、已推送的精确提交运行一次 `tools/verify-pc.ps1`（内部执行完整
+   `tools/test-regression.ps1`）和完整适用的物理机矩阵，冻结同一候选、签名角色、manifest、
+   哈希与证据。
 3. [ ] 从 production/review 两个独立 checkout 构建同一提交与源码树；使用 review-test HAP
    从真实桌面图标完成冷启动到首字母输入，并通过真实双服务器完成 ProxyJump 两层信任/认证、
    目标 PTY 和错误层级的最终人工确认。全部门禁闭合后发布不可变 `v1.4.0` GitHub Release，

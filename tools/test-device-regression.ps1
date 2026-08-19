@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 
 function Assert-True {
@@ -53,20 +54,6 @@ Assert-True (
     (Get-LeanTTYTerminalInputText -Layout $layout) -eq 'ssh-keygen -p -f regression_key'
 ) 'Terminal input text was not read from the accessibility layout'
 
-$printableAscii = -join (32..126 | ForEach-Object { [char]$_ })
-$printableKeyCommand = ConvertTo-LeanTTYDeviceTextKeyCommand -Text $printableAscii
-$unexpectedKeyTokens = @($printableKeyCommand -split ' ' | Where-Object {
-    $_ -notmatch '^(?:uinput|-K|-d|-u|\d+)$'
-})
-Assert-True (
-    $printableKeyCommand.StartsWith('uinput -K ') -and
-    $unexpectedKeyTokens.Count -eq 0 -and
-    $printableKeyCommand -notmatch 'uitest|uiInput'
-) 'Device text key conversion did not cover the complete printable ASCII range'
-Assert-Throws -Action {
-    ConvertTo-LeanTTYDeviceTextKeyCommand -Text "line`nbreak"
-} -Message 'Device text key conversion accepted non-printable input'
-
 & {
     $script:capturedHdcCalls = [Collections.Generic.List[object]]::new()
     function Invoke-FakeHdc {
@@ -78,43 +65,134 @@ Assert-Throws -Action {
         -Hdc 'Invoke-FakeHdc' `
         -Target 'regression-device' `
         -Text 'echo LTTY'
-    $expectedFirstCommand = ConvertTo-LeanTTYDeviceTextKeyCommand `
-        -Text 'echo LTT' `
-        -IntervalMilliseconds 500
-    $expectedSecondCommand = ConvertTo-LeanTTYDeviceTextKeyCommand `
-        -Text 'Y' `
-        -IntervalMilliseconds 500
     Assert-True (
-        $script:capturedHdcCalls.Count -eq 2 -and
-        $script:capturedHdcCalls[0].Count -eq 4 -and
+        $script:capturedHdcCalls.Count -eq 1 -and
+        $script:capturedHdcCalls[0].Count -eq 7 -and
         $script:capturedHdcCalls[0][0] -eq '-t' -and
         $script:capturedHdcCalls[0][1] -eq 'regression-device' -and
         $script:capturedHdcCalls[0][2] -eq 'shell' -and
-        $script:capturedHdcCalls[0][3] -eq $expectedFirstCommand -and
-        $script:capturedHdcCalls[1][3] -eq $expectedSecondCommand
-    ) 'Device text injection did not use bounded device-paced raw-key commands'
-
-    $script:capturedHdcCalls.Clear()
-    $secretLengthText = 't' + ('a' * 23)
-    Invoke-LeanTTYDeviceText `
-        -Hdc 'Invoke-FakeHdc' `
-        -Target 'regression-device' `
-        -Text $secretLengthText
-    Assert-True (
-        $script:capturedHdcCalls.Count -eq 3 -and
-        $script:capturedHdcCalls[0][3] -eq (
-            ConvertTo-LeanTTYDeviceTextKeyCommand `
-                -Text ('t' + ('a' * 7)) `
-                -IntervalMilliseconds 500
-        ) -and
-        $script:capturedHdcCalls[1][3] -eq (
-            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 8) -IntervalMilliseconds 500
-        ) -and
-        $script:capturedHdcCalls[2][3] -eq (
-            ConvertTo-LeanTTYDeviceTextKeyCommand -Text ('a' * 8) -IntervalMilliseconds 500
-        )
-    ) 'Secret-length device text injection was not split below the observed physical uinput boundary'
+        $script:capturedHdcCalls[0][3] -eq 'uitest' -and
+        $script:capturedHdcCalls[0][4] -eq 'uiInput' -and
+        $script:capturedHdcCalls[0][5] -eq 'text' -and
+        $script:capturedHdcCalls[0][6] -eq 'echo LTTY'
+    ) 'Ordinary device text did not use one complete serialized UiTest input operation'
 }
+
+& {
+    function Get-HdcTargets {
+        return @([pscustomobject]@{
+                key = 'regression-device'; transport = 'USB'; status = 'Ready'; raw = ''
+            })
+    }
+    Assert-True (
+        (Assert-HdcTargetReady -Hdc 'unused' -Target 'regression-device').status -eq 'Ready'
+    ) 'Ready USB HDC target was rejected by preflight'
+}
+
+& {
+    function Invoke-FailingHdc {
+        '[E001005] runtime-only-secret'
+        $global:LASTEXITCODE = 0
+    }
+    $failureMessage = ''
+    try {
+        Invoke-HdcChecked `
+            -Hdc 'Invoke-FailingHdc' `
+            -Target 'regression-device' `
+            -Arguments @('shell', 'probe') `
+            -Operation 'bounded probe' | Out-Null
+    } catch {
+        $failureMessage = $_.Exception.Message
+    }
+    Assert-True (
+        $failureMessage.Contains('hdcCode=E001005') -and
+        -not $failureMessage.Contains('runtime-only-secret')
+    ) 'Checked HDC failures either lost the standard code or exposed command output'
+}
+
+Assert-Throws -Action {
+    Invoke-LeanTTYDeviceText -Hdc 'unused' -Target 'unused' -Text "line`nbreak"
+} -Message 'Device text input accepted a command separator'
+
+Assert-True (Test-HdcCommandFailure -Output '[E001005] target disconnected') (
+    'HDC standard error code was not recognized as a failed command'
+)
+Assert-True (-not (Test-HdcCommandFailure -Output 'Forwardport result:OK')) (
+    'Successful HDC output was classified as a failure'
+)
+
+& {
+    function Get-HdcTargets {
+        return @([pscustomobject]@{
+                key = 'regression-device'; transport = 'USB'; status = 'Offline'; raw = ''
+            })
+    }
+    Assert-Throws -Action {
+        Assert-HdcTargetReady -Hdc 'unused' -Target 'regression-device'
+    } -Message 'Offline HDC target was accepted instead of stopping at preflight'
+}
+
+& {
+    function Get-HdcTargets {
+        return @([pscustomobject]@{
+                key = 'regression-device'; transport = 'USB'; status = 'Offline'; raw = ''
+            })
+    }
+    $message = ''
+    try {
+        Resolve-LeanTTYRegressionTarget -Hdc 'unused'
+    } catch {
+        $message = $_.Exception.Message
+    }
+    Assert-True ($message.StartsWith('[infrastructure]')) (
+        'No ready device was not classified as an infrastructure stop'
+    )
+}
+
+& {
+    function Get-HdcTargets {
+        return @(
+            [pscustomobject]@{ key = 'device-a'; transport = 'USB'; status = 'Ready'; raw = '' },
+            [pscustomobject]@{ key = 'device-b'; transport = 'USB'; status = 'Ready'; raw = '' }
+        )
+    }
+    $message = ''
+    try {
+        Resolve-LeanTTYRegressionTarget -Hdc 'unused'
+    } catch {
+        $message = $_.Exception.Message
+    }
+    Assert-True ($message.StartsWith('[environment]')) (
+        'Ambiguous ready targets were not classified as an environment stop'
+    )
+}
+
+$devicePreflightPath = Join-Path $PSScriptRoot 'preflight-device.ps1'
+Assert-True (Test-Path -LiteralPath $devicePreflightPath -PathType Leaf) (
+    'Standalone device control preflight is missing'
+)
+$preflightTokens = $null
+$preflightErrors = $null
+[void][Management.Automation.Language.Parser]::ParseFile(
+    $devicePreflightPath,
+    [ref]$preflightTokens,
+    [ref]$preflightErrors
+)
+Assert-True ($preflightErrors.Count -eq 0) 'Standalone device control preflight has invalid syntax'
+$devicePreflightText = Get-Content -LiteralPath $devicePreflightPath -Raw
+Assert-True (
+    $devicePreflightText.Contains('Resolve-LeanTTYRegressionTarget') -and
+    $devicePreflightText.Contains('Assert-HdcTargetReady') -and
+    $devicePreflightText.Contains('Invoke-HdcChecked') -and
+    $devicePreflightText.Contains('Get-LeanTTYDeviceLayout') -and
+    $devicePreflightText.Contains("gate = 'device-control-preflight'") -and
+    $devicePreflightText.Contains('acceptanceEligible = $false') -and
+    $devicePreflightText.Contains('productBehaviorClaimed = $false') -and
+    $devicePreflightText.Contains('Get-PreflightFailureDomain') -and
+    -not $devicePreflightText.Contains('aa start') -and
+    -not $devicePreflightText.Contains('power-shell wakeup') -and
+    -not $devicePreflightText.Contains('Start-LeanTTYRegressionApp')
+) 'Device preflight mutates product state, repairs the target, or claims product acceptance'
 
 & {
     $script:injectedText = ''
@@ -136,7 +214,7 @@ Assert-Throws -Action {
         $script:injectedText -eq 'echo LEANTTY_SMOKE' -and
         $script:submittedKeyCodes.Count -eq 1 -and
         $script:submittedKeyCodes[0] -eq 2054
-    ) 'Device command submission did not inject raw text before pressing Enter'
+    ) 'Device command submission did not inject complete UI text before pressing Enter'
 }
 
 $submitCommandParameters = (Get-Command Submit-LeanTTYDeviceCommand).Parameters.Keys
@@ -174,12 +252,32 @@ Assert-Throws -Action {
 $appLogParameters = (Get-Command Get-LeanTTYAppLogs).Parameters.Keys
 $waitLogParameters = (Get-Command Wait-LeanTTYAppLog).Parameters.Keys
 $waitLogSource = (Get-Command Wait-LeanTTYAppLog).Definition
+$layoutCaptureSource = (Get-Command Get-LeanTTYDeviceLayout).Definition
+$layoutCaptureParameters = (Get-Command Get-LeanTTYDeviceLayout).Parameters
 $physicalKeySource = (Get-Command Invoke-LeanTTYDevicePhysicalKey).Definition
 Assert-True (
     $appLogParameters -notcontains 'Pid' -and
     $waitLogParameters -notcontains 'Pid' -and
-    $waitLogSource.Contains('[ValidateRange(1, 60)]')
+    $waitLogSource.Contains('[ValidateRange(1, 60)]') -and
+    $waitLogSource.Contains('Start-Sleep -Milliseconds 1000') -and
+    -not $waitLogSource.Contains('Start-Sleep -Milliseconds 200')
 ) 'Device log helpers conflict with the read-only PowerShell PID automatic variable'
+Assert-True (
+    $layoutCaptureSource.Contains('for ($captureAttempt = 1; $captureAttempt -le 2; $captureAttempt++)') -and
+    $layoutCaptureSource.Contains('HarmonyOS UI layout remained empty after two captures')
+) 'Transient empty UiTest layouts are not handled by one bounded idempotent retry'
+Assert-True (
+    $layoutCaptureParameters.ContainsKey('BundleName') -and
+    $layoutCaptureSource.Contains("[string]`$BundleName = 'com.leantty.app'") -and
+    $layoutCaptureSource.Contains("if (-not [string]::IsNullOrWhiteSpace(`$BundleName))") -and
+    $devicePreflightText.Contains("-BundleName ''")
+) 'Generic device preflight cannot request a global layout without launching LeanTTY'
+
+$awakeLeaseParameter = (Get-Command Start-LeanTTYDeviceAwakeLease).Parameters['TimeoutMilliseconds']
+Assert-True (
+    $awakeLeaseParameter.Attributes.Where({ $_ -is [Management.Automation.ValidateRangeAttribute] }).MaxRange `
+        -ge 7200000
+) 'Device awake lease cannot cover the declared full-matrix budget'
 Assert-True (
     $physicalKeySource.Contains('$process.WaitForExit(5000)') -and
     $physicalKeySource.Contains('$process.Kill($true)') -and
@@ -227,11 +325,15 @@ Assert-True (
     $deviceRegressionText -notmatch 'terminal-line cleanup|backspaceCount'
 ) 'Device input cleanup still uses inferred backspaces'
 Assert-True (
-    $deviceRegressionText -match '-IntervalMilliseconds 500(?:\s|$)' -and
-    $deviceRegressionText.Contains('$chunkLength = 8') -and
-    $deviceRegressionText.Contains('$postInjectionSettleMilliseconds = 500') -and
-    $deviceRegressionText.Contains('Start-Sleep -Milliseconds $postInjectionSettleMilliseconds')
-) 'Device raw-key text injection does not preserve pacing and bounded batches'
+    $deviceRegressionText.Contains("@('uiInput', 'text', `$Text)") -and
+    -not $deviceRegressionText.Contains('ConvertTo-LeanTTYDeviceTextKeyCommand') -and
+    -not $deviceRegressionText.Contains('$chunkLength = 8')
+) 'Ordinary device text is not isolated from the raw physical-key path'
+Assert-True (
+    $deviceRegressionText.Contains('function Invoke-LeanTTYSerializedUiTest') -and
+    $deviceRegressionText.Contains('[Threading.Mutex]::new') -and
+    $deviceRegressionText.Contains('$mutex.WaitOne(60000)')
+) 'UiTest operations are not serialized across concurrent device harness processes'
 Assert-True (
     $deviceRegressionText -notmatch 'shell\s+run-as\s+com\.leantty\.app' -and
     $deviceRegressionText -match 'shell\s+-b\s+com\.leantty\.app'
@@ -334,9 +436,6 @@ Assert-True (
 '@ | ConvertFrom-Json -Depth 20),
         (@'
 {"attributes":{"bounds":"[0,0][3120,1955]","hint":""},"children":[{"attributes":{"bounds":"[127,495][145,536]","hint":"Terminal input","focused":"true"},"children":[]},{"attributes":{"bounds":"[1694,135][1712,176]","hint":"Terminal input","focused":"false"},"children":[]}]}
-'@ | ConvertFrom-Json -Depth 20),
-        (@'
-{"attributes":{"bounds":"[0,0][3120,1955]","hint":""},"children":[{"attributes":{"bounds":"[127,495][145,536]","hint":"Terminal input","focused":"true"},"children":[]},{"attributes":{"bounds":"[1694,135][1712,176]","hint":"Terminal input","focused":"false"},"children":[]}]}
 '@ | ConvertFrom-Json -Depth 20)
     )
     function Invoke-FocusHdc {
@@ -362,10 +461,10 @@ Assert-True (
     Assert-True (
         $script:focusClickCalls.Count -eq 1 -and
         ($script:focusClickCalls[0] -join ' ') -match 'uiInput click 136 516' -and
-        $script:focusLayoutIndex -eq 3 -and
+        $script:focusLayoutIndex -eq 2 -and
         $focusedNodes.Count -eq 1 -and
         $focusedNodes[0].attributes.bounds -eq '[127,495][145,536]'
-    ) 'Terminal focus gate did not wait for two stable focused snapshots of the clicked input'
+    ) 'Terminal focus gate did not accept one focused post-click snapshot'
 }
 
 Assert-True (
@@ -376,6 +475,7 @@ Assert-True (
 
 foreach ($scriptName in @(
     'device-regression.ps1',
+    'preflight-device.ps1',
     'verify-key-passphrase-pc.ps1',
     'verify-ssh-auth-pc.ps1',
     'verify-terminal-search-pc.ps1'
@@ -422,11 +522,14 @@ foreach ($scriptName in @(
             $content.Contains('SSH authentication harness requires a clean committed tree') -and
             $content.Contains('Assert-LeanTTYCandidateHarnessCompatibility') -and
             $content.Contains("'tools/start-ssh-auth-fixture.ps1'") -and
+            $content.Contains("'tools/hdc-common.ps1'") -and
             $content.Contains('harness = [ordered]@{')
         ) 'SSH authentication evidence does not separate candidate and harness identity safely'
         Assert-True (
             $content.Contains('rport "tcp:$FixturePort"') -and
             $content.Contains('fport rm "tcp:$FixturePort" "tcp:$FixturePort"') -and
+            $content.Contains('Assert-AuthControlChannels') -and
+            $content.Contains('Assert-HdcTargetReady') -and
             $content.Contains('cleanup = [ordered]@{')
         ) 'SSH authentication fixture mapping is not paired with recorded cleanup'
         Assert-True (
@@ -440,10 +543,9 @@ foreach ($scriptName in @(
             -not $content.Contains('Invoke-AcknowledgedAuthText') -and
             -not $content.Contains('Invoke-SerializedAuthText') -and
             -not $content.Contains('Invoke-SecretKeyEventText') -and
-            -not $content.Contains('Invoke-LeanTTYDeviceText') -and
             $content.Contains('function Invoke-AuthUiText') -and
             ([regex]::Matches($content, 'Invoke-AuthUiText').Count -ge 6) -and
-            $content.Contains('& $hdc -t $Target shell uitest uiInput text $Text') -and
+            $content.Contains('Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Text') -and
             $content.Contains('function Invoke-TemporaryFixtureAuthText') -and
             ([regex]::Matches($content, 'Invoke-TemporaryFixtureAuthText').Count -ge 6) -and
             $content.Contains("'^[a-z0-9]+$'") -and
@@ -464,7 +566,7 @@ foreach ($scriptName in @(
             ([regex]::Matches($content, 'Assert-RegressionProcessUnchanged -Action').Count -eq 3) -and
             $content.Contains("process identity was unavailable while `$Action") -and
             $content.Contains('Focus-ActiveCommandInput') -and
-            $content.Contains('Set-LeanTTYTerminalInputFocus') -and
+            $content.Contains('Invoke-LeanTTYDeviceClick') -and
             $content.Contains('businessOutcomeRequired = $true') -and
             $content.Contains('fixedDelayUsedAsVerdict = $false')
         ) 'SSH authentication scenario does not enforce the layout/log secret boundary'
@@ -492,6 +594,8 @@ foreach ($scriptName in @(
             $content.Contains('Write-AuthLiveStatus') -and
             $content.Contains('Get-LeanTTYFixtureStageBudgetSeconds') -and
             $content.Contains('Get-LeanTTYFixtureRunSeconds') -and
+            $content.Contains('$awakeLeaseMilliseconds = ($fixtureRunSeconds + 300) * 1000') -and
+            $content.Contains('-TimeoutMilliseconds $awakeLeaseMilliseconds') -and
             $content.Contains('selectedStageBudgetsSeconds') -and
             $content.Contains("'password-kbdint-mixed-echo' = 300") -and
             $content.Contains("'multiround-wrong-answer-recovery' = 420") -and
@@ -542,7 +646,8 @@ foreach ($scriptName in @(
             $content.Contains("'tools/verify-terminal-search-pc.ps1'") -and
             $content.Contains("'docs/design/terminal-search.md'") -and
             $content.Contains("'docs/next-work.md'") -and
-            $content.Contains('Device did not submit the focused command after three attempts')
+            $content.Contains('Command submission outcome is unknown; the scenario must be restarted') -and
+            -not $content.Contains('for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++)')
         ) 'SSH authentication scenario does not declare its bounded physical coverage'
         Assert-True (
             $content.Contains("'transport-main-path'") -and
@@ -550,8 +655,9 @@ foreach ($scriptName in @(
             $content.Contains("'ltty-paste-prepare russhmain 1048576'") -and
             ([regex]::Matches($content, 'Submit-ConnectedInputUntilFixtureEvent').Count -ge 8) -and
             ([regex]::Matches($content, 'Submit-ConnectedInputUntilAuthEvent').Count -ge 2) -and
-            $content.Contains('Device did not deliver connected input after three attempts') -and
-            $content.Contains('Connected input did not produce the expected application event after three attempts') -and
+            $content.Contains('Connected input outcome is unknown; the scenario must be restarted') -and
+            $content.Contains('Connected input application outcome is unknown; the scenario must be restarted') -and
+            -not $content.Contains('for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++)') -and
             -not $content.Contains("Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'") -and
             $content.Contains("'Clipboard paste ok,1048576'") -and
             $content.Contains("'D: 1048576 chars'") -and
@@ -575,8 +681,8 @@ foreach ($scriptName in @(
             $content.Contains("@('Off', 'Low', 'Medium', 'High', 'Extreme')") -and
             $content.Contains('Invoke-AuthPerfSample -CaseId $caseId') -and
             $content.Contains("' lines=12000 width=80 bytes=\d+ state=prepared'") -and
-            $content.Contains('Fixture did not accept the PERF prepare command') -and
-            $content.Contains('Fixture did not accept the PERF run command') -and
+            $content.Contains('PERF prepare outcome is unknown') -and
+            $content.Contains('PERF run outcome is unknown') -and
             $content.Contains('commandAttempts') -and
             $content.Contains('renderSamples = @($renderSamples)') -and
             $content.Contains('memorySamples = @($memorySamples)') -and
@@ -716,8 +822,8 @@ $deviceRegressionText = Get-Content -LiteralPath (
 ) -Raw
 Assert-True (
     $deviceRegressionText.Contains("return 't' + [Guid]::NewGuid()") -and
-    $deviceRegressionText.Contains('-IntervalMilliseconds 500')
-) 'Device secret injection is not restricted to stable lowercase input with conservative pacing'
+    $deviceRegressionText.Contains("@('uiInput', 'text', `$Text)")
+) 'Device secret injection is not restricted to stable lowercase input with complete UiTest delivery'
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $sessionViewModel = Get-Content -LiteralPath (
@@ -790,6 +896,8 @@ Assert-True (
     $fileTransferVerifier.Contains('ACCEPTANCE_DOWNLOADS_MANAGER passed=true') -and
     $fileTransferVerifier.Contains('managerObservation') -and
     $fileTransferVerifier.Contains('device-downloads-capability.json') -and
+    ([regex]::Matches($fileTransferVerifier, 'Start-Sleep -Milliseconds 1000').Count -ge 3) -and
+    $fileTransferVerifier.Contains('Invoke-LeanTTYDeviceClick') -and
     $fileTransferVerifier.Contains('Get-LeanTTYDeviceLayout') -and
     $fileTransferVerifier.Contains('Start-LeanTTYRegressionApp')
 ) 'Focused file-transfer physical-PC gate is incomplete'
@@ -879,6 +987,9 @@ Assert-True (
     $putGetVerifier.Contains('device-put-get-cancel.json') -and
     $putGetVerifier.Contains('fport rm "tcp:$FixturePort" "tcp:$FixturePort"') -and
     -not $putGetVerifier.Contains('rport rm "tcp:$FixturePort"') -and
+    $putGetVerifier.Contains('$awakeLeaseMilliseconds = ($fixtureRunSeconds + 300) * 1000') -and
+    $putGetVerifier.Contains('-TimeoutMilliseconds $awakeLeaseMilliseconds') -and
+    $putGetVerifier.Contains('Invoke-LeanTTYDeviceClick') -and
     $putGetVerifier.Contains('-WindowStyle Hidden') -and
     $putGetVerifier.Contains('device-put-get.json')
 ) 'Production PUT/GET physical-PC verifier is incomplete'

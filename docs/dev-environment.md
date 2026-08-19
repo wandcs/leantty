@@ -58,6 +58,18 @@ only when the affected behavior needs a device build, and run only its affected
 physical scenario. The complete software suite and physical matrix are not
 routine commit gates.
 
+Use the existing software gate with explicit focused groups instead of running
+the full suite. For example:
+
+```powershell
+.\tools\test-regression.ps1 -Group policy,tooling
+```
+
+Available groups are documented in `quality-strategy.md`. When the mapped claim
+requires a physical PC, run `.\tools\preflight-device.ps1` after local checks
+and before deployment or scenario setup. It stops on Offline, ambiguous targets
+or unusable UiTest/layout channels and never repairs or unlocks the device.
+
 `tools/verify-pc.ps1` is reserved for formal release-package preparation. It
 requires a clean committed tree and retains its signed test HAP only after the
 full gate succeeds.

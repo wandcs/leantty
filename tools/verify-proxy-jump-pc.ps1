@@ -277,9 +277,9 @@ function Focus-ProxyPane {
     $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
     $index = if ($Side -eq 'left') { 0 } else { 1 }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$nodes[$index].attributes.bounds)
-    & $script:proxyHdc -t $script:proxyTarget shell `
-        "uitest uiInput click $($center.x) $($center.y)" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to focus the $Side ProxyJump Pane" }
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $script:proxyHdc -Target $script:proxyTarget -X $center.x -Y $center.y `
+        -Operation "LeanTTY $Side ProxyJump Pane focus"
 
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     do {
