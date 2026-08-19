@@ -429,11 +429,12 @@ foreach ($scriptName in @(
             $content.Contains("'failure-fixture-stderr.txt'") -and
             $content.Contains("'[REDACTED]'") -and
             -not $content.Contains('Device auth input delivery length mismatch') -and
-            $content.Contains("SessionViewModel: D: 1 chars, mode=") -and
-            $content.Contains('function Invoke-AcknowledgedAuthText') -and
-            ([regex]::Matches($content, 'Invoke-AcknowledgedAuthText').Count -ge 6) -and
-            $content.Contains('Authentication input character was not acknowledged after three attempts') -and
-            $content.Contains('device-paced-runtime-generated-printable-ascii-with-per-character-nonsecret-ack') -and
+            -not $content.Contains('Get-AuthInputEventCount') -and
+            -not $content.Contains('Authentication input character was not acknowledged after three attempts') -and
+            -not $content.Contains('Invoke-AcknowledgedAuthText') -and
+            $content.Contains('function Invoke-SerializedAuthText') -and
+            ([regex]::Matches($content, 'Invoke-SerializedAuthText').Count -ge 6) -and
+            $content.Contains('device-paced-runtime-generated-printable-ascii-serialized-per-character') -and
             $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
             $content.Contains('[regex]::Escape($Command)') -and
