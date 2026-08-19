@@ -839,12 +839,19 @@ foreach ($scriptName in @(
             $content.Contains('function Submit-ProxyCommand') -and
             $content.Contains('$inputNode = Focus-ProxyCommandInput') -and
             $content.Contains('-InputNode $inputNode') -and
-            $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
+            $content.Contains('function Get-ProxyCommandInputText') -and
+            $content.Contains('function Wait-ProxyCommandInputText') -and
+            $content.Contains('Get-LeanTTYTerminalInputNodes -Layout $Layout') -and
             $content.Contains('$actualBuffer -ceq $Command') -and
-            $content.Contains('[regex]::Escape($Command)') -and
+            $content.Contains("-Expected ''") -and
+            -not $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
             $content.Contains('ProxyJump command submission outcome is unknown; the scenario must be restarted') -and
-            $content.Contains("-Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true'") -and
-            $content.Contains('HarmonyOS input could not prepare the exact ProxyJump command buffer')
+            $content.Contains('HarmonyOS input could not prepare the exact ProxyJump command buffer') -and
+            $content.Contains("[string]`$HapPath = ''") -and
+            $content.Contains('[IO.Path]::GetFullPath($HapPath)') -and
+            $content.Contains('ProxyJump verification requires a signed HAP') -and
+            $content.Contains('-HapPath $selectedHapPath') -and
+            $content.Contains('$script:proxyHapPath = $selectedHapPath')
         ) 'ProxyJump physical scenario can submit an unverified command buffer'
     }
 }
