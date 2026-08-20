@@ -41,7 +41,7 @@ function Get-WarmGlobalLayout {
     $remotePath = '/data/local/tmp/leantty-warm-' + [Guid]::NewGuid().ToString('N') + '.json'
     $localPath = Join-Path $script:evidenceDirectory ($Name + '.json')
     try {
-        & $script:hdc -t $script:target shell "uitest dumpLayout -p $remotePath -a" | Out-Null
+        & $script:hdc -t $script:target shell "uitest dumpLayout -p $remotePath" | Out-Null
         if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS global UI layout capture failed' }
         & $script:hdc -t $script:target file recv $remotePath $localPath | Out-Null
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $localPath -PathType Leaf)) {

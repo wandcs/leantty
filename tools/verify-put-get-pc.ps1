@@ -117,6 +117,7 @@ $authObservationStdout = ''
 $authObservationStderr = ''
 $authObservationFiles = [Collections.Generic.List[string]]::new()
 $authObservationRecords = [Collections.Generic.List[object]]::new()
+$commandObservations = [Collections.Generic.List[object]]::new()
 $sourceKind = 'generated-random'
 $sourceBytesCount = if ($SelectionCopy) {
     1MB
@@ -360,8 +361,15 @@ function Focus-TerminalInput {
     } else {
         throw 'PUT/GET verifier could not identify one active terminal input'
     }
-    Set-LeanTTYTerminalInputFocus `
-        -Hdc $hdc -Target $Target -InputNode $inputNode -LocalPath $layoutPath | Out-Null
+    $focusedLayout = Set-LeanTTYTerminalInputFocus `
+        -Hdc $hdc -Target $Target -InputNode $inputNode -LocalPath $layoutPath
+    $focusedNodes = @(Get-LeanTTYTerminalInputNodes -Layout $focusedLayout | Where-Object {
+            [string]$_.attributes.focused -eq 'true'
+        })
+    if ($focusedNodes.Count -ne 1) {
+        throw 'PUT/GET verifier could not prove one focused terminal input'
+    }
+    return $focusedNodes[0]
 }
 
 function Reset-TerminalInput {
@@ -378,36 +386,6 @@ function Reset-TerminalInput {
         -LocalPath (Join-Path $EvidenceDirectory ($LayoutName + '-after-interrupt.json')) | Out-Null
 }
 
-function Wait-ExactAcceptanceCommandSubmit {
-    param(
-        [Parameter(Mandatory = $true)][string]$Expected,
-        [Parameter(Mandatory = $true)][string]$Stage
-    )
-
-    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    while ($stopwatch.Elapsed.TotalSeconds -lt 10) {
-        $liveAll = Read-SharedTextFile -Path $script:authObservationStdout
-        $liveCurrent = if ($script:authObservationOffset -le $liveAll.Length) {
-            $liveAll.Substring($script:authObservationOffset)
-        } else {
-            $liveAll
-        }
-        $records = @([regex]::Matches(
-                $liveCurrent,
-                'ACCEPTANCE_INPUT_SUBMIT sequence=\d+,kind=command,input=(?<input>[^\r\n]*)'
-            ))
-        if ($records.Count -gt 0) {
-            $actual = $records[$records.Count - 1].Groups['input'].Value
-            return [pscustomobject]@{
-                exact = $actual -ceq $Expected
-                actual = $actual
-            }
-        }
-        Start-Sleep -Milliseconds 100
-    }
-    throw "Acceptance package did not expose the submitted production command buffer for $Stage"
-}
-
 function Submit-TerminalText {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
@@ -416,8 +394,9 @@ function Submit-TerminalText {
     )
 
     if ($InputKind -eq 'host-key') {
-        Focus-TerminalInput -Name ($LayoutName + '-focus')
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Text
+        $inputNode = Focus-TerminalInput -Name ($LayoutName + '-focus')
+        Invoke-LeanTTYDeviceText `
+            -Hdc $hdc -Target $Target -Text $Text -InputNode $inputNode
         Get-LeanTTYDeviceLayout `
             -Hdc $hdc -Target $Target `
             -LocalPath (Join-Path $EvidenceDirectory ($LayoutName + '-typed.json')) | Out-Null
@@ -426,25 +405,20 @@ function Submit-TerminalText {
         return
     }
 
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
-        Focus-TerminalInput -Name ($LayoutName + '-focus-' + $attempt.ToString())
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Text
-        Get-LeanTTYDeviceLayout `
-            -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory (
-                    $LayoutName + '-typed-' + $attempt.ToString() + '.json'
-                )) | Out-Null
-        Set-FileTransferAuthenticationObservationCursor
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-        $submitted = Wait-ExactAcceptanceCommandSubmit -Expected $Text -Stage $LayoutName
-        if ($submitted.exact) { return }
-        Start-Sleep -Milliseconds 300
-        $stateLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appProcessId
-        if ($stateLogs -match 'File transfer authentication prompt=|FILE_TRANSFER phase=(PREPARING|TRANSFERRING)') {
-            throw "Inexact physical command unexpectedly started work for $LayoutName"
-        }
-    }
-    throw "Physical key injection could not submit the exact production command for $LayoutName"
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appProcessId `
+        -Command $Text `
+        -Stage $LayoutName `
+        -ObservationSink $commandObservations `
+        -MaxInputAttempts 2 `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Focus-TerminalInput -Name (
+                $LayoutName + '-focus-' + $inputAttempt.ToString()
+            )
+        } | Out-Null
 }
 
 function Submit-TerminalTextWithAcceptanceData {
@@ -462,30 +436,31 @@ function Submit-TerminalTextWithAcceptanceData {
     $before = $Text.Substring(0, $markerIndex)
     $after = $Text.Substring($markerIndex + $marker.Length)
     $expected = $before + '数据' + $after
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
-        Focus-TerminalInput -Name ($LayoutName + '-focus-' + $attempt.ToString())
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $before
-        & $hdc -t $Target shell (
-            'uinput -K -d 2072 -d 2045 -d 2037 -u 2037 -u 2045 -u 2072'
-        ) | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to inject the Unicode file-name segment' }
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $after
-        Get-LeanTTYDeviceLayout `
-            -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory (
-                    $LayoutName + '-typed-' + $attempt.ToString() + '.json'
-                )) | Out-Null
-        Set-FileTransferAuthenticationObservationCursor
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-        $submitted = Wait-ExactAcceptanceCommandSubmit -Expected $expected -Stage $LayoutName
-        if ($submitted.exact) { return }
-        Start-Sleep -Milliseconds 300
-        $stateLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appProcessId
-        if ($stateLogs -match 'File transfer authentication prompt=|FILE_TRANSFER phase=(PREPARING|TRANSFERRING)') {
-            throw "Inexact physical Unicode command unexpectedly started work for $LayoutName"
-        }
-    }
-    throw "Physical key injection could not submit the exact production Unicode command for $LayoutName"
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appProcessId `
+        -Command $expected `
+        -Stage $LayoutName `
+        -ObservationSink $commandObservations `
+        -MaxInputAttempts 2 `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Focus-TerminalInput -Name (
+                $LayoutName + '-focus-' + $inputAttempt.ToString()
+            )
+        } `
+        -InputPreparer {
+            param($inputNode, $inputAttempt)
+            Invoke-LeanTTYDeviceText `
+                -Hdc $hdc -Target $Target -Text $before -InputNode $inputNode
+            & $hdc -t $Target shell (
+                'uinput -K -d 2072 -d 2045 -d 2037 -u 2037 -u 2045 -u 2072'
+            ) | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to inject the Unicode file-name segment' }
+            Invoke-LeanTTYDeviceText `
+                -Hdc $hdc -Target $Target -Text $after -InputNode $inputNode
+        } | Out-Null
 }
 
 function Complete-TerminalTextWithAcceptanceDataAndTab {
@@ -502,61 +477,59 @@ function Complete-TerminalTextWithAcceptanceDataAndTab {
         $Prefix.IndexOf($marker, $markerIndex + $marker.Length, [StringComparison]::Ordinal) -ge 0) {
         throw 'Acceptance Unicode completion must contain exactly one {{DATA}} marker'
     }
-    $completedExactly = $false
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
-        Focus-TerminalInput -Name ($LayoutName + '-focus-' + $attempt.ToString())
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Prefix.Substring(0, $markerIndex)
-        & $hdc -t $Target shell (
-            'uinput -K -d 2072 -d 2045 -d 2037 -u 2037 -u 2045 -u 2072'
-        ) | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Unable to inject the Unicode completion segment' }
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target `
-            -Text $Prefix.Substring($markerIndex + $marker.Length)
-        Get-LeanTTYDeviceLayout `
-            -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory (
-                    $LayoutName + '-prefix-' + $attempt.ToString() + '.json'
-                )) | Out-Null
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
-        Start-Sleep -Milliseconds 300
-        $tabLogs = Wait-LeanTTYAppLog `
-            -Hdc $hdc -Target $Target -ProcessId $appProcessId `
-            -Pattern 'ACCEPTANCE_TAB_COMPLETE input=' -TimeoutSeconds 10
-        if ($tabLogs -match 'File transfer authentication prompt=|FILE_TRANSFER result=') {
-            throw 'Unicode Tab completion unexpectedly started a transfer or authentication'
-        }
-        $tabRecords = @([regex]::Matches(
-                $tabLogs,
-                'ACCEPTANCE_TAB_COMPLETE input=(?<input>[^\r\n]*),matches=(?<matches>\d+)'
-            ))
-        if ($tabRecords.Count -gt 0) {
-            $tabRecord = $tabRecords[$tabRecords.Count - 1]
-            $completedPrefix = $tabRecord.Groups['input'].Value
-            $matches = [int]$tabRecord.Groups['matches'].Value
-            if ($matches -eq 1 -and $completedPrefix -ceq $ExpectedCompletedPrefix) {
-                $completedExactly = $true
-                break
+    $expectedCommand = $ExpectedCompletedPrefix + $Suffix
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appProcessId `
+        -Command $expectedCommand `
+        -Stage $LayoutName `
+        -ObservationSink $commandObservations `
+        -MaxInputAttempts 2 `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Focus-TerminalInput -Name (
+                $LayoutName + '-focus-' + $inputAttempt.ToString()
+            )
+        } `
+        -InputPreparer {
+            param($inputNode, $inputAttempt)
+            Invoke-LeanTTYDeviceText `
+                -Hdc $hdc -Target $Target `
+                -Text $Prefix.Substring(0, $markerIndex) -InputNode $inputNode
+            & $hdc -t $Target shell (
+                'uinput -K -d 2072 -d 2045 -d 2037 -u 2037 -u 2045 -u 2072'
+            ) | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to inject the Unicode completion segment' }
+            Invoke-LeanTTYDeviceText `
+                -Hdc $hdc -Target $Target `
+                -Text $Prefix.Substring($markerIndex + $marker.Length) `
+                -InputNode $inputNode
+            Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+            Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+            $tabLogs = Wait-LeanTTYAppLog `
+                -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+                -Pattern 'ACCEPTANCE_TAB_COMPLETE input=' -TimeoutSeconds 10
+            if ($tabLogs -match 'File transfer authentication prompt=|FILE_TRANSFER result=') {
+                throw 'Unicode Tab completion unexpectedly started a transfer or authentication'
             }
-        }
-        if ($attempt -lt 2) {
-            Reset-TerminalInput -LayoutName ($LayoutName + '-retry-' + $attempt.ToString())
-            Start-Sleep -Milliseconds 300
-        }
-    }
-    if (-not $completedExactly) {
-        throw "Physical Unicode Tab completion did not produce the expected command for $LayoutName"
-    }
-    if (-not [string]::IsNullOrEmpty($Suffix)) {
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Suffix
-    }
-    Set-FileTransferAuthenticationObservationCursor
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    $submitted = Wait-ExactAcceptanceCommandSubmit `
-        -Expected ($ExpectedCompletedPrefix + $Suffix) -Stage $LayoutName
-    if (-not $submitted.exact) {
-        throw "Physical key injection changed the completed Unicode command for $LayoutName"
-    }
+            $tabRecords = @([regex]::Matches(
+                    $tabLogs,
+                    'ACCEPTANCE_TAB_COMPLETE input=(?<input>[^\r\n]*),matches=(?<matches>\d+)'
+                ))
+            if ($tabRecords.Count -eq 0) {
+                throw "Unicode Tab completion exposed no result for $LayoutName"
+            }
+            $tabRecord = $tabRecords[$tabRecords.Count - 1]
+            if ([int]$tabRecord.Groups['matches'].Value -ne 1 -or
+                $tabRecord.Groups['input'].Value -cne $ExpectedCompletedPrefix) {
+                throw "Physical Unicode Tab completion did not produce the expected command for $LayoutName"
+            }
+            if (-not [string]::IsNullOrEmpty($Suffix)) {
+                Invoke-LeanTTYDeviceText `
+                    -Hdc $hdc -Target $Target -Text $Suffix -InputNode $inputNode
+            }
+        } | Out-Null
 }
 
 function Complete-TerminalTextWithTab {
@@ -566,52 +539,51 @@ function Complete-TerminalTextWithTab {
         [Parameter(Mandatory = $true)][string]$LayoutName
     )
 
-    $typedExactly = $false
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
-        Focus-TerminalInput -Name ($LayoutName + '-focus-' + $attempt.ToString())
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Prefix
-        $typedLayout = Get-LeanTTYDeviceLayout `
-            -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory (
-                    $LayoutName + '-prefix-' + $attempt.ToString() + '.json'
+    $prepared = [pscustomobject]@{ command = $null }
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appProcessId `
+        -Stage $LayoutName `
+        -ObservationSink $commandObservations `
+        -MaxInputAttempts 2 `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Focus-TerminalInput -Name (
+                $LayoutName + '-focus-' + $inputAttempt.ToString()
+            )
+        } `
+        -InputPreparer {
+            param($inputNode, $inputAttempt)
+            Invoke-LeanTTYDeviceText `
+                -Hdc $hdc -Target $Target -Text $Prefix -InputNode $inputNode
+            Wait-LeanTTYAcceptanceIdleInputState `
+                -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+                -Expected $Prefix -TimeoutSeconds 10 | Out-Null
+            Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+            Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+            $tabLogs = Wait-LeanTTYAppLog `
+                -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+                -Pattern 'ACCEPTANCE_TAB_COMPLETE input=' -TimeoutSeconds 10
+            if ($tabLogs -match 'File transfer authentication prompt=|FILE_TRANSFER result=') {
+                throw 'Tab completion unexpectedly started a transfer or remote authentication'
+            }
+            $tabRecords = @([regex]::Matches(
+                    $tabLogs,
+                    'ACCEPTANCE_TAB_COMPLETE input=(?<input>[^\r\n]*),matches=(?<matches>\d+)'
                 ))
-        if ((Get-LeanTTYTerminalInputText -Layout $typedLayout) -ceq $Prefix) {
-            $typedExactly = $true
-            break
-        }
-        Reset-TerminalInput -LayoutName ($LayoutName + '-retry-' + $attempt.ToString())
-        Start-Sleep -Milliseconds 300
-    }
-    if (-not $typedExactly) {
-        throw "Physical key injection could not enter the exact Tab prefix for $LayoutName"
-    }
-    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
-    Start-Sleep -Milliseconds 300
-    $tabLogs = Wait-LeanTTYAppLog `
-        -Hdc $hdc -Target $Target -ProcessId $appProcessId `
-        -Pattern 'ACCEPTANCE_TAB_COMPLETE input=' -TimeoutSeconds 10
-    if ($tabLogs -match 'File transfer authentication prompt=|FILE_TRANSFER result=') {
-        throw 'Tab completion unexpectedly started a transfer or remote authentication'
-    }
-    $tabRecords = @([regex]::Matches(
-            $tabLogs,
-            'ACCEPTANCE_TAB_COMPLETE input=(?<input>[^\r\n]*),matches=(?<matches>\d+)'
-        ))
-    if ($tabRecords.Count -eq 0 -or
-        [int]$tabRecords[$tabRecords.Count - 1].Groups['matches'].Value -ne 1) {
-        throw "Tab completion did not resolve exactly one production candidate for $LayoutName"
-    }
-    $completedPrefix = $tabRecords[$tabRecords.Count - 1].Groups['input'].Value
-    if (-not [string]::IsNullOrEmpty($Suffix)) {
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Suffix
-    }
-    Set-FileTransferAuthenticationObservationCursor
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    $submitted = Wait-ExactAcceptanceCommandSubmit `
-        -Expected ($completedPrefix + $Suffix) -Stage $LayoutName
-    if (-not $submitted.exact) {
-        throw "Physical key injection changed the completed command for $LayoutName"
-    }
+            if ($tabRecords.Count -eq 0 -or
+                [int]$tabRecords[$tabRecords.Count - 1].Groups['matches'].Value -ne 1) {
+                throw "Tab completion did not resolve exactly one production candidate for $LayoutName"
+            }
+            $completedPrefix = $tabRecords[$tabRecords.Count - 1].Groups['input'].Value
+            if (-not [string]::IsNullOrEmpty($Suffix)) {
+                Invoke-LeanTTYDeviceText `
+                    -Hdc $hdc -Target $Target -Text $Suffix -InputNode $inputNode
+            }
+            $prepared.command = $completedPrefix + $Suffix
+        } `
+        -ExpectedCommandProvider { param($inputAttempt) $prepared.command } | Out-Null
 }
 
 function Assert-LocalTabCompletion {
@@ -623,63 +595,61 @@ function Assert-LocalTabCompletion {
         [ValidateRange(1, 3)][int]$TabCount = 1
     )
 
-    $typedExactly = $false
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
-        Focus-TerminalInput -Name ($Name + '-focus-' + $attempt.ToString())
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Typed
-        $typedLayout = Get-LeanTTYDeviceLayout `
-            -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory ($Name + '-typed-' + $attempt.ToString() + '.json'))
-        try {
-            Wait-LocalCompletionInputState `
-                -ExpectedInput $Typed -Stage ($Name + ' typed prefix') `
-                -CompletionActive $false -MenuActive $false | Out-Null
-            $typedExactly = $true
-            break
-        } catch {
-            if ($attempt -ge 2) { throw }
-        }
-        Reset-TerminalInput -LayoutName ($Name + '-retry-' + $attempt.ToString())
-        Start-Sleep -Milliseconds 300
-    }
-    if (-not $typedExactly) {
-        throw "Physical key injection could not enter the exact Tab prefix for $Name"
-    }
-    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    for ($index = 0; $index -lt $TabCount; $index++) {
-        Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
-        Start-Sleep -Milliseconds 250
-    }
-    $completionLogs = Wait-LeanTTYAppLog `
-        -Hdc $hdc -Target $Target -ProcessId $appProcessId `
-        -Pattern 'ACCEPTANCE_TAB_COMPLETE input=' `
-        -TimeoutSeconds 10
-    $completionRecords = @([regex]::Matches(
-            $completionLogs,
-            'ACCEPTANCE_TAB_COMPLETE input=(?<input>[^\r\n]*),matches=(?<matches>\d+)'
-        ))
-    if ($completionRecords.Count -eq 0) {
-        throw "Tab completion $Name did not expose its acceptance state"
-    }
-    $completionRecord = $completionRecords[$completionRecords.Count - 1]
-    $actualInput = $completionRecord.Groups['input'].Value
-    $actualMatches = [int]$completionRecord.Groups['matches'].Value
-    if ($actualInput -cne $Expected -or $actualMatches -ne $ExpectedMatches) {
-        throw (
-            "Tab completion $Name produced '$actualInput' with $actualMatches matches; " +
-            "expected '$Expected' with $ExpectedMatches matches"
-        )
-    }
-    $layout = Get-LeanTTYDeviceLayout `
-        -Hdc $hdc -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory ($Name + '.json'))
-    $tabLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appProcessId
-    if ($tabLogs -match 'File transfer authentication prompt=|FILE_TRANSFER phase=PREPARING|FILE_TRANSFER result=') {
-        throw "Tab completion $Name started a transfer or remote authentication"
-    }
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    Start-Sleep -Milliseconds 200
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appProcessId `
+        -Command $Expected `
+        -Stage $Name `
+        -ObservationSink $commandObservations `
+        -MaxInputAttempts 2 `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Focus-TerminalInput -Name ($Name + '-focus-' + $inputAttempt.ToString())
+        } `
+        -InputPreparer {
+            param($inputNode, $inputAttempt)
+            Invoke-LeanTTYDeviceText `
+                -Hdc $hdc -Target $Target -Text $Typed -InputNode $inputNode
+            $typedState = Wait-LeanTTYAcceptanceIdleInputState `
+                -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+                -Expected $Typed -TimeoutSeconds 10
+            if (-not $typedState.exact -or $typedState.completionActive -or $typedState.menuActive) {
+                throw "Tab completion $Name did not preserve the typed prefix state"
+            }
+            Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+            for ($index = 0; $index -lt $TabCount; $index++) {
+                Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+            }
+            $completionLogs = Wait-LeanTTYAppLog `
+                -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+                -Pattern 'ACCEPTANCE_TAB_COMPLETE input=' -TimeoutSeconds 10
+            $completionRecords = @([regex]::Matches(
+                    $completionLogs,
+                    'ACCEPTANCE_TAB_COMPLETE input=(?<input>[^\r\n]*),matches=(?<matches>\d+)'
+                ))
+            if ($completionRecords.Count -eq 0) {
+                throw "Tab completion $Name did not expose its acceptance state"
+            }
+            $completionRecord = $completionRecords[$completionRecords.Count - 1]
+            $actualInput = $completionRecord.Groups['input'].Value
+            $actualMatches = [int]$completionRecord.Groups['matches'].Value
+            if ($actualInput -cne $Expected -or $actualMatches -ne $ExpectedMatches) {
+                throw (
+                    "Tab completion $Name produced '$actualInput' with $actualMatches matches; " +
+                    "expected '$Expected' with $ExpectedMatches matches"
+                )
+            }
+            Get-LeanTTYDeviceLayout `
+                -Hdc $hdc -Target $Target `
+                -LocalPath (Join-Path $EvidenceDirectory ($Name + '.json')) | Out-Null
+            if ($completionLogs -match (
+                    'File transfer authentication prompt=|FILE_TRANSFER phase=PREPARING|' +
+                    'FILE_TRANSFER result='
+                )) {
+                throw "Tab completion $Name started a transfer or remote authentication"
+            }
+        } | Out-Null
 }
 
 function Wait-LocalCompletionInputState {
@@ -717,31 +687,42 @@ function Wait-LocalCompletionInputState {
 }
 
 function Assert-LocalUnicodeTabCompletion {
-    Focus-TerminalInput -Name 'tab-unicode-focus'
-    Invoke-LeanTTYDeviceText `
-        -Hdc $hdc -Target $Target `
-        -Text 'put .leantty-transfer-fixture/'
-    & $hdc -t $Target shell (
-        'uinput -K -d 2072 -d 2045 -d 2037 -u 2037 -u 2045 -u 2072'
-    ) | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to inject the Unicode completion prefix' }
-    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
-    $completionLogs = Wait-LeanTTYAppLog `
-        -Hdc $hdc -Target $Target -ProcessId $appProcessId `
-        -Pattern 'ACCEPTANCE_TAB_COMPLETE input=' `
-        -TimeoutSeconds 10
     $expected = 'put .leantty-transfer-fixture/数据.bin '
-    if ($completionLogs -notmatch (
-            'ACCEPTANCE_TAB_COMPLETE input=' + [regex]::Escape($expected) + ',matches=1'
-        )) {
-        throw 'Unicode Tab completion did not produce the expected escaped filename'
-    }
-    Get-LeanTTYDeviceLayout `
-        -Hdc $hdc -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory 'tab-unicode.json') | Out-Null
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    Start-Sleep -Milliseconds 200
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appProcessId `
+        -Command $expected `
+        -Stage 'tab-unicode' `
+        -ObservationSink $commandObservations `
+        -MaxInputAttempts 2 `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Focus-TerminalInput -Name ('tab-unicode-focus-' + $inputAttempt.ToString())
+        } `
+        -InputPreparer {
+            param($inputNode, $inputAttempt)
+            Invoke-LeanTTYDeviceText `
+                -Hdc $hdc -Target $Target `
+                -Text 'put .leantty-transfer-fixture/' -InputNode $inputNode
+            & $hdc -t $Target shell (
+                'uinput -K -d 2072 -d 2045 -d 2037 -u 2037 -u 2045 -u 2072'
+            ) | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to inject the Unicode completion prefix' }
+            Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+            Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2049
+            $completionLogs = Wait-LeanTTYAppLog `
+                -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+                -Pattern 'ACCEPTANCE_TAB_COMPLETE input=' -TimeoutSeconds 10
+            if ($completionLogs -notmatch (
+                    'ACCEPTANCE_TAB_COMPLETE input=' + [regex]::Escape($expected) + ',matches=1'
+                )) {
+                throw 'Unicode Tab completion did not produce the expected escaped filename'
+            }
+            Get-LeanTTYDeviceLayout `
+                -Hdc $hdc -Target $Target `
+                -LocalPath (Join-Path $EvidenceDirectory 'tab-unicode.json') | Out-Null
+        } | Out-Null
 }
 
 function Complete-PasswordAuthentication {
@@ -1987,10 +1968,10 @@ try {
     }
     if ($LateEvents) {
         Split-And-FocusTransferPane
-        Submit-FocusedTerminalText -Text (
+        Submit-TerminalText -Text (
             "get -p $FixturePort password@127.0.0.1:/late-cancel-source.bin " +
             "$localDirectoryName/late-cancel-result.bin"
-        )
+        ) -LayoutName 'late-cancel-command'
         Complete-FocusedPasswordAuthentication -Stage 'late-cancel'
         $cancelProgress = Wait-LeanTTYAppLog `
             -Hdc $hdc -Target $Target -ProcessId $appProcessId `
@@ -2037,10 +2018,10 @@ try {
         }
 
         Focus-TransferPaneByIndex -Index 0 -LayoutName 'late-events-transfer-pane'
-        Submit-FocusedTerminalText -Text (
+        Submit-TerminalText -Text (
             "get -p $FixturePort password@127.0.0.1:/late-disconnect-source.bin " +
             "$localDirectoryName/late-disconnect-result.bin"
-        )
+        ) -LayoutName 'late-disconnect-command'
         Complete-FocusedPasswordAuthentication -Stage 'late-disconnect'
         $disconnectProgress = Wait-LeanTTYAppLog `
             -Hdc $hdc -Target $Target -ProcessId $appProcessId `
@@ -3283,6 +3264,22 @@ try {
     $primaryFailure = $_
     throw
 } finally {
+    $automationVerdict = if (@($commandObservations | Where-Object {
+        $_.result -eq 'unknown'
+    }).Count -gt 0) {
+        'unknown'
+    } elseif ($null -eq $primaryFailure) {
+        'passed'
+    } else {
+        'failed'
+    }
+    $automationSummary = Get-LeanTTYDeviceCommandAutomationSummary `
+        -Observations $commandObservations `
+        -BusinessVerdict $automationVerdict `
+        -BusinessPostcondition 'selected-file-transfer-scenario-business-oracle-before-final-cleanup'
+    $automationSummary | ConvertTo-Json -Depth 8 | Set-Content `
+        -LiteralPath (Join-Path $EvidenceDirectory 'device-command-automation.json') `
+        -Encoding utf8NoBOM
     if ($keyCleanupRequired -and -not [string]::IsNullOrWhiteSpace($appProcessId)) {
         try {
             Stop-FileTransferAuthenticationObserver

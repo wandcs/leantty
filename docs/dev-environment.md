@@ -92,6 +92,20 @@ matrix. A retained formal-release HAP may cross a later harness commit only when
 the script proves that every intervening file is on its explicit harness/doc
 allowlist; product-source or packaging changes require a new release candidate.
 
+Immediately before a formal physical matrix, qualify and freeze the clean
+harness against the explicit retained HAP:
+
+```powershell
+.\tools\qualify-acceptance-harness-pc.ps1 `
+  -ReviewHapPath '<exact retained LeanTTY-test-signed.hap>'
+```
+
+This is a small readiness gate, not another product matrix. It reuses
+`password-success` to prove ordinary and secret input, semantic layout,
+structured logs, the controlled server and cleanup, while the focused software
+gate proves release packages reject acceptance-only markers. Any HAP or harness
+identity change invalidates its formal record.
+
 Device scenarios publish `live-status.json` while running and final JSON with
 candidate/harness identities, attempt lineage, selected stages, failure domain,
 resource manifest and cleanup audits. Use those artifacts before rerunning a

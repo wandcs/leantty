@@ -97,6 +97,7 @@ $awakeLeaseActive = $false
 $appPid = ''
 $result = 'failed'
 $failure = ''
+$commandObservations = [Collections.Generic.List[object]]::new()
 
 function Start-ProxyFixture {
     param(
@@ -401,46 +402,14 @@ function Wait-ProxyCommandInputText {
 
 function Submit-ProxyCommand {
     param([Parameter(Mandatory = $true)][string]$Command)
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        Invoke-LeanTTYDeviceCtrlC -Hdc $script:proxyHdc -Target $script:proxyTarget
-        $inputNode = Focus-ProxyCommandInput
-        Clear-LeanTTYAppLogs -Hdc $script:proxyHdc -Target $script:proxyTarget
-        Invoke-LeanTTYDeviceText `
-            -Hdc $script:proxyHdc `
-            -Target $script:proxyTarget `
-            -Text $Command `
-            -InputNode $inputNode
-        $typedLayout = Get-LeanTTYDeviceLayout `
-            -Hdc $script:proxyHdc `
-            -Target $script:proxyTarget `
-            -LocalPath (Join-Path $EvidenceDirectory "command-buffer-$attempt.json")
-        $actualBuffer = Get-ProxyCommandInputText -Layout $typedLayout
-        if ($actualBuffer -ceq $Command) {
-            Invoke-LeanTTYDeviceKey `
-                -Hdc $script:proxyHdc `
-                -Target $script:proxyTarget `
-                -KeyCode 2054
-            try {
-                Wait-ProxyCommandInputText `
-                    -Expected '' `
-                    -LayoutName "command-submitted-$attempt.json" | Out-Null
-                return
-            } catch {
-                throw '[harness] ProxyJump command submission outcome is unknown; the scenario must be restarted'
-            }
-        }
-
-        Write-Host (
-            '[proxy-jump] RETRY inexact command buffer ' +
-            "attempt=$attempt expectedLength=$($Command.Length) " +
-            "actualLength=$($actualBuffer.Length) actual=$actualBuffer"
-        ) -ForegroundColor Yellow
-        Invoke-LeanTTYDeviceCtrlC -Hdc $script:proxyHdc -Target $script:proxyTarget
-        Wait-ProxyCommandInputText `
-            -Expected '' `
-            -LayoutName "command-cleared-$attempt.json" | Out-Null
-    }
-    throw '[environment] HarmonyOS input could not prepare the exact ProxyJump command buffer'
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $script:proxyHdc `
+        -Target $script:proxyTarget `
+        -ProcessId $script:proxyAppPid `
+        -Command $Command `
+        -Stage 'proxy-command' `
+        -ObservationSink $commandObservations `
+        -InputNodeProvider { param($inputAttempt) Focus-ProxyCommandInput } | Out-Null
 }
 
 function Submit-HostKeyDecisionUntilResult {
@@ -572,9 +541,13 @@ function Write-ProxySummary {
         targetShellClosedCleanly = $TargetShellClosedCleanly
         lifecycle = $Lifecycle
         hapSha256 = (Get-FileHash -LiteralPath $script:proxyHapPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        automation = Get-LeanTTYDeviceCommandAutomationSummary `
+            -Observations $commandObservations `
+            -BusinessVerdict 'passed' `
+            -BusinessPostcondition 'proxy-route-business-oracle-and-clean-close'
     }
     $summaryPath = Join-Path $EvidenceDirectory 'summary.json'
-    [IO.File]::WriteAllText($summaryPath, (ConvertTo-Json $summary -Depth 5) + "`n")
+    [IO.File]::WriteAllText($summaryPath, (ConvertTo-Json $summary -Depth 8) + "`n")
     Write-Host "PROXYJUMP PC EVIDENCE: $summaryPath" -ForegroundColor Green
 }
 
@@ -829,11 +802,15 @@ try {
             hapSha256 = (
                 Get-FileHash -LiteralPath $script:proxyHapPath -Algorithm SHA256
             ).Hash.ToLowerInvariant()
+            automation = Get-LeanTTYDeviceCommandAutomationSummary `
+                -Observations $commandObservations `
+                -BusinessVerdict 'passed' `
+                -BusinessPostcondition 'parallel-proxy-routes-opened-and-closed-independently'
         }
         $parallelSummaryPath = Join-Path $EvidenceDirectory 'summary.json'
         [IO.File]::WriteAllText(
             $parallelSummaryPath,
-            (ConvertTo-Json $parallelSummary -Depth 5) + "`n"
+            (ConvertTo-Json $parallelSummary -Depth 8) + "`n"
         )
         Write-Host "PROXYJUMP PC EVIDENCE: $parallelSummaryPath" -ForegroundColor Green
         return

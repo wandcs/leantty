@@ -25,6 +25,13 @@ param(
     [int]$FixturePort = 22222,
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
     [ValidateSet(
+        'transport-performance',
+        'authentication-methods',
+        'lifecycle-recovery',
+        'pane-focus-attention'
+    )]
+    [string]$Group = '',
+    [ValidateSet(
         'password-success',
         'terminal-key-input',
         'transport-main-path',
@@ -56,9 +63,16 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
 
+if (-not [string]::IsNullOrWhiteSpace($Group) -and $Only.Count -gt 0) {
+    throw 'Group cannot be combined with -Only'
+}
+
 $harnessStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect SSH authentication harness source state' }
-if ($harnessStatus.Count -gt 0) { throw 'SSH authentication harness requires a clean committed tree' }
+$harnessDirty = ($harnessStatus.Count -gt 0)
+if ($harnessDirty -and -not $DiagnosticHap) {
+    throw 'SSH authentication harness requires a clean committed tree for acceptance evidence'
+}
 $harnessCommit = (& git -C $repoRoot rev-parse HEAD 2>&1).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve SSH authentication harness commit' }
 $harnessTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}' 2>&1).Trim()
@@ -116,6 +130,7 @@ if (-not $DiagnosticHap) {
         -Candidate $candidate `
         -AllowedHarnessPaths @(
             'tools/verify-ssh-auth-pc.ps1',
+            'tools/verify-ssh-matrix-pc.ps1',
             'tools/verify-terminal-search-pc.ps1',
             'tools/verify-file-transfer-pc.ps1',
             'tools/verify-put-get-pc.ps1',
@@ -150,11 +165,14 @@ $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) (
     'leantty-ssh-auth-device-' + [Guid]::NewGuid().ToString('N')
 )
 $fixtureControl = Join-Path $fixtureRoot 'control'
+$fixtureConnectedInputSnapshot = Join-Path $fixtureControl 'connected-input-snapshot'
 $fixtureStdout = Join-Path $fixtureRoot 'stdout.log'
 $fixtureStderr = Join-Path $fixtureRoot 'stderr.log'
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 
 $checks = [Collections.Generic.List[object]]::new()
+$commandObservations = [Collections.Generic.List[object]]::new()
+$connectedInputObservations = [Collections.Generic.List[object]]::new()
 $startedAt = [DateTimeOffset]::UtcNow
 $fixtureProcess = $null
 $fixtureLinuxPid = 0
@@ -183,6 +201,7 @@ $caughtError = $null
 $preferencesDigestBefore = ''
 $preferencesDigestAfter = ''
 $preferencesDigestUnchanged = $null
+$knownHostCleanupCompleted = $false
 $bellEvidence = [ordered]@{
     selected = $false
     activePaneStayedTransient = $null
@@ -197,13 +216,85 @@ $performanceEvidence = [ordered]@{
     selected = $false
     gpu = $null
     modes = @()
+    initialMode = $null
     restoredMode = $null
 }
+$performanceInitialTransparencyMode = $null
+$performanceTransparencyRestored = $false
 $stageStartedAt = $null
 $currentStage = 'initialization'
 $failureDomain = 'none'
 $attemptId = [Guid]::NewGuid().ToString('N')
-$runMode = if ($Only.Count -eq 0 -and -not $DiagnosticHap) { 'acceptance' } else { 'diagnostic' }
+$runMode = if (-not $DiagnosticHap -and $Only.Count -eq 0) { 'acceptance' } else { 'diagnostic' }
+$authGroupDefinitions = [ordered]@{
+    'transport-performance' = [ordered]@{
+        stages = @('terminal-key-input', 'transport-main-path', 'performance-matrix')
+        setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-known-host-boundary'
+        resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'transparency-preference')
+        primaryOracle = 'fixture-received-bytes-and-device-clock-performance-records'
+        cleanup = 'close-session-remove-known-host-restore-transparency-stop-fixture-remove-reverse-port'
+        preconditions = 'exact-candidate-harness-device-fixture-and-preference-baseline'
+    }
+    'authentication-methods' = [ordered]@{
+        stages = @(
+            'password-success',
+            'password-kbdint-mixed-echo',
+            'multiround-wrong-answer-recovery',
+            'publickey-unencrypted',
+            'publickey-then-password',
+            'publickey-then-keyboard-interactive',
+            'keyboard-interactive-zero-prompt',
+            'unsupported-method-error-and-recovery',
+            'publickey-encrypted-passphrase'
+        )
+        setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-run-scoped-keys'
+        resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'disposable-key-files')
+        primaryOracle = 'controlled-server-authentication-result-and-recovery-session'
+        cleanup = 'product-delete-key-independent-absence-audit-remove-known-host-stop-fixture-remove-reverse-port'
+        preconditions = 'exact-candidate-harness-device-and-fresh-fixture-credentials'
+    }
+    'lifecycle-recovery' = [ordered]@{
+        stages = @(
+            'ctrl-c-authentication-cancellation-and-recovery',
+            'pane-close-during-hidden-prompt-and-recovery',
+            'minimize-restore-hidden-prompt',
+            'process-stop-during-hidden-prompt-cleanup'
+        )
+        setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-known-host-boundary'
+        resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'app-process', 'window-state')
+        primaryOracle = 'prompt-lifecycle-state-and-subsequent-controlled-server-session'
+        cleanup = 'restart-visible-single-pane-remove-known-host-stop-fixture-remove-reverse-port'
+        preconditions = 'exact-candidate-harness-device-fixture-and-interactive-window'
+    }
+    'pane-focus-attention' = [ordered]@{
+        stages = @('bell-attention', 'parallel-pane-authentication')
+        setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-known-host-boundary'
+        resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'pane-and-tab-layout')
+        primaryOracle = 'layout-owned-focus-attention-state-and-independent-server-authentication'
+        cleanup = 'return-single-pane-remove-known-host-stop-fixture-remove-reverse-port'
+        preconditions = 'exact-candidate-harness-device-fixture-and-single-pane-layout'
+    }
+}
+$executionGroup = if (-not [string]::IsNullOrWhiteSpace($Group)) {
+    $Group
+} elseif ($Only.Count -gt 0) {
+    'ad-hoc-stages'
+} else {
+    'full-matrix'
+}
+$selectedGroupManifest = if (-not [string]::IsNullOrWhiteSpace($Group)) {
+    [ordered]@{
+        name = $Group
+        setup = $authGroupDefinitions[$Group].setup
+        resources = @($authGroupDefinitions[$Group].resources)
+        primaryOracle = $authGroupDefinitions[$Group].primaryOracle
+        cleanup = $authGroupDefinitions[$Group].cleanup
+        preconditions = $authGroupDefinitions[$Group].preconditions
+        declaredStages = @($authGroupDefinitions[$Group].stages)
+    }
+} else {
+    $null
+}
 $availableStages = @(
     'password-success',
     'terminal-key-input',
@@ -230,23 +321,25 @@ $availableStages = @(
 $selectedStages = [Collections.Generic.HashSet[string]]::new(
     [StringComparer]::OrdinalIgnoreCase
 )
-if ($Only.Count -eq 0) {
+if (-not [string]::IsNullOrWhiteSpace($Group)) {
+    foreach ($name in $authGroupDefinitions[$Group].stages) { [void]$selectedStages.Add($name) }
+} elseif ($Only.Count -eq 0) {
     foreach ($name in $availableStages) { [void]$selectedStages.Add($name) }
 } else {
     foreach ($name in $Only) { [void]$selectedStages.Add($name) }
-    $keyStages = @(
-        'publickey-unencrypted',
-        'publickey-then-password',
-        'publickey-then-keyboard-interactive',
-        'publickey-encrypted-passphrase'
-    )
-    if (@($Only | Where-Object { $_ -in $keyStages }).Count -gt 0) {
-        [void]$selectedStages.Add('generated-disposable-auth-key')
-        [void]$selectedStages.Add('deleted-disposable-auth-key')
-    }
-    if ($Only -contains 'publickey-encrypted-passphrase') {
-        [void]$selectedStages.Add('encrypted-disposable-auth-key')
-    }
+}
+$keyStages = @(
+    'publickey-unencrypted',
+    'publickey-then-password',
+    'publickey-then-keyboard-interactive',
+    'publickey-encrypted-passphrase'
+)
+if (@($keyStages | Where-Object { $selectedStages.Contains($_) }).Count -gt 0) {
+    [void]$selectedStages.Add('generated-disposable-auth-key')
+    [void]$selectedStages.Add('deleted-disposable-auth-key')
+}
+if ($selectedStages.Contains('publickey-encrypted-passphrase')) {
+    [void]$selectedStages.Add('encrypted-disposable-auth-key')
 }
 $selectedStageNames = @($availableStages | Where-Object { $selectedStages.Contains($_) })
 
@@ -325,7 +418,9 @@ function Write-AuthLiveStatus {
 
 function Resolve-AuthFailureDomain {
     param([Parameter(Mandatory = $true)][string]$Message)
-    foreach ($domain in @('product', 'harness', 'environment', 'infrastructure', 'invalid')) {
+    foreach ($domain in @(
+        'product', 'harness', 'environment', 'infrastructure', 'invalid', 'unknown'
+    )) {
         if ($Message.StartsWith("[$domain]", [StringComparison]::OrdinalIgnoreCase)) {
             return $domain
         }
@@ -470,13 +565,72 @@ function Invoke-AuthUiText {
         [Parameter(Mandatory = $true)][string]$Text,
         $InputNode = $null
     )
-    if ($null -eq $InputNode) {
-        $InputNode = Focus-ActiveCommandInput -LayoutName (
-            'layout-auth-text-focus-' + [Guid]::NewGuid().ToString('N') + '.json'
-        )
-    }
     Invoke-LeanTTYDeviceText `
         -Hdc $hdc -Target $Target -Text $Text -InputNode $InputNode
+}
+
+function Read-FixtureConnectedInputSnapshot {
+    if (-not (Test-Path -LiteralPath $fixtureConnectedInputSnapshot -PathType Leaf)) {
+        return [pscustomobject]@{ observed = $false; value = '' }
+    }
+    try {
+        $stream = [IO.File]::Open(
+            $fixtureConnectedInputSnapshot,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::ReadWrite
+        )
+        try {
+            $reader = [IO.StreamReader]::new(
+                $stream,
+                [Text.UTF8Encoding]::new($false),
+                $true
+            )
+            try {
+                return [pscustomobject]@{
+                    observed = $true
+                    value = $reader.ReadToEnd()
+                }
+            } finally { $reader.Dispose() }
+        } finally {
+            $stream.Dispose()
+        }
+    } catch [IO.IOException] {
+        return [pscustomobject]@{ observed = $false; value = '' }
+    }
+}
+
+function Wait-FixtureConnectedInputSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Expected,
+        [ValidateRange(1, 10)][int]$TimeoutSeconds = 5
+    )
+
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $lastValue = ''
+    $observed = $false
+    $stableSinceMs = 0L
+    while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        $snapshot = Read-FixtureConnectedInputSnapshot
+        if ($snapshot.observed) {
+            $observed = $true
+            $value = [string]$snapshot.value
+            if ($value -ceq $Expected) {
+                return [pscustomobject]@{ observed = $true; value = $value }
+            }
+            if ($value -cne $lastValue) {
+                $lastValue = $value
+                $stableSinceMs = $stopwatch.ElapsedMilliseconds
+            } elseif (($stopwatch.ElapsedMilliseconds - $stableSinceMs) -ge 500) {
+                return [pscustomobject]@{ observed = $true; value = $value }
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    return [pscustomobject]@{
+        observed = $observed
+        value = $lastValue
+    }
 }
 
 function Invoke-TemporaryFixtureAuthText {
@@ -557,48 +711,19 @@ function Submit-FocusedDeviceCommand {
         [Parameter(Mandatory = $true)][string]$Command,
         [Parameter(Mandatory = $true)][string]$LayoutName
     )
-    $submittedCommandPattern =
-        'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
-    for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++) {
-        $inputNode = Focus-ActiveCommandInput -LayoutName $LayoutName
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Invoke-AuthUiText -Text $Command -InputNode $inputNode
-
-        $bufferLogs = Wait-LeanTTYAppLog `
-            -Hdc $hdc `
-            -Target $Target `
-            -ProcessId $appPid `
-            -Pattern 'ACCEPTANCE_IDLE_RESULT kind=' `
-            -TimeoutSeconds 10
-        $bufferRecords = @([regex]::Matches(
-                $bufferLogs,
-                'ACCEPTANCE_IDLE_RESULT kind=\d+,input=(?<input>[^\r\n]*),' +
-                'completionActive=(?:true|false),menuActive=(?:true|false)'
-            ))
-        $actualBuffer = if ($bufferRecords.Count -gt 0) {
-            $bufferRecords[$bufferRecords.Count - 1].Groups['input'].Value
-        } else {
-            ''
-        }
-        if ($actualBuffer -ceq $Command) {
-            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-            try {
-                Wait-AuthLog -Pattern $submittedCommandPattern -TimeoutSeconds 10
-                return
-            } catch {
-                throw '[harness] Command submission outcome is unknown; the scenario must be restarted'
-            }
-        }
-
-        Write-Host (
-            '[device-auth] RETRY inexact command buffer ' +
-            "attempt=$commandAttempt expectedLength=$($Command.Length) " +
-            "actualLength=$($actualBuffer.Length) actual=$actualBuffer"
-        ) -ForegroundColor Yellow
-        Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
-        Wait-AuthLog -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' -TimeoutSeconds 10
-    }
-    throw '[environment] HarmonyOS input could not prepare the exact SSH command buffer'
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appPid `
+        -Command $Command `
+        -Stage $currentStage `
+        -ObservationSink $commandObservations `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Focus-ActiveCommandInput -LayoutName (
+                $LayoutName + '-attempt-' + $inputAttempt.ToString()
+            )
+        } | Out-Null
 }
 
 function Assert-AuthCommandLoopbackTarget {
@@ -645,8 +770,71 @@ function Close-FixtureShell {
 
 function Submit-ConnectedInput {
     param([Parameter(Mandatory = $true)][string]$Text)
-    Invoke-AuthUiText -Text $Text
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    $observation = [ordered]@{
+        stage = $currentStage
+        result = 'running'
+        inputAttempts = 0
+        inputMismatches = 0
+        expectedLength = $Text.Length
+        actualLength = 0
+        firstMismatchIndex = $null
+        enterCount = 0
+        lastProvenBoundary = 'none'
+    }
+    try {
+        for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++) {
+            $observation.inputAttempts = $inputAttempt
+            Remove-Item `
+                -LiteralPath $fixtureConnectedInputSnapshot `
+                -Force `
+                -ErrorAction SilentlyContinue
+            Invoke-AuthUiText -Text $Text
+            $inputSnapshot = Wait-FixtureConnectedInputSnapshot -Expected $Text
+            $actual = if ($inputSnapshot.observed) {
+                [string]$inputSnapshot.value
+            } else {
+                $null
+            }
+            $observation.actualLength = if ($null -eq $actual) { 0 } else { $actual.Length }
+            if ($null -ne $actual -and $actual -ceq $Text) {
+                $observation.lastProvenBoundary = 'server-input-exact-before-enter'
+                Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+                $observation.enterCount = 1
+                $observation.lastProvenBoundary = 'enter-dispatched-after-server-input-exact'
+                $observation.result = 'passed'
+                return
+            }
+
+            $observation.inputMismatches++
+            $observation.firstMismatchIndex = Get-LeanTTYTextMismatchIndex `
+                -Expected $Text `
+                -Actual $(if ($null -eq $actual) { '' } else { $actual })
+            if ($inputAttempt -lt 3) {
+                $clearCount = Get-FixtureLogMatchCount -Pattern 'connected input state=cleared'
+                Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+                Wait-FixtureLogMatchCount `
+                    -Pattern 'connected input state=cleared' `
+                    -GreaterThan $clearCount `
+                    -TimeoutSeconds 10 | Out-Null
+                $clearedSnapshot = Wait-FixtureConnectedInputSnapshot -Expected ''
+                $cleared = if ($clearedSnapshot.observed) {
+                    [string]$clearedSnapshot.value
+                } else {
+                    $null
+                }
+                if ($null -eq $cleared -or $cleared.Length -ne 0) {
+                    throw '[harness] Connected input snapshot did not clear before retry'
+                }
+                $observation.lastProvenBoundary = 'inexact-server-input-cleared-before-enter'
+            }
+        }
+        throw '[harness] Connected input could not be made exact before Enter'
+    } catch {
+        if ($observation.result -eq 'running') { $observation.result = 'failed' }
+        throw
+    } finally {
+        $connectedInputObservations.Add([pscustomobject]$observation) | Out-Null
+    }
 }
 
 function Submit-ConnectedInputUntilFixtureEvent {
@@ -822,6 +1010,19 @@ function Open-AuthToolMenu {
         Start-Sleep -Milliseconds 200
     } while ($stopwatch.Elapsed.TotalSeconds -lt 10)
     throw '[environment] LeanTTY transparency menu row did not open'
+}
+
+function Get-AuthTransparencyMode {
+    param([Parameter(Mandatory = $true)][string]$LayoutPrefix)
+    $layout = Open-AuthToolMenu -LayoutPrefix $LayoutPrefix
+    $labels = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+        [string]$_.attributes.type -eq 'Text' -and
+        [string]$_.attributes.text -in @('Off', 'Low', 'Medium', 'High', 'Extreme')
+    })
+    if ($labels.Count -ne 1) { throw '[harness] Transparency mode label was not unique' }
+    $mode = [string]$labels[0].attributes.text
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2070
+    return $mode
 }
 
 function Set-AuthTransparencyMode {
@@ -1196,6 +1397,9 @@ function Read-FixtureCredentials {
 }
 
 function Write-AuthEvidence {
+    $automationVerdict = if (@($commandObservations | Where-Object {
+        $_.result -eq 'unknown'
+    }).Count -gt 0) { 'unknown' } else { $scenarioResult }
     $evidence = [ordered]@{
         schemaVersion = 2
         gate = $(if ($runMode -eq 'acceptance') { 'device-behavior' } else { 'diagnostic' })
@@ -1224,7 +1428,7 @@ function Write-AuthEvidence {
         harness = [ordered]@{
             gitCommit = $harnessCommit
             gitTree = $harnessTree
-            gitDirty = $false
+            gitDirty = $harnessDirty
             differencePathsFromCandidate = @($harnessDifferencePaths)
         }
         device = [ordered]@{
@@ -1264,6 +1468,22 @@ function Write-AuthEvidence {
             minimizeTrigger = 'HarmonyOS-EnhanceMinimizeBtn'
             pasteTrigger = 'HarmonyOS-uitest-Ctrl-Alt-V-trusted-browser-event'
         }
+        automation = Get-LeanTTYDeviceCommandAutomationSummary `
+            -Observations $commandObservations `
+            -BusinessVerdict $automationVerdict `
+            -BusinessPostcondition 'selected-ssh-authentication-checks-and-cleanup'
+        connectedInputAutomation = [ordered]@{
+            schemaVersion = 1
+            contract = 'controlled-server-buffer-exact-before-single-enter'
+            commandCount = $connectedInputObservations.Count
+            inputAttemptCount = [int](($connectedInputObservations |
+                    Measure-Object -Property inputAttempts -Sum).Sum)
+            inputMismatchCount = [int](($connectedInputObservations |
+                    Measure-Object -Property inputMismatches -Sum).Sum)
+            enterCount = [int](($connectedInputObservations |
+                    Measure-Object -Property enterCount -Sum).Sum)
+            commands = @($connectedInputObservations)
+        }
         preferences = [ordered]@{
             verificationRequested = [bool]$VerifyPreferencesUnchanged
             algorithm = 'SHA-256'
@@ -1295,6 +1515,8 @@ function Write-AuthEvidence {
             'process-stop-during-hidden-prompt-cleanup'
         )
         selectedStages = @($selectedStageNames)
+        executionGroup = $executionGroup
+        groupManifest = $selectedGroupManifest
         checks = @($checks)
         resourceManifest = [ordered]@{
             disposableKey = $keyName
@@ -1307,6 +1529,7 @@ function Write-AuthEvidence {
             failure = $cleanupFailure
             productDeletePathUsed = $keyDeletePathUsed
             independentKeyAbsenceAudit = $keyAbsenceAudited
+            knownHostRemovalCommandCompleted = $knownHostCleanupCompleted
             reverseMappingAbsenceAudit = (-not $mappingActive)
             fixtureProcessAbsenceAudit = $fixtureProcessAbsent
         }
@@ -1407,6 +1630,9 @@ try {
     Submit-FocusedDeviceCommand `
         -Command "ssh-keygen -R [127.0.0.1]:$FixturePort" `
         -LayoutName 'layout-preflight-command-focus.json'
+    if ($VerifyPreferencesUnchanged) {
+        $preferencesDigestBefore = Get-LeanTTYPreferencesDigest
+    }
     if (-not (Test-AuthStageSelected -Name 'password-success')) {
         Start-AuthCommand -User 'password'
         Wait-AuthLog -Pattern 'rust event: HOST_KEY_PROMPT:'
@@ -1421,9 +1647,6 @@ try {
             -TimeoutSeconds 10 | Out-Null
     }
     Add-AuthCheck -Name 'fixture-and-device-preflight' -DurationMs $preflight.ElapsedMilliseconds
-    if ($VerifyPreferencesUnchanged) {
-        $preferencesDigestBefore = Get-LeanTTYPreferencesDigest
-    }
 
     if (Test-AuthStageSelected -Name 'password-success') {
     Start-AuthStage -Name 'password-success'
@@ -1552,6 +1775,9 @@ try {
     if (Test-AuthStageSelected -Name 'performance-matrix') {
     Start-AuthStage -Name 'performance-matrix'
     $performanceEvidence.selected = $true
+    $performanceInitialTransparencyMode = Get-AuthTransparencyMode `
+        -LayoutPrefix 'performance-initial-mode'
+    $performanceEvidence.initialMode = $performanceInitialTransparencyMode
     Start-AuthCommand -User 'password'
     Wait-AuthLog -Pattern 'native auth event kind=password'
     Submit-AuthValue -Value $credentials.password -LayoutName 'layout-performance-password.json'
@@ -1583,20 +1809,19 @@ try {
                 processes = @(Get-AuthProcessMemorySample)
             })
         }
-        $screenshotName = "performance-$modeSlug.png"
-        Save-LeanTTYDeviceScreenshot -Hdc $hdc -Target $Target `
-            -LocalPath (Join-Path $EvidenceDirectory $screenshotName)
         $performanceEvidence.modes += [pscustomobject][ordered]@{
             mode = $modeName
             renderSamples = @($renderSamples)
             memorySamples = @($memorySamples)
             hitchBefore = $hitchBefore
             hitchAfter = Get-AuthHitchSample
-            screenshot = $screenshotName
         }
     }
-    Set-AuthTransparencyMode -Mode 'Medium' -LayoutPrefix 'performance-restore-medium'
-    $performanceEvidence.restoredMode = 'Medium'
+    Set-AuthTransparencyMode `
+        -Mode $performanceInitialTransparencyMode `
+        -LayoutPrefix 'performance-restore-initial'
+    $performanceTransparencyRestored = $true
+    $performanceEvidence.restoredMode = $performanceInitialTransparencyMode
     Close-FixtureShell
     Complete-AuthStage -Name 'performance-matrix'
     }
@@ -1952,6 +2177,7 @@ try {
     Submit-FocusedDeviceCommand `
         -Command "ssh-keygen -R [127.0.0.1]:$FixturePort" `
         -LayoutName 'layout-final-known-hosts-command-focus.json'
+    $knownHostCleanupCompleted = $true
     if ($VerifyPreferencesUnchanged) {
         $preferencesCheck = [Diagnostics.Stopwatch]::StartNew()
         $preferencesDigestAfter = Get-LeanTTYPreferencesDigest
@@ -1986,6 +2212,19 @@ try {
     } catch {}
 } finally {
     $cleanupFailures = [Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($performanceInitialTransparencyMode) -and
+        -not $performanceTransparencyRestored) {
+        try {
+            Restart-RegressionApp
+            Set-AuthTransparencyMode `
+                -Mode $performanceInitialTransparencyMode `
+                -LayoutPrefix 'performance-finally-restore-initial'
+            $performanceTransparencyRestored = $true
+            $performanceEvidence.restoredMode = $performanceInitialTransparencyMode
+        } catch {
+            $cleanupFailures.Add('LeanTTY transparency preference cleanup failed')
+        }
+    }
     if ($keyCleanupRequired -and -not [string]::IsNullOrWhiteSpace($appPid)) {
         try {
             Restart-RegressionApp
@@ -1993,6 +2232,17 @@ try {
             $keyCleanupRequired = $false
         } catch {
             $cleanupFailures.Add('Disposable SSH authentication key cleanup failed')
+        }
+    }
+    if (-not $knownHostCleanupCompleted -and -not [string]::IsNullOrWhiteSpace($appPid)) {
+        try {
+            Restart-RegressionApp
+            Submit-FocusedDeviceCommand `
+                -Command "ssh-keygen -R [127.0.0.1]:$FixturePort" `
+                -LayoutName 'layout-known-host-finally-cleanup.json'
+            $knownHostCleanupCompleted = $true
+        } catch {
+            $cleanupFailures.Add('Known-host entry cleanup failed')
         }
     }
     if ($mappingActive) {
