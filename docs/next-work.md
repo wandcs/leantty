@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：为 1.5 第三个产品切片建立 keepalive 半开检测进入门禁
+> 当前工程阶段：验证并配置化 1.5 第三个产品切片的现有 SSH keepalive
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -30,30 +30,38 @@
 
 ## 1.5 当前活动工作
 
-### 第三个切片：`ServerAliveInterval` / `ServerAliveCountMax` 进入门禁
+### 第三个切片：验证并配置化现有 SSH keepalive
 
 用户在 Wi-Fi、休眠恢复、NAT 或链路黑洞导致 SSH 连接半开时，应在可理解的有限时间内得到
 明确断开并沿用现有重连路径，而不是让 Pane 永久停在看似 connected 的状态。这个结果必须
 使用 SSH 加密通道内的 server-alive 请求，不能以 TCP keepalive、定时写 shell 字节、自动重连
 或后台 Session 代替。
 
-这个切片只考虑唯一 OpenSSH config 中的标准 `ServerAliveInterval` 与
+LeanTTY 当前 direct、ProxyJump target 和文件传输连接已经由同一个 russh 配置固定启用
+`30s` interval / `3` count；这不是待新增的第二套计时机制。OpenSSH 的配置默认是
+`ServerAliveInterval 0` / `ServerAliveCountMax 3`，而 russh `0.62.5` 在达到 `max` 后的下一次
+interval 才报告 `KeepaliveTimeout`，不能把两者当成已经等价。这个切片只考虑唯一 OpenSSH
+config 中的标准 `ServerAliveInterval` 与
 `ServerAliveCountMax`。它不增加通用 `-o`、网络自动切换、Session roaming、自动重试、全局
 定时器框架或第二套连接状态；jump 和 target 是否分别需要 keepalive，必须由 russh 能力和受控
 半开证据决定，不能从字段命名猜测。
 
-1. [ ] 建立 OpenSSH 与 russh 语义基线：确认 interval/count 的默认值、边界、首值优先级、
-   请求/应答类型、何时开始计数、何时复位、零值语义，以及 direct/ProxyJump 各层可观察行为。
-2. [ ] 扩展仓库受控 SSH fixture，能分别模拟正常应答、静默丢弃 keepalive 应答、目标半开、
+1. [x] 建立 OpenSSH 与 russh 语义基线：OpenSSH 在未收到服务端数据后发送加密通道内请求，
+   interval `0` 关闭、count 默认 `3`；russh 发送 `keepalive@openssh.com`、任意收到的 SSH packet
+   都复位计数，并在 `alive_timeouts > keepalive_max` 时报告超时。现有固定 `30s/3` 配置覆盖
+   direct、ProxyJump target 和文件传输连接；jump transport 仍须由受控半开证据决定。
+2. [ ] 扩展仓库受控 SSH fixture，以传输层单向丢包分别模拟正常应答、目标半开、
    jump 半开和普通远端静默；先在桌面与物理 PC 上证明“仍连接但请求无应答”可重复，不能以
-   主动 close、进程退出、端口拒绝或短 `ConnectTimeout` 冒充半开。
+   主动 close、进程退出、端口拒绝或短 `ConnectTimeout` 冒充半开。direct target 已由桌面
+   `100ms/3` 时序测试和物理 PC 未改动 `30s/3` 诊断证明；jump 分层与普通静默仍待闭合。
 3. [ ] 形成专项方案并锁定最小 Host 入口、有效范围、错误文案、断开计时和 terminal 保留语义；
    若 russh 没有稳定的 SSH-level keepalive/应答可观察接口，或 fixture 不能证明真实黑洞路径，
    停在门禁并裁剪，不新增自定义协议或周期 shell 数据。
-4. [ ] 门禁通过后才实现 config 解析/编辑、连接层传播和 generation-owned 定时生命周期；取消、
-   Pane 关闭、重连、进程后台/恢复和迟到 callback 必须复用现有 Session 所有权并完整清理。
+4. [ ] 门禁通过后才实现 config 解析/编辑和现有 russh 配置传播；不新增 ArkTS timer 或第二套
+   connection lifecycle。未显式配置时先保留 LeanTTY 现有 `30s/3` 可靠性默认，显式 interval
+   `0` 关闭；只有证据证明改变默认更可靠时才重新评估。
 5. [ ] 补齐 ArkTS/Rust/fixture 自动化与最小 ARM64 build，再在物理 PC 上验证正常静默连接不被
-   误断、确定半开按配置断开、默认关闭、direct/ProxyJump 分层、休眠恢复、立即重连和双 Pane
+   误断、确定半开按配置断开、现有默认与显式关闭、direct/ProxyJump 分层、休眠恢复、立即重连和双 Pane
    隔离；只有 server-alive 请求/应答与用户可见 Session 结果共同成立才算通过。
 
 `ConnectTimeout` 与基本 SSH escape 已完成并归档到专项设计。`AddressFamily` / `ssh -4/-6`

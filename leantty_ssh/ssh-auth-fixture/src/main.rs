@@ -14,8 +14,10 @@ use russh::keys::{Algorithm, PrivateKey, PublicKey};
 use russh::server::{Auth, Handler, Msg, Response, Server, Session};
 use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet};
 use russh_sftp::protocol::{Attrs, Data, FileAttributes, Handle, OpenFlags, Status, StatusCode};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use zeroize::{Zeroize, Zeroizing};
 
 const USER_PASSWORD: &str = "password";
@@ -1331,6 +1333,7 @@ struct Arguments {
     sftp_delay_ms: u64,
     sftp_fault: SftpFault,
     direct_tcpip_behavior: DirectTcpipBehavior,
+    server_output_drop_path: Option<PathBuf>,
 }
 
 fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Arguments, String> {
@@ -1339,7 +1342,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         .unwrap_or_else(|| "ssh-auth-fixture".to_string());
     let usage = || {
         format!(
-            "usage: {executable} <listen-address> <credentials-file> [run-seconds] [ready-file] [sftp-delay-ms] [sftp-fault] [direct-tcpip-target]"
+            "usage: {executable} <listen-address> <credentials-file> [run-seconds] [ready-file] [sftp-delay-ms] [sftp-fault] [direct-tcpip-target] [server-output-drop-file]"
         )
     };
     let listen = arguments.next().ok_or_else(&usage)?;
@@ -1379,6 +1382,13 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         .map(|value| DirectTcpipBehavior::parse(&value))
         .transpose()?
         .unwrap_or_default();
+    let server_output_drop_path = arguments.next().and_then(|value| {
+        if value == "none" {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    });
     if arguments.next().is_some() {
         return Err(usage());
     }
@@ -1390,6 +1400,53 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         sftp_delay_ms,
         sftp_fault,
         direct_tcpip_behavior,
+        server_output_drop_path,
+    })
+}
+
+fn spawn_server_output_drop_proxy(
+    listener: TcpListener,
+    target: SocketAddr,
+    drop_path: PathBuf,
+) -> JoinHandle<io::Result<()>> {
+    tokio::spawn(async move {
+        loop {
+            let (client, client_address) = listener.accept().await?;
+            let server = TcpStream::connect(target).await?;
+            let connection_drop_path = drop_path.clone();
+            tokio::spawn(async move {
+                let (mut client_read, mut client_write) = client.into_split();
+                let (mut server_read, mut server_write) = server.into_split();
+                let client_to_server = tokio::io::copy(&mut client_read, &mut server_write);
+                let server_to_client = async {
+                    let mut buffer = [0_u8; 16 * 1024];
+                    let mut dropping = false;
+                    loop {
+                        let read = server_read.read(&mut buffer).await?;
+                        if read == 0 {
+                            client_write.shutdown().await?;
+                            return Ok::<(), io::Error>(());
+                        }
+                        if connection_drop_path.exists() {
+                            if !dropping {
+                                eprintln!(
+                                    "transport proxy client={client_address} mode=drop-server-output"
+                                );
+                                dropping = true;
+                            }
+                            continue;
+                        }
+                        client_write.write_all(&buffer[..read]).await?;
+                    }
+                };
+                tokio::pin!(client_to_server);
+                tokio::pin!(server_to_client);
+                tokio::select! {
+                    _ = &mut client_to_server => {}
+                    _ = &mut server_to_client => {}
+                }
+            });
+        }
     })
 }
 
@@ -1415,8 +1472,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let credentials = Arc::new(
         Credentials::load(&arguments.credentials_path).map_err(|error| error.to_string())?,
     );
-    let socket = TcpListener::bind(&arguments.listen).await?;
-    let address = socket.local_addr()?;
+    let (socket, address, _proxy) =
+        if let Some(drop_path) = arguments.server_output_drop_path.clone() {
+            let server_socket = TcpListener::bind("127.0.0.1:0").await?;
+            let server_address = server_socket.local_addr()?;
+            let public_socket = TcpListener::bind(&arguments.listen).await?;
+            let public_address = public_socket.local_addr()?;
+            let proxy = spawn_server_output_drop_proxy(public_socket, server_address, drop_path);
+            (server_socket, public_address, Some(proxy))
+        } else {
+            let server_socket = TcpListener::bind(&arguments.listen).await?;
+            let server_address = server_socket.local_addr()?;
+            (server_socket, server_address, None)
+        };
     let config = Arc::new(russh::server::Config {
         inactivity_timeout: Some(Duration::from_secs(arguments.run_seconds)),
         auth_rejection_time: Duration::from_millis(50),
@@ -1440,10 +1508,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle.shutdown("fixture lifetime expired".into());
     });
     if let Some(ready_path) = arguments.ready_path {
-        fs::write(
-            ready_path,
-            format!("address={address}\npid={}\n", std::process::id()),
-        )?;
+        let mut ready = format!("address={address}\npid={}\n", std::process::id());
+        if let Some(drop_path) = &arguments.server_output_drop_path {
+            ready.push_str(&format!(
+                "server_output_drop_file={}\n",
+                drop_path.display()
+            ));
+        }
+        fs::write(ready_path, ready)?;
     }
     println!(
         "LEANTTY_SSH_AUTH_FIXTURE_READY address={address} pid={}",
@@ -1537,6 +1609,7 @@ mod tests {
         assert_eq!(parsed.sftp_delay_ms, 125);
         assert_eq!(parsed.sftp_fault, SftpFault::PutWriteRemove);
         assert_eq!(parsed.direct_tcpip_behavior, DirectTcpipBehavior::Disabled);
+        assert_eq!(parsed.server_output_drop_path, None);
 
         let jump = parse_arguments(
             [
@@ -1556,6 +1629,27 @@ mod tests {
         assert_eq!(
             jump.direct_tcpip_behavior,
             DirectTcpipBehavior::Forward("127.0.0.1:22223".parse().unwrap())
+        );
+
+        let dropping = parse_arguments(
+            [
+                "fixture",
+                "127.0.0.1:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "0",
+                "none",
+                "none",
+                "/tmp/drop-server-output",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert_eq!(
+            dropping.server_output_drop_path,
+            Some(PathBuf::from("/tmp/drop-server-output"))
         );
 
         let stalled_jump = parse_arguments(
@@ -2004,6 +2098,130 @@ mod tests {
         assert!(fixture.path("/inbox/../source.bin").is_err());
         assert!(fixture.path("/inbox//source.bin").is_err());
         assert!(fixture.path("/inbox\\source.bin").is_err());
+    }
+
+    #[tokio::test]
+    async fn transport_proxy_drops_only_server_output_after_control_file_appears() -> AsyncTestResult
+    {
+        let temp = env::temp_dir().join(format!(
+            "leantty-transport-proxy-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        fs::create_dir_all(&temp)?;
+        let drop_path = temp.join("drop-server-output");
+
+        let backend_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let backend_address = backend_listener.local_addr()?;
+        let backend = tokio::spawn(async move {
+            let (mut socket, _) = backend_listener.accept().await?;
+            let mut buffer = [0_u8; 64];
+            loop {
+                let read = socket.read(&mut buffer).await?;
+                if read == 0 {
+                    return Ok::<(), io::Error>(());
+                }
+                socket.write_all(&buffer[..read]).await?;
+            }
+        });
+
+        let proxy_listener = TcpListener::bind("127.0.0.1:0").await?;
+        let proxy_address = proxy_listener.local_addr()?;
+        let proxy =
+            spawn_server_output_drop_proxy(proxy_listener, backend_address, drop_path.clone());
+        let mut client = TcpStream::connect(proxy_address).await?;
+
+        client.write_all(b"before").await?;
+        let mut before = [0_u8; 6];
+        client.read_exact(&mut before).await?;
+        assert_eq!(&before, b"before");
+
+        fs::write(&drop_path, b"drop")?;
+        client.write_all(b"after").await?;
+        let mut after = [0_u8; 5];
+        assert!(
+            timeout(Duration::from_millis(150), client.read_exact(&mut after))
+                .await
+                .is_err()
+        );
+
+        drop(client);
+        timeout(Duration::from_secs(1), backend).await???;
+        proxy.abort();
+        fs::remove_dir_all(temp)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn russh_keepalive_timeout_occurs_after_max_plus_one_intervals() -> AsyncTestResult {
+        let temp = env::temp_dir().join(format!(
+            "leantty-keepalive-proxy-{}-{:016x}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        fs::create_dir_all(&temp)?;
+        let drop_path = temp.join("drop-server-output");
+
+        let server_socket = TcpListener::bind("127.0.0.1:0").await?;
+        let server_address = server_socket.local_addr()?;
+        let server_config = Arc::new(russh::server::Config {
+            keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)?],
+            ..Default::default()
+        });
+        let mut fixture = FixtureServer::new(credentials());
+        let running = fixture.run_on_socket(server_config, &server_socket);
+        let server_handle = running.handle();
+
+        let proxy_socket = TcpListener::bind("127.0.0.1:0").await?;
+        let proxy_address = proxy_socket.local_addr()?;
+        let proxy = spawn_server_output_drop_proxy(proxy_socket, server_address, drop_path.clone());
+        let client = async move {
+            let client_config = Arc::new(client::Config {
+                keepalive_interval: Some(Duration::from_millis(100)),
+                keepalive_max: 3,
+                ..Default::default()
+            });
+            let mut ssh = client::connect(client_config, proxy_address, SftpTestClient).await?;
+            if !ssh
+                .authenticate_password(USER_PASSWORD, "password-value")
+                .await?
+                .success()
+            {
+                return Err(io::Error::other("keepalive fixture password was rejected").into());
+            }
+            let channel = ssh.channel_open_session().await?;
+            channel.request_shell(true).await?;
+            fs::write(&drop_path, b"drop")?;
+
+            let started = tokio::time::Instant::now();
+            let result = timeout(Duration::from_secs(2), &mut ssh).await?;
+            let elapsed = started.elapsed();
+            if !matches!(result, Err(russh::Error::KeepaliveTimeout)) {
+                return Err(io::Error::other(format!(
+                    "expected russh keepalive timeout, got {result:?}"
+                ))
+                .into());
+            }
+            if !(Duration::from_millis(350)..Duration::from_millis(900)).contains(&elapsed) {
+                return Err(io::Error::other(format!(
+                    "keepalive timeout elapsed outside max-plus-one interval window: {elapsed:?}"
+                ))
+                .into());
+            }
+            Ok::<(), Box<dyn Error + Send + Sync>>(())
+        };
+
+        let managed_client = async move {
+            let result = client.await;
+            server_handle.shutdown("test complete".to_string());
+            result
+        };
+        let (server_result, client_result) = tokio::join!(running, managed_client);
+        proxy.abort();
+        fs::remove_dir_all(temp)?;
+        server_result
+            .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })
+            .and(client_result)
     }
 
     #[tokio::test]

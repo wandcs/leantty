@@ -36,6 +36,7 @@
 | OpenSSH ProxyJump | Verified / GitHub 已发布；AppGallery 审核中 | 1.4 | [`proxy-jump.md`](proxy-jump.md) |
 | OpenSSH ConnectTimeout | Implemented / 1.5 首个切片已闭合 | 1.5 | [`connect-timeout.md`](connect-timeout.md) |
 | Basic SSH escape | Verified / 1.5 第二个切片已闭合 | 1.5 | [`ssh-escape.md`](ssh-escape.md) |
+| OpenSSH ServerAlive | Implementing / 半开 fixture 进入门禁 | 1.5 | [`server-alive.md`](server-alive.md) |
 | Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.7 | [`mosh.md`](mosh.md) |
 
 ## 最小文档结构

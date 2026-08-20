@@ -16,6 +16,7 @@ param(
     [ValidateSet('none', 'put-write-remove', 'permission-denied', 'rename-unsupported', 'unavailable')]
     [string]$SftpFault = 'none',
     [string]$DirectTcpipTarget = 'none',
+    [switch]$EnableServerOutputDrop,
     [string]$ControlDirectory = '',
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO
 )
@@ -64,6 +65,13 @@ try {
 
     $wslCredentialsPath = ConvertTo-LeanTTYWslPath -WindowsPath $credentialsPath -Distribution $Distribution
     $wslReadyPath = ConvertTo-LeanTTYWslPath -WindowsPath $readyPath -Distribution $Distribution
+    $wslServerOutputDropPath = 'none'
+    if ($EnableServerOutputDrop) {
+        $serverOutputDropPath = Join-Path $fixtureDirectory 'drop-server-output'
+        $wslServerOutputDropPath = ConvertTo-LeanTTYWslPath `
+            -WindowsPath $serverOutputDropPath -Distribution $Distribution
+        Write-Host "Create this file to drop server output: $serverOutputDropPath" -ForegroundColor Yellow
+    }
     Write-Host "Temporary fixture directory: $fixtureDirectory" -ForegroundColor Yellow
     Write-Host 'Credentials are available only in server-credentials while this process is running.'
     Write-Host ('Users: password, publickey, password-kbdint, publickey-password, ' +
@@ -75,7 +83,7 @@ try {
         '-p', 'leantty-ssh-auth-fixture', '--', $ListenAddress, $wslCredentialsPath,
         $RunSeconds.ToString([Globalization.CultureInfo]::InvariantCulture), $wslReadyPath,
         $SftpDelayMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture),
-        $SftpFault, $DirectTcpipTarget
+        $SftpFault, $DirectTcpipTarget, $wslServerOutputDropPath
     )
 } finally {
     if (Test-Path -LiteralPath $fixtureDirectory) {

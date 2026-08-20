@@ -36,6 +36,7 @@ param(
         'terminal-key-input',
         'transport-main-path',
         'ssh-escape',
+        'server-alive',
         'performance-matrix',
         'bell-attention',
         'password-kbdint-mixed-echo',
@@ -167,6 +168,7 @@ $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) (
 )
 $fixtureControl = Join-Path $fixtureRoot 'control'
 $fixtureConnectedInputSnapshot = Join-Path $fixtureControl 'connected-input-snapshot'
+$fixtureServerOutputDrop = Join-Path $fixtureControl 'drop-server-output'
 $fixtureStdout = Join-Path $fixtureRoot 'stdout.log'
 $fixtureStderr = Join-Path $fixtureRoot 'stderr.log'
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
@@ -301,6 +303,7 @@ $availableStages = @(
     'terminal-key-input',
     'transport-main-path',
     'ssh-escape',
+    'server-alive',
     'performance-matrix',
     'bell-attention',
     'password-kbdint-mixed-echo',
@@ -326,7 +329,9 @@ $selectedStages = [Collections.Generic.HashSet[string]]::new(
 if (-not [string]::IsNullOrWhiteSpace($Group)) {
     foreach ($name in $authGroupDefinitions[$Group].stages) { [void]$selectedStages.Add($name) }
 } elseif ($Only.Count -eq 0) {
-    foreach ($name in $availableStages) { [void]$selectedStages.Add($name) }
+    foreach ($name in $availableStages) {
+        if ($name -ne 'server-alive') { [void]$selectedStages.Add($name) }
+    }
 } else {
     foreach ($name in $Only) { [void]$selectedStages.Add($name) }
 }
@@ -357,6 +362,7 @@ function Get-LeanTTYFixtureStageBudgetSeconds {
         'terminal-key-input' = 180
         'transport-main-path' = 300
         'ssh-escape' = 360
+        'server-alive' = 300
         'performance-matrix' = 540
         'bell-attention' = 240
         'password-kbdint-mixed-echo' = 300
@@ -1587,6 +1593,7 @@ function Write-AuthEvidence {
             'password-success',
             'transport-main-path-input-large-paste-continuous-output-resize-disconnect-reconnect',
             'ssh-escape-line-start-local-actions-remote-bytes-reconnect-and-pane-isolation',
+            'server-alive-real-duration-target-blackhole-error-and-immediate-reconnect',
             'five-mode-transparency-continuous-output-render-memory-gpu-hitch-distributions',
             'bell-active-inactive-tab-split-pane-coalescing-and-clear',
             'password-then-keyboard-interactive-mixed-echo',
@@ -1666,6 +1673,9 @@ try {
         '-RunSeconds', $fixtureRunSeconds.ToString(),
         '-ControlDirectory', $fixtureControl
     )
+    if (Test-AuthStageSelected -Name 'server-alive') {
+        $fixtureArguments += '-EnableServerOutputDrop'
+    }
     if (-not [string]::IsNullOrWhiteSpace($Distribution)) {
         $fixtureArguments += @('-Distribution', $Distribution)
     }
@@ -1964,6 +1974,58 @@ try {
     Focus-AuthPane -Side 'left' -LayoutName 'layout-ssh-escape-left-close.json'
     Close-FixtureShell
     Complete-AuthStage -Name 'ssh-escape'
+    }
+
+    if (Test-AuthStageSelected -Name 'server-alive') {
+    Start-AuthStage -Name 'server-alive'
+    Remove-Item -LiteralPath $fixtureServerOutputDrop -Force -ErrorAction SilentlyContinue
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-server-alive-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check serveralivebefore' `
+        -Pattern 'input case=serveralivebefore result=matched'
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    $serverAliveWatch = [Diagnostics.Stopwatch]::StartNew()
+    New-Item -ItemType File -Path $fixtureServerOutputDrop -Force | Out-Null
+    $keepaliveTimeoutObserved = $false
+    for ($waitSegment = 1; $waitSegment -le 3; $waitSegment++) {
+        try {
+            Wait-AuthLog -Pattern 'SSH error: SSH keepalive timed out' `
+                -TimeoutSeconds 50 | Out-Null
+            $keepaliveTimeoutObserved = $true
+            break
+        } catch {
+            if ($waitSegment -ge 3) { throw }
+        }
+    }
+    if (-not $keepaliveTimeoutObserved) {
+        throw '[product] Existing 30s/3 keepalive did not report a timeout'
+    }
+    $serverAliveWatch.Stop()
+    if ($serverAliveWatch.Elapsed.TotalSeconds -lt 105 -or
+        $serverAliveWatch.Elapsed.TotalSeconds -gt 145) {
+        throw ('[product] Existing 30s/3 keepalive timed out outside the russh max-plus-one ' +
+            "window: $([Math]::Round($serverAliveWatch.Elapsed.TotalSeconds, 3)) seconds")
+    }
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'server-alive-timeout.png')
+
+    Remove-Item -LiteralPath $fixtureServerOutputDrop -Force
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password `
+        -LayoutName 'layout-server-alive-reconnect-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check serveralivereconnect' `
+        -Pattern 'input case=serveralivereconnect result=matched'
+    Close-FixtureShell
+    Complete-AuthStage -Name 'server-alive'
     }
 
     if (Test-AuthStageSelected -Name 'performance-matrix') {
