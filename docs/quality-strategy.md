@@ -247,7 +247,7 @@ It does not silently retry or skip a failed group.
 
 | SSH group | Owned public stages | Run-scoped state and primary oracle |
 | --- | --- | --- |
-| `transport-performance` | terminal key bytes, transport main path, five-mode performance matrix | Fresh fixture/reverse mapping and saved transparency baseline; controlled-server bytes plus device-clock render/performance records |
+| `transport-performance` | terminal key bytes, transport main path, SSH escape and five-mode performance matrix | Fresh fixture/reverse mapping and saved transparency baseline; controlled-server bytes, local escape actions plus device-clock render/performance records |
 | `authentication-methods` | password, keyboard-interactive variants, unencrypted/encrypted public key and fallback methods | Fresh credentials and disposable keys; controlled-server authentication result plus recovered session |
 | `lifecycle-recovery` | Ctrl+C, Pane close, minimize/restore and process-stop cancellation | Fresh process/window/session boundary; prompt lifecycle state plus a subsequent controlled-server session |
 | `pane-focus-attention` | BEL attention and parallel Pane authentication | Fresh single-Pane layout; layout-owned focus/attention state plus independent server authentication |

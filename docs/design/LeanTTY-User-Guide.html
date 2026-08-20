@@ -1102,6 +1102,14 @@ ssh -J jump deploy@target.example.com</code></pre>
           <code>ltty</code>。
         </p>
 
+        <h3>已连接 SSH 的行首 escape</h3>
+        <p>
+          在 Session 刚连接或按下 Enter 后，输入 <code>~.</code> 只断开当前 Pane，
+          <code>~?</code> 显示 LeanTTY 支持的 escape，<code>~I</code> 显示脱敏后的目标、可选跳板
+          和连接状态，<code>~~</code> 向远端发送一个字面 <code>~</code>。行中的 tilde 和未知的
+          行首组合（例如 <code>~x</code>）会原样发送；连接信息不包含密码、认证回答或私钥路径。
+        </p>
+
         <div class="callout">
           <strong>LeanTTY 负责连接，长期任务仍在远端运行。</strong>
           <p>如果工作必须跨越应用退出、重启或断网继续，请在远端使用 tmux 或 screen。</p>
@@ -1591,6 +1599,15 @@ ssh -J jump deploy@target.example.com</code></pre>
           After a successful connection, the current Tab shows <code>user@Host</code> and keeps a saved
           Host alias when one was used. After a normal remote-shell exit, a failed connection or a
           cancelled connection, the title returns to <code>ltty</code>.
+        </p>
+
+        <h3>Line-start escapes in connected SSH</h3>
+        <p>
+          At the start of a Session or immediately after Enter, use <code>~.</code> to disconnect only
+          the current Pane, <code>~?</code> to list LeanTTY-supported escapes, <code>~I</code> to show a
+          sanitized target, optional jump route and state, or <code>~~</code> to send one literal
+          <code>~</code>. Mid-line tildes and unknown sequences such as <code>~x</code> are sent unchanged.
+          Connection information never includes passwords, authentication answers or private-key paths.
         </p>
 
         <div class="callout">

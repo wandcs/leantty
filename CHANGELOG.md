@@ -6,6 +6,12 @@
 
 ### Added
 
+- Added line-start SSH escapes for an active terminal: `~.` disconnects the
+  current Pane's Session, `~?` lists only LeanTTY-supported escapes, `~I` shows
+  a sanitized target and optional jump route, and `~~` sends one literal
+  tilde. Recognition remains local to the current Pane, preserves ordered
+  pasted input and leaves ordinary, mid-line and unknown escape text for the
+  remote PTY.
 - Added `host add|set ... --connect-timeout <1-300|default>` to manage a
   controlled OpenSSH `ConnectTimeout` directive for direct SSH,
   one-hop ProxyJump, reconnect and Host-based `put/get`. LeanTTY applies the

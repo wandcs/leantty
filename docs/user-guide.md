@@ -123,6 +123,24 @@ terminal opens only after the target PTY is ready. `-J none` bypasses a saved
 version supports one jump only; `ProxyCommand` and comma-separated chains fail
 explicitly.
 
+## Connected SSH escapes
+
+At the start of a connected Session or immediately after Enter, use these
+OpenSSH-style escapes:
+
+| Escape | Result |
+| --- | --- |
+| `~.` | Disconnect only the current Pane's SSH Session |
+| `~?` | Show the escapes LeanTTY currently supports |
+| `~I` | Show the sanitized target, optional jump route and connected state |
+| `~~` | Send one literal `~` to the remote PTY |
+
+The escape must begin at line start. A tilde elsewhere in a shell command,
+editor, tmux or Agent TUI is sent normally, and an unknown line-start sequence
+such as `~x` is also sent unchanged. Connection information never includes a
+password, authentication response or private-key path. Each Pane recognizes
+escapes independently; only `~.` ends the Session.
+
 ## Key management
 
 Generate a key pair:

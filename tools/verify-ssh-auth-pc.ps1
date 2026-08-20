@@ -35,6 +35,7 @@ param(
         'password-success',
         'terminal-key-input',
         'transport-main-path',
+        'ssh-escape',
         'performance-matrix',
         'bell-attention',
         'password-kbdint-mixed-echo',
@@ -228,7 +229,7 @@ $attemptId = [Guid]::NewGuid().ToString('N')
 $runMode = if (-not $DiagnosticHap -and $Only.Count -eq 0) { 'acceptance' } else { 'diagnostic' }
 $authGroupDefinitions = [ordered]@{
     'transport-performance' = [ordered]@{
-        stages = @('terminal-key-input', 'transport-main-path', 'performance-matrix')
+        stages = @('terminal-key-input', 'transport-main-path', 'ssh-escape', 'performance-matrix')
         setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-known-host-boundary'
         resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'transparency-preference')
         primaryOracle = 'fixture-received-bytes-and-device-clock-performance-records'
@@ -299,6 +300,7 @@ $availableStages = @(
     'password-success',
     'terminal-key-input',
     'transport-main-path',
+    'ssh-escape',
     'performance-matrix',
     'bell-attention',
     'password-kbdint-mixed-echo',
@@ -354,6 +356,7 @@ function Get-LeanTTYFixtureStageBudgetSeconds {
         'password-success' = 150
         'terminal-key-input' = 180
         'transport-main-path' = 300
+        'ssh-escape' = 360
         'performance-matrix' = 540
         'bell-attention' = 240
         'password-kbdint-mixed-echo' = 300
@@ -867,6 +870,91 @@ function Submit-ConnectedInputUntilAuthEvent {
     } catch {
         throw '[harness] Connected input application outcome is unknown; the scenario must be restarted'
     }
+}
+
+function Invoke-SshEscapeInputText {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    if ($Text -match '^[~?I.]+$') {
+        for ($physicalIndex = 0; $physicalIndex -lt $Text.Length; $physicalIndex++) {
+            $physicalCommand = switch ($Text[$physicalIndex]) {
+                '~' { 'uinput -K -d 2047 -d 2056 -u 2056 -u 2047' }
+                '?' { 'uinput -K -d 2047 -d 2064 -u 2064 -u 2047' }
+                'I' { 'uinput -K -d 2047 -d 2025 -u 2025 -u 2047' }
+                '.' { 'uinput -K -d 2044 -u 2044' }
+            }
+            & $hdc -t $Target shell $physicalCommand | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw '[environment] Unable to inject a physical SSH escape key'
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        return
+    }
+    $segmentStart = 0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        if ($Text[$index] -cne '~') { continue }
+        if ($index -gt $segmentStart) {
+            Invoke-AuthUiText -Text $Text.Substring($segmentStart, $index - $segmentStart)
+        }
+        & $hdc -t $Target shell 'uinput -K -d 2047 -d 2056 -u 2056 -u 2047' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to inject a physical tilde key' }
+        Start-Sleep -Milliseconds 250
+        $segmentStart = $index + 1
+    }
+    if ($segmentStart -lt $Text.Length) {
+        Invoke-AuthUiText -Text $Text.Substring($segmentStart)
+    }
+}
+
+function Assert-SshEscapeRemoteMapping {
+    param(
+        [Parameter(Mandatory = $true)][string]$TypedText,
+        [Parameter(Mandatory = $true)][string]$ExpectedRemoteText,
+        [Parameter(Mandatory = $true)][string]$CaseName
+    )
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
+        Invoke-SshEscapeInputText -Text $TypedText
+        $snapshot = Wait-FixtureConnectedInputSnapshot -Expected $ExpectedRemoteText
+        if ($snapshot.observed -and [string]$snapshot.value -ceq $ExpectedRemoteText) {
+            Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+            $cleared = Wait-FixtureConnectedInputSnapshot -Expected ''
+            if (-not $cleared.observed -or [string]$cleared.value -cne '') {
+                throw "[harness] SSH fixture input did not clear after $CaseName"
+            }
+            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+            Start-Sleep -Milliseconds 250
+            return
+        }
+        if ($attempt -lt 3) {
+            Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+            Wait-FixtureConnectedInputSnapshot -Expected '' | Out-Null
+            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    throw "[product] SSH escape remote mapping failed for $CaseName after exact-input retries"
+}
+
+function Assert-SshEscapeLocalOnly {
+    param(
+        [Parameter(Mandatory = $true)][string]$TypedText,
+        [Parameter(Mandatory = $true)][string]$LogPattern,
+        [Parameter(Mandatory = $true)][string]$CaseName
+    )
+    Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Invoke-SshEscapeInputText -Text $TypedText
+    Wait-AuthLog -Pattern $LogPattern -TimeoutSeconds 10
+    Start-Sleep -Milliseconds 500
+    $snapshot = Read-FixtureConnectedInputSnapshot
+    if ($snapshot.observed -and -not [string]::IsNullOrEmpty([string]$snapshot.value)) {
+        throw "[product] Local SSH escape reached the remote PTY for $CaseName"
+    }
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory ("ssh-escape-$CaseName.png"))
 }
 
 function Invoke-LeanTTYPasteShortcut {
@@ -1498,6 +1586,7 @@ function Write-AuthEvidence {
         declaredCoverage = @(
             'password-success',
             'transport-main-path-input-large-paste-continuous-output-resize-disconnect-reconnect',
+            'ssh-escape-line-start-local-actions-remote-bytes-reconnect-and-pane-isolation',
             'five-mode-transparency-continuous-output-render-memory-gpu-hitch-distributions',
             'bell-active-inactive-tab-split-pane-coalescing-and-clear',
             'password-then-keyboard-interactive-mixed-echo',
@@ -1770,6 +1859,111 @@ try {
         -Pattern 'input case=reconnect result=matched'
     Close-FixtureShell
     Complete-AuthStage -Name 'transport-main-path'
+    }
+
+    if (Test-AuthStageSelected -Name 'ssh-escape') {
+    Start-AuthStage -Name 'ssh-escape'
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-ssh-escape-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+
+    Assert-SshEscapeRemoteMapping `
+        -TypedText 'echo~.safe' `
+        -ExpectedRemoteText 'echo~.safe' `
+        -CaseName 'mid-line'
+    Assert-SshEscapeRemoteMapping `
+        -TypedText '~~literal' `
+        -ExpectedRemoteText '~literal' `
+        -CaseName 'literal-tilde'
+    Assert-SshEscapeRemoteMapping `
+        -TypedText '~xunknown' `
+        -ExpectedRemoteText '~xunknown' `
+        -CaseName 'unknown'
+
+    Assert-SshEscapeLocalOnly `
+        -TypedText '~?' `
+        -LogPattern 'SSH escape action=help' `
+        -CaseName 'help'
+    Assert-SshEscapeLocalOnly `
+        -TypedText '~I' `
+        -LogPattern 'SSH escape action=connection-info' `
+        -CaseName 'connection-info'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check afterescape' `
+        -Pattern 'input case=afterescape result=matched'
+
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-terminal-dirty escapealt' `
+        -Pattern 'terminal dirty case=escapealt result=enabled'
+    # Focus reporting can send ESC[I after the command's newline. Like OpenSSH,
+    # escape recognition resumes only after the user sends another newline.
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    Start-Sleep -Milliseconds 250
+    Assert-SshEscapeLocalOnly `
+        -TypedText '~?' `
+        -LogPattern 'SSH escape action=help' `
+        -CaseName 'alternate-screen-help'
+    Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
+    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2017
+    $alternateRemote = Wait-FixtureConnectedInputSnapshot -Expected 'a'
+    if (-not $alternateRemote.observed -or [string]$alternateRemote.value -cne 'a') {
+        throw '[product] Remote PTY input did not continue after alternate-screen escape help'
+    }
+    Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+    Wait-FixtureConnectedInputSnapshot -Expected '' | Out-Null
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    Start-Sleep -Milliseconds 250
+
+    Assert-SshEscapeLocalOnly `
+        -TypedText '~.' `
+        -LogPattern 'SSH escape action=disconnect' `
+        -CaseName 'disconnect'
+    Wait-AuthLog -Pattern 'SSH closed' -TimeoutSeconds 15
+
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-ssh-escape-reconnect-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check escapereconnect' `
+        -Pattern 'input case=escapereconnect result=matched'
+
+    Split-AuthPane
+    Focus-AuthPane -Side 'right' -LayoutName 'layout-ssh-escape-right-idle.json'
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-ssh-escape-right-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+
+    Focus-AuthPane -Side 'left' -LayoutName 'layout-ssh-escape-left-pending.json'
+    Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
+    Invoke-SshEscapeInputText -Text '~'
+    Start-Sleep -Milliseconds 500
+    $pendingSnapshot = Read-FixtureConnectedInputSnapshot
+    if ($pendingSnapshot.observed -and -not [string]::IsNullOrEmpty([string]$pendingSnapshot.value)) {
+        throw '[product] A pending line-start escape reached the remote PTY'
+    }
+
+    Focus-AuthPane -Side 'right' -LayoutName 'layout-ssh-escape-right-isolation.json'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check rightescape' `
+        -Pattern 'input case=rightescape result=matched'
+
+    Focus-AuthPane -Side 'left' -LayoutName 'layout-ssh-escape-left-complete.json'
+    Assert-SshEscapeLocalOnly `
+        -TypedText '?' `
+        -LogPattern 'SSH escape action=help' `
+        -CaseName 'left-pane-isolation'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check leftescape' `
+        -Pattern 'input case=leftescape result=matched'
+
+    Focus-AuthPane -Side 'right' -LayoutName 'layout-ssh-escape-right-close.json'
+    Close-FixtureShell
+    Focus-AuthPane -Side 'left' -LayoutName 'layout-ssh-escape-left-close.json'
+    Close-FixtureShell
+    Complete-AuthStage -Name 'ssh-escape'
     }
 
     if (Test-AuthStageSelected -Name 'performance-matrix') {

@@ -44,14 +44,17 @@ const HELP_TEXT: string =
   '  host list                                      List hosts\r\n' +
   '\r\n' +
   '  help [<command>], <command> --help, ?           Show help\r\n' +
-  '  exit                                           Close this pane\r\n'
+  '  exit                                           Close this pane\r\n' +
+  '\r\n' +
+  'Connected SSH: after a newline, use ~? for supported escapes.\r\n'
 
 const SSH_HELP: string = '\r\nUsage: ssh [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
   '       ssh [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n\r\n' +
   'Host settings, including one ProxyJump and ConnectTimeout, come from ~/.ssh/config.\r\n' +
   'Command options take precedence where LeanTTY provides one.\r\n' +
   '<jump> is one saved Host or [user@]host[:port]. Use -J none to bypass a saved ProxyJump.\r\n' +
-  'ProxyCommand and multi-hop chains are not supported.\r\n'
+  'ProxyCommand and multi-hop chains are not supported.\r\n' +
+  'While connected, enter ~? after a newline to list supported SSH escapes.\r\n'
 const KEYGEN_HELP: string = '\r\nUsage: ssh-keygen [-t <ed25519|rsa>] [-f <key-name>] [-C <comment>]\r\n' +
   '       ssh-keygen -y -f <identity>\r\n       ssh-keygen -l -f <identity>[.pub]\r\n' +
   '       ssh-keygen -p -f <identity>\r\n' +

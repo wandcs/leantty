@@ -20,6 +20,12 @@ import { DurableStateManager } from '../model/persistence/DurableStateManager'
 import { TerminalInputAction, TerminalInputActionKind, TerminalInputParser } from '../model/terminal/TerminalInputParser'
 import { TerminalMode } from '../common/types/TerminalTypes'
 import { ConnectionControl } from '../model/ssh/ConnectionControl'
+import {
+  SshEscapeEvent,
+  SshEscapeEventKind,
+  SshEscapeParser,
+  SshEscapeResult
+} from '../model/ssh/SshEscapeParser'
 import { TerminalSurfaceController } from '../model/terminal/TerminalSurfaceController'
 import { LocalCommandLine } from '../model/terminal/LocalCommandLine'
 import { LocalCommandOutput } from '../model/terminal/LocalCommandOutput'
@@ -71,6 +77,7 @@ export class SessionViewModel {
   private logger: Logger = new Logger('SessionViewModel')
 
   private mode: TerminalMode = TerminalMode.IDLE
+  private sshEscapeParser: SshEscapeParser = new SshEscapeParser()
   private commandLine: LocalCommandLine = new LocalCommandLine()
   private passwordBuffer: string = ''
   private hostKeyBuffer: string = ''
@@ -431,6 +438,10 @@ export class SessionViewModel {
       this.completionEngine.finishEditing()
       this.completionRenderer.reset()
     }
+    if (this.mode !== newMode && (this.mode === TerminalMode.CONNECTED ||
+      newMode === TerminalMode.CONNECTED)) {
+      this.sshEscapeParser.reset()
+    }
     this.mode = newMode
     if (this.terminalSurface !== null) {
       this.terminalSurface.setInputMasked(SessionViewModel.isSecretInputMode(newMode))
@@ -777,8 +788,7 @@ export class SessionViewModel {
       return
     }
     if (this.mode === TerminalMode.CONNECTED) {
-      this.observePerfInput(data)
-      this.sshClient.write(data)
+      this.handleConnectedInput(data)
       return
     }
 
@@ -815,6 +825,57 @@ export class SessionViewModel {
     if (this.mode === TerminalMode.CONNECTING) {
       return
     }
+  }
+
+  private handleConnectedInput(data: string): void {
+    let result: SshEscapeResult = this.sshEscapeParser.consume(data)
+    for (let index = 0; index < result.events.length; index++) {
+      let event: SshEscapeEvent = result.events[index]
+      if (event.kind === SshEscapeEventKind.REMOTE_DATA) {
+        this.observePerfInput(event.data)
+        this.sshClient.write(event.data)
+      } else if (event.kind === SshEscapeEventKind.DISCONNECT) {
+        this.logger.info('SSH escape action=disconnect')
+        this.sshClient.disconnect()
+        return
+      } else if (event.kind === SshEscapeEventKind.HELP) {
+        this.writeTerminal('\r\nSupported SSH escapes (after a newline):\r\n' +
+          '  ~.  Disconnect\r\n' +
+          '  ~?  Show this help\r\n' +
+          '  ~I  Show connection information\r\n' +
+          '  ~~  Send a literal ~\r\n')
+        this.logger.info('SSH escape action=help')
+      } else if (event.kind === SshEscapeEventKind.CONNECTION_INFO) {
+        this.writeTerminal('\r\n' + this.sshConnectionInfo() + '\r\n')
+        this.logger.info('SSH escape action=connection-info')
+      }
+    }
+  }
+
+  private sshConnectionInfo(): string {
+    let targetHost: string = this.session.getDisplayHost().length > 0 ?
+      this.session.getDisplayHost() : this.session.getHostname()
+    let jumpHost: string = this.session.getJumpDisplayHost().length > 0 ?
+      this.session.getJumpDisplayHost() : this.session.getJumpHostname()
+    return SessionViewModel.formatSshConnectionInfo(
+      this.session.getUsername(), targetHost, this.session.getPort(),
+      this.session.getJumpUsername(), jumpHost, this.session.getJumpPort())
+  }
+
+  static formatSshConnectionInfo(targetUser: string, targetHost: string, targetPort: number,
+    jumpUser: string = '', jumpHost: string = '', jumpPort: number = 22): string {
+    let text: string = 'Target: ' + SessionViewModel.formatSshDisplayEndpoint(
+      targetUser, targetHost, targetPort)
+    if (jumpHost.length > 0) {
+      text += '\r\nJump: ' + SessionViewModel.formatSshDisplayEndpoint(jumpUser, jumpHost, jumpPort)
+    }
+    return text + '\r\nState: connected'
+  }
+
+  private static formatSshDisplayEndpoint(user: string, host: string, port: number): string {
+    let endpoint: string = host.indexOf(':') >= 0 ? '[' + host + ']:' + port.toString() :
+      host + ':' + port.toString()
+    return SessionViewModel.terminalSafeText(user + '@' + endpoint)
   }
 
   private handleIdleInput(data: string): void {

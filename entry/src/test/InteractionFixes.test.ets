@@ -9,6 +9,12 @@ import {
 } from '../main/ets/model/command/CommandParser'
 import { SshConfig } from '../main/ets/model/ssh/SshConfig'
 import { SshClient } from '../main/ets/model/ssh/SshClient'
+import {
+  SshEscapeEvent,
+  SshEscapeEventKind,
+  SshEscapeParser,
+  SshEscapeResult
+} from '../main/ets/model/ssh/SshEscapeParser'
 import { BridgeMessage, BridgeProtocol } from '../main/ets/model/bridge/BridgeProtocol'
 import { InteractionPolicy, WorkspaceNavigationAction } from '../main/ets/model/ui/InteractionPolicy'
 import { KeyCodeMap } from '../main/ets/common/constants/KeyCodeMap'
@@ -1456,6 +1462,70 @@ export default function interactionFixesTest() {
       expect(reverseActions[0].kind).assertEqual(TerminalInputActionKind.REVERSE_TAB)
       expect(escapeActions.length).assertEqual(1)
       expect(escapeActions[0].kind).assertEqual(TerminalInputActionKind.ESCAPE)
+    })
+
+    it('recognizesOnlySupportedSshEscapesAtLineStartAcrossChunks', 0, () => {
+      let parser: SshEscapeParser = new SshEscapeParser()
+      let pending: SshEscapeResult = parser.consume('~')
+      expect(pending.events.length).assertEqual(0)
+      let info: SshEscapeResult = parser.consume('I')
+      expect(info.events.length).assertEqual(1)
+      expect(info.events[0].kind).assertEqual(SshEscapeEventKind.CONNECTION_INFO)
+
+      let ordinary: SshEscapeResult = parser.consume('echo ~.\r')
+      expect(ordinary.events.length).assertEqual(1)
+      expect(ordinary.events[0].kind).assertEqual(SshEscapeEventKind.REMOTE_DATA)
+      expect(ordinary.events[0].data).assertEqual('echo ~.\r')
+      let help: SshEscapeResult = parser.consume('~?')
+      expect(help.events.length).assertEqual(1)
+      expect(help.events[0].kind).assertEqual(SshEscapeEventKind.HELP)
+    })
+
+    it('preservesLiteralAndUnknownSshEscapesAndStopsAfterDisconnect', 0, () => {
+      let parser: SshEscapeParser = new SshEscapeParser()
+      let literal: SshEscapeResult = parser.consume('~~value\r~x\n')
+      expect(literal.events.length).assertEqual(1)
+      expect(literal.events[0].kind).assertEqual(SshEscapeEventKind.REMOTE_DATA)
+      expect(literal.events[0].data).assertEqual('~value\r~x\n')
+      let disconnect: SshEscapeResult = parser.consume('~.ignored')
+      expect(disconnect.events.length).assertEqual(1)
+      expect(disconnect.events[0].kind).assertEqual(SshEscapeEventKind.DISCONNECT)
+
+      parser.reset()
+      let crlf: SshEscapeResult = parser.consume('command\r\n~?')
+      expect(crlf.events.length).assertEqual(2)
+      expect(crlf.events[0].data).assertEqual('command\r\n')
+      expect(crlf.events[1].kind).assertEqual(SshEscapeEventKind.HELP)
+    })
+
+    it('preservesSshEscapeAndRemoteDataOrderWithinOneInputChunk', 0, () => {
+      let parser: SshEscapeParser = new SshEscapeParser()
+      let result: SshEscapeResult = parser.consume('~?echo ok\r~I~~x\r~.ignored')
+      expect(result.events.length).assertEqual(5)
+      let help: SshEscapeEvent = result.events[0]
+      let firstRemote: SshEscapeEvent = result.events[1]
+      let info: SshEscapeEvent = result.events[2]
+      let secondRemote: SshEscapeEvent = result.events[3]
+      let disconnect: SshEscapeEvent = result.events[4]
+      expect(help.kind).assertEqual(SshEscapeEventKind.HELP)
+      expect(firstRemote.kind).assertEqual(SshEscapeEventKind.REMOTE_DATA)
+      expect(firstRemote.data).assertEqual('echo ok\r')
+      expect(info.kind).assertEqual(SshEscapeEventKind.CONNECTION_INFO)
+      expect(secondRemote.kind).assertEqual(SshEscapeEventKind.REMOTE_DATA)
+      expect(secondRemote.data).assertEqual('~x\r')
+      expect(disconnect.kind).assertEqual(SshEscapeEventKind.DISCONNECT)
+    })
+
+    it('formatsSshConnectionInfoFromDisplayRouteWithoutSecretFields', 0, () => {
+      let text: string = SessionViewModel.formatSshConnectionInfo(
+        'deploy', 'production', 2222, 'gateway', '2001:db8::1', 22)
+      expect(text).assertEqual(
+        'Target: deploy@production:2222\r\nJump: gateway@[2001:db8::1]:22\r\nState: connected')
+      expect(text.includes('Identity')).assertEqual(false)
+      expect(text.includes('password')).assertEqual(false)
+
+      let escaped: string = SessionViewModel.formatSshConnectionInfo('user', 'bad\u001B[31mhost', 22)
+      expect(escaped.includes('\u001B')).assertEqual(false)
     })
 
     it('routesExactCtrlCBeforeArkWebConsumesSelectionCopy', 0, () => {

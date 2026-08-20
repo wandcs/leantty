@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：实现并闭合 1.5 第二个产品切片 `AddressFamily` / `ssh -4/-6`
+> 当前工程阶段：为 1.5 第三个产品切片建立 keepalive 半开检测进入门禁
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -30,41 +30,38 @@
 
 ## 1.5 当前活动工作
 
-### 第二个切片：受控 `AddressFamily` 与 `ssh -4/-6`
+### 第三个切片：`ServerAliveInterval` / `ServerAliveCountMax` 进入门禁
 
-用户面对双栈 DNS、单栈网络或只能通过特定地址族到达的目标时，可以在唯一 OpenSSH config
-中保存标准 `AddressFamily`，也可以用标准 `ssh -4/-6` 对当前连接作一次明确选择。选择必须
-约束真实 DNS 解析和 TCP 连接，而不是只接受一个无效 flag；失败必须指出是 IPv4、IPv6 还是
-默认双栈路径，并保持 Host、认证、主机校验、ProxyJump、重连和 `put/get` 的现有所有权。
+用户在 Wi-Fi、休眠恢复、NAT 或链路黑洞导致 SSH 连接半开时，应在可理解的有限时间内得到
+明确断开并沿用现有重连路径，而不是让 Pane 永久停在看似 connected 的状态。这个结果必须
+使用 SSH 加密通道内的 server-alive 请求，不能以 TCP keepalive、定时写 shell 字节、自动重连
+或后台 Session 代替。
 
-这个切片只增加一个三值连接策略，不增加 DNS 缓存、Happy Eyeballs 框架、网络扫描、地址
-重写、第二份 Host/config 或通用 `-o`。命名 jump 与 target 分别使用自己的有效配置；一次性
-`-4/-6` 是否以及如何作用于 jump/target，必须先对照 OpenSSH 标准行为和受控双栈证据锁定，
-不能由当前实现猜测。
+这个切片只考虑唯一 OpenSSH config 中的标准 `ServerAliveInterval` 与
+`ServerAliveCountMax`。它不增加通用 `-o`、网络自动切换、Session roaming、自动重试、全局
+定时器框架或第二套连接状态；jump 和 target 是否分别需要 keepalive，必须由 russh 能力和受控
+半开证据决定，不能从字段命名猜测。
 
-1. [ ] 建立标准与受控网络基线：记录 OpenSSH `AddressFamily any|inet|inet6`、`ssh -4/-6`、
-   Host 首值和 CLI/config 优先级；在本机与物理 HarmonyOS PC 上证明可重复的 IPv4-only、
-   IPv6-only、双栈同名目标及单跳 ProxyJump fixture。没有真实 IPv6 路径时不得用 parser 测试
-   代替，也不得实现后再倒推语义。
-2. [ ] 形成专项方案并确定最小用户入口：`host add|set ... --address-family
-   <any|inet|inet6|default>` 只修改唯一 config 中的标准字段，`ssh -4/-6` 只影响当前 SSH；
-   `ssh -G` 输出真实有效值，重复、冲突、无效配置和不适用于本地命令的 option 在网络动作前
-   明确失败。
-3. [ ] 让地址族策略贯穿真实解析与连接：普通 SSH、命名 jump/target、重连和复用 Host 的
-   `put/get` 使用同一解析结果；Rust 只尝试允许的 socket family，并保留 ConnectTimeout、
-   取消、Host key identity、Session generation 和迟到事件拒绝。
-4. [ ] 补齐 ArkTS/Rust 自动化，至少覆盖默认 any、Host/通配 Host 首值、CLI 覆盖、`-4/-6`
-   冲突、IPv4/IPv6 literal、DNS 多地址过滤、无允许地址、jump/target 独立配置、reconnect、
-   transfer 和取消；测试必须证明实际选择的 socket family，而不只断言字段传播。
-5. [ ] 运行映射的最小本地门禁与 ARM64 debug build，再在物理 ARM64 HarmonyOS PC 上验证
-   IPv4-only、IPv6-only、双栈强制 v4/v6、错误 family 的确定失败、ProxyJump 分层、取消和
-   默认 any 正常 smoke；安装、启动、`ssh -G` 或日志字段本身不能替代真实连接后置条件。
-6. [ ] 将最终语义、非目标、自动化和真机证据同步到专项设计、User Guide/Help、Changelog
-   与相关权威文档；从本文件删除完成切片，再依据真实阻断和复杂度决定 1.5 下一项。
+1. [ ] 建立 OpenSSH 与 russh 语义基线：确认 interval/count 的默认值、边界、首值优先级、
+   请求/应答类型、何时开始计数、何时复位、零值语义，以及 direct/ProxyJump 各层可观察行为。
+2. [ ] 扩展仓库受控 SSH fixture，能分别模拟正常应答、静默丢弃 keepalive 应答、目标半开、
+   jump 半开和普通远端静默；先在桌面与物理 PC 上证明“仍连接但请求无应答”可重复，不能以
+   主动 close、进程退出、端口拒绝或短 `ConnectTimeout` 冒充半开。
+3. [ ] 形成专项方案并锁定最小 Host 入口、有效范围、错误文案、断开计时和 terminal 保留语义；
+   若 russh 没有稳定的 SSH-level keepalive/应答可观察接口，或 fixture 不能证明真实黑洞路径，
+   停在门禁并裁剪，不新增自定义协议或周期 shell 数据。
+4. [ ] 门禁通过后才实现 config 解析/编辑、连接层传播和 generation-owned 定时生命周期；取消、
+   Pane 关闭、重连、进程后台/恢复和迟到 callback 必须复用现有 Session 所有权并完整清理。
+5. [ ] 补齐 ArkTS/Rust/fixture 自动化与最小 ARM64 build，再在物理 PC 上验证正常静默连接不被
+   误断、确定半开按配置断开、默认关闭、direct/ProxyJump 分层、休眠恢复、立即重连和双 Pane
+   隔离；只有 server-alive 请求/应答与用户可见 Session 结果共同成立才算通过。
 
-`ConnectTimeout` 已完成并归档到专项设计。除本节已经晋级的地址族切片外，路线图中的
-半开恢复、主机密钥轮换、
-诊断、config 导入导出和 ECDSA 互操作仍是候选集合，不因 1.5 milestone 已启动而整体获得
+`ConnectTimeout` 与基本 SSH escape 已完成并归档到专项设计。`AddressFamily` / `ssh -4/-6`
+已完成标准基线，
+但当前物理 PC 没有全局 IPv6 默认路由，HDC reverse 也没有提供可用的 `::1` SSH fixture；按
+真机进入门禁暂不实现，不能以 parser 或字段传播测试代替。除本节已经晋级的 keepalive 外，
+路线图中的主机密钥轮换、诊断、config 导入导出和 ECDSA 互操作仍是候选集合，不因 1.5
+milestone 已启动而整体获得
 实现授权。推广手册也只提供稳定工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
 
 ## 维护规则
