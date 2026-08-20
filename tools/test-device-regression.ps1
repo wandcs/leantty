@@ -4,6 +4,8 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 
+& (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1') -SelfTest
+
 function Assert-True {
     param(
         [Parameter(Mandatory = $true)][bool]$Condition,
@@ -53,6 +55,21 @@ $layout = @'
 Assert-True (
     (Get-LeanTTYTerminalInputText -Layout $layout) -eq 'ssh-keygen -p -f regression_key'
 ) 'Terminal input text was not read from the accessibility layout'
+
+$focusedTextLayout = @'
+{
+  "attributes":{"type":"root","focused":"true","bounds":"[0,0][100,100]"},
+  "children":[
+    {"attributes":{"type":"textField","hint":"Search text Find","focused":"true","bounds":"[10,10][50,30]"},"children":[]},
+    {"attributes":{"type":"textField","hint":"Terminal input","focused":"false","bounds":"[10,60][50,80]"},"children":[]}
+  ]
+}
+'@ | ConvertFrom-Json -Depth 20
+$focusedTextInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $focusedTextLayout)
+Assert-True (
+    $focusedTextInputs.Count -eq 1 -and
+    $focusedTextInputs[0].attributes.hint -eq 'Search text Find'
+) 'Targeted text input did not select the unique focused text field'
 
 & {
     $script:capturedHdcCalls = [Collections.Generic.List[object]]::new()
@@ -199,46 +216,220 @@ Assert-True (
     -not $devicePreflightText.Contains('Start-LeanTTYRegressionApp')
 ) 'Device preflight mutates product state, repairs the target, or claims product acceptance'
 
+$idleState = Get-LeanTTYAcceptanceIdleInputState -Logs @'
+ACCEPTANCE_IDLE_RESULT kind=0,input=partial,completionActive=false,menuActive=false
+ACCEPTANCE_IDLE_RESULT kind=0,input=exact command,completionActive=false,menuActive=false
+'@
+Assert-True (
+    $null -ne $idleState -and $idleState.input -ceq 'exact command' -and
+    -not $idleState.completionActive -and -not $idleState.menuActive
+) 'Acceptance input parser did not return the last native command-buffer state'
+
 & {
-    $script:injectedText = ''
+    $script:injectedText = [Collections.Generic.List[string]]::new()
     $script:submittedKeyCodes = [Collections.Generic.List[int]]::new()
+    $script:interruptCount = 0
+    $script:bufferChecks = 0
+    function Clear-LeanTTYAppLogs { param($Hdc, $Target) }
+    function Invoke-LeanTTYDeviceCtrlC {
+        param($Hdc, $Target)
+        $script:interruptCount++
+    }
+    function Wait-LeanTTYAppLog {
+        param($Hdc, $Target, $ProcessId, $Pattern, $TimeoutSeconds)
+        if ($Pattern -match 'ACCEPTANCE_IDLE_INTERRUPT') { return 'cleared' }
+        if ($Pattern -match 'ACCEPTANCE_INPUT_SUBMIT') {
+            $logs = @'
+ACCEPTANCE_INPUT_SUBMIT sequence=1,kind=command,input=echo LEANTTY_SMOKE
+ACCEPTANCE_IDLE_RESULT kind=1,input=,completionActive=false,menuActive=false
+'@
+            if ($logs -notmatch $Pattern) { throw 'submission acknowledgement pattern did not match' }
+            return $logs
+        }
+        throw "Unexpected log wait: $Pattern"
+    }
+    function Wait-LeanTTYAcceptanceIdleInputState {
+        param($Hdc, $Target, $ProcessId, $Expected, $TimeoutSeconds)
+        $script:bufferChecks++
+        if ($script:bufferChecks -eq 1) {
+            return [pscustomobject]@{ input = 'echo LEANTTY_SMOK'; exact = $false }
+        }
+        return [pscustomobject]@{ input = $Expected; exact = $true }
+    }
     function Invoke-LeanTTYDeviceText {
-        param($Hdc, $Target, $Text)
-        $script:injectedText = $Text
+        param($Hdc, $Target, $Text, $InputNode)
+        Assert-True ($null -ne $InputNode) 'Verified command input was not coordinate-targeted'
+        $script:injectedText.Add($Text)
     }
     function Invoke-LeanTTYDeviceKey {
         param($Hdc, $Target, $KeyCode)
         $script:submittedKeyCodes.Add($KeyCode)
     }
 
-    Submit-LeanTTYDeviceCommand `
+    $observations = [Collections.Generic.List[object]]::new()
+    $result = Submit-LeanTTYDeviceCommand `
         -Hdc 'unused' `
         -Target 'unused' `
-        -Command 'echo LEANTTY_SMOKE'
+        -ProcessId '1234' `
+        -Command 'echo LEANTTY_SMOKE' `
+        -Stage 'short-write-retry' `
+        -ObservationSink $observations `
+        -InputNodeProvider { [pscustomobject]@{ attributes = @{ bounds = '[0,0][10,10]' } } }
+    $summary = Get-LeanTTYDeviceCommandAutomationSummary `
+        -Observations $observations `
+        -BusinessVerdict 'passed' `
+        -BusinessPostcondition 'fixture-observed-command-result'
+    $summaryJson = ConvertTo-Json -InputObject $summary -Depth 8 -Compress
     Assert-True (
-        $script:injectedText -eq 'echo LEANTTY_SMOKE' -and
+        $result.inputAttempts -eq 2 -and
+        $script:injectedText.Count -eq 2 -and
+        $script:interruptCount -eq 2 -and
         $script:submittedKeyCodes.Count -eq 1 -and
-        $script:submittedKeyCodes[0] -eq 2054
-    ) 'Device command submission did not inject complete UI text before pressing Enter'
+        $script:submittedKeyCodes[0] -eq 2054 -and
+        $summary.businessVerdict -eq 'passed' -and
+        $summary.harnessStability -eq 'flaky-harness' -and
+        $summary.inputAttemptCount -eq 2 -and
+        $summary.inputMismatchCount -eq 1 -and
+        $summary.enterCount -eq 1 -and
+        $summary.commands[0].stage -eq 'short-write-retry' -and
+        $summary.commands[0].actualLength -eq 18 -and
+        $summary.commands[0].lastProvenBoundary -eq 'submission-acknowledged' -and
+        $summaryJson -notmatch 'LEANTTY_SMOKE'
+    ) 'Verified command contract did not retry before Enter and submit exactly once'
 }
 
+& {
+    function Clear-LeanTTYAppLogs { param($Hdc, $Target) }
+    function Invoke-LeanTTYDeviceCtrlC { param($Hdc, $Target) }
+    function Wait-LeanTTYAcceptanceIdleInputState {
+        param($Hdc, $Target, $ProcessId, $Expected, $TimeoutSeconds)
+        return [pscustomobject]@{ input = $Expected; exact = $true }
+    }
+    function Invoke-LeanTTYDeviceText { param($Hdc, $Target, $Text, $InputNode) }
+    function Invoke-LeanTTYDeviceKey { param($Hdc, $Target, $KeyCode) }
+    function Wait-LeanTTYAppLog {
+        param($Hdc, $Target, $ProcessId, $Pattern, $TimeoutSeconds)
+        if ($Pattern -match 'ACCEPTANCE_IDLE_INTERRUPT') { return 'cleared' }
+        throw 'submission acknowledgement missing'
+    }
+    $message = ''
+    $observations = [Collections.Generic.List[object]]::new()
+    try {
+        Submit-LeanTTYDeviceCommand `
+            -Hdc 'unused' -Target 'unused' -ProcessId '1234' -Command 'key list' `
+            -Stage 'missing-submit-ack' -ObservationSink $observations `
+            -InputNodeProvider {
+                [pscustomobject]@{ attributes = @{ bounds = '[0,0][10,10]' } }
+            } | Out-Null
+    } catch {
+        $message = $_.Exception.Message
+    }
+    $summary = Get-LeanTTYDeviceCommandAutomationSummary `
+        -Observations $observations `
+        -BusinessVerdict 'unknown' `
+        -BusinessPostcondition 'command-result-not-observable'
+    Assert-True (
+        $message -match 'unknown' -and
+        $summary.businessVerdict -eq 'unknown' -and
+        $summary.harnessStability -eq 'unknown' -and
+        $summary.enterCount -eq 1 -and
+        $summary.commands[0].failureDomain -eq 'unknown' -and
+        $summary.commands[0].lastProvenBoundary -eq 'enter-dispatched'
+    ) (
+        'Missing post-Enter acknowledgement was not classified as an unknown outcome'
+    )
+}
+
+$environmentSummary = Get-LeanTTYDeviceCommandAutomationSummary `
+    -Observations @([pscustomobject]@{
+        result = 'failed'
+        failureDomain = 'environment'
+        inputAttempts = 1
+        inputMismatches = 0
+        enterCount = 0
+    }) `
+    -BusinessVerdict 'failed' `
+    -BusinessPostcondition 'not-reached'
+Assert-True ($environmentSummary.harnessStability -eq 'not-assessed') (
+    'Environment interruption was incorrectly classified as a harness failure'
+)
+
+& {
+    $prepared = [pscustomobject]@{ command = $null }
+    $script:dynamicEnterCount = 0
+    function Clear-LeanTTYAppLogs { param($Hdc, $Target) }
+    function Invoke-LeanTTYDeviceCtrlC { param($Hdc, $Target) }
+    function Wait-LeanTTYAppLog {
+        param($Hdc, $Target, $ProcessId, $Pattern, $TimeoutSeconds)
+        return 'acknowledged'
+    }
+    function Wait-LeanTTYAcceptanceIdleInputState {
+        param($Hdc, $Target, $ProcessId, $Expected, $TimeoutSeconds)
+        return [pscustomobject]@{ input = $Expected; exact = $true }
+    }
+    function Invoke-LeanTTYDeviceKey {
+        param($Hdc, $Target, $KeyCode)
+        $script:dynamicEnterCount++
+    }
+    $result = Submit-LeanTTYDeviceCommand `
+        -Hdc 'unused' -Target 'unused' -ProcessId '1234' `
+        -InputNodeProvider {
+            [pscustomobject]@{ attributes = @{ bounds = '[0,0][10,10]' } }
+        } `
+        -InputPreparer { param($inputNode, $inputAttempt) $prepared.command = 'completed command' } `
+        -ExpectedCommandProvider { param($inputAttempt) $prepared.command }
+    Assert-True (
+        $result.expectedLength -eq 17 -and $script:dynamicEnterCount -eq 1
+    ) 'Prepared Tab/Unicode command did not reuse the exact pre-submit contract'
+}
+
+$deviceTextSource = (Get-Command Invoke-LeanTTYDeviceText).Definition
 $submitCommandParameters = (Get-Command Submit-LeanTTYDeviceCommand).Parameters.Keys
 $submitCommandSource = (Get-Command Submit-LeanTTYDeviceCommand).Definition
+$automationSummarySource = (Get-Command Get-LeanTTYDeviceCommandAutomationSummary).Definition
 Assert-True (
-    $submitCommandParameters -notcontains 'LayoutPath' -and
-    -not $submitCommandSource.Contains('Get-LeanTTYTerminalInputText')
-) 'Device command submission still treats ArkWeb accessibility text as the native command buffer'
+    -not $deviceTextSource.Contains("@('uiInput', 'text', `$Text)") -and
+    $deviceTextSource.Contains("@('uiInput', 'inputText', `$center.x, `$center.y, `$Text)")
+) 'Ordinary device text can still collide with the focused UiTest CLI text parser'
+Assert-True (
+    $submitCommandParameters -contains 'ProcessId' -and
+    $submitCommandParameters -contains 'InputNodeProvider' -and
+    $submitCommandParameters -contains 'ObservationSink' -and
+    $submitCommandParameters -contains 'Stage' -and
+    $submitCommandSource.Contains('Wait-LeanTTYAcceptanceIdleInputState') -and
+    $submitCommandSource.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
+    -not $submitCommandSource.Contains('Get-LeanTTYTerminalInputText') -and
+    $automationSummarySource.Contains("'flaky-harness'") -and
+    $automationSummarySource.Contains('businessPostcondition') -and
+    $automationSummarySource.Contains('inputMismatchCount')
+) 'Device command submission does not enforce the native pre-submit buffer contract'
+
+foreach ($ordinaryCommandOwner in @(
+        'verify-key-passphrase-pc.ps1',
+        'verify-ssh-auth-pc.ps1',
+        'verify-terminal-search-pc.ps1',
+        'verify-proxy-jump-pc.ps1',
+        'verify-put-get-pc.ps1',
+        'verify-startup-readiness-pc.ps1',
+        'verify-startup-upgrade-pc.ps1'
+    )) {
+    $ownerText = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot $ordinaryCommandOwner)
+    Assert-True (
+        $ownerText.Contains('Submit-LeanTTYDeviceCommand') -and
+        $ownerText.Contains('-ObservationSink') -and
+        $ownerText.Contains('Get-LeanTTYDeviceCommandAutomationSummary')
+    ) (
+        "$ordinaryCommandOwner bypasses the observable ordinary command contract"
+    )
+}
 
 $keyPassphraseVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-key-passphrase-pc.ps1'
 ) -Raw
 Assert-True (
-    $keyPassphraseVerifier.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
-    $keyPassphraseVerifier.Contains('completionActive=(?:true|false),menuActive=(?:true|false)') -and
-    $keyPassphraseVerifier.Contains('$actualBuffer -ceq $Command') -and
-    $keyPassphraseVerifier.Contains('ACCEPTANCE_IDLE_INTERRUPT cleared=true') -and
-    $keyPassphraseVerifier.Contains('Physical key injection could not prepare the exact command buffer')
-) 'Key-passphrase device commands are not verified before consequential submission'
+    $keyPassphraseVerifier.Contains('Submit-LeanTTYDeviceCommand') -and
+    -not $keyPassphraseVerifier.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='")
+) 'Key-passphrase verifier still duplicates the ordinary command submission contract'
 
 $center = Get-LeanTTYBoundsCenter -Bounds '[1900,1200][2200,1300]'
 Assert-True ($center.x -eq 2050 -and $center.y -eq 1250) (
@@ -525,7 +716,7 @@ foreach ($scriptName in @(
     }
     if ($scriptName -eq 'verify-ssh-auth-pc.ps1') {
         Assert-True (
-            $content.Contains('SSH authentication harness requires a clean committed tree') -and
+            $content.Contains('$harnessDirty -and -not $DiagnosticHap') -and
             $content.Contains('Assert-LeanTTYCandidateHarnessCompatibility') -and
             $content.Contains("'tools/start-ssh-auth-fixture.ps1'") -and
             $content.Contains("'tools/hdc-common.ps1'") -and
@@ -550,8 +741,8 @@ foreach ($scriptName in @(
             -not $content.Contains('Invoke-SerializedAuthText') -and
             -not $content.Contains('Invoke-SecretKeyEventText') -and
             $content.Contains('function Invoke-AuthUiText') -and
-            ([regex]::Matches($content, 'Invoke-AuthUiText').Count -ge 6) -and
-            $content.Contains("'layout-auth-text-focus-' + [Guid]::NewGuid().ToString('N') + '.json'") -and
+            ([regex]::Matches($content, 'Invoke-AuthUiText').Count -ge 5) -and
+            -not $content.Contains("'layout-auth-text-focus-' + [Guid]::NewGuid().ToString('N') + '.json'") -and
             $content.Contains('-Hdc $hdc -Target $Target -Text $Text -InputNode $InputNode') -and
             $content.Contains('function Invoke-TemporaryFixtureAuthText') -and
             ([regex]::Matches($content, 'Invoke-TemporaryFixtureAuthText').Count -ge 6) -and
@@ -561,9 +752,11 @@ foreach ($scriptName in @(
             $content.Contains("method = 'harmony-uitest-text-and-raw-physical-special-keys'") -and
             $content.Contains("ordinaryTextInjection = 'harmony-uitest-targeted-inputText'") -and
             $content.Contains("physicalKeyInjection = 'raw-key-events-special-keys-only'") -and
-            $content.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
-            $content.Contains('[regex]::Escape($Command)') -and
+            $content.Contains('Submit-LeanTTYDeviceCommand') -and
+            $content.Contains('-ProcessId $appPid') -and
+            $content.Contains('-InputNodeProvider') -and
+            -not $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
             $content.Contains("'ltty-exit'") -and
             $content.Contains("'shell command=exit result=closed'") -and
             $content.Contains('Assert-AuthCommandLoopbackTarget') -and
@@ -591,12 +784,23 @@ foreach ($scriptName in @(
         ) 'SSH authentication scenario does not capture terminal key bytes at the server boundary'
         Assert-True (
             $content.Contains('[string[]]$Only') -and
+            $content.Contains('[string]$Group') -and
+            $content.Contains("'transport-performance'") -and
+            $content.Contains("'authentication-methods'") -and
+            $content.Contains("'lifecycle-recovery'") -and
+            $content.Contains("'pane-focus-attention'") -and
+            $content.Contains('$authGroupDefinitions') -and
+            $content.Contains('Group cannot be combined with -Only') -and
             $content.Contains('[switch]$DiagnosticHap') -and
             $content.Contains('[switch]$VerifyPreferencesUnchanged') -and
             $content.Contains('-DiagnosticHap requires an explicit -HapPath') -and
             $content.Contains("provenance = 'explicit-unretained-diagnostic-hap'") -and
-            $content.Contains("`$runMode = if (`$Only.Count -eq 0 -and -not `$DiagnosticHap)") -and
+            $content.Contains("`$runMode = if (-not `$DiagnosticHap -and `$Only.Count -eq 0)") -and
             $content.Contains("runMode = `$runMode") -and
+            $content.Contains('executionGroup = $executionGroup') -and
+            $content.Contains('groupManifest = $selectedGroupManifest') -and
+            $content.Contains('knownHostRemovalCommandCompleted = $knownHostCleanupCompleted') -and
+            $content.Contains("'layout-known-host-finally-cleanup.json'") -and
             $content.Contains("failureDomain = `$failureDomain") -and
             $content.Contains('attemptId = $attemptId') -and
             $content.Contains('resourceManifest = [ordered]@{') -and
@@ -612,6 +816,51 @@ foreach ($scriptName in @(
             $content.Contains("'diagnostic'") -and
             $content.Contains("'acceptance'")
         ) 'SSH authentication harness lacks targeted diagnostics or auditable live evidence'
+        $groupDefinitionStart = $content.IndexOf('$authGroupDefinitions = [ordered]@{')
+        $groupDefinitionEnd = $content.IndexOf('$availableStages = @(', $groupDefinitionStart)
+        Assert-True (
+            $groupDefinitionStart -ge 0 -and $groupDefinitionEnd -gt $groupDefinitionStart
+        ) 'SSH group definition boundary could not be inspected'
+        $groupDefinitionText = $content.Substring(
+            $groupDefinitionStart,
+            $groupDefinitionEnd - $groupDefinitionStart
+        )
+        foreach ($groupedStage in @(
+                'password-success',
+                'terminal-key-input',
+                'transport-main-path',
+                'performance-matrix',
+                'bell-attention',
+                'password-kbdint-mixed-echo',
+                'multiround-wrong-answer-recovery',
+                'publickey-unencrypted',
+                'publickey-then-password',
+                'publickey-then-keyboard-interactive',
+                'keyboard-interactive-zero-prompt',
+                'unsupported-method-error-and-recovery',
+                'ctrl-c-authentication-cancellation-and-recovery',
+                'pane-close-during-hidden-prompt-and-recovery',
+                'publickey-encrypted-passphrase',
+                'parallel-pane-authentication',
+                'minimize-restore-hidden-prompt',
+                'process-stop-during-hidden-prompt-cleanup'
+            )) {
+            Assert-True (
+                ([regex]::Matches(
+                    $groupDefinitionText,
+                    [regex]::Escape("'$groupedStage'")
+                )).Count -eq 1
+            ) "SSH public stage is missing from or duplicated across groups: $groupedStage"
+        }
+        foreach ($internalStage in @(
+                'generated-disposable-auth-key',
+                'encrypted-disposable-auth-key',
+                'deleted-disposable-auth-key'
+            )) {
+            Assert-True (-not $groupDefinitionText.Contains("'$internalStage'")) (
+                "SSH internal dependency was incorrectly promoted to a public group stage: $internalStage"
+            )
+        }
         Assert-True (
             $content.Contains('Get-LeanTTYPreferencesDigest') -and
             $content.Contains('sha256sum $preferencesPath') -and
@@ -655,11 +904,9 @@ foreach ($scriptName in @(
             $content.Contains("'tools/verify-terminal-search-pc.ps1'") -and
             $content.Contains("'docs/design/terminal-search.md'") -and
             $content.Contains("'docs/next-work.md'") -and
-            $content.Contains('Command submission outcome is unknown; the scenario must be restarted') -and
-            $content.Contains('for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++)') -and
-            $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
-            $content.Contains("-Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true'") -and
-            $content.Contains('HarmonyOS input could not prepare the exact SSH command buffer')
+            $content.Contains('Submit-LeanTTYDeviceCommand') -and
+            -not $content.Contains('for ($commandAttempt = 1; $commandAttempt -le 3; $commandAttempt++)') -and
+            -not $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='")
         ) 'SSH authentication scenario does not declare its bounded physical coverage'
         Assert-True (
             $content.Contains("'transport-main-path'") -and
@@ -667,9 +914,13 @@ foreach ($scriptName in @(
             $content.Contains("'ltty-paste-prepare russhmain 1048576'") -and
             ([regex]::Matches($content, 'Submit-ConnectedInputUntilFixtureEvent').Count -ge 8) -and
             ([regex]::Matches($content, 'Submit-ConnectedInputUntilAuthEvent').Count -ge 2) -and
+            $content.Contains("'connected-input-snapshot'") -and
+            $content.Contains('function Wait-FixtureConnectedInputSnapshot') -and
+            $content.Contains('for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++)') -and
+            $content.Contains('connected input state=cleared') -and
+            $content.Contains('Connected input could not be made exact before Enter') -and
             $content.Contains('Connected input outcome is unknown; the scenario must be restarted') -and
             $content.Contains('Connected input application outcome is unknown; the scenario must be restarted') -and
-            -not $content.Contains('for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++)') -and
             -not $content.Contains("Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'") -and
             $content.Contains("'Clipboard paste ok,1048576'") -and
             $content.Contains("'D: 1048576 chars'") -and
@@ -700,7 +951,11 @@ foreach ($scriptName in @(
             $content.Contains('memorySamples = @($memorySamples)') -and
             $content.Contains("hidumper -s 10 -a 'hitchs app0'") -and
             $content.Contains("hidumper -s 10 -a 'gles'") -and
-            $content.Contains("Set-AuthTransparencyMode -Mode 'Medium'") -and
+            $content.Contains('Get-AuthTransparencyMode') -and
+            $content.Contains('-Mode $performanceInitialTransparencyMode') -and
+            $content.Contains('$performanceTransparencyRestored = $true') -and
+            -not $content.Contains('$screenshotName = "performance-$modeSlug.png"') -and
+            -not $content.Contains('screenshot = $screenshotName') -and
             $content.Contains('performanceMatrix = $performanceEvidence')
         ) 'SSH five-mode performance matrix is incomplete'
         Assert-True (
@@ -742,11 +997,11 @@ foreach ($scriptName in @(
             $content.Contains("Invoke-LocalTerminalCommand -Command 'help'") -and
             $content.Contains('function Invoke-LocalTerminalCommand') -and
             $content.Contains('Get-LeanTTYActiveTerminalInputNodes -Layout $layout') -and
-            $content.Contains('-InputNode $inputNode') -and
-            $content.Contains('ACCEPTANCE_IDLE_RESULT kind=') -and
-            $content.Contains('$actualBuffer -ceq $Command') -and
-            $content.Contains('[regex]::Escape($Command)') -and
-            $content.Contains('Local command submission outcome is unknown; the scenario must be restarted') -and
+            $content.Contains('Submit-LeanTTYDeviceCommand') -and
+            $content.Contains('-ProcessId $appPid') -and
+            $content.Contains('-InputNodeProvider') -and
+            $content.Contains("elseif (`$failure -match '^\[unknown\]')") -and
+            -not $content.Contains('$actualBuffer -ceq $Command') -and
             $content.Contains('rightPaneRejectedLeftScrollbackQuery = $true') -and
             $content.Contains('secondTabRejectedFirstTabScrollbackQuery = $true') -and
             $content.Contains("'pane-scroll-after-focus-switch.png'") -and
@@ -759,7 +1014,6 @@ foreach ($scriptName in @(
             $content.Contains('Get-LeanTTYActiveTerminalSurfaceNodes') -and
             $content.Contains('-RequireTerminalFocus $false') -and
             $content.Contains('terminalFocusRestoredByCommandSubmit') -and
-            $content.Contains("'ACCEPTANCE_INPUT_SUBMIT sequence=\d+,kind=command'") -and
             $content.Contains("attributes.opacity -eq '1.000000'") -and
             $content.Contains("attributes.zIndex -eq '1'") -and
             $content.Contains('does not ') -and
@@ -767,6 +1021,8 @@ foreach ($scriptName in @(
             $content.Contains("'layout-search-open.json'") -and
             $content.Contains("'layout-search-closed.json'") -and
             $content.Contains("'explicit-unretained-diagnostic-hap'") -and
+            $content.Contains('$harnessDirty -and -not $DiagnosticHap') -and
+            $content.Contains('gitDirty = $harnessDirty') -and
             $content.Contains('Assert-LeanTTYCandidateHarnessCompatibility') -and
             $content.Contains("'tools/start-ssh-auth-fixture.ps1'") -and
             $content.Contains("'retained-verified-candidate'") -and
@@ -837,16 +1093,14 @@ foreach ($scriptName in @(
     if ($scriptName -eq 'verify-proxy-jump-pc.ps1') {
         Assert-True (
             $content.Contains('function Submit-ProxyCommand') -and
-            $content.Contains('$inputNode = Focus-ProxyCommandInput') -and
-            $content.Contains('-InputNode $inputNode') -and
+            $content.Contains('Submit-LeanTTYDeviceCommand') -and
+            $content.Contains('-ProcessId $script:proxyAppPid') -and
+            $content.Contains('-InputNodeProvider') -and
             $content.Contains('function Get-ProxyCommandInputText') -and
             $content.Contains('function Wait-ProxyCommandInputText') -and
             $content.Contains('Get-LeanTTYTerminalInputNodes -Layout $Layout') -and
-            $content.Contains('$actualBuffer -ceq $Command') -and
-            $content.Contains("-Expected ''") -and
             -not $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
-            $content.Contains('ProxyJump command submission outcome is unknown; the scenario must be restarted') -and
-            $content.Contains('HarmonyOS input could not prepare the exact ProxyJump command buffer') -and
+            -not $content.Contains('$actualBuffer -ceq $Command') -and
             $content.Contains("[string]`$HapPath = ''") -and
             $content.Contains('[IO.Path]::GetFullPath($HapPath)') -and
             $content.Contains('ProxyJump verification requires a signed HAP') -and
@@ -856,9 +1110,37 @@ foreach ($scriptName in @(
     }
 }
 
+$sshMatrixPath = Join-Path $PSScriptRoot 'verify-ssh-matrix-pc.ps1'
+Assert-True (Test-Path -LiteralPath $sshMatrixPath -PathType Leaf) (
+    'Formal SSH physical matrix orchestrator is missing'
+)
+$sshMatrixVerifier = Get-Content -Raw -LiteralPath $sshMatrixPath
+Assert-True (
+    $sshMatrixVerifier.Contains("'transport-performance'") -and
+    $sshMatrixVerifier.Contains("'authentication-methods'") -and
+    $sshMatrixVerifier.Contains("'lifecycle-recovery'") -and
+    $sshMatrixVerifier.Contains("'pane-focus-attention'") -and
+    $sshMatrixVerifier.Contains("'verify-ssh-auth-pc.ps1'") -and
+    $sshMatrixVerifier.Contains('-Group $group') -and
+    $sshMatrixVerifier.Contains('-VerifyPreferencesUnchanged') -and
+    $sshMatrixVerifier.Contains("cleanup.result -ne 'passed'") -and
+    $sshMatrixVerifier.Contains("runMode -ne 'acceptance'") -and
+    $sshMatrixVerifier.Contains('candidate.retained') -and
+    $sshMatrixVerifier.Contains('harness.gitDirty') -and
+    $sshMatrixVerifier.Contains('preferences.unchanged') -and
+    $sshMatrixVerifier.Contains('candidate.sha256') -and
+    $sshMatrixVerifier.Contains('harness.gitTree') -and
+    $sshMatrixVerifier.Contains("'ssh-matrix.json'") -and
+    $sshMatrixVerifier.Contains('completedGroups')
+) 'Formal SSH physical matrix does not enforce isolated fixed-order checkpoints'
+
 $deviceRegressionText = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'device-regression.ps1'
 ) -Raw
+Assert-True (
+    $deviceRegressionText.Contains("@('dumpLayout', '-p', `$remotePath)") -and
+    -not $deviceRegressionText.Contains("@('dumpLayout', '-p', `$remotePath, '-a')")
+) 'Routine device layouts still request unused UiTest extended visual attributes'
 Assert-True (
     $deviceRegressionText.Contains("return 't' + [Guid]::NewGuid()") -and
     $deviceRegressionText.Contains("@('uiInput', 'inputText', `$center.x, `$center.y, `$Text)") -and
@@ -978,7 +1260,10 @@ Assert-True (
     $putGetVerifier.Contains('File transfer authentication prompt=keyboard-interactive') -and
     $putGetVerifier.Contains('explicit -i affected only its command') -and
     $putGetVerifier.Contains('Test-LeanTTYDeviceKeyFilesPresent') -and
-    $putGetVerifier.Contains('Get-LeanTTYTerminalInputText -Layout $typedLayout') -and
+    $putGetVerifier.Contains('Submit-LeanTTYDeviceCommand') -and
+    $putGetVerifier.Contains('-ExpectedCommandProvider') -and
+    $putGetVerifier.Contains('Wait-LeanTTYAcceptanceIdleInputState') -and
+    -not $putGetVerifier.Contains('Wait-ExactAcceptanceCommandSubmit') -and
     $putGetVerifier.Contains('Submit-HiddenTransferValue -Value $script:secret') -and
     $putGetVerifier.Contains('Assert-LeanTTYLayoutExcludesValues') -and
     $putGetVerifier.Contains('Wait-AuthenticationMatrixKeyCreated') -and

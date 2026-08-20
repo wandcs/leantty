@@ -33,7 +33,8 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 
 $harnessStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect terminal-search harness source state' }
-if ($harnessStatus.Count -gt 0) {
+$harnessDirty = $harnessStatus.Count -gt 0
+if ($harnessDirty -and -not $DiagnosticHap) {
     throw 'Terminal-search device harness requires a clean committed tree'
 }
 $harnessCommit = (& git -C $repoRoot rev-parse HEAD 2>&1).Trim()
@@ -118,6 +119,7 @@ Assert-LeanTTYCredentialPathOutsideRepository `
 $startedAt = [DateTimeOffset]::UtcNow
 $attemptId = [Guid]::NewGuid().ToString('N')
 $checks = [Collections.Generic.List[object]]::new()
+$commandObservations = [Collections.Generic.List[object]]::new()
 $failure = ''
 $failureDomain = 'none'
 $cleanupFailure = ''
@@ -455,89 +457,53 @@ function Invoke-TerminalWorkspaceChord {
 }
 
 function Invoke-LocalTerminalCommand {
-    param([Parameter(Mandatory = $true)][string]$Command)
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [ValidateNotNullOrEmpty()][string]$Stage = 'terminal-search-local-command'
+    )
 
-    $submittedPattern =
-        'ACCEPTANCE_INPUT_SUBMIT.*kind=command,input=' + [regex]::Escape($Command)
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $layoutPath = Join-Path $EvidenceDirectory (
-            "layout-local-command-$attempt-" + [Guid]::NewGuid().ToString('N') + '.json'
-        )
-        $layout = Get-LeanTTYDeviceLayout `
-            -Hdc $hdc `
-            -Target $Target `
-            -LocalPath $layoutPath
-        $terminalInputs = @(Get-LeanTTYActiveTerminalInputNodes -Layout $layout)
-        $focusedInputs = @($terminalInputs | Where-Object {
-            [string]$_.attributes.focused -eq 'true'
-        })
-        $inputNode = if ($focusedInputs.Count -eq 1) {
-            $focusedInputs[0]
-        } elseif ($terminalInputs.Count -eq 1) {
-            $terminalInputs[0]
-        } else {
-            $null
-        }
-        if ($null -eq $inputNode) {
-            throw '[environment] Unable to identify the active terminal input before local command submission'
-        }
-        if ([string]$inputNode.attributes.focused -ne 'true') {
-            $layout = Set-LeanTTYTerminalInputFocus `
-                -Hdc $hdc `
-                -Target $Target `
-                -InputNode $inputNode `
-                -LocalPath $layoutPath `
-                -TimeoutSeconds 10
-            $focusedInputs = @(Get-LeanTTYActiveTerminalInputNodes -Layout $layout | Where-Object {
-                [string]$_.attributes.focused -eq 'true'
-            })
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appPid `
+        -Command $Command `
+        -Stage $Stage `
+        -ObservationSink $commandObservations `
+        -InputNodeProvider {
+            param($inputAttempt)
+            $layoutPath = Join-Path $EvidenceDirectory (
+                "layout-local-command-$inputAttempt-" +
+                [Guid]::NewGuid().ToString('N') + '.json'
+            )
+            $layout = Get-LeanTTYDeviceLayout `
+                -Hdc $hdc -Target $Target -LocalPath $layoutPath
+            $terminalInputs = @(Get-LeanTTYActiveTerminalInputNodes -Layout $layout)
+            $focusedInputs = @($terminalInputs | Where-Object {
+                    [string]$_.attributes.focused -eq 'true'
+                })
+            $inputNode = if ($focusedInputs.Count -eq 1) {
+                $focusedInputs[0]
+            } elseif ($terminalInputs.Count -eq 1) {
+                $terminalInputs[0]
+            } else {
+                $null
+            }
+            if ($null -eq $inputNode) {
+                throw '[environment] Unable to identify the active terminal input before local command submission'
+            }
+            if ([string]$inputNode.attributes.focused -eq 'true') { return $inputNode }
+            $focusedLayout = Set-LeanTTYTerminalInputFocus `
+                -Hdc $hdc -Target $Target -InputNode $inputNode `
+                -LocalPath $layoutPath -TimeoutSeconds 10
+            $focusedInputs = @(Get-LeanTTYActiveTerminalInputNodes -Layout $focusedLayout | Where-Object {
+                    [string]$_.attributes.focused -eq 'true'
+                })
             if ($focusedInputs.Count -ne 1) {
                 throw '[environment] Local command input focus was not unique'
             }
-            $inputNode = $focusedInputs[0]
-        }
-
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        Invoke-LeanTTYDeviceText `
-            -Hdc $hdc `
-            -Target $Target `
-            -Text $Command `
-            -InputNode $inputNode
-        $bufferLogs = Wait-SearchAppLog `
-            -Pattern 'ACCEPTANCE_IDLE_RESULT kind=' `
-            -TimeoutSeconds 10
-        $bufferRecords = @([regex]::Matches(
-                $bufferLogs,
-                'ACCEPTANCE_IDLE_RESULT kind=\d+,input=(?<input>[^\r\n]*),' +
-                'completionActive=(?:true|false),menuActive=(?:true|false)'
-            ))
-        $actualBuffer = if ($bufferRecords.Count -gt 0) {
-            $bufferRecords[$bufferRecords.Count - 1].Groups['input'].Value
-        } else {
-            ''
-        }
-        if ($actualBuffer -ceq $Command) {
-            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-            try {
-                Wait-SearchAppLog -Pattern $submittedPattern -TimeoutSeconds 10 | Out-Null
-                Start-Sleep -Milliseconds 500
-                return
-            } catch {
-                throw '[harness] Local command submission outcome is unknown; the scenario must be restarted'
-            }
-        }
-
-        Write-Host (
-            '[terminal-search] RETRY inexact local command buffer ' +
-            "attempt=$attempt expectedLength=$($Command.Length) " +
-            "actualLength=$($actualBuffer.Length) actual=$actualBuffer"
-        ) -ForegroundColor Yellow
-        Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
-        Wait-SearchAppLog `
-            -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' `
-            -TimeoutSeconds 10 | Out-Null
-    }
-    throw '[environment] HarmonyOS input could not prepare the exact local command buffer'
+            return $focusedInputs[0]
+        } | Out-Null
+    Start-Sleep -Milliseconds 500
 }
 
 function Invoke-LeanTTYLayoutNodeClick {
@@ -1133,6 +1099,8 @@ try {
         'environment'
     } elseif ($failure -match '^\[harness\]') {
         'harness'
+    } elseif ($failure -match '^\[unknown\]') {
+        'unknown'
     } else {
         'product'
     }
@@ -1163,13 +1131,17 @@ try {
         }
     }
 
+    $scenarioResult = if (-not $failure -and -not $cleanupFailure) { 'passed' } else { 'failed' }
+    $automationVerdict = if (@($commandObservations | Where-Object {
+        $_.result -eq 'unknown'
+    }).Count -gt 0) { 'unknown' } else { $scenarioResult }
     $evidence = [ordered]@{
         schemaVersion = 2
         gate = $(if ($DiagnosticHap) { 'diagnostic' } else { 'device-behavior' })
         scenario = 'terminal-search'
         runMode = $(if ($DiagnosticHap) { 'diagnostic' } else { 'acceptance' })
         attemptId = $attemptId
-        result = $(if (-not $failure -and -not $cleanupFailure) { 'passed' } else { 'failed' })
+        result = $scenarioResult
         startedAt = $startedAt.ToString('o')
         completedAt = [DateTimeOffset]::UtcNow.ToString('o')
         durationMs = [int]([DateTimeOffset]::UtcNow - $startedAt).TotalMilliseconds
@@ -1190,7 +1162,7 @@ try {
         harness = [ordered]@{
             gitCommit = $harnessCommit
             gitTree = $harnessTree
-            gitDirty = $false
+            gitDirty = $harnessDirty
             differencePathsFromCandidate = @($harnessDifferencePaths)
         }
         device = [ordered]@{
@@ -1206,6 +1178,10 @@ try {
         )
         selectedScenarios = @($Only)
         checks = @($checks)
+        automation = Get-LeanTTYDeviceCommandAutomationSummary `
+            -Observations $commandObservations `
+            -BusinessVerdict $automationVerdict `
+            -BusinessPostcondition 'selected-terminal-search-checks-and-cleanup'
         failureDomain = $failureDomain
         failure = $failure
         cleanup = [ordered]@{

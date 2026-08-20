@@ -221,6 +221,7 @@ struct FixtureServer {
     interactive_round: InteractiveRound,
     session_scenario: Option<Scenario>,
     shell_input: Vec<u8>,
+    input_snapshot_path: Option<Arc<PathBuf>>,
     pending_perf_request: Option<PerfStreamRequest>,
     pending_paste: Option<PasteTransfer>,
     channels: Arc<Mutex<HashMap<ChannelId, Option<Channel<Msg>>>>>,
@@ -264,6 +265,7 @@ impl FixtureServer {
             interactive_round: InteractiveRound::NotStarted,
             session_scenario: None,
             shell_input: Vec::new(),
+            input_snapshot_path: None,
             pending_perf_request: None,
             pending_paste: None,
             channels: Arc::new(Mutex::new(HashMap::new())),
@@ -272,6 +274,22 @@ impl FixtureServer {
             sftp_fault,
             direct_tcpip_behavior,
         }
+    }
+
+    fn set_input_snapshot_path(&mut self, path: PathBuf) {
+        self.input_snapshot_path = Some(Arc::new(path));
+    }
+
+    fn persist_fixture_input(&self) -> io::Result<()> {
+        if let Some(path) = self.input_snapshot_path.as_ref() {
+            fs::write(path.as_ref(), &self.shell_input)?;
+        }
+        Ok(())
+    }
+
+    fn clear_fixture_input(&mut self) -> io::Result<()> {
+        self.shell_input.clear();
+        self.persist_fixture_input()
     }
 
     fn take_fixture_command(&mut self, data: &[u8]) -> Option<FixtureCommand> {
@@ -295,6 +313,9 @@ impl FixtureServer {
                     self.shell_input.clear();
                 }
             }
+        }
+        if let Err(error) = self.persist_fixture_input() {
+            eprintln!("connected input snapshot result=error error={error}");
         }
         command
     }
@@ -499,13 +520,15 @@ impl Server for FixtureServer {
     type Handler = Self;
 
     fn new_client(&mut self, _: Option<SocketAddr>) -> Self {
-        Self::with_sftp_root_delay_and_fault(
+        let mut client = Self::with_sftp_root_delay_and_fault(
             Arc::clone(&self.credentials),
             Arc::clone(&self.sftp_root),
             self.sftp_delay,
             self.sftp_fault,
             self.direct_tcpip_behavior,
-        )
+        );
+        client.input_snapshot_path = self.input_snapshot_path.as_ref().map(Arc::clone);
+        client
     }
 
     fn handle_session_error(&mut self, error: <Self::Handler as Handler>::Error) {
@@ -782,6 +805,12 @@ impl Handler for FixtureServer {
                 format_input_hex(data)
             );
             session.data(channel, captured.into_bytes())?;
+            return Ok(());
+        }
+        if data.contains(&0x03) {
+            self.clear_fixture_input()?;
+            eprintln!("connected input state=cleared");
+            session.data(channel, b"^C\r\nfixture> ".as_slice())?;
             return Ok(());
         }
         session.data(channel, data.to_vec())?;
@@ -1372,6 +1401,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parent()
         .ok_or("fixture credentials path has no parent")?
         .join("sftp-root");
+    let input_snapshot_path = arguments
+        .credentials_path
+        .parent()
+        .ok_or("fixture credentials path has no parent")?
+        .join("connected-input-snapshot");
+    match fs::remove_file(&input_snapshot_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     fs::create_dir_all(&sftp_root)?;
     let credentials = Arc::new(
         Credentials::load(&arguments.credentials_path).map_err(|error| error.to_string())?,
@@ -1392,6 +1431,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arguments.sftp_fault,
         arguments.direct_tcpip_behavior,
     );
+    fixture.set_input_snapshot_path(input_snapshot_path);
+    fixture.clear_fixture_input()?;
     let running = fixture.run_on_socket(config, &socket);
     let handle = running.handle();
     tokio::spawn(async move {
@@ -1634,6 +1675,8 @@ mod tests {
             SftpFault::PutWriteRemove,
             DirectTcpipBehavior::Forward("127.0.0.1:22223".parse().unwrap()),
         );
+        let snapshot = PathBuf::from("/tmp/leantty-connected-input-snapshot");
+        fixture.set_input_snapshot_path(snapshot.clone());
 
         let client = fixture.new_client(None);
 
@@ -1641,6 +1684,13 @@ mod tests {
         assert_eq!(
             client.direct_tcpip_behavior,
             DirectTcpipBehavior::Forward("127.0.0.1:22223".parse().unwrap())
+        );
+        assert_eq!(
+            client
+                .input_snapshot_path
+                .as_ref()
+                .map(|path| path.as_ref().as_path()),
+            Some(snapshot.as_path())
         );
     }
 
@@ -1780,6 +1830,25 @@ mod tests {
         assert_eq!(encode_base64(b"fo"), "Zm8=");
         assert_eq!(encode_base64(b"foo"), "Zm9v");
         assert_eq!(encode_base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn exposes_and_clears_connected_input_before_submission() {
+        let root = env::temp_dir().join(format!("leantty-connected-input-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let snapshot = root.join("connected-input-snapshot");
+        let mut fixture = FixtureServer::new(credentials());
+        fixture.set_input_snapshot_path(snapshot.clone());
+
+        assert_eq!(
+            fixture.take_fixture_command(b"ltty-bell inative01 5000"),
+            None
+        );
+        assert_eq!(fs::read(&snapshot).unwrap(), b"ltty-bell inative01 5000");
+        fixture.clear_fixture_input().unwrap();
+        assert_eq!(fs::read(&snapshot).unwrap(), b"");
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

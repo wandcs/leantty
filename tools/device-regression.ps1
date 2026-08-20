@@ -249,7 +249,7 @@ function Get-LeanTTYDeviceLayout {
     for ($captureAttempt = 1; $captureAttempt -le 2; $captureAttempt++) {
         $remotePath = '/data/local/tmp/leantty-layout-' + [Guid]::NewGuid().ToString('N') + '.json'
         try {
-            $layoutArguments = @('dumpLayout', '-p', $remotePath, '-a')
+            $layoutArguments = @('dumpLayout', '-p', $remotePath)
             if (-not [string]::IsNullOrWhiteSpace($BundleName)) {
                 $layoutArguments += @('-b', $BundleName)
             }
@@ -383,6 +383,42 @@ function Wait-LeanTTYTerminalInputLayout {
     throw 'Timed out waiting for the LeanTTY terminal input accessibility node'
 }
 
+function Get-LeanTTYFocusedTextInputNodes {
+    param([Parameter(Mandatory = $true)]$Layout)
+
+    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
+        [string]$_.attributes.type -eq 'textField' -and
+        [string]$_.attributes.focused -eq 'true'
+    })
+}
+
+function Get-LeanTTYSingleFocusedTerminalInputNode {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$LocalPath,
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 10
+    )
+
+    $layout = Wait-LeanTTYTerminalInputLayout `
+        -Hdc $Hdc -Target $Target -LocalPath $LocalPath -TimeoutSeconds $TimeoutSeconds
+    $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
+    if ($nodes.Count -ne 1) {
+        throw '[environment] Expected exactly one LeanTTY terminal input'
+    }
+    if ([string]$nodes[0].attributes.focused -eq 'true') { return $nodes[0] }
+    $focusedLayout = Set-LeanTTYTerminalInputFocus `
+        -Hdc $Hdc -Target $Target -InputNode $nodes[0] `
+        -LocalPath $LocalPath -TimeoutSeconds $TimeoutSeconds
+    $focusedNodes = @(Get-LeanTTYTerminalInputNodes -Layout $focusedLayout | Where-Object {
+            [string]$_.attributes.focused -eq 'true'
+        })
+    if ($focusedNodes.Count -ne 1) {
+        throw '[environment] LeanTTY terminal input focus was not unique'
+    }
+    return $focusedNodes[0]
+}
+
 function Assert-LeanTTYLayoutExcludesValues {
     param(
         [Parameter(Mandatory = $true)]$Layout,
@@ -410,21 +446,29 @@ function Invoke-LeanTTYDeviceText {
     }
 
     if ($null -eq $InputNode) {
-        Invoke-LeanTTYSerializedUiTest `
-            -Hdc $Hdc `
-            -Target $Target `
-            -Arguments @('uiInput', 'text', $Text) `
-            -Operation 'HarmonyOS focused UI text input' | Out-Null
-    } else {
-        $center = Get-LeanTTYBoundsCenter -Bounds ([string]$InputNode.attributes.bounds)
-        Invoke-LeanTTYSerializedUiTest `
-            -Hdc $Hdc `
-            -Target $Target `
-            -Arguments @('uiInput', 'inputText', $center.x, $center.y, $Text) `
-            -Operation 'HarmonyOS targeted UI text input' | Out-Null
+        $temporaryLayoutPath = Join-Path ([IO.Path]::GetTempPath()) (
+            'leantty-focused-input-' + [Guid]::NewGuid().ToString('N') + '.json'
+        )
+        try {
+            $layout = Get-LeanTTYDeviceLayout `
+                -Hdc $Hdc -Target $Target -LocalPath $temporaryLayoutPath
+            $focusedInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $layout)
+            if ($focusedInputs.Count -ne 1) {
+                throw '[environment] HarmonyOS text input requires one current focused text field'
+            }
+            $InputNode = $focusedInputs[0]
+        } finally {
+            Remove-Item -LiteralPath $temporaryLayoutPath -Force -ErrorAction SilentlyContinue
+        }
     }
-    # Both text operations return before ArkWeb necessarily consumes the final
-    # event. Do not let Enter, layout capture, or a verdict race that event.
+    $center = Get-LeanTTYBoundsCenter -Bounds ([string]$InputNode.attributes.bounds)
+    Invoke-LeanTTYSerializedUiTest `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('uiInput', 'inputText', $center.x, $center.y, $Text) `
+        -Operation 'HarmonyOS targeted UI text input' | Out-Null
+    # UiTest can return before ArkWeb consumes the final event. Callers that may
+    # press Enter must still use the verified command contract below.
     Start-Sleep -Milliseconds 500
 }
 
@@ -524,15 +568,293 @@ function Get-LeanTTYDeviceRegressionKeyNames {
     } | Sort-Object -Unique)
 }
 
+function Get-LeanTTYTextMismatchIndex {
+    param(
+        [AllowEmptyString()][string]$Expected,
+        [AllowEmptyString()][string]$Actual
+    )
+
+    $sharedLength = [Math]::Min($Expected.Length, $Actual.Length)
+    for ($index = 0; $index -lt $sharedLength; $index++) {
+        if ($Expected[$index] -cne $Actual[$index]) { return $index }
+    }
+    if ($Expected.Length -ne $Actual.Length) { return $sharedLength }
+    return -1
+}
+
+function Get-LeanTTYAcceptanceIdleInputState {
+    param([AllowEmptyString()][string]$Logs)
+
+    $records = @([regex]::Matches(
+            $Logs,
+            'ACCEPTANCE_IDLE_RESULT kind=(?<kind>\d+),input=(?<input>[^\r\n]*),' +
+            'completionActive=(?<completion>true|false),menuActive=(?<menu>true|false)'
+        ))
+    if ($records.Count -eq 0) { return $null }
+    $record = $records[$records.Count - 1]
+    return [pscustomobject]@{
+        kind = [int]$record.Groups['kind'].Value
+        input = $record.Groups['input'].Value
+        completionActive = $record.Groups['completion'].Value -eq 'true'
+        menuActive = $record.Groups['menu'].Value -eq 'true'
+    }
+}
+
+function Wait-LeanTTYAcceptanceIdleInputState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$ProcessId,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Expected,
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 10
+    )
+
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $lastState = $null
+    $lastChangeAt = 0L
+    while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        $logs = Get-LeanTTYAppLogs -Hdc $Hdc -Target $Target -ProcessId $ProcessId
+        $state = Get-LeanTTYAcceptanceIdleInputState -Logs $logs
+        if ($null -ne $state) {
+            if ($state.input -ceq $Expected) {
+                $state | Add-Member -NotePropertyName exact -NotePropertyValue $true
+                $state | Add-Member `
+                    -NotePropertyName observationMs `
+                    -NotePropertyValue ([int]$stopwatch.ElapsedMilliseconds)
+                return $state
+            }
+            if ($null -eq $lastState -or $lastState.input -cne $state.input) {
+                $lastState = $state
+                $lastChangeAt = $stopwatch.ElapsedMilliseconds
+            } elseif (($stopwatch.ElapsedMilliseconds - $lastChangeAt) -ge 1000) {
+                $state | Add-Member -NotePropertyName exact -NotePropertyValue $false
+                $state | Add-Member `
+                    -NotePropertyName observationMs `
+                    -NotePropertyValue ([int]$stopwatch.ElapsedMilliseconds)
+                return $state
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($null -eq $lastState) {
+        throw '[harness] Acceptance package exposed no native command-buffer result'
+    }
+    $lastState | Add-Member -NotePropertyName exact -NotePropertyValue $false
+    $lastState | Add-Member `
+        -NotePropertyName observationMs `
+        -NotePropertyValue ([int]$stopwatch.ElapsedMilliseconds)
+    return $lastState
+}
+
+function Reset-LeanTTYDeviceCommandInput {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$ProcessId
+    )
+
+    Clear-LeanTTYAppLogs -Hdc $Hdc -Target $Target
+    Invoke-LeanTTYDeviceCtrlC -Hdc $Hdc -Target $Target
+    Wait-LeanTTYAppLog `
+        -Hdc $Hdc -Target $Target -ProcessId $ProcessId `
+        -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' `
+        -TimeoutSeconds 10 | Out-Null
+}
+
 function Submit-LeanTTYDeviceCommand {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
         [Parameter(Mandatory = $true)][string]$Target,
-        [Parameter(Mandatory = $true)][string]$Command
+        [Parameter(Mandatory = $true)][string]$ProcessId,
+        [AllowNull()][string]$Command = $null,
+        [Parameter(Mandatory = $true)][scriptblock]$InputNodeProvider,
+        [scriptblock]$InputPreparer = $null,
+        [scriptblock]$ExpectedCommandProvider = $null,
+        [Collections.IList]$ObservationSink = $null,
+        [ValidateNotNullOrEmpty()][string]$Stage = 'ordinary-command',
+        [ValidateRange(1, 3)][int]$MaxInputAttempts = 3
     )
 
-    Invoke-LeanTTYDeviceText -Hdc $Hdc -Target $Target -Text $Command
-    Invoke-LeanTTYDeviceKey -Hdc $Hdc -Target $Target -KeyCode 2054
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $mismatches = [Collections.Generic.List[object]]::new()
+    $observation = [ordered]@{
+        stage = $Stage
+        inputMethod = 'harmony-uitest-targeted-inputText'
+        result = 'running'
+        failureDomain = 'none'
+        inputAttempts = 0
+        inputMismatches = 0
+        expectedLength = $null
+        actualLength = $null
+        firstMismatchIndex = $null
+        enterCount = 0
+        durationMs = 0
+        lastProvenBoundary = 'none'
+        mismatches = $mismatches
+    }
+    try {
+        $hasStaticCommand = $PSBoundParameters.ContainsKey('Command')
+        $hasDynamicCommand = (
+            $PSBoundParameters.ContainsKey('ExpectedCommandProvider') -and
+            $null -ne $ExpectedCommandProvider
+        )
+        if ($hasStaticCommand -eq $hasDynamicCommand) {
+            throw '[harness] Verified command submission requires one expected-command source'
+        }
+        if ($null -ne $ExpectedCommandProvider -and $null -eq $InputPreparer) {
+            throw '[harness] Dynamic expected commands require an input preparer'
+        }
+        if ($hasStaticCommand -and (
+            [string]::IsNullOrEmpty($Command) -or
+            $Command -match '[\r\n\x00]'
+        )) {
+            throw '[harness] Verified command submission does not accept command separators'
+        }
+        Reset-LeanTTYDeviceCommandInput -Hdc $Hdc -Target $Target -ProcessId $ProcessId
+        $observation.lastProvenBoundary = 'input-reset-verified'
+        for ($inputAttempt = 1; $inputAttempt -le $MaxInputAttempts; $inputAttempt++) {
+            $observation.inputAttempts = $inputAttempt
+            $inputNode = & $InputNodeProvider $inputAttempt
+            if ($null -eq $inputNode) {
+                throw '[environment] Verified command submission found no active terminal input'
+            }
+            Clear-LeanTTYAppLogs -Hdc $Hdc -Target $Target
+            if ($null -eq $InputPreparer) {
+                Invoke-LeanTTYDeviceText `
+                    -Hdc $Hdc -Target $Target -Text $Command -InputNode $inputNode
+            } else {
+                & $InputPreparer $inputNode $inputAttempt
+            }
+            $expectedCommand = if ($null -eq $ExpectedCommandProvider) {
+                $Command
+            } else {
+                & $ExpectedCommandProvider $inputAttempt
+            }
+            if ([string]::IsNullOrEmpty($expectedCommand) -or
+                $expectedCommand -match '[\r\n\x00]') {
+                throw '[harness] Input preparer produced an invalid expected command'
+            }
+            $observation.expectedLength = $expectedCommand.Length
+            $state = Wait-LeanTTYAcceptanceIdleInputState `
+                -Hdc $Hdc -Target $Target -ProcessId $ProcessId -Expected $expectedCommand `
+                -TimeoutSeconds 10
+            $actual = [string]$state.input
+            $observation.actualLength = $actual.Length
+            if ($state.exact) {
+                $observation.lastProvenBoundary = 'native-command-buffer-exact'
+                Clear-LeanTTYAppLogs -Hdc $Hdc -Target $Target
+                $observation.enterCount = 1
+                $observation.lastProvenBoundary = 'enter-dispatch-attempted'
+                try {
+                    Invoke-LeanTTYDeviceKey -Hdc $Hdc -Target $Target -KeyCode 2054
+                } catch {
+                    throw '[unknown] Enter dispatch outcome is unknown; restart the isolated scenario'
+                }
+                $observation.lastProvenBoundary = 'enter-dispatched'
+                $submittedPattern = (
+                    'ACCEPTANCE_INPUT_SUBMIT sequence=\d+,kind=command,input=' +
+                    [regex]::Escape($expectedCommand) + '(?:\r?\n|$)'
+                )
+                try {
+                    Wait-LeanTTYAppLog `
+                        -Hdc $Hdc -Target $Target -ProcessId $ProcessId `
+                        -Pattern $submittedPattern -TimeoutSeconds 10 | Out-Null
+                } catch {
+                    throw '[unknown] Command submission outcome is unknown; restart the isolated scenario'
+                }
+                $observation.lastProvenBoundary = 'submission-acknowledged'
+                $observation.result = 'passed'
+                return [pscustomobject]$observation
+            }
+
+            $mismatchIndex = Get-LeanTTYTextMismatchIndex `
+                -Expected $expectedCommand -Actual $actual
+            $observation.inputMismatches = $mismatches.Count + 1
+            $observation.firstMismatchIndex = $mismatchIndex
+            $mismatches.Add([pscustomobject]@{
+                attempt = $inputAttempt
+                expectedLength = $expectedCommand.Length
+                actualLength = $actual.Length
+                firstMismatchIndex = $mismatchIndex
+            })
+            Write-Host (
+                '[device-command] RETRY inexact native command buffer ' +
+                "attempt=$inputAttempt expectedLength=$($expectedCommand.Length) " +
+                "actualLength=$($actual.Length) firstMismatchIndex=$mismatchIndex"
+            ) -ForegroundColor Yellow
+            Reset-LeanTTYDeviceCommandInput `
+                -Hdc $Hdc -Target $Target -ProcessId $ProcessId
+            $observation.lastProvenBoundary = 'input-reset-verified'
+        }
+        throw '[harness] UiTest could not prepare the exact native command buffer before Enter'
+    } catch {
+        if ($observation.result -eq 'running') {
+            $message = $_.Exception.Message
+            $observation.result = if ($message -match '^\[unknown\]') { 'unknown' } else { 'failed' }
+            $observation.failureDomain = if ($message -match '^\[environment\]') {
+                'environment'
+            } elseif ($message -match '^\[infrastructure\]') {
+                'infrastructure'
+            } elseif ($message -match '^\[unknown\]') {
+                'unknown'
+            } else {
+                'harness'
+            }
+        }
+        throw
+    } finally {
+        $observation.durationMs = [long]$stopwatch.ElapsedMilliseconds
+        if ($null -ne $ObservationSink) {
+            $ObservationSink.Add([pscustomobject]$observation) | Out-Null
+        }
+    }
+}
+
+function Get-LeanTTYDeviceCommandAutomationSummary {
+    param(
+        [Parameter(Mandatory = $true)][Collections.IEnumerable]$Observations,
+        [Parameter(Mandatory = $true)][ValidateSet('passed', 'failed', 'unknown')]
+        [string]$BusinessVerdict,
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()]
+        [string]$BusinessPostcondition
+    )
+
+    $records = @($Observations)
+    $unknownCount = @($records | Where-Object { $_.result -eq 'unknown' }).Count
+    $harnessFailureCount = @($records | Where-Object {
+        $_.result -eq 'failed' -and $_.failureDomain -eq 'harness'
+    }).Count
+    $externalFailureCount = @($records | Where-Object {
+        $_.result -eq 'failed' -and $_.failureDomain -ne 'harness'
+    }).Count
+    $retriedCount = @($records | Where-Object {
+        $_.result -eq 'passed' -and $_.inputAttempts -gt 1
+    }).Count
+    $stability = if ($unknownCount -gt 0) {
+        'unknown'
+    } elseif ($harnessFailureCount -gt 0) {
+        'failed-harness'
+    } elseif ($externalFailureCount -gt 0) {
+        'not-assessed'
+    } elseif ($retriedCount -gt 0) {
+        'flaky-harness'
+    } elseif ($records.Count -gt 0) {
+        'stable'
+    } else {
+        'not-exercised'
+    }
+    return [pscustomobject][ordered]@{
+        schemaVersion = 1
+        businessVerdict = $BusinessVerdict
+        businessPostcondition = $BusinessPostcondition
+        harnessStability = $stability
+        inputMethod = 'harmony-uitest-targeted-inputText'
+        commandCount = $records.Count
+        inputAttemptCount = [int](($records | Measure-Object -Property inputAttempts -Sum).Sum)
+        inputMismatchCount = [int](($records | Measure-Object -Property inputMismatches -Sum).Sum)
+        enterCount = [int](($records | Measure-Object -Property enterCount -Sum).Sum)
+        commands = $records
+    }
 }
 
 function Clear-LeanTTYAppLogs {

@@ -66,6 +66,112 @@ try {
     )
     . $packagePolicyScript
 
+    $releaseToolingScript = Join-Path $PSScriptRoot 'release-tooling.ps1'
+    Assert-True (Test-Path -LiteralPath $releaseToolingScript -PathType Leaf) (
+        "Release tooling helper is missing: $releaseToolingScript"
+    )
+    . $releaseToolingScript
+
+    $fakeSigningRepo = Join-Path $testRoot 'git-signing-repo'
+    New-Item -ItemType Directory -Path $fakeSigningRepo -Force | Out-Null
+    & git -C $fakeSigningRepo init --quiet
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize fake signing repository' }
+    $fakeGpg = Join-Path $testRoot 'configured-gpg.cmd'
+    [IO.File]::WriteAllText(
+        $fakeGpg,
+        "@echo off`r`nexit /b 0`r`n",
+        [Text.ASCIIEncoding]::new()
+    )
+    & git -C $fakeSigningRepo config gpg.format openpgp
+    & git -C $fakeSigningRepo config gpg.openpgp.program $fakeGpg
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to configure fake Git signing backend' }
+    $resolvedSigningBackend = Resolve-LeanTTYGitSigningBackend -RepoRoot $fakeSigningRepo
+    Assert-True (
+        $resolvedSigningBackend.format -eq 'openpgp' -and
+        $resolvedSigningBackend.executablePath -eq [IO.Path]::GetFullPath($fakeGpg)
+    ) 'Git signing backend resolution ignored the executable configured for OpenPGP'
+
+    $signReleaseTagPath = Join-Path $PSScriptRoot 'sign-release-tag.ps1'
+    Assert-True (Test-Path -LiteralPath $signReleaseTagPath -PathType Leaf) (
+        "Release tag helper is missing: $signReleaseTagPath"
+    )
+    $signReleaseTagText = Get-Content -LiteralPath $signReleaseTagPath -Raw
+    Assert-True (
+        ([regex]::Matches(
+                $signReleaseTagText,
+                [regex]::Escape('-c $backendConfig')
+            )).Count -eq 2 -and
+        -not $signReleaseTagText.Contains('& git -C $RepoRoot tag -v $Tag')
+    ) 'Release tag creation and verification do not use one resolved GPG executable'
+
+    $safeAutomaticVariableScript = Join-Path $testRoot 'safe-automatic-variable.ps1'
+    [IO.File]::WriteAllText(
+        $safeAutomaticVariableScript,
+        "`$currentProcessId = `$PID`r`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    Assert-LeanTTYPowerShellAutomaticVariableSafety -Path @($safeAutomaticVariableScript)
+    foreach ($unsafeSource in @(
+            'param([int]$pid)',
+            '$pid = 1',
+            'foreach ($pid in 1..2) { $pid }'
+        )) {
+        $unsafeAutomaticVariableScript = Join-Path $testRoot (
+            'unsafe-automatic-variable-' + [Guid]::NewGuid().ToString('N') + '.ps1'
+        )
+        [IO.File]::WriteAllText(
+            $unsafeAutomaticVariableScript,
+            $unsafeSource,
+            [Text.UTF8Encoding]::new($false)
+        )
+        Assert-Throws {
+            Assert-LeanTTYPowerShellAutomaticVariableSafety `
+                -Path @($unsafeAutomaticVariableScript)
+        } 'PowerShell automatic-variable audit accepted a PID write collision'
+    }
+    $repositoryPowerShellScripts = @(
+        Get-ChildItem -LiteralPath $PSScriptRoot -File -Filter '*.ps1' |
+            Select-Object -ExpandProperty FullName
+    )
+    Assert-LeanTTYPowerShellAutomaticVariableSafety -Path $repositoryPowerShellScripts
+
+    $productionHap = Join-Path $testRoot 'LeanTTY-1.4.0-arm64-v8a-signed.hap'
+    $reviewHap = Join-Path $testRoot 'LeanTTY-1.4.0-review-test-signed.hap'
+    $retainedHap = Join-Path $testRoot 'LeanTTY-test-signed.hap'
+    foreach ($hap in @($productionHap, $reviewHap, $retainedHap)) {
+        [IO.File]::WriteAllBytes($hap, [byte[]](1, 2, 3))
+    }
+    Assert-Throws {
+        Assert-LeanTTYDeviceTestHapPath `
+            -HapPath $productionHap `
+            -ParameterName 'ReviewHapPath'
+    } 'Review-HAP boundary accepted a production release-Profile HAP'
+    Assert-True (
+        (Assert-LeanTTYDeviceTestHapPath `
+            -HapPath $reviewHap `
+            -ParameterName 'ReviewHapPath') -eq [IO.Path]::GetFullPath($reviewHap)
+    ) 'Review-HAP boundary rejected the named review-test package'
+    Assert-True (
+        (Assert-LeanTTYDeviceTestHapPath `
+            -HapPath $retainedHap `
+            -ParameterName 'ReviewHapPath') -eq [IO.Path]::GetFullPath($retainedHap)
+    ) 'Review-HAP boundary rejected a retained verified test candidate'
+
+    $startupUpgradeVerifierText = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'verify-startup-upgrade-pc.ps1'
+    ) -Raw
+    Assert-True (
+        $startupUpgradeVerifierText.Contains('$BaselineReviewHapPath') -and
+        $startupUpgradeVerifierText.Contains('$CandidateReviewHapPath') -and
+        $startupUpgradeVerifierText.Contains('Assert-LeanTTYDeviceTestHapPath')
+    ) 'Startup-upgrade verifier does not expose explicit review-HAP parameters'
+    $harnessQualifierText = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'qualify-acceptance-harness-pc.ps1'
+    ) -Raw
+    Assert-True (
+        $harnessQualifierText.Contains('Assert-LeanTTYDeviceTestHapPath')
+    ) 'Harness qualification does not reject a production HAP before device setup'
+
     $acceptanceSourceScript = Join-Path $PSScriptRoot 'acceptance-source.ps1'
     Assert-True (Test-Path -LiteralPath $acceptanceSourceScript -PathType Leaf) (
         "Acceptance source helper is missing: $acceptanceSourceScript"
@@ -251,6 +357,7 @@ try {
         ) -and
         $startupPerformanceVerifierText.Contains('STARTUP_PERF phase=T4') -and
         $startupPerformanceVerifierText.Contains('uinput -K -d 2017 -u 2017') -and
+        -not $startupPerformanceVerifierText.Contains('dumpLayout -p $remotePath -a') -and
         $startupPerformanceVerifierText.Contains('t5RequiresMatchingAsciiEchoAndPaint = $true') -and
         $startupPerformanceVerifierText.Contains('maxT4ToInputInjectionMs = 250')
     ) 'Startup performance PC verifier no longer measures cold App Center click through painted input'
@@ -280,6 +387,7 @@ try {
         $startupWarmVerifierText.Contains("'AppCenterAppGrid_AppBubble_com.leantty.app'") -and
         $startupWarmVerifierText.Contains('STARTUP_WARM phase=T4') -and
         $startupWarmVerifierText.Contains('uinput -K -d 2017 -u 2017') -and
+        -not $startupWarmVerifierText.Contains('dumpLayout -p $remotePath -a') -and
         $startupWarmVerifierText.Contains('processRetainedForAllSamples = $true')
     ) 'Warm startup PC verifier no longer measures retained-process foreground input readiness'
     foreach ($startupVerifierName in @(
@@ -451,6 +559,91 @@ try {
     Assert-Throws -Action {
         Assert-LeanTTYReleasePackageExcludesAcceptanceMarkers -PackagePath $unsafeHap
     } -Message 'Release package policy accepted an acceptance-only marker'
+
+    $qualificationPolicyScript = Join-Path $PSScriptRoot 'harness-qualification.ps1'
+    Assert-True (Test-Path -LiteralPath $qualificationPolicyScript -PathType Leaf) (
+        "Harness qualification policy helper is missing: $qualificationPolicyScript"
+    )
+    . $qualificationPolicyScript
+    $qualificationSha = 'a' * 64
+    $qualificationCommit = 'b' * 40
+    $qualificationTree = 'c' * 40
+    $validQualificationPhysicalEvidence = [pscustomobject][ordered]@{
+        schemaVersion = 2
+        scenario = 'ssh-interactive-authentication'
+        result = 'passed'
+        candidate = [ordered]@{ sha256 = $qualificationSha }
+        harness = [ordered]@{
+            gitCommit = $qualificationCommit
+            gitTree = $qualificationTree
+            gitDirty = $false
+        }
+        checks = @(
+            [ordered]@{ name = 'fixture-and-device-preflight' },
+            [ordered]@{ name = 'password-success' },
+            [ordered]@{ name = 'preferences-unchanged-during-authentication' }
+        )
+        automation = [ordered]@{
+            businessVerdict = 'passed'
+            harnessStability = 'stable'
+            commandCount = 2
+            inputAttemptCount = 2
+            inputMismatchCount = 0
+            enterCount = 2
+        }
+        input = [ordered]@{
+            secretInjection = 'harmony-uitest-targeted-inputText-runtime-generated-temporary-fixture-values'
+        }
+        cleanup = [ordered]@{
+            result = 'passed'
+            knownHostRemovalCommandCompleted = $true
+            reverseMappingAbsenceAudit = $true
+            fixtureProcessAbsenceAudit = $true
+        }
+        failureDomain = 'none'
+    }
+    $qualificationSummary = Assert-LeanTTYHarnessQualificationPhysicalEvidence `
+        -Evidence $validQualificationPhysicalEvidence `
+        -ReviewHapSha256 $qualificationSha `
+        -HarnessCommit $qualificationCommit `
+        -HarnessTree $qualificationTree `
+        -RequireCleanHarness
+    Assert-True (
+        $qualificationSummary.ordinaryCommandCount -eq 2 -and
+        $qualificationSummary.harnessStability -eq 'stable'
+    ) 'Passing harness qualification evidence did not produce a stable summary'
+
+    foreach ($invalidQualification in @(
+        @{ name = 'review HAP mismatch'; mutate = { param($e) $e.candidate.sha256 = 'd' * 64 } },
+        @{ name = 'flaky command channel'; mutate = { param($e) $e.automation.harnessStability = 'flaky-harness' } },
+        @{ name = 'input mismatch'; mutate = { param($e) $e.automation.inputMismatchCount = 1 } },
+        @{ name = 'cleanup failure'; mutate = { param($e) $e.cleanup.reverseMappingAbsenceAudit = $false } }
+    )) {
+        $invalidEvidence = $validQualificationPhysicalEvidence |
+            ConvertTo-Json -Depth 8 | ConvertFrom-Json
+        & $invalidQualification.mutate $invalidEvidence
+        Assert-Throws -Action {
+            Assert-LeanTTYHarnessQualificationPhysicalEvidence `
+                -Evidence $invalidEvidence `
+                -ReviewHapSha256 $qualificationSha `
+                -HarnessCommit $qualificationCommit `
+                -HarnessTree $qualificationTree `
+                -RequireCleanHarness
+        } -Message "Harness qualification accepted $($invalidQualification.name)"
+    }
+
+    $qualificationEntry = Join-Path $PSScriptRoot 'qualify-acceptance-harness-pc.ps1'
+    Assert-True (Test-Path -LiteralPath $qualificationEntry -PathType Leaf) (
+        "Harness qualification entry is missing: $qualificationEntry"
+    )
+    $qualificationEntryText = Get-Content -LiteralPath $qualificationEntry -Raw
+    Assert-True (
+        $qualificationEntryText.Contains('[Parameter(Mandatory = $true)][string]$ReviewHapPath') -and
+        $qualificationEntryText.Contains("'test-acceptance-harness.ps1'") -and
+        $qualificationEntryText.Contains("Only = @('password-success')") -and
+        $qualificationEntryText.Contains('releaseEligible = (-not $Diagnostic -and -not $failure)') -and
+        $qualificationEntryText.Contains('harness-commit-or-tree-change')
+    ) 'Harness qualification no longer binds the explicit package, minimum scenario and freeze identity'
 
     $candidateBase = Join-Path $testRoot 'candidates'
     $latestSource = $null

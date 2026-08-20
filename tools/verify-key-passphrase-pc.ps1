@@ -74,6 +74,7 @@ $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
 $evidencePath = Join-Path $EvidenceDirectory 'device-key-passphrase.json'
 $checks = [Collections.Generic.List[object]]::new()
+$commandObservations = [Collections.Generic.List[object]]::new()
 $startedAt = [DateTimeOffset]::UtcNow
 $keyName = 'ltty_reg_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
 $secretA = New-LeanTTYRegressionSecret
@@ -94,6 +95,7 @@ $awakeLeaseResult = 'not-acquired'
 $awakeLeaseFailure = ''
 $deviceUnlockResult = 'not-attempted'
 $stageStartedAt = $null
+$currentBehaviorStage = 'initialization'
 
 function Add-BehaviorCheck {
     param(
@@ -114,6 +116,7 @@ function Start-BehaviorStage {
 
     Write-Host "[device] START $Name"
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    $script:currentBehaviorStage = $Name
     $script:stageStartedAt = [Diagnostics.Stopwatch]::StartNew()
 }
 
@@ -134,68 +137,32 @@ function Complete-BehaviorStage {
 function Submit-Command {
     param([Parameter(Mandatory = $true)][string]$Command)
 
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $layoutPath = Join-Path $EvidenceDirectory (
-            'layout-command-focus-' + [Guid]::NewGuid().ToString('N') + '.json'
-        )
-        $layout = Wait-LeanTTYTerminalInputLayout `
-            -Hdc $hdc `
-            -Target $Target `
-            -LocalPath $layoutPath `
-            -TimeoutSeconds 10
-        $inputNodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
-        if ($inputNodes.Count -ne 1) {
-            throw '[environment] Unable to identify the terminal input before command submission'
-        }
-        Set-LeanTTYTerminalInputFocus `
-            -Hdc $hdc `
-            -Target $Target `
-            -InputNode $inputNodes[0] `
-            -LocalPath $layoutPath `
-            -TimeoutSeconds 10 | Out-Null
-        Invoke-LeanTTYDeviceText `
-            -Hdc $hdc `
-            -Target $Target `
-            -Text $Command `
-            -InputNode $inputNodes[0]
-
-        $bufferLogs = Wait-LeanTTYAppLog `
-            -Hdc $hdc `
-            -Target $Target `
-            -ProcessId $appPid `
-            -Pattern 'ACCEPTANCE_IDLE_RESULT kind=' `
-            -TimeoutSeconds 10
-        $bufferRecords = @([regex]::Matches(
-                $bufferLogs,
-                'ACCEPTANCE_IDLE_RESULT kind=\d+,input=(?<input>[^\r\n]*),' +
-                'completionActive=(?:true|false),menuActive=(?:true|false)'
-            ))
-        $actualBuffer = if ($bufferRecords.Count -gt 0) {
-            $bufferRecords[$bufferRecords.Count - 1].Groups['input'].Value
-        } else {
-            ''
-        }
-        if ($actualBuffer -ceq $Command) {
-            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-            return
-        }
-
-        Write-Host (
-            '[device] RETRY inexact command buffer ' +
-            "attempt=$attempt expectedLength=$($Command.Length) actualLength=$($actualBuffer.Length) " +
-            "actual=$actualBuffer"
-        ) -ForegroundColor Yellow
-
-        Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
-        Wait-LeanTTYAppLog `
-            -Hdc $hdc `
-            -Target $Target `
-            -ProcessId $appPid `
-            -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' `
-            -TimeoutSeconds 10 | Out-Null
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    }
-    throw '[environment] Physical key injection could not prepare the exact command buffer'
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $Target `
+        -ProcessId $appPid `
+        -Command $Command `
+        -Stage $currentBehaviorStage `
+        -ObservationSink $commandObservations `
+        -InputNodeProvider {
+            param($inputAttempt)
+            $layoutPath = Join-Path $EvidenceDirectory (
+                'layout-command-focus-' + $inputAttempt.ToString() + '-' +
+                [Guid]::NewGuid().ToString('N') + '.json'
+            )
+            $layout = Wait-LeanTTYTerminalInputLayout `
+                -Hdc $hdc -Target $Target -LocalPath $layoutPath -TimeoutSeconds 10
+            $inputNodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
+            if ($inputNodes.Count -ne 1) {
+                throw '[environment] Unable to identify the terminal input before command submission'
+            }
+            $focusedLayout = Set-LeanTTYTerminalInputFocus `
+                -Hdc $hdc -Target $Target -InputNode $inputNodes[0] `
+                -LocalPath $layoutPath -TimeoutSeconds 10
+            return @(Get-LeanTTYTerminalInputNodes -Layout $focusedLayout | Where-Object {
+                    [string]$_.attributes.focused -eq 'true'
+                })[0]
+        } | Out-Null
 }
 
 function Submit-Secret {
@@ -298,6 +265,9 @@ function Remove-DisposableDeviceKey {
 function Write-BehaviorEvidence {
     param([Parameter(Mandatory = $true)][string]$Result)
 
+    $automationVerdict = if (@($commandObservations | Where-Object {
+        $_.result -eq 'unknown'
+    }).Count -gt 0) { 'unknown' } else { $Result }
     $evidence = [ordered]@{
         schemaVersion = 2
         gate = 'device-behavior'
@@ -333,6 +303,10 @@ function Write-BehaviorEvidence {
             postInputSettleMilliseconds = 500
             fixedDelayUsedAsVerdict = $false
         }
+        automation = Get-LeanTTYDeviceCommandAutomationSummary `
+            -Observations $commandObservations `
+            -BusinessVerdict $automationVerdict `
+            -BusinessPostcondition 'key-passphrase-checks-and-cleanup'
         checks = @($checks)
         cleanup = [ordered]@{
             result = $cleanupResult

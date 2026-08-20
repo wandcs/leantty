@@ -75,8 +75,20 @@ git clone https://github.com/wandcs/leantty.git $releaseCheckout
 Before building a release:
 
 - Run `tools/verify-pc.ps1` on the target HarmonyOS PC from the clean development
-  checkout, then run every applicable named `verify-*-pc.ps1` behavior scenario
-  against that unchanged retained HAP before pushing the verified commit.
+  checkout. Before the first formal behavior matrix, qualify the clean harness
+  against that exact retained review-test HAP, then run every applicable named
+  `verify-*-pc.ps1` scenario against the unchanged HAP before pushing the
+  verified commit:
+
+  ```powershell
+  .\tools\qualify-acceptance-harness-pc.ps1 `
+    -ReviewHapPath '<exact retained LeanTTY-test-signed.hap>'
+  ```
+
+  Continue only when `harness-qualification.json` records `runMode=formal`,
+  `result=passed` and `releaseEligible=true`. Record that file with the physical
+  report. A diagnostic qualification or a record whose candidate HAP or harness
+  identity changed cannot authorize the matrix.
 - Confirm the trusted ArkTS suite and Rust `fmt --check` pass.
 - Use the clean ARM64 cross-build as the native integration gate. Rust
   formatting, tests and compilation run in WSL; Windows supplies the DevEco
@@ -238,8 +250,19 @@ git status --short
 | Build starts and later reveals a wrong version or dirty source | Release identity was not checked before expensive compilation | Run the formal command or `build-all.ps1 ... -PreflightOnly`; do not bypass the preflight |
 | Production and review HAPs cannot be confidently compared | They were built from different commits, trees, versions, ABIs or native outputs | Discard the review evidence and rebuild both through the formal command |
 | It is unclear which HAP/APP to submit or install | Artifact roles were carried only in operator notes | Read the archived `artifact-roles.txt`; upload only the production signed APP |
+| A formal physical matrix has no passing harness qualification, or the HAP/harness identity changed after qualification | Control and observation validity was assumed instead of frozen | Stop before the next C3 stage and rerun `qualify-acceptance-harness-pc.ps1` against the exact retained review-test HAP; never promote a diagnostic record |
+| GPG tag creation succeeds but verification cannot find the key or uses a different backend | Creation and verification resolved different `gpg.exe` programs/keyrings | Use `sign-release-tag.ps1`; it resolves Git's effective OpenPGP executable once and pins that same executable for both operations. Do not create another key or change the Git/global GPG configuration as a workaround |
+| A production HAP reaches an HDC install command | A generic candidate/HAP parameter hid the production/review artifact role | Stop before device setup and select the matching `review-test` or retained verified test HAP; the production release-Profile HAP remains identity evidence only |
 
-## Publish the GitHub Release and Submit for AppGallery Review
+## Publish the GitHub Release and Prepare the AppGallery Handoff
+
+AppGallery submission is a maintainer-only operation. Codex and other project
+automation must not open the Huawei developer or AppGallery website, sign in to
+the maintainer account, upload artifacts, edit the store listing, or submit a
+version for review. Their responsibility ends after producing and verifying the
+exact upload artifact, checksums, store materials and handoff checklist. The
+maintainer performs the website submission personally and reports the resulting
+state back to the project for recording.
 
 Only after the exact release artifact passes the final real-PC smoke test:
 
@@ -248,22 +271,39 @@ Only after the exact release artifact passes the final real-PC smoke test:
    rejection and replacement relationship.
 2. Confirm the release commit and signed APP/HAP hashes match
    `build-manifest.json`.
-3. Create an immutable signed tag on the verified commit:
-   `git tag -s vX.Y.Z <release-commit-sha> -m "vX.Y.Z"`.
-4. Confirm the tag resolves to the commit recorded by
+3. Create and locally verify an immutable signed tag on the verified commit,
+   supplying the existing local passphrase file outside the repository:
+
+   ```powershell
+   .\tools\sign-release-tag.ps1 `
+     -Tag 'vX.Y.Z' `
+     -Commit '<release-commit-sha>' `
+     -PassphrasePath '<local PGP passphrase file>'
+   ```
+
+   The helper does not create keys, alter Git/GPG configuration or push. It
+   resolves Git's effective OpenPGP program once and pins the same executable
+   for creation and verification so both operations use the same keyring.
+4. Reconfirm the locally verified tag resolves to the commit recorded by
    `build-manifest.json`, then push it: `git push origin vX.Y.Z`.
 5. Publish the non-draft GitHub Release on that tag. Attach
    `build-manifest.json`, `licenses/` and the SHA-256 checksum file, then verify
    the release points to the expected tag and commit and exposes the archived
    assets. The GitHub Release is the canonical version identity and consumes
    the version number.
-6. Only after the GitHub Release is complete, upload the same-version production
-   signed APP and store materials to AppGallery. Do not
-   attempt to install its release-Profile HAP with HDC. Use only the separately
-   test-signed review HAP from the same commit/tree/native build for direct
-   installation, final device acceptance, screenshots and self-test video.
-7. Record the submitted version, GitHub Release, tag, exact commit, build
-   manifest, artifact hashes and AppGallery submission state.
+6. Only after the GitHub Release is complete, hand the maintainer the
+   same-version production signed APP, its SHA-256 value, the store materials
+   and the submission checklist. Do not attempt to install its release-Profile
+   HAP with HDC. Use only the separately test-signed review HAP from the same
+   commit/tree/native build for direct installation, final device acceptance,
+   screenshots and self-test video.
+7. The maintainer personally verifies the APP filename and SHA-256 value,
+   uploads the production signed APP and store materials on AppGallery, and
+   submits the version for review.
+8. After the maintainer reports the result, record the submitted version,
+   GitHub Release, tag, exact commit, build manifest, artifact hashes and
+   AppGallery submission state. Do not infer submission success from prepared
+   local materials or an open browser page.
 
 If AppGallery review fails for any reason, including store listing text,
 screenshots, qualifications or metadata outside the APP, the published GitHub
@@ -280,7 +320,8 @@ AppGallery review is followed by `1.1.1`.
 
 ## Record an Approved AppGallery Release
 
-Only after AppGallery reports the submitted version as `Released`:
+Only after the maintainer confirms that AppGallery reports the submitted
+version as `Released`:
 
 1. Confirm the approved APP hash, existing signed tag and recorded release
    commit.

@@ -62,6 +62,7 @@ if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
 }
 $evidencePath = [IO.Path]::GetFullPath($EvidenceDirectory)
 New-Item -ItemType Directory -Force -Path $evidencePath | Out-Null
+$commandObservations = [Collections.Generic.List[object]]::new()
 
 $awakeLease = $false
 try {
@@ -91,7 +92,22 @@ try {
         -Pattern 'ACCEPTANCE_STARTUP_PREP attempt=1 state=failed' `
         -TimeoutSeconds 10 | Out-Null
 
-    Submit-LeanTTYDeviceCommand -Hdc $hdc -Target $targetId -Command 'key list'
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $hdc `
+        -Target $targetId `
+        -ProcessId $start.processId `
+        -Command 'key list' `
+        -Stage 'first-ssh-dependent-command-after-retry' `
+        -ObservationSink $commandObservations `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Get-LeanTTYSingleFocusedTerminalInputNode `
+                -Hdc $hdc `
+                -Target $targetId `
+                -LocalPath (Join-Path $evidencePath (
+                        'command-focus-' + $inputAttempt.ToString() + '.json'
+                    ))
+        } | Out-Null
     Wait-StartupReadinessLog `
         -ProcessId $start.processId `
         -Pattern 'ACCEPTANCE_STARTUP_PREP attempt=2 state=started' `
@@ -150,6 +166,10 @@ try {
         secondAttemptCompletionCount = $completedCount
         sameProcessRetained = $true
         deferredGarbageCollectionFailureAbsent = $true
+        automation = Get-LeanTTYDeviceCommandAutomationSummary `
+            -Observations $commandObservations `
+            -BusinessVerdict 'passed' `
+            -BusinessPostcondition 'startup-retry-completed-and-first-ssh-command-succeeded'
     }
     $summaryPath = Join-Path $evidencePath 'summary.json'
     [IO.File]::WriteAllText($summaryPath, (ConvertTo-Json $summary -Depth 6) + "`n")

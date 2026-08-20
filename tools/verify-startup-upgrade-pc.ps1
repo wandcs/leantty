@@ -11,8 +11,12 @@
 #>
 param(
     [string]$Target = '',
-    [Parameter(Mandatory = $true)][string]$V13HapPath,
-    [Parameter(Mandatory = $true)][string]$CandidateHapPath,
+    [Parameter(Mandatory = $true)]
+    [Alias('V13HapPath')]
+    [string]$BaselineReviewHapPath,
+    [Parameter(Mandatory = $true)]
+    [Alias('CandidateHapPath')]
+    [string]$CandidateReviewHapPath,
     [string]$EvidenceDirectory = ''
 )
 
@@ -20,6 +24,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
+. (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
 function Install-StartupUpgradeHap {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -123,16 +128,12 @@ if ($transport -ne 'usb') {
     throw "Startup upgrade verification requires a USB-connected physical PC, got $transport"
 }
 
-$v13Hap = [IO.Path]::GetFullPath($V13HapPath)
-$candidateHap = [IO.Path]::GetFullPath($CandidateHapPath)
-foreach ($path in @($v13Hap, $candidateHap)) {
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Signed HAP is missing: $path"
-    }
-    if ((Split-Path $path -Leaf) -match 'unsigned') {
-        throw "Upgrade verification requires a signed HAP: $path"
-    }
-}
+$v13Hap = Assert-LeanTTYDeviceTestHapPath `
+    -HapPath $BaselineReviewHapPath `
+    -ParameterName 'BaselineReviewHapPath'
+$candidateHap = Assert-LeanTTYDeviceTestHapPath `
+    -HapPath $CandidateReviewHapPath `
+    -ParameterName 'CandidateReviewHapPath'
 
 if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
     $EvidenceDirectory = Join-Path $repoRoot (
@@ -141,6 +142,7 @@ if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
 }
 $script:evidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 New-Item -ItemType Directory -Force -Path $script:evidenceDirectory | Out-Null
+$commandObservations = [Collections.Generic.List[object]]::new()
 
 $awakeLease = $false
 try {
@@ -157,7 +159,22 @@ try {
     Install-StartupUpgradeHap -Path $candidateHap
     Clear-LeanTTYAppLogs -Hdc $script:hdc -Target $script:target
     $candidateStart = Start-StartupUpgradeApp -LayoutName 'v14-ready.json'
-    Submit-LeanTTYDeviceCommand -Hdc $script:hdc -Target $script:target -Command 'key list'
+    Submit-LeanTTYDeviceCommand `
+        -Hdc $script:hdc `
+        -Target $script:target `
+        -ProcessId $candidateStart.processId `
+        -Command 'key list' `
+        -Stage 'v14-first-ssh-dependent-command' `
+        -ObservationSink $commandObservations `
+        -InputNodeProvider {
+            param($inputAttempt)
+            Get-LeanTTYSingleFocusedTerminalInputNode `
+                -Hdc $script:hdc `
+                -Target $script:target `
+                -LocalPath (Join-Path $script:evidenceDirectory (
+                        'command-focus-' + $inputAttempt.ToString() + '.json'
+                    ))
+        } | Out-Null
     Start-Sleep -Milliseconds 200
     Save-LeanTTYDeviceScreenshot `
         -Hdc $script:hdc `
@@ -219,6 +236,10 @@ try {
             v14 = $candidateStart.processId
             v14RemainedAliveInBackground = $true
         }
+        automation = Get-LeanTTYDeviceCommandAutomationSummary `
+            -Observations $commandObservations `
+            -BusinessVerdict 'passed' `
+            -BusinessPostcondition 'upgrade-preserved-projection-and-first-ssh-command-succeeded'
     }
     $summaryPath = Join-Path $script:evidenceDirectory 'summary.json'
     [IO.File]::WriteAllText($summaryPath, (ConvertTo-Json $summary -Depth 8) + "`n")

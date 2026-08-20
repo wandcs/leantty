@@ -2,7 +2,7 @@
 
 > Status: mandatory cross-version engineering standard
 >
-> Last updated: 2026-08-19
+> Last updated: 2026-08-20
 >
 > Product acceptance: [`vision-acceptance.md`](vision-acceptance.md)
 
@@ -30,6 +30,41 @@ Risk increases the depth of the affected-chain evidence, not the breadth of
 unrelated regression. A small host-trust or terminal-byte change can require
 strong L1–L3 negative and recovery coverage; it still does not authorize the L4
 matrix during ordinary development.
+
+### External research gate for test-system changes
+
+Before changing device automation, input injection, focus or wait behavior,
+fixtures, observation/oracle logic, failure classification, retry/rerun policy,
+scenario partitioning or release-verification tooling, the implementing agent
+MUST research the problem outside the current repository. A local code reading
+or one failed run is not enough to authorize a fix.
+
+The research MUST be performed when that individual task starts, so a previously
+saved link list does not substitute for checking the currently applicable SDK
+and tool behavior. It MUST cover, when available:
+
+1. HarmonyOS/OpenHarmony official API documentation, guides, samples, source and
+   version or release notes;
+2. relevant upstream issues, pull requests and maintainer discussions;
+3. Huawei developer-community and other reproducible reports of the same or a
+   closely related symptom; and
+4. official practices from comparable automation systems, used only as design
+   patterns and never presented as proof of HarmonyOS behavior.
+
+The task record MUST state the research date, precise question, source links,
+applicable platform/tool versions, agreements, conflicts and unresolved gaps.
+If no matching report is found, record that negative result instead of inventing
+an implied platform guarantee. Search summaries and forum workarounds are leads;
+prefer primary sources and trace each proposed workaround back to documented
+semantics or a controlled experiment.
+
+External research narrows hypotheses but does not replace the systematic local
+investigation: reproduce the symptom, identify the last correct and first
+incorrect component boundary, compare a working path, test one hypothesis at a
+time, and verify on the physical ARM64 HarmonyOS PC when the claim is physical.
+Only then may the change proceed. If the evidence contradicts the planned task,
+update `next-work.md` and reframe the work rather than implementing the stale
+plan.
 
 ### Change-scoped feature and bug-fix verification
 
@@ -155,7 +190,7 @@ marked `software-focused`, `mode=focused` and `releaseEligible=false`.
 | Group | Select when the changed chain owns |
 | --- | --- |
 | `policy` | Public-source policy, edited text and diff integrity; normally include before commit |
-| `tooling` | Build/release scripts, candidate handling, HDC helpers or physical harness logic |
+| `tooling` | Build/release scripts, candidate handling, HDC helpers or physical harness logic; includes automatic-variable and production/review artifact-role guards |
 | `ssh-flow` | ArkTS/native SSH ordering or asynchronous key-generation control flow |
 | `web` | Packaged terminal HTML/xterm policy or the offline user guide |
 | `arkts` | Application state, parser, ownership, persistence, interaction or platform policy |
@@ -185,7 +220,7 @@ Formal release software gate, candidate build and deployment use one command:
 ```powershell
 .\tools\verify-pc.ps1
 .\tools\verify-key-passphrase-pc.ps1
-.\tools\verify-ssh-auth-pc.ps1
+.\tools\verify-ssh-matrix-pc.ps1
 ```
 
 `test-regression.ps1` without `-Group` runs public-source policy,
@@ -204,8 +239,77 @@ volatile build tree with its SHA-256, Git identity and software evidence.
 installs an already retained clean candidate, drives real application state,
 records JSON evidence and never rebuilds the HAP.
 
+`verify-ssh-matrix-pc.ps1` is the formal SSH physical entry. It runs four
+isolated groups in the fixed order below against one retained candidate, stops
+at the first failed group, and validates each group's acceptance mode,
+candidate SHA-256, clean harness tree, unchanged Preferences and cleanup result.
+It does not silently retry or skip a failed group.
+
+| SSH group | Owned public stages | Run-scoped state and primary oracle |
+| --- | --- | --- |
+| `transport-performance` | terminal key bytes, transport main path, five-mode performance matrix | Fresh fixture/reverse mapping and saved transparency baseline; controlled-server bytes plus device-clock render/performance records |
+| `authentication-methods` | password, keyboard-interactive variants, unencrypted/encrypted public key and fallback methods | Fresh credentials and disposable keys; controlled-server authentication result plus recovered session |
+| `lifecycle-recovery` | Ctrl+C, Pane close, minimize/restore and process-stop cancellation | Fresh process/window/session boundary; prompt lifecycle state plus a subsequent controlled-server session |
+| `pane-focus-attention` | BEL attention and parallel Pane authentication | Fresh single-Pane layout; layout-owned focus/attention state plus independent server authentication |
+
+Each group creates its own fixture process, reverse mapping, known-host
+boundary, app restart and evidence directory, then removes or restores those
+resources. Groups for the same PC and fixture port MUST run serially. The
+performance group captures the existing transparency mode and restores that
+exact mode on both success and failure.
+
+For a routine diagnostic against an explicit test HAP, select one group with
+`-DiagnosticHap -HapPath ... -Group <name>`; it remains diagnostic evidence. For
+R1 acceptance against the unchanged retained candidate and clean harness, run
+`verify-ssh-auth-pc.ps1 -Group <name> -VerifyPreferencesUnchanged`. `-Group`
+and `-Only` are mutually exclusive; `-Only` remains ad-hoc diagnostic coverage.
+After a formal matrix failure, diagnose only the failed group. Earlier group
+passes may be retained and the failed plus remaining groups run in fixed order
+only when every C3 reuse prerequisite below is still provable. Otherwise use
+R3. No console-only or manually edited result may fill a missing checkpoint.
+
 Public CI independently repeats the public subset. Neither CI nor a clean HAP
 automatically proves a physical scenario.
+
+## Acceptance-harness qualification and freeze
+
+After C2 produces the exact retained test HAP and before any formal C3 matrix
+stage, run `qualify-acceptance-harness-pc.ps1` with an explicit
+`-ReviewHapPath`. A formal qualification requires a clean committed harness and
+the HAP must resolve to a clean retained candidate. The qualifier runs the
+focused software harness gate and one bounded `password-success` physical
+scenario; it does not promote product behavior evidence or replace any C3
+scenario.
+
+The passing record MUST prove all of the following for its declared context of
+use:
+
+- ready HDC plus serialized UiTest layout control before disposable state;
+- at least one ordinary command with exact pre-Enter buffer equality, one input
+  attempt, zero mismatch and one Enter;
+- a runtime-generated non-echoing secret input and structured authentication
+  result;
+- semantic layout, filtered application logs and the repository-only controlled
+  SSH server as independent observation channels;
+- successful known-host, reverse-mapping, fixture-process and Preferences
+  cleanup; and
+- the release-package negative regression that rejects every registered
+  acceptance-only marker.
+
+The record separately identifies the review-test HAP/candidate SHA-256 and
+source commit/tree, and the harness commit/tree. Only `runMode=formal`,
+`result=passed`, `releaseEligible=true` is a release qualification. A dirty-tree
+`-Diagnostic` run may develop or check the qualifier but MUST remain
+`releaseEligible=false`.
+
+Qualification freezes the harness contract for that formal matrix. Any change
+to the review HAP bytes or candidate identity, harness commit/tree, input,
+layout, log, fixture, cleanup or release-marker policy invalidates the record.
+A device OS/Test Kit/control-channel change before the matrix also requires a
+fresh qualification. If a harness defect appears after freezing, stop the
+affected stage, classify it and repair the harness outside the running matrix;
+then apply the C3 compatibility and R1-R4 rules instead of editing tools while
+unrelated stages continue.
 
 ## Formal checkpoints and rerun policy
 
@@ -220,6 +324,7 @@ how expensive the previous run was.
 | **C0 — release source** | Clean committed commit/tree, finalized version and packaged resources; the same identity must be pushed before production/review release work | The exact source identity remains unchanged |
 | **C1 — software gate** | Passing `test-regression.ps1` evidence bound to C0 | No source, dependency, workflow or required-toolchain input changed |
 | **C2 — retained candidate** | Passing `verify-pc.ps1`, signed ARM64 HAP SHA-256 and manifest | C0/C1 remain valid and the candidate file/hash is unchanged |
+| **QH — harness qualification** | Passing formal `harness-qualification.json` bound to the explicit C2 test HAP and clean harness | Candidate/HAP, harness, qualification contract and device Test Kit/control environment remain unchanged |
 | **C3 — physical stage** | Named acceptance result, candidate/harness identity, attempt identity and successful cleanup | The stage is independent, all identities still match and no shared state was contaminated |
 | **C4 — production/review artifacts** | Matching source/tree/version/ABI/native identity, signatures, hashes and artifact roles | No release input or artifact bytes changed |
 
@@ -232,7 +337,8 @@ combined into release acceptance.
 Checkpoint reuse is allowed only when the owning script/evidence format can
 record and validate it. Until a scenario supports acceptance-mode resume, rerun
 the smallest enclosing acceptance script rather than manually promoting an
-`-Only`/`runMode=diagnostic` result.
+`-Only`/`runMode=diagnostic` result. SSH groups are the acceptance-mode resume
+boundary; individual stages inside a group are not.
 
 ### What “restart from the beginning” means
 
@@ -368,12 +474,29 @@ Every automated physical scenario MUST:
 - locate UI controls from current layout semantics and native bounds, not stale
   screenshots or Windows-scaled coordinates;
 - never run two physical scenarios against the same target concurrently;
-- inject ordinary terminal text as one complete serialized UiTest text operation;
-  reserve numeric physical-key events for shortcuts, modifiers and special-key
-  semantics. Common helper-driven layout, click, text, key and screenshot
-  operations MUST share one device-scoped UiTest mutex because the platform
-  interface is not concurrent; require the command's structured result or actual
-  side effect before proceeding;
+- inject ordinary terminal text as one complete, coordinate-targeted serialized
+  UiTest `inputText` operation against the current semantic input node. Do not use
+  focused `uiInput text` for arbitrary payloads: on UiTest 6.0.2.3 a payload such
+  as `help` is parsed as the CLI help subcommand and returns success without
+  delivering text. Reserve numeric physical-key events for shortcuts, modifiers
+  and special-key semantics. Common helper-driven layout, click, text, key and
+  screenshot operations MUST share one device-scoped UiTest mutex because the
+  platform interface is not concurrent;
+- before Enter can submit an ordinary local command, start from a verified empty
+  state, read the acceptance-only native command buffer and require an ordinal
+  character-for-character match. A mismatch may be cleared through the real
+  `Ctrl+C` path and retried at most three total input attempts; log only lengths,
+  the first mismatch index and attempt count. Enter is injected once only after
+  the exact match. A missing exact submission acknowledgement is an unknown
+  outcome and MUST NOT trigger another Enter. The final stage verdict still uses
+  the controlled server, file/state or other business postcondition;
+- before Enter can submit a repository-only command inside a controlled SSH
+  fixture session, require the fixture's temporary current-line snapshot to
+  match the expected bytes exactly. An incomplete line may be cleared with the
+  fixture's verified `Ctrl+C` path and the text retried at most three total
+  attempts; Enter remains single-shot and is forbidden before exact server-side
+  observation. Retain only lengths, mismatch position and attempt counts in
+  evidence, and remove the raw temporary snapshot with the fixture;
 - activate the application, locate the current active terminal input and prove
   focus immediately before each command or hidden response; a system
   notification, dialog or foreground-window change invalidates that input
@@ -384,6 +507,16 @@ Every automated physical scenario MUST:
   MAY pace polling but MUST NOT decide success. Full layout dumps and bounded
   HiLog snapshots are diagnostic observations: do not repeat them faster than
   their platform cost or request them when a cheaper stage postcondition exists;
+- request the default filtered UiTest layout for routine semantic selection.
+  Extended visual attributes (`dumpLayout -a`) MAY be requested only by a named
+  diagnostic that consumes them; routine focus, disclosure and state checks MUST
+  NOT pay that cost speculatively. A current unique focused input is sufficient
+  for ordinary text injection; click and recapture only after an interaction that
+  can invalidate focus or when the current layout does not prove unique focus;
+- retain success screenshots only when pixels are the primary oracle or are
+  required to audit a user-visible state that semantic evidence cannot prove.
+  Performance and protocol scenarios use their declared device-clock, server or
+  final-state oracle and upgrade to screenshot/layout/log diagnostics on failure;
 - when a consequential input has been sent but its acknowledgement is missing,
   classify the outcome as unknown and restart that isolated scenario from a
   known state. Never blindly resend a command, secret, confirmation or fixture
@@ -447,6 +580,18 @@ rendered digits and diverge from the native buffer.
 Only **Pass** counts as acceptance. Infrastructure failures must be repaired and
 rerun; they must not be relabeled as product passes or product regressions.
 Unknown outcomes require a verified state reset before R1, otherwise R3.
+
+Machine evidence MUST keep the business verdict and harness stability as two
+orthogonal fields. A business postcondition that passes after an input retry is
+`passed` plus `flaky-harness`, not a stable pass. Ordinary-command evidence must
+remain content-free while reporting the semantic stage, expected/actual lengths,
+input attempts and mismatches, Enter count, duration, failure domain and last
+proven boundary. `passed` with one attempt is `stable`; a retry-success is
+`flaky-harness`; a command-contract failure is `failed-harness`; and any action
+whose side effect cannot be confirmed remains `unknown`. Environment or
+infrastructure interruption before the contract can finish is `not-assessed`,
+not a harness failure. A `not-exercised` automation value is valid only when the
+selected scenario did not use that path.
 
 ## Change-to-evidence matrix
 
@@ -578,6 +723,22 @@ Keep correctness and loss detection as hard constraints.
 A measured default is not a permanent optimum. Re-run the same workload after
 changes to xterm, ArkWeb, Bridge flow control, Rust/russh, buffering or lifecycle
 retention. A build-only comparison is not a user-experience result.
+
+When the test system itself is being optimized, compare at least three runs of
+the same candidate/HAP, harness identity, selected scenario and environment.
+For a three-run sample, report every value plus min/median/max; do not invent a
+P95 from an undersized sample. Record first-attempt pass rate, retry-success
+rate, input mismatch rate, unknown/misclassified outcomes, cleanup failures,
+run-time human intervention and reruns that produced no new evidence. A retry
+that passes remains `flaky-harness`, never a stable first-attempt pass.
+
+Test value is the explicit claim and failure boundary proved per unit of time,
+not the number of cases or artifacts produced. A focused run and a formal full
+matrix are different products: compare their costs only for the overlapping
+claim, and never present the focused saving as equivalent L4 coverage. Repeated
+runs requested to measure a distribution are measurement samples, not
+no-new-evidence reruns; an unplanned repeat with unchanged inputs and no new
+hypothesis is.
 
 ## Evidence record
 
