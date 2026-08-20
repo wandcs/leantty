@@ -94,6 +94,7 @@ export class SshClient {
         options.jumpUsername,
         options.jumpPrivateKeyPath,
         options.jumpPrivateKeyRequiresPassphrase,
+        options.jumpConnectTimeoutMs,
         options.knownHostsPath,
         options.connectTimeoutMs,
         this.generation,

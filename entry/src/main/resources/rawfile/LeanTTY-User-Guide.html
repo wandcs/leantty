@@ -9,7 +9,7 @@
   <meta name="leantty-guide-revision" content="5">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>LeanTTY 1.4.0 使用指南 / User Guide</title>
+  <title>LeanTTY 1.5.0 使用指南 / User Guide</title>
   <style>
     :root {
       color-scheme: dark;
@@ -936,7 +936,7 @@
       <span class="brand-name">LeanTTY</span>
     </a>
     <div class="masthead-meta">
-      <span class="edition">使用指南 · 1.4.0</span>
+      <span class="edition">使用指南 · 1.5.0</span>
       <div class="language-switch" role="group" aria-label="指南语言">
         <label for="language-zh">中文</label>
         <label for="language-en" lang="en">English</label>
@@ -1072,10 +1072,17 @@ ssh -i id_work user@example.com</code></pre>
 
         <h3>保存一个短名称</h3>
         <pre><code>host add work user@example.com:2222
+host set work user@example.com:2222 --connect-timeout 9
 ssh work</code></pre>
         <p>
           保存的 Host 写在 <code>~/.ssh/config</code> 中由 LeanTTY 管理的区域。连接前可用
           <code>ssh -G work</code> 查看 LeanTTY 最终会采用哪些配置。
+        </p>
+        <p>
+          已有 OpenSSH Host 可设置 <code>ConnectTimeout 1</code> 到 <code>ConnectTimeout 300</code>
+          （整数秒）；未设置时为 15 秒。它限制 TCP 建连和初始 SSH 握手，不会占用你核对主机
+          指纹或输入密码、口令、OTP 的时间。命名跳板和目标分别使用自己的 Host 值。使用
+          <code>--connect-timeout default</code> 可删除显式值并恢复 15 秒默认值。
         </p>
 
         <h3>通过一个 SSH 跳板连接</h3>
@@ -1380,7 +1387,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.4.0</strong> · 离线使用指南 · 修订 5 · 版本日期 2026-08-19</div>
+    <div><strong>LeanTTY 1.5.0</strong> · 离线使用指南 · 修订 6 · 版本日期 2026-08-21</div>
     <div>先核对，再连接；先保留工作，再处理断线。</div>
   </footer>
   </div>
@@ -1417,7 +1424,7 @@ get work:/reports/latest.csv reports/</code></pre>
       <span class="brand-name">LeanTTY</span>
     </a>
     <div class="masthead-meta">
-      <span class="edition">USER GUIDE · 1.4.0</span>
+      <span class="edition">USER GUIDE · 1.5.0</span>
       <div class="language-switch" role="group" aria-label="Guide language">
         <label for="language-zh" lang="zh-CN">中文</label>
         <label for="language-en">English</label>
@@ -1554,10 +1561,18 @@ ssh -i id_work user@example.com</code></pre>
 
         <h3>Save a short name</h3>
         <pre><code>host add work user@example.com:2222
+host set work user@example.com:2222 --connect-timeout 9
 ssh work</code></pre>
         <p>
           Saved hosts use LeanTTY's managed section of <code>~/.ssh/config</code>. Inspect the
           supported effective values before connecting with <code>ssh -G work</code>.
+        </p>
+        <p>
+          An existing OpenSSH Host may set <code>ConnectTimeout 1</code> through
+          <code>ConnectTimeout 300</code> in whole seconds; the default remains 15 seconds. It limits
+          TCP setup and the initial SSH handshake, but not time spent verifying a host key or entering
+          a password, passphrase or OTP. Named jump and target Hosts use their own values. Use
+          <code>--connect-timeout default</code> to remove the explicit value and restore 15 seconds.
         </p>
 
         <h3>Connect through one SSH jump host</h3>
@@ -1870,7 +1885,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.4.0</strong> · Offline user guide · Revision 5 · Version date 2026-08-19</div>
+    <div><strong>LeanTTY 1.5.0</strong> · Offline user guide · Revision 6 · Version date 2026-08-21</div>
     <div>Verify first. Keep work durable. Recover deliberately.</div>
   </footer>
   </div>

@@ -1,6 +1,10 @@
 import { FileUtils } from '../../common/utils/FileUtils'
 import { common } from '@kit.AbilityKit'
 import { DurableStateManager } from '../persistence/DurableStateManager'
+import {
+  DEFAULT_SSH_CONNECT_TIMEOUT_MS,
+  MAX_SSH_CONNECT_TIMEOUT_SECONDS
+} from '../../common/types/SshTypes'
 
 const MANAGED_BEGIN: string = '# >>> LeanTTY managed hosts >>>'
 const MANAGED_END: string = '# <<< LeanTTY managed hosts <<<'
@@ -12,6 +16,7 @@ export class SshConfigHost {
   user: string
   identityFile: string
   proxyJump: string
+  connectTimeoutMs: number
   errorMessage: string
 
   constructor(alias: string) {
@@ -21,6 +26,7 @@ export class SshConfigHost {
     this.user = ''
     this.identityFile = ''
     this.proxyJump = ''
+    this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
     this.errorMessage = ''
   }
 }
@@ -95,7 +101,8 @@ export class SshConfig {
     return this.resolveSourceHost(alias)
   }
 
-  addAlias(alias: string, hostname: string, port: number, user: string, proxyJump: string | null = null): void {
+  addAlias(alias: string, hostname: string, port: number, user: string, proxyJump: string | null = null,
+    connectTimeoutMs: number | null = null): void {
     let existing: SshConfigHost | null = null
     for (let i = 0; i < this.hosts.length; i++) {
       if (this.hosts[i].alias === alias) {
@@ -108,12 +115,14 @@ export class SshConfig {
       existing.port = port
       existing.user = user
       if (proxyJump !== null) { existing.proxyJump = proxyJump }
+      if (connectTimeoutMs !== null) { existing.connectTimeoutMs = connectTimeoutMs }
     } else {
       let host: SshConfigHost = new SshConfigHost(alias)
       host.hostname = hostname
       host.port = port
       host.user = user
       if (proxyJump !== null) { host.proxyJump = proxyJump }
+      if (connectTimeoutMs !== null) { host.connectTimeoutMs = connectTimeoutMs }
       this.hosts.push(host)
     }
     this.removePending(this.pendingRemovals, alias)
@@ -181,6 +190,9 @@ export class SshConfig {
     }
     if (host.proxyJump.length > 0) {
       text += '  ProxyJump ' + host.proxyJump + newline
+    }
+    if (host.connectTimeoutMs !== DEFAULT_SSH_CONNECT_TIMEOUT_MS) {
+      text += '  ConnectTimeout ' + Math.floor(host.connectTimeoutMs / 1000).toString() + newline
     }
     return text + newline
   }
@@ -309,6 +321,7 @@ export class SshConfig {
     let userSet: boolean = false
     let identitySet: boolean = false
     let proxyJumpSet: boolean = false
+    let connectTimeoutSet: boolean = false
     let active: boolean = true
     let lines: string[] = this.sourceText.split(/\r?\n/)
     for (let i = 0; i < lines.length; i++) {
@@ -381,8 +394,19 @@ export class SshConfig {
         }
         resolved.proxyJump = value
         proxyJumpSet = true
+      } else if (lowerName === 'connecttimeout' && !connectTimeoutSet) {
+        let seconds: number = parseInt(value, 10)
+        if (/^\d+$/.test(value) && !isNaN(seconds) && seconds >= 1 &&
+          seconds <= MAX_SSH_CONNECT_TIMEOUT_SECONDS) {
+          resolved.connectTimeoutMs = seconds * 1000
+          connectTimeoutSet = true
+        } else if (resolved.errorMessage.length === 0) {
+          resolved.errorMessage = this.configError(alias, name, i + 1,
+            'expected whole seconds 1-' + MAX_SSH_CONNECT_TIMEOUT_SECONDS.toString())
+        }
       } else if (lowerName !== 'hostname' && lowerName !== 'port' && lowerName !== 'user' &&
-        lowerName !== 'identityfile' && lowerName !== 'proxyjump' && resolved.errorMessage.length === 0) {
+        lowerName !== 'identityfile' && lowerName !== 'proxyjump' && lowerName !== 'connecttimeout' &&
+        resolved.errorMessage.length === 0) {
         resolved.errorMessage = this.configError(alias, name, i + 1, 'directive is not supported')
       }
     }
@@ -449,7 +473,8 @@ export class SshConfig {
 
   private configError(alias: string, directive: string, line: number, reason: string): string {
     return 'SSH config error for ' + alias + ' at line ' + line.toString() + ': ' +
-      directive + ' ' + reason + '. Supported directives: Host, HostName, User, Port, IdentityFile, ProxyJump.'
+      directive + ' ' + reason +
+      '. Supported directives: Host, HostName, User, Port, IdentityFile, ProxyJump, ConnectTimeout.'
   }
 
   private stripInlineComment(line: string): string {

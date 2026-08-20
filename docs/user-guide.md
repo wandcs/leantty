@@ -2,10 +2,10 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-19
+> Last updated: 2026-08-21
 >
-> Applies to: the current repository 1.4.0 release-candidate behavior. AppGallery
-> currently distributes 1.3.0; check the matching GitHub Release and
+> Applies to: the current repository 1.5.0 development behavior. AppGallery
+> currently distributes 1.3.0 and is reviewing 1.4.0; check the matching GitHub Release and
 > `CHANGELOG.md` before relying on behavior that has not yet shipped.
 
 LeanTTY is a keyboard-first SSH terminal for a physical ARM64 HarmonyOS PC. It
@@ -59,7 +59,7 @@ Create a short Host name with:
 host add work user@example.com
 host add lab user@example.com:2222
 host add private deploy@target.example.com -J jump
-host set work user@new.example.com:2222
+host set work user@new.example.com:2222 --connect-timeout 9
 host list
 host rm work
 ```
@@ -83,6 +83,7 @@ The current documented `ssh_config` subset is:
 | `Port` | Defaults to 22 |
 | `IdentityFile` | Selects a verified LeanTTY key by supported reference |
 | `ProxyJump` | Uses one saved Host or one `[user@]host[:port]` jump |
+| `ConnectTimeout` | Uses 1–300 whole seconds; defaults to 15 seconds |
 
 OpenSSH first-value behavior is preserved for these fields. An unknown or
 unsupported directive in a matching Host block causes `ssh` and `ssh -G` to
@@ -91,6 +92,14 @@ LeanTTY does not yet evaluate `Match` conditions, any `Match` block is rejected
 instead of being silently ignored. Unsupported directives in unrelated Host
 blocks do not block the selected Host, and LeanTTY preserves their source text
 when it edits its own managed Host section.
+
+`ConnectTimeout` limits TCP setup and the initial SSH handshake/key exchange. It
+uses the target Host value for direct SSH, the target layer, reconnect and
+`put/get`; a named jump Host uses its own value. It does not count time spent waiting for you to
+confirm a host key or enter a password, key passphrase or OTP. A timeout reports
+whether the jump or target layer failed so you can correct the Host or retry.
+Use `--connect-timeout default` with `host set` to remove the explicit line and
+restore LeanTTY's 15-second default.
 
 Inspect the effective supported fields without connecting:
 

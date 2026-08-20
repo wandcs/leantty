@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [1.5.0] - In development
+
+### Added
+
+- Added `host add|set ... --connect-timeout <1-300|default>` to manage a
+  controlled OpenSSH `ConnectTimeout` directive for direct SSH,
+  one-hop ProxyJump, reconnect and Host-based `put/get`. LeanTTY applies the
+  configured whole-second value to TCP setup and the initial SSH handshake/key
+  exchange, reports jump and target timeouts separately, keeps user-driven host
+  verification and authentication waits outside the deadline, and retains the
+  existing 15-second default when the directive is absent.
+
 ## [1.4.0] - 2026-08-19
 
 ### Added

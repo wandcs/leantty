@@ -361,7 +361,7 @@ export default function interactionFixesTest() {
     it('keepsSshAndTransferConnectionResolutionConsistent', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName files.example.com\n  User deploy\n' +
-        '  Port 2200\n  IdentityFile default-key\n')
+        '  Port 2200\n  IdentityFile default-key\n  ConnectTimeout 9\n')
       let ssh = CommandParser.parseInput('ssh prod', config)
       let put = CommandParser.parseInput('put report.txt prod:/report.txt', config)
       let get = CommandParser.parseInput('get prod:/report.txt', config)
@@ -375,6 +375,7 @@ export default function interactionFixesTest() {
           expect(connection.port).assertEqual(ssh.port)
           expect(connection.username).assertEqual(ssh.username)
           expect(connection.identityFile).assertEqual(ssh.identityFile)
+          expect(connection.connectTimeoutMs).assertEqual(ssh.connectTimeoutMs)
         }
       }
     })
@@ -746,12 +747,45 @@ export default function interactionFixesTest() {
         CommandParser.parseInput('alias add prod root@example.com', new SshConfig())
       let jumped: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('host add private deploy@target.example.com -J jump', new SshConfig())
+      let configured: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput(
+          'host set private deploy@target.example.com --connect-timeout 9 -J jump', new SshConfig())
       expect(host instanceof KeyCommandResult).assertEqual(true)
       expect(alias instanceof KeyCommandResult).assertEqual(true)
       if (host instanceof KeyCommandResult) { expect(host.legacySyntax).assertEqual(false) }
       if (alias instanceof KeyCommandResult) { expect(alias.legacySyntax).assertEqual(true) }
       expect(jumped instanceof KeyCommandResult).assertEqual(true)
       if (jumped instanceof KeyCommandResult) { expect(jumped.sshJump).assertEqual('jump') }
+      expect(configured instanceof KeyCommandResult).assertEqual(true)
+      if (configured instanceof KeyCommandResult) {
+        expect(configured.sshJump).assertEqual('jump')
+        expect(configured.sshConnectTimeoutMs).assertEqual(9000)
+      }
+    })
+
+    it('validatesAndPersistsManagedHostConnectTimeout', 0, () => {
+      let configured: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --connect-timeout 25')
+      let reset: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host set prod deploy@example.com --connect-timeout default')
+      let invalid: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --connect-timeout 301')
+      let duplicate: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --connect-timeout 5 --connect-timeout 6')
+      expect(configured.errorMessage).assertEqual('')
+      expect(configured.sshConnectTimeoutMs).assertEqual(25000)
+      expect(reset.sshConnectTimeoutMs).assertEqual(15000)
+      expect(invalid.errorMessage.includes('whole seconds 1-300')).assertEqual(true)
+      expect(duplicate.errorMessage).assertEqual('Duplicate host option: --connect-timeout')
+
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('')
+      config.addAlias('prod', configured.sshHost, configured.sshPort, configured.sshUser,
+        null, configured.sshConnectTimeoutMs)
+      expect(config.previewConfigText().includes('  ConnectTimeout 25\n')).assertEqual(true)
+      config.addAlias('prod', reset.sshHost, reset.sshPort, reset.sshUser,
+        null, reset.sshConnectTimeoutMs)
+      expect(config.previewConfigText().includes('  ConnectTimeout ')).assertEqual(false)
     })
 
     it('persistsProxyJumpInTheSingleManagedHostConfig', 0, () => {
@@ -1040,12 +1074,60 @@ export default function interactionFixesTest() {
       }
     })
 
+    it('resolvesControlledConnectTimeoutWithOpenSshFirstValueSemantics', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName prod.example.com\n  User deploy\n' +
+        '  ConnectTimeout 9\n\nHost *\n  ConnectTimeout 30\n')
+      let configured = CommandParser.parseInput('ssh prod', config)
+      let transfer = CommandParser.parseInput('get prod:/report.txt', config)
+      let direct = CommandParser.parseInput('ssh deploy@example.com', config)
+      expect(configured instanceof CommandParseResult).assertEqual(true)
+      expect(transfer instanceof TransferCommandResult).assertEqual(true)
+      expect(direct instanceof CommandParseResult).assertEqual(true)
+      if (configured instanceof CommandParseResult) {
+        expect(configured.isValid).assertEqual(true)
+        expect(configured.connectTimeoutMs).assertEqual(9000)
+      }
+      if (transfer instanceof TransferCommandResult) {
+        expect(transfer.isValid).assertEqual(true)
+        expect(transfer.connectTimeoutMs).assertEqual(9000)
+      }
+      if (direct instanceof CommandParseResult) {
+        expect(direct.isValid).assertEqual(true)
+        expect(direct.connectTimeoutMs).assertEqual(15000)
+      }
+    })
+
+    it('acceptsConnectTimeoutBoundsAndRejectsInvalidValuesBeforeConnection', 0, () => {
+      for (let value of ['1', '300']) {
+        let valid: SshConfig = new SshConfig()
+        valid.loadFromText('Host prod\n  User deploy\n  ConnectTimeout ' + value + '\n')
+        let result = CommandParser.parseInput('ssh prod', valid)
+        expect(result instanceof CommandParseResult).assertEqual(true)
+        if (result instanceof CommandParseResult) {
+          expect(result.isValid).assertEqual(true)
+          expect(result.connectTimeoutMs).assertEqual(parseInt(value, 10) * 1000)
+        }
+      }
+      for (let value of ['0', '301', '-1', '1.5', 'forever']) {
+        let invalid: SshConfig = new SshConfig()
+        invalid.loadFromText('Host prod\n  User deploy\n  ConnectTimeout ' + value + '\n')
+        let result = CommandParser.parseInput('ssh prod', invalid)
+        expect(result instanceof CommandParseResult).assertEqual(true)
+        if (result instanceof CommandParseResult) {
+          expect(result.isValid).assertEqual(false)
+          expect(result.errorMessage.includes('ConnectTimeout')).assertEqual(true)
+          expect(result.errorMessage.includes('expected whole seconds 1-300')).assertEqual(true)
+        }
+      }
+    })
+
     it('resolvesSingleProxyJumpWithSeparateHostIdentityAndOverrides', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName target.example.com\n  User target-user\n' +
-        '  IdentityFile target-key\n  ProxyJump jump-user@bastion:2200\n\n' +
+        '  IdentityFile target-key\n  ConnectTimeout 9\n  ProxyJump jump-user@bastion:2200\n\n' +
         'Host bastion\n  HostName jump.example.com\n  User config-jump-user\n' +
-        '  Port 2222\n  IdentityFile jump-key\n')
+        '  Port 2222\n  IdentityFile jump-key\n  ConnectTimeout 4\n')
       let parsed = CommandParser.parseInput('ssh prod', config)
       expect(parsed instanceof CommandParseResult).assertEqual(true)
       if (parsed instanceof CommandParseResult) {
@@ -1058,6 +1140,8 @@ export default function interactionFixesTest() {
         expect(parsed.jumpPort).assertEqual(2200)
         expect(parsed.jumpUsername).assertEqual('jump-user')
         expect(parsed.jumpIdentityFile).assertEqual('jump-key')
+        expect(parsed.connectTimeoutMs).assertEqual(9000)
+        expect(parsed.jumpConnectTimeoutMs).assertEqual(4000)
       }
     })
 
@@ -1131,6 +1215,17 @@ export default function interactionFixesTest() {
       let text: string = config.previewConfigText()
       expect(text.includes('Host prod\n  HostName new.example.com\n  User new-user\n' +
         '  Port 2200\n  ProxyJump jump')).assertEqual(true)
+    })
+
+    it('managedHostUpdatesPreserveConnectTimeout', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('# >>> LeanTTY managed hosts >>>\nHost prod\n' +
+        '  HostName old.example.com\n  User old-user\n  ConnectTimeout 25\n' +
+        '# <<< LeanTTY managed hosts <<<\n')
+      config.addAlias('prod', 'new.example.com', 2200, 'new-user')
+      let text: string = config.previewConfigText()
+      expect(text.includes('Host prod\n  HostName new.example.com\n  User new-user\n' +
+        '  Port 2200\n  ConnectTimeout 25')).assertEqual(true)
     })
 
     it('resolvesOpenSshFirstValueAndIdentityFile', 0, () => {

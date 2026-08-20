@@ -138,6 +138,13 @@ export default function paneModelTest() {
       expect(session.getConnectionTitle()).assertEqual('user@172.16.100.2')
     })
 
+    it('retainsTheResolvedConnectTimeoutForReconnect', 0, () => {
+      let session: SshSession = new SshSession()
+      expect(session.getConnectTimeoutMs()).assertEqual(15000)
+      session.setConnectTimeoutMs(9000)
+      expect(session.getConnectTimeoutMs()).assertEqual(9000)
+    })
+
     it('activePaneSelectionNeverCrossesTheActiveTab', 0, () => {
       let vm: AppViewModel = new AppViewModel()
       let first: TabInfo = vm.addTab('one')

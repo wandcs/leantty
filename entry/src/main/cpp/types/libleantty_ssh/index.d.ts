@@ -33,6 +33,7 @@ export declare function sshConnect(
   privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
   jumpHost: string, jumpPort: number, jumpUser: string,
   jumpPrivateKeyPath: string, jumpPrivateKeyRequiresPassphrase: boolean,
+  jumpConnectTimeoutMs: number,
   knownHostsPath: string, connectTimeoutMs: number, generation: number,
   onTransport: (event: TransportEvent) => void,
   onControl: (event: string) => void,

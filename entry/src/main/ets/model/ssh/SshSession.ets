@@ -1,4 +1,5 @@
 import { SshSessionState } from '../../common/types/TerminalTypes'
+import { DEFAULT_SSH_CONNECT_TIMEOUT_MS } from '../../common/types/SshTypes'
 
 export { SshSessionState }
 
@@ -14,6 +15,8 @@ export class SshSession {
   private jumpPort: number = 22
   private jumpUsername: string = ''
   private jumpIdentityFile: string = ''
+  private jumpConnectTimeoutMs: number = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+  private connectTimeoutMs: number = DEFAULT_SSH_CONNECT_TIMEOUT_MS
   private errorMessage: string = ''
   private exitCode: number = -1
 
@@ -103,6 +106,22 @@ export class SshSession {
 
   setJumpIdentityFile(identityFile: string): void {
     this.jumpIdentityFile = identityFile
+  }
+
+  getJumpConnectTimeoutMs(): number {
+    return this.jumpConnectTimeoutMs
+  }
+
+  setJumpConnectTimeoutMs(connectTimeoutMs: number): void {
+    this.jumpConnectTimeoutMs = connectTimeoutMs
+  }
+
+  getConnectTimeoutMs(): number {
+    return this.connectTimeoutMs
+  }
+
+  setConnectTimeoutMs(connectTimeoutMs: number): void {
+    this.connectTimeoutMs = connectTimeoutMs
   }
 
   getErrorMessage(): string {

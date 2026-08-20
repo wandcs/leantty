@@ -260,6 +260,8 @@ export class SessionViewModel {
     this.session.setJumpPort(request.jumpPort)
     this.session.setJumpUsername(request.jumpUsername)
     this.session.setJumpIdentityFile(request.jumpIdentityFile)
+    this.session.setJumpConnectTimeoutMs(request.jumpConnectTimeoutMs)
+    this.session.setConnectTimeoutMs(request.connectTimeoutMs)
     this.notifyStateChange()
 
     try {
@@ -277,7 +279,9 @@ export class SessionViewModel {
       opts.jumpHost = request.jumpHost
       opts.jumpPort = request.jumpPort
       opts.jumpUsername = request.jumpUsername
+      opts.jumpConnectTimeoutMs = request.jumpConnectTimeoutMs
       opts.knownHostsPath = this.knownHostsPath
+      opts.connectTimeoutMs = request.connectTimeoutMs
       if (!this.pendingKeypush) {
         let key: KeyPairInfo | null = this.resolvePrivateKey(request.identityFile)
         if (key !== null) {
@@ -346,6 +350,8 @@ export class SessionViewModel {
     request.jumpPort = this.session.getJumpPort()
     request.jumpUsername = this.session.getJumpUsername()
     request.jumpIdentityFile = this.session.getJumpIdentityFile()
+    request.jumpConnectTimeoutMs = this.session.getJumpConnectTimeoutMs()
+    request.connectTimeoutMs = this.session.getConnectTimeoutMs()
     let previousClient: SshClient = this.sshClient
     previousClient.onEvent(() => {})
     previousClient.onData(() => {})
@@ -1205,6 +1211,7 @@ export class SessionViewModel {
       options.port = command.port
       options.username = command.username
       options.knownHostsPath = this.knownHostsPath
+      options.connectTimeoutMs = command.connectTimeoutMs
       options.paneId = this.paneId
       options.remotePath = command.remotePath
       if (key !== null) {

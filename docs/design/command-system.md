@@ -2,7 +2,7 @@
 
 > 状态：Accepted 能力取舍基线；待证实项保持 WIP，不授权实现
 >
-> 适用 milestone：跨 1.1–1.6
+> 适用 milestone：跨 1.1–1.7
 >
 > 更新日期：2026-08-17
 >
@@ -34,7 +34,7 @@ OpenSSH Unix 工具箱：
 | `host` | 必须做 | 管理唯一 OpenSSH Host 配置，不建立 GUI 主机数据库 |
 | `key` | 必须做 | 管理 HarmonyOS 中的 LeanTTY 私有密钥资产 |
 | `put/get` | 已采纳，1.3 | 受限单文件交付；内部使用 SFTP，不冒充 `scp/sftp` |
-| `mosh` | 应该做，WIP 1.5 | SSH bootstrap 后的交互式弱网 TTY Session |
+| `mosh` | 应该做，WIP 1.7 | SSH bootstrap 后的交互式弱网 TTY Session |
 | `scp`、`sftp` | 不做用户命令 | 标准语义超出受限单文件和 TTY 入口边界 |
 | `ssh-agent`、`ssh-add` | 不做 | 没有 Unix agent socket、子进程和环境变量模型 |
 | `ssh-keyscan` | 不做 | 采集不能证明主机密钥真实性 |
@@ -110,15 +110,15 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 | 密码、公钥、加密私钥 | authentication methods | 必须做 | 当前核心并持续回归 |
 | keyboard-interactive、多方法、banner | RFC 4256 等 | 必须做 | 1.1；结构化 challenge 和唯一 Session 状态机 |
 | 主机校验 | unknown/changed host key | 必须做 | 首次确认；变化立即拒绝；不得配置为静默信任 |
-| 连接默认策略 | timeout、keepalive、取消 | 必须做 | 安全可靠默认；可配置子集进入 1.6 |
-| 地址族 | `-4/-6`、`AddressFamily` | 应该做 | 1.6；强制实际网络族，不作为无效 flag |
-| 安全诊断 | `-v` | 应该做 | 1.6；LeanTTY 结构化、脱敏诊断，不复制原始 OpenSSH log |
-| 基本 escape | `~.`、`~?`、`~I` | 应该做 | 1.6；断开、帮助、连接信息；与 Pane 生命周期统一 |
+| 连接默认策略 | timeout、keepalive、取消 | 必须做 | 安全可靠默认；可配置子集进入 1.5 |
+| 地址族 | `-4/-6`、`AddressFamily` | 应该做 | 1.5；强制实际网络族，不作为无效 flag |
+| 安全诊断 | `-v` | 应该做 | 1.5；LeanTTY 结构化、脱敏诊断，不复制原始 OpenSSH log |
+| 基本 escape | `~.`、`~?`、`~I` | 应该做 | 1.5；断开、帮助、连接信息；与 Pane 生命周期统一 |
 | Jump Host | `ProxyJump`、`-J` | 应该做 | 1.4；配置为主，`-J` 复用同一状态机，首版单跳 |
 | 远端命令 | `ssh host command...` | 待证实 | quoting、PTY、输出、退出状态和取消闭合后重议 |
 | PTY override | `-t/-T` | 待证实/不做 | 远端命令未采用前不加 `-t`；`-T` 不属于 TTY 产品路径 |
 | URI、`-l` | `ssh://...`、`-l user` | 不单独规划 | `user@host` 是唯一主路径；只可作为无新语义兼容语法重议 |
-| alternate config | `-F file` | 不做 | 受控 config import/export 进入 1.6，不建立临时第二权威 |
+| alternate config | `-F file` | 不做 | 受控 config import/export 进入 1.5，不建立临时第二权威 |
 | generic config override | `-o option` | 不做 | 不能绕过逐 directive 审计和安全策略 |
 | 版本与算法查询 | `-V/-Q` | 不做当前命令 | 使用 LeanTTY 自身版本/help；算法诊断按真实需求提供 |
 | 日志文件 | `-E file` | 不做 | 不扩大本地文件和秘密泄露面 |
@@ -143,11 +143,11 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 | `HostName/User/Port/IdentityFile` | 必须做 | 当前核心；`ssh -G` 必须反映结果 |
 | host trust 与 known-hosts | 必须做 | 产品策略拥有；不允许配置关闭核心信任 |
 | auth 与 multi-method | 必须做 | 1.1；config 不替代 Rust Session 状态机 |
-| timeout/keepalive | 应该做 | 1.6：`ConnectTimeout`、`ServerAliveInterval/CountMax` 的受控子集 |
-| `AddressFamily` | 应该做 | 1.6；与 `-4/-6` 共用策略 |
-| `UpdateHostKeys` | 应该做 | 1.6；须验证服务端扩展、原子持久化和错误恢复 |
+| timeout/keepalive | 应该做 | 1.5：`ConnectTimeout`、`ServerAliveInterval/CountMax` 的受控子集 |
+| `AddressFamily` | 应该做 | 1.5；与 `-4/-6` 共用策略 |
+| `UpdateHostKeys` | 应该做 | 1.5；须验证服务端扩展、原子持久化和错误恢复 |
 | `ProxyJump` | 应该做 | 1.4；首版单跳，跳板与目标分别校验和认证 |
-| config import/export | 应该做局部命令 | 1.6；通过 HarmonyOS 文件授权进入唯一 config，不用 `-F` |
+| config import/export | 应该做局部命令 | 1.5；通过 HarmonyOS 文件授权进入唯一 config，不用 `-F` |
 | certificate/CA directives | 待证实 | 只考虑使用证书；不建设签发和 CA 管理平台 |
 | `Include`、safe `Match`、token expansion | 待证实 | 由真实配置迁移样本和解析复杂度决定；`Match exec` 不做 |
 | `IdentitiesOnly`、auth preference | 待证实 | 先证明多 identity 与受控认证顺序的真实缺口 |
@@ -179,9 +179,9 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 | `-l` fingerprint | 必须做 | 当前核心；默认 SHA-256 |
 | `-F` 查询 known-hosts | 必须做 | 1.1；覆盖散列记录、IPv4/IPv6、非默认端口 |
 | `-R` 删除 known-hosts | 必须做 | 当前核心；精确删除并原子持久化 |
-| `-c` 修改 comment | 应该做 | 1.6；复用同一 key identity 和提交入口 |
+| `-c` 修改 comment | 应该做 | 1.5；复用同一 key identity 和提交入口 |
 | safe `-b/-C/-f` | 必须做受控子集 | 与生成 mode 一起保持明确范围 |
-| ECDSA key 导入和认证 | 应该做，待实现证据 | 1.6 候选；不要求新增 ECDSA 生成入口 |
+| ECDSA key 导入和认证 | 应该做，待实现证据 | 1.5 候选；不要求新增 ECDSA 生成入口 |
 | public-key 格式转换 `-i/-e` | 不做标准 mode | 通过受控 `key import/export` 覆盖实际平台边界 |
 | known-host hashing `-H` | 内部安全能力 | 可按产品策略读写散列；不复制 `.old` 文件语义 |
 | passphrase flags `-N/-P` | 不做 | 秘密不得进入命令文本和历史 |
@@ -203,7 +203,7 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
   不演进成主机数据库、标签、分组或 GUI 资产管理。
 - 查看有效 Host 使用 `ssh -G`；查找和删除主机信任使用 `ssh-keygen -F/-R`，不增加
   平行的 `host show-known-key` 命令。
-- 1.6 可增加受控 config import/export，但不得导入后静默忽略关键 directive。
+- 1.5 可增加受控 config import/export，但不得导入后静默忽略关键 directive。
 
 ### 7.3 `ssh-copy-id`
 
@@ -236,9 +236,9 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 
 Mosh 的产品方向通过前五道决策门：它直接改善合盖、短断网、网络切换和高延迟下的
 交互式 TTY 可靠性。但在 UDP、native 依赖、安全、终端同步和真机生命周期证据闭合前，
-第六道完整交付门仍未通过，因此整体保持 WIP 1.5。
+第六道完整交付门仍未通过，因此整体保持 WIP 1.7。
 
-| 能力 | 决策 | 1.5 边界 |
+| 能力 | 决策 | 1.7 边界 |
 | --- | --- | --- |
 | `mosh [user@]host|alias` | 必须做 | 唯一用户入口；复用 SSH Host/User/Identity |
 | SSH bootstrap | 必须做 | 复用主机校验、全部认证、取消和错误；启动远端 server 后结束 SSH |
@@ -301,8 +301,9 @@ ProxyJump 最多帮助 Mosh 的 SSH bootstrap；它不转发 UDP。只有目标 
 | 1.2 | 不强行加入命令能力；保持终端搜索的单一主题 |
 | 1.3 | 已采纳 `put/get`；SFTP 只作内部 subsystem，不开放 `scp/sftp` |
 | 1.4 | 启动性能；`ProxyJump` 配置与标准 `-J`，首版单跳并保持 jump/target 双重信任与认证。HSL 专用入口因公开发现门禁失败而裁剪，手工 HSL Host 仍复用现有 SSH 命令、认证和主机信任 |
-| 1.5 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
-| 1.6 | `-4/-6`、安全 `-v`、基本 SSH escape、timeout/keepalive config、`UpdateHostKeys`、config import/export、`ssh-keygen -c`、ECDSA 导入/认证候选 |
+| 1.5 | `ConnectTimeout` 已闭合；当前切片为 `-4/-6` / `AddressFamily`。安全 `-v`、基本 SSH escape、keepalive config、`UpdateHostKeys`、config import/export、`ssh-keygen -c`、ECDSA 导入/认证仍逐项晋级 |
+| 1.6 | 长任务注意力与返回路径；不为版本号强行增加命令能力 |
+| 1.7 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
 
 路线图分配不等于实现授权。每个后续 milestone 确认并把第一段可执行工作写入
 `next-work.md` 后才能开始实现；1.2 不为“每版都加命令”而混入无关范围。

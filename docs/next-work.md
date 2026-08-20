@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：先收敛 1.5 的首个产品切片；不从路线图候选直接推断实现范围
+> 当前工程阶段：实现并闭合 1.5 第二个产品切片 `AddressFamily` / `ssh -4/-6`
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -30,14 +30,42 @@
 
 ## 1.5 当前活动工作
 
-1. [ ] 从 `roadmap.md` 的 1.5 候选中选择一个最小、独立、可验证的首个产品切片；重新核对
-   用户阻断、OpenSSH 标准、HarmonyOS PC 真实环境和现有 Host/Identity/`known_hosts`/config
-   权威来源，明确用户结果、非目标、安全边界、专项方案与真机门禁，再把该切片的可执行顺序
-   写入本文件。完成条件是维护者确认一个有证据的具体切片；在此之前不修改产品实现。
+### 第二个切片：受控 `AddressFamily` 与 `ssh -4/-6`
 
-路线图中 IPv4/IPv6、连接超时、半开恢复、主机密钥轮换、诊断、config 导入导出和 ECDSA
-互操作仍是候选集合，不因 1.5 milestone 已启动而整体获得实现授权。推广手册也只提供稳定
-工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
+用户面对双栈 DNS、单栈网络或只能通过特定地址族到达的目标时，可以在唯一 OpenSSH config
+中保存标准 `AddressFamily`，也可以用标准 `ssh -4/-6` 对当前连接作一次明确选择。选择必须
+约束真实 DNS 解析和 TCP 连接，而不是只接受一个无效 flag；失败必须指出是 IPv4、IPv6 还是
+默认双栈路径，并保持 Host、认证、主机校验、ProxyJump、重连和 `put/get` 的现有所有权。
+
+这个切片只增加一个三值连接策略，不增加 DNS 缓存、Happy Eyeballs 框架、网络扫描、地址
+重写、第二份 Host/config 或通用 `-o`。命名 jump 与 target 分别使用自己的有效配置；一次性
+`-4/-6` 是否以及如何作用于 jump/target，必须先对照 OpenSSH 标准行为和受控双栈证据锁定，
+不能由当前实现猜测。
+
+1. [ ] 建立标准与受控网络基线：记录 OpenSSH `AddressFamily any|inet|inet6`、`ssh -4/-6`、
+   Host 首值和 CLI/config 优先级；在本机与物理 HarmonyOS PC 上证明可重复的 IPv4-only、
+   IPv6-only、双栈同名目标及单跳 ProxyJump fixture。没有真实 IPv6 路径时不得用 parser 测试
+   代替，也不得实现后再倒推语义。
+2. [ ] 形成专项方案并确定最小用户入口：`host add|set ... --address-family
+   <any|inet|inet6|default>` 只修改唯一 config 中的标准字段，`ssh -4/-6` 只影响当前 SSH；
+   `ssh -G` 输出真实有效值，重复、冲突、无效配置和不适用于本地命令的 option 在网络动作前
+   明确失败。
+3. [ ] 让地址族策略贯穿真实解析与连接：普通 SSH、命名 jump/target、重连和复用 Host 的
+   `put/get` 使用同一解析结果；Rust 只尝试允许的 socket family，并保留 ConnectTimeout、
+   取消、Host key identity、Session generation 和迟到事件拒绝。
+4. [ ] 补齐 ArkTS/Rust 自动化，至少覆盖默认 any、Host/通配 Host 首值、CLI 覆盖、`-4/-6`
+   冲突、IPv4/IPv6 literal、DNS 多地址过滤、无允许地址、jump/target 独立配置、reconnect、
+   transfer 和取消；测试必须证明实际选择的 socket family，而不只断言字段传播。
+5. [ ] 运行映射的最小本地门禁与 ARM64 debug build，再在物理 ARM64 HarmonyOS PC 上验证
+   IPv4-only、IPv6-only、双栈强制 v4/v6、错误 family 的确定失败、ProxyJump 分层、取消和
+   默认 any 正常 smoke；安装、启动、`ssh -G` 或日志字段本身不能替代真实连接后置条件。
+6. [ ] 将最终语义、非目标、自动化和真机证据同步到专项设计、User Guide/Help、Changelog
+   与相关权威文档；从本文件删除完成切片，再依据真实阻断和复杂度决定 1.5 下一项。
+
+`ConnectTimeout` 已完成并归档到专项设计。除本节已经晋级的地址族切片外，路线图中的
+半开恢复、主机密钥轮换、
+诊断、config 导入导出和 ECDSA 互操作仍是候选集合，不因 1.5 milestone 已启动而整体获得
+实现授权。推广手册也只提供稳定工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
 
 ## 维护规则
 

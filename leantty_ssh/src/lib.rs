@@ -1238,6 +1238,7 @@ async fn run_session(
     jump_user: String,
     jump_private_key_path: String,
     jump_private_key_requires_passphrase: bool,
+    jump_connect_timeout: Duration,
     known_hosts_path: String,
     connect_timeout: Duration,
     transport_callback: JsTransportCallback,
@@ -1278,7 +1279,7 @@ async fn run_session(
             russh::client::connect(config.clone(), (jump_host.as_str(), jump_port), handler);
         let mut jump = match wait_for_connect(
             connect,
-            connect_timeout,
+            jump_connect_timeout,
             &mut receivers.disconnect_rx,
             &mut progress_rx,
         )
@@ -1294,7 +1295,7 @@ async fn run_session(
                     &control_callback,
                     &format!(
                         "CONNECT:jump:connection timed out after {} ms",
-                        connect_timeout.as_millis()
+                        jump_connect_timeout.as_millis()
                     ),
                 );
                 return;
@@ -2013,6 +2014,7 @@ pub fn ssh_connect(
     jump_user: String,
     jump_private_key_path: String,
     jump_private_key_requires_passphrase: bool,
+    jump_connect_timeout_ms: u32,
     known_hosts_path: String,
     connect_timeout_ms: u32,
     generation: u32,
@@ -2035,6 +2037,9 @@ pub fn ssh_connect(
         }
         if jump_user.trim().is_empty() {
             return Err(napi_error("jump user must not be empty"));
+        }
+        if jump_connect_timeout_ms == 0 {
+            return Err(napi_error("jump connect timeout must be positive"));
         }
         if host == jump_host && port == jump_port {
             return Err(napi_error("jump host must differ from target host"));
@@ -2115,6 +2120,7 @@ pub fn ssh_connect(
         jump_user,
         jump_private_key_path,
         jump_private_key_requires_passphrase,
+        Duration::from_millis(jump_connect_timeout_ms as u64),
         known_hosts_path,
         Duration::from_millis(connect_timeout_ms as u64),
         transport_callback,

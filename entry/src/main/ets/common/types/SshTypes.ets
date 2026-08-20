@@ -8,6 +8,9 @@ export enum SshErrorCode {
   SessionClosed = 7
 }
 
+export const DEFAULT_SSH_CONNECT_TIMEOUT_MS: number = 15000
+export const MAX_SSH_CONNECT_TIMEOUT_SECONDS: number = 300
+
 export class SshError extends Error {
   code: SshErrorCode
   detail: string
@@ -32,6 +35,7 @@ export class SshConnectOptions {
   jumpUsername: string
   jumpPrivateKeyPath: string
   jumpPrivateKeyRequiresPassphrase: boolean
+  jumpConnectTimeoutMs: number
   knownHostsPath: string
   connectTimeoutMs: number
 
@@ -46,7 +50,8 @@ export class SshConnectOptions {
     this.jumpUsername = ''
     this.jumpPrivateKeyPath = ''
     this.jumpPrivateKeyRequiresPassphrase = false
+    this.jumpConnectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
     this.knownHostsPath = ''
-    this.connectTimeoutMs = 15000
+    this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
   }
 }

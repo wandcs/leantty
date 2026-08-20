@@ -1,6 +1,10 @@
 import { SshConfig, SshConfigHost } from '../ssh/SshConfig'
 import { KeyAlgorithm } from '../../common/types/SshKeyTypes'
 import { TerminalTextPolicy } from '../../common/security/TerminalTextPolicy'
+import {
+  DEFAULT_SSH_CONNECT_TIMEOUT_MS,
+  MAX_SSH_CONNECT_TIMEOUT_SECONDS
+} from '../../common/types/SshTypes'
 
 export class CommandParseResult {
   isValid: boolean
@@ -15,6 +19,8 @@ export class CommandParseResult {
   jumpPort: number
   jumpUsername: string
   jumpIdentityFile: string
+  jumpConnectTimeoutMs: number
+  connectTimeoutMs: number
   errorMessage: string
 
   constructor() {
@@ -30,6 +36,8 @@ export class CommandParseResult {
     this.jumpPort = 22
     this.jumpUsername = ''
     this.jumpIdentityFile = ''
+    this.jumpConnectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
     this.errorMessage = ''
   }
 }
@@ -65,6 +73,7 @@ export class KeyCommandResult {
   sshPort: number
   sshUser: string
   sshJump: string
+  sshConnectTimeoutMs: number
   errorMessage: string
   legacySyntax: boolean
 
@@ -78,6 +87,7 @@ export class KeyCommandResult {
     this.sshPort = 22
     this.sshUser = ''
     this.sshJump = ''
+    this.sshConnectTimeoutMs = -1
     this.errorMessage = ''
     this.legacySyntax = false
   }
@@ -96,6 +106,7 @@ export class TransferCommandResult {
   port: number
   username: string
   identityFile: string
+  connectTimeoutMs: number
   localPath: string
   remotePath: string
   automaticLocalName: boolean
@@ -110,6 +121,7 @@ export class TransferCommandResult {
     this.port = 22
     this.username = ''
     this.identityFile = ''
+    this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
     this.localPath = ''
     this.remotePath = ''
     this.automaticLocalName = false
@@ -236,7 +248,8 @@ export class CommandParser {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.ALIAS_LIST
       result.legacySyntax = words[0] === 'alias'
-      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] | ' +
+      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] ' +
+        '[--connect-timeout <1-300|default>] | ' +
         'host rm <host-name> | host list'
       return result
     }
@@ -310,6 +323,7 @@ export class CommandParser {
       result.port = explicitPort > 0 ? explicitPort : host.port
       result.username = host.user
       if (result.identityFile.length === 0) { result.identityFile = host.identityFile }
+      result.connectTimeoutMs = host.connectTimeoutMs
       result.isAlias = true
       CommandParser.applyProxyJump(jumpSpecified ? explicitJump : host.proxyJump, sshConfig, result)
       if (result.errorMessage.length > 0) { result.isValid = false }
@@ -385,6 +399,7 @@ export class CommandParser {
       jumpPort = explicitJumpPort ? parsed.port : jumpAlias.port
       jumpUser = explicitUser.length > 0 ? explicitUser : jumpAlias.user
       jumpIdentity = jumpAlias.identityFile
+      result.jumpConnectTimeoutMs = jumpAlias.connectTimeoutMs
     }
     if (jumpUser.length === 0) {
       result.errorMessage = 'ProxyJump host must define User: ' + jumpDisplayHost
@@ -528,6 +543,7 @@ export class CommandParser {
     result.port = connection.port
     result.username = connection.username
     result.identityFile = connection.identityFile
+    result.connectTimeoutMs = connection.connectTimeoutMs
     result.isValid = true
     return result
   }
@@ -900,22 +916,50 @@ export class CommandParser {
     result.kind = KeyCommandKind.ALIAS_ADD
     let parts: string[] = input.split(/\s+/)
     let operation: string = parts.length >= 2 && parts[1] === 'set' ? 'set' : 'add'
-    if (parts.length !== 4 && parts.length !== 6) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+    let usage: string = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] ' +
+      '[-J <jump>] [--connect-timeout <1-300|default>]'
+    if (parts.length < 4 || parts.length > 8 || parts.length % 2 !== 0) {
+      result.errorMessage = usage
       return result
     }
-    if (parts.length === 6) {
-      if (parts[4] !== '-J' || parts[5].length === 0) {
-        result.errorMessage = 'Usage: host ' + operation +
-          ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+    for (let index: number = 4; index < parts.length; index += 2) {
+      let option: string = parts[index]
+      let value: string = parts[index + 1]
+      if (value.length === 0) {
+        result.errorMessage = usage
         return result
       }
-      if (parts[5].includes(',') || parts[5].includes('://') || parts[5].includes('%') ||
-        parts[5].includes('$')) {
-        result.errorMessage = 'Unsupported ProxyJump expression: only one [user@]host[:port] is supported'
+      if (option === '-J') {
+        if (result.sshJump.length > 0) {
+          result.errorMessage = 'Duplicate host option: -J'
+          return result
+        }
+        if (value.includes(',') || value.includes('://') || value.includes('%') || value.includes('$')) {
+          result.errorMessage = 'Unsupported ProxyJump expression: only one [user@]host[:port] is supported'
+          return result
+        }
+        result.sshJump = value
+      } else if (option === '--connect-timeout') {
+        if (result.sshConnectTimeoutMs >= 0) {
+          result.errorMessage = 'Duplicate host option: --connect-timeout'
+          return result
+        }
+        if (value === 'default') {
+          result.sshConnectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+        } else {
+          let seconds: number = parseInt(value, 10)
+          if (!/^\d+$/.test(value) || isNaN(seconds) || seconds < 1 ||
+            seconds > MAX_SSH_CONNECT_TIMEOUT_SECONDS) {
+            result.errorMessage = 'Connect timeout must be whole seconds 1-' +
+              MAX_SSH_CONNECT_TIMEOUT_SECONDS.toString() + ', or default'
+            return result
+          }
+          result.sshConnectTimeoutMs = seconds * 1000
+        }
+      } else {
+        result.errorMessage = 'Unsupported host option: ' + option
         return result
       }
-      result.sshJump = parts[5]
     }
     result.keyName = parts[2]
     if (!/^[A-Za-z0-9._-]+$/.test(result.keyName)) {
@@ -925,13 +969,13 @@ export class CommandParser {
     let target: string = parts[3]
     let atIdx: number = target.lastIndexOf('@')
     if (atIdx <= 0) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+      result.errorMessage = usage
       return result
     }
     result.sshUser = target.substring(0, atIdx)
     let hostPort: string = target.substring(atIdx + 1)
     if (hostPort.length === 0) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+      result.errorMessage = usage
       return result
     }
     if (hostPort.startsWith('[')) {
