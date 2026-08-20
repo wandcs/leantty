@@ -1,6 +1,6 @@
 # LeanTTY 文档入口
 
-> 更新日期：2026-08-08
+> 更新日期：2026-08-21
 
 `docs/` 根目录保留当前规则、用户契约、版本路线、跨版本验收、唯一工作清单和稳定
 工程手册；`design/` 为每个大的功能点保存一份专项技术方案。私有证据和机器记录不
@@ -26,6 +26,7 @@
 | [`security-model.md`](security-model.md) | 受保护资产、信任边界、残余风险和安全证据要求 |
 | [`quality-strategy.md`](quality-strategy.md) | 所有开发必须遵守的回归流程、测试层级、真机自动化和证据门禁 |
 | [`test-release-efficiency.md`](test-release-efficiency.md) | 测试与发布耗时原因、减重边界、候选方向和效果度量 |
+| [`promotion-playbook.md`](promotion-playbook.md) | 推广工作目录、逐项全网调研门禁、执行建议和完成证据 |
 
 ## 稳定手册与合规文件
 

@@ -2,7 +2,7 @@
 
 > 状态：当前版本路线；采用滚动规划
 >
-> 更新日期：2026-08-17
+> 更新日期：2026-08-21
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -45,6 +45,24 @@ HarmonyOS 原生交互和可恢复错误等核心质量；没有修改某个领�
 测试层级、真机矩阵和证据复用边界见
 [`quality-strategy.md`](quality-strategy.md)。
 
+## 跨 milestone：发布、推广与反馈闭环
+
+推广是产品交付的持续工作，不单独占用一个功能版本，也不要求停止后续开发。
+每个公开 milestone 都按以下节奏形成可核验的闭环：
+
+1. 候选与发布准备期同步准备 README、AppGallery 介绍、截图、演示和技术文章
+   素材；素材只能使用已经通过对应发布门禁的产品事实。
+2. 对应精确版本在 AppGallery 可获取后，再发布包含该版本能力的对外内容；
+   GitHub Release、测试 HAP 和本地源码不能代替商店可获取性。
+3. 以鸿蒙 PC、HSL/openEuler、Code Agent 和 LeanTTY 的可复现实践为主干，诚实
+   保留手工启动 `sshd`、查询动态 IP 和通过普通 SSH Host 连接的当前边界；
+   不宣传未实现的 HSL 自动发现或管理。
+4. 发布后持续收集真实设备、核心任务、阻断问题和恢复路径；反馈可以调整
+   尚未开始的 milestone，但不为追逐竞品功能数打断已在收口的版本。
+
+只有已授权、尚未完成的具体推广交付才进入 [`next-work.md`](next-work.md)；
+渠道候选、文章草稿和发布后反馈本身不得成为第二份活动 TODO。
+
 ## 跨 milestone：SSH 与 Mosh 命令体系治理
 
 LeanTTY 不能继续按“维护者使用时发现缺什么，就补一个命令”的方式演进。删除
@@ -79,7 +97,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 不足的保持 WIP。
 
 正式能力矩阵、明确不做范围和 milestone 分配见
-[`design/command-system.md`](design/command-system.md)。该基线跨越 1.1–1.6；它决定
+[`design/command-system.md`](design/command-system.md)。该基线跨越 1.1–1.7；它决定
 后续版本的命令边界，但不是新的并行 TODO，活动工作仍只进入 `next-work.md`。
 
 ## 已完成基础：1.0
@@ -130,7 +148,7 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 
 - 文件传输、终端搜索、ProxyJump、Mosh 或新的执行环境入口。
 - `-4/-6`、安全 `-v`、SSH escape、config import/export、`UpdateHostKeys` 和其他
-  1.6 兼容/诊断能力。
+  1.5 连接、诊断与互操作能力。
 - 厂商认证 SDK、验证码生成/保存、第二套 Host/Identity 或厂商特例。
 - SFTP 文件管理器、复杂工作区、自定义快捷键和会话恢复。
 
@@ -222,22 +240,26 @@ OpenSSH 的全部工具与 option。端口转发、X11、agent、CA/KRL、批处
 完成方案：[`design/file-transfer.md`](design/file-transfer.md)。1.3 已形成不可变
 [`v1.3.0` GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.3.0)，并于
 2026-08-17 通过 AppGallery 审核、正式上架。该发布身份由标签、Release、精确提交和归档
-production 产物共同冻结，不再由发布分支承载。`main` 已进入 1.4，后续工作使用聚焦、短期
-topic branch；`release/1.4.0` 只在正式候选准备阶段创建。
+production 产物共同冻结，不再由发布分支承载。`main` 后续已完成 1.4 并进入
+发布后工程优化；后续功能版本仍使用聚焦、短期 topic branch 和正式候选阶段才创建的
+release branch。
 
-## 当前 milestone：1.4 — 启动性能与 OpenSSH ProxyJump
+## 已完成 milestone：1.4 — 启动性能与 OpenSSH ProxyJump
 
 ### 版本目标
 
-1.4 现在包含两个核心结果：已经完成开发候选验收的启动优化与 OpenSSH ProxyJump。前者缩短
+1.4 包含两个核心结果：启动优化与 OpenSSH ProxyJump。前者缩短
 用户点击 LeanTTY 图标，到本地终端能够正确接收并显示第一个字母的时间；后者让用户通过一个
-标准 SSH 跳板机进入无法直接访问的目标执行环境。两项结果仍须绑定同一个精确提交，通过正式
-发布候选门禁后才形成 production 包与公开版本。
+标准 SSH 跳板机进入无法直接访问的目标执行环境。`v1.4.0` 已由不可变签名标签、
+精确发布源、GitHub Release 和归档发布产物冻结；AppGallery 上传、审核和商店可获取
+状态只在维护者报告结果后记录，不由本地源码或 GitHub 发布推断。
 启动窗口出现、页面加载或 ArkWeb ready 只用于定位分段耗时；ProxyJump 仅解析成功、跳板已连
 或目标 TCP 可达也不等于目标 TTY 已可用。
 
 原拟议 1.5 OpenSSH ProxyJump 已于 2026-08-17 合并到 1.4，不再保留独立的 ProxyJump 1.5
-发布计划。原拟议 1.6 Mosh 与 1.7 SSH 配置/诊断里程碑相应调整为拟议 1.5 与 1.6。
+发布计划。2026-08-20 路线回顾进一步将连接可靠性/诊断与配置迁移/资产互操作
+合并为 1.5，将长任务体验前移为 1.6，Mosh 顺延为 1.7；MatePad 双模式作为真机
+阻塞的 2.0 战略 milestone，获得测试设备后可依据本文的抢占规则前移。
 
 原条件 HSL 本地入口已于 2026-08-17 完成公开接口与物理机进入门禁。由于没有三方应用可用的
 公开稳定发现/状态 API、Intent 或文档化 loopback endpoint，该入口按预设停止条件整体裁剪，
@@ -305,10 +327,79 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 - 必须先有受控双服务器基线，并证明嵌套认证、主机校验、取消、超时和错误恢复不会
   串 Session 或泄露目标/凭据。
 
-技术方案：[`design/proxy-jump.md`](design/proxy-jump.md)。ProxyJump 已进入
-[`next-work.md`](next-work.md)，按其中的技术门禁、实现和验证顺序授权执行。
+完成方案：[`design/proxy-jump.md`](design/proxy-jump.md)。实现、验证与发布事实以该方案、
+`CHANGELOG.md`、不可变标签和 GitHub Release 为准；ProxyJump 不再是当前活动工作。
 
-## 拟议 milestone：1.5 — Mosh 弱网连接
+## 当前 milestone：1.5 — SSH 连接可靠性、诊断与资产互操作
+
+### 用户结果
+
+用户在 IPv4/IPv6、长延迟、半开连接、主机密钥轮换或从已有 OpenSSH 环境迁移
+配置时，可以在 LeanTTY 内理解失败、恢复连接并复用已有资产，而不必依靠另一台
+电脑临时诊断或重建配置。这些能力继续使用唯一 Host、Identity、`known_hosts` 和 config，
+不引入第二套连接或资产模型。
+
+### 拟议范围
+
+- `ssh -4/-6` 与 `AddressFamily`，以及脱敏、结构化、可关闭的安全 `ssh -v`。
+- `~.`、`~?`、`~I` 基本 SSH escape，与 Pane 关闭、连接信息和错误恢复统一。
+- `ConnectTimeout`、`ServerAliveInterval`、`ServerAliveCountMax` 的受控 config 子集。
+- 经过服务端扩展、原子持久化和失败恢复验证的 `UpdateHostKeys`。
+- 通过 HarmonyOS 文件授权进入唯一资产的 config import/export；导入前验证，关键
+  directive 未支持时明确失败，导出保留非 LeanTTY 管理原文。
+- `ssh-keygen -c` 修改 key comment；在库、安全和互操作证据成立时支持 ECDSA key
+  导入和认证，但不因此新增 ECDSA 生成入口。
+
+上述子能力必须能够独立验证和裁剪。合并为同一 milestone 表示共同改善“连接、排障、
+迁移”这条用户路径，不表示必须为了版本号保留每一项候选。
+
+### 非目标与进入条件
+
+- 不加入通用 `-o`、任意 `-F`、任意算法降级、`ProxyCommand`、local command、agent、
+  forwarding、X11、tunnel 或第二份 known-hosts/config 权威来源。
+- 不因配置导入而承诺完整 OpenSSH parser；`Include`、safe `Match`、token expansion、
+  certificate 等仍按证据触发，不能静默忽略后声称兼容。
+- 进入开发前必须收集受控 IPv4/IPv6、超时、半开连接、host-key rotation 和真实 config
+  样本，并确认诊断输出不会泄露密码、口令、私钥、远端敏感内容或不必要的主机资产。
+- 合并后仍按用户结果和证据控制范围，不让 1.5 变成无限的 OpenSSH 兼容版本。
+
+命令边界与单项门禁见 [`design/command-system.md`](design/command-system.md)。该 milestone
+已进入 `next-work.md`，但当前只授权收敛首个最小产品切片；上述候选在逐项写入活动清单前
+均不授权实现。
+
+## 拟议 milestone：1.6 — 长任务注意力与返回路径
+
+### 用户结果
+
+用户在远端 shell、tmux 或 Code Agent 中运行长任务时，不必持续盯住 LeanTTY；当标准
+终端信号表示任务需要注意时，用户能得到有界的本地提醒，并准确返回产生信号的
+Tab 和 Pane。
+
+### 拟议范围
+
+- 以现有 BEL 的有限 Tab 强调和来源 Pane 标记为应用内基线，不回退为全窗口闪烁或
+  持续动画。
+- 在应用处于后台、最小化或信号来源不可见时，通过 HarmonyOS 公开稳定的本地
+  通知能力给出有界提醒；通知授权拒绝不得影响终端和应用内 attention。
+- 通知只携带定位所需的 LeanTTY 本地状态，默认不复制远端输出、Agent 回答、
+  命令、凭据或未脱敏主机信息。
+- 点击有效提醒后返回对应 Tab/Pane；Session 已结束、Pane 已销毁或信号已被用户处理
+  时不复活旧状态。
+- 在上游规格、主流 Agent/shell 可重复行为和不可信 payload 边界成立后，可独立评估
+  BEL 之外的有界终端通知序列；不因单个 Agent 的私有协议建立产品核心。
+
+### 非目标与进入条件
+
+- 不内置 Agent、编辑器、任务队列、提示词系统、云 relay、账号或跨设备同步。
+- 不解析远端自然语言或屏幕内容猜测“Agent 已完成”、“正在等待确认”或“任务失败”。
+- 本 milestone 不为维持通知而新增常驻后台服务、隐式保活或第二套 Session 所有权。
+- 进入开发前必须证明 HarmonyOS PC 公开通知 API、权限、后台/最小化生命周期和点击返回
+  路径对普通 AppGallery 应用成立，并用真实长任务与物理 PC 闭合重复、过期、跨 Pane
+  串扰、应用重启和敏感内容边界。
+
+该 milestone 未进入 `next-work.md`，不授权实现。
+
+## 拟议 milestone：1.7 — Mosh 弱网连接
 
 ### 用户结果
 
@@ -342,36 +433,34 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 技术草案：[`design/mosh.md`](design/mosh.md)。该 milestone 未进入 `next-work.md`，
 不授权实现。
 
-## 拟议 milestone：1.6 — SSH 配置、诊断与资产互操作
+## 阻塞的战略 milestone：2.0 — MatePad 实体键盘双模式
 
-### 用户结果
+### 优先级与用户结果
 
-用户在 IPv4/IPv6、长延迟、主机密钥轮换或从已有 OpenSSH 环境迁移配置时，可以诊断
-并解决问题，而不必依靠另一台电脑临时修改 LeanTTY 内部资产；这些能力继续使用唯一
-Host、Identity、`known_hosts` 和 config，不引入第二套配置模型。
+MatePad 适配是当前最高优先级的设备扩展方向，但因缺少支持 PC 模式的真实测试机而
+阻塞。目标是让用户在 MatePad 的 PC 模式和平板模式中使用外接实体键盘完成同一套
+高频 SSH/TTY 工作，同时保留 LeanTTY 的信任、可靠性和键盘优先原则。
 
-### 拟议范围
+### 拟议顺序与范围
 
-- `ssh -4/-6` 与 `AddressFamily`，以及脱敏、结构化、可关闭的安全 `ssh -v`。
-- `~.`、`~?`、`~I` 基本 SSH escape，与 Pane 关闭、连接信息和错误恢复统一。
-- `ConnectTimeout`、`ServerAliveInterval`、`ServerAliveCountMax` 的受控 config 子集。
-- 经过服务端扩展、原子持久化和失败恢复验证的 `UpdateHostKeys`。
-- 通过 HarmonyOS 文件授权进入唯一资产的 config import/export；导入前验证，关键
-  directive 未支持时明确失败，导出保留非 LeanTTY 管理原文。
-- `ssh-keygen -c` 修改 key comment；在库、安全和互操作证据成立时支持 ECDSA key
-  导入和认证，但不因此新增 ECDSA 生成入口。
+1. 先闭合 **PC 模式 + 外接键盘/鼠标**，因为它与当前 HarmonyOS PC 的产品合同最接近。
+2. 再闭合 **平板模式 + 外接实体键盘**，单独验证窗口/全屏、系统返回、焦点、
+   快捷键、触控板/鼠标、分屏、尺寸和生命周期。
+3. 复用同一 SSH Transport、Session、Terminal Surface、Host/Identity 和主机信任模型；
+   不为设备扩展建立第二套产品或数据边界。
 
-### 非目标与进入条件
+### 非目标、设备门禁与抢占规则
 
-- 不加入通用 `-o`、任意 `-F`、任意算法降级、`ProxyCommand`、local command、agent、
-  forwarding、X11、tunnel 或第二份 known-hosts/config 权威来源。
-- 不因配置导入而承诺完整 OpenSSH parser；`Include`、safe `Match`、token expansion、
-  certificate 等仍按证据触发，不能静默忽略后声称兼容。
-- 进入开发前必须收集受控 IPv4/IPv6、超时、半开连接、host-key rotation 和真实 config
-  样本，并确认每个子能力可以独立裁剪，不让 1.6 变成无限兼容版本。
+- 不投入大量精力优化纯触屏 + 系统虚拟键盘工作流，不新增大型虚拟快捷键盘或
+  触控优先的第二套交互。
+- 开发前必须获得一台支持 PC 模式、能安装正式签名 HAP 且可长期回归的物理
+  MatePad，并核对 HarmonyOS 版本、分发设备范围和两种模式的公开平台合同。
+- 获得合格测试机后，2.0 成为当前正在收口的 milestone 之后的下一优先级，可前移
+  到尚未开始的 1.6 或 1.7 之前；不为此中断已进入正式候选或发布收口的版本。
+- 没有真机时可做公开 API、应用市场设备范围、现有 PC 假设审计和验收矩阵准备，
+  但不编写适配实现、不用模拟器或响应式布局代替物理设备结论。
 
-命令边界与单项门禁见 [`design/command-system.md`](design/command-system.md)。该 milestone
-未进入 `next-work.md`，不授权实现。
+该 milestone 未进入 `next-work.md`，设备门禁成立前不授权适配实现。
 
 ## 未分配版本的长期触发方向
 
