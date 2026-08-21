@@ -1230,7 +1230,15 @@ try {
                     -Hdc $hdc `
                     -Target $targetId `
                     -LocalPath (Join-Path $EvidenceDirectory "$blackholeLayer-alive-disabled.png")
+                Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+                Submit-ConnectedProxyInput -Text '~.'
+                Wait-ProxyLog -Pattern 'SSH escape action=disconnect' -TimeoutSeconds 15
+                Wait-ProxyLog -Pattern 'SSH closed' -TimeoutSeconds 15
                 Remove-Item -LiteralPath $dropPath -Force
+                Complete-KnownHostProxyConnection `
+                    -Command $proxyCommand `
+                    -JumpPassword $jumpFixture.password `
+                    -TargetPassword $targetFixture.password
                 continue
             }
             $keepaliveTimeoutObserved = $false
