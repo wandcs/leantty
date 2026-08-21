@@ -50,6 +50,7 @@ param(
         'ctrl-c-authentication-cancellation-and-recovery',
         'pane-close-during-hidden-prompt-and-recovery',
         'key-comment-change-and-restart',
+        'ecdsa-import-encrypted-and-restart',
         'publickey-encrypted-passphrase',
         'parallel-pane-authentication',
         'minimize-restore-hidden-prompt',
@@ -151,6 +152,7 @@ if (-not $DiagnosticHap) {
             'docs/quality-strategy.md',
             'docs/design/ssh-authentication.md',
             'docs/design/key-comment-change.md',
+            'docs/design/ecdsa-key-interop.md',
             'docs/design/terminal-search.md',
             'docs/next-work.md',
             'docs/dev-environment.md'
@@ -199,6 +201,30 @@ $secrets = @()
 $keyName = 'ltty_reg_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
 $keyPassphrase = New-LeanTTYRegressionSecret
 $wrongKeyPassphrase = New-LeanTTYRegressionSecret
+$ecdsaKeyName = 'ltty_reg_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
+$ecdsaSourceFileName = 'ltty_ecdsa_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
+$ecdsaLocalSourcePath = Join-Path $fixtureRoot $ecdsaSourceFileName
+$ecdsaImportPath = "/data/storage/el2/base/haps/entry/files/$ecdsaSourceFileName"
+$ecdsaSandboxPath = "/data/app/el2/100/base/com.leantty.app/haps/entry/files/$ecdsaSourceFileName"
+$ecdsaPassphrase = New-LeanTTYRegressionSecret
+$wrongEcdsaPassphrase = New-LeanTTYRegressionSecret
+$ecdsaKeyCleanupRequired = $false
+$ecdsaSourceCleanupRequired = $false
+$ecdsaKeyAbsenceAudited = $false
+$ecdsaSourceAbsenceAudited = $false
+$ecdsaEvidence = [ordered]@{
+    selected = $false
+    algorithm = 'ecdsa-sha2-nistp256'
+    encryptedSource = $true
+    wrongPassphraseRejected = $false
+    authenticatedBeforeRestart = $false
+    authenticatedAfterRestart = $false
+    fingerprintBeforeRestart = ''
+    fingerprintAfterRestart = ''
+    privateModeBeforeRestart = ''
+    privateModeAfterRestart = ''
+    durableIdentity = $false
+}
 $keyComment = 'comment' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
 $keyCommentEvidence = [ordered]@{
     selected = $false
@@ -270,7 +296,8 @@ $authGroupDefinitions = [ordered]@{
             'keyboard-interactive-zero-prompt',
             'unsupported-method-error-and-recovery',
             'key-comment-change-and-restart',
-            'publickey-encrypted-passphrase'
+            'publickey-encrypted-passphrase',
+            'ecdsa-import-encrypted-and-restart'
         )
         setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-run-scoped-keys'
         resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'disposable-key-files')
@@ -342,6 +369,7 @@ $availableStages = @(
     'encrypted-disposable-auth-key',
     'key-comment-change-and-restart',
     'publickey-encrypted-passphrase',
+    'ecdsa-import-encrypted-and-restart',
     'parallel-pane-authentication',
     'minimize-restore-hidden-prompt',
     'process-stop-during-hidden-prompt-cleanup',
@@ -407,6 +435,7 @@ function Get-LeanTTYFixtureStageBudgetSeconds {
         'pane-close-during-hidden-prompt-and-recovery' = 300
         'encrypted-disposable-auth-key' = 180
         'key-comment-change-and-restart' = 240
+        'ecdsa-import-encrypted-and-restart' = 360
         'publickey-encrypted-passphrase' = 150
         'parallel-pane-authentication' = 480
         'minimize-restore-hidden-prompt' = 240
@@ -1458,17 +1487,20 @@ function Invoke-ClosePaneDialog {
 }
 
 function Remove-DisposableAuthKey {
-    param([Parameter(Mandatory = $true)][string]$LayoutPrefix)
+    param(
+        [Parameter(Mandatory = $true)][string]$KeyName,
+        [Parameter(Mandatory = $true)][string]$LayoutPrefix
+    )
     if (-not (Test-LeanTTYDeviceKeyFilesPresent `
         -Hdc $hdc `
         -Target $Target `
-        -KeyName $keyName)) {
+        -KeyName $KeyName)) {
         return 'already-absent'
     }
     Clear-LeanTTYDeviceInput -Hdc $hdc -Target $Target
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-FocusedDeviceCommand `
-        -Command "key rm $keyName" `
+        -Command "key rm $KeyName" `
         -LayoutName "$LayoutPrefix-focus.json"
     $script:keyDeletePathUsed = $true
     Invoke-DeleteKeyDialog -LayoutName "$LayoutPrefix-dialog.json"
@@ -1476,10 +1508,52 @@ function Remove-DisposableAuthKey {
     if (Test-LeanTTYDeviceKeyFilesPresent `
         -Hdc $hdc `
         -Target $Target `
-        -KeyName $keyName) {
+        -KeyName $KeyName) {
         throw 'Disposable SSH authentication key remains after deletion'
     }
     return 'verified-absent'
+}
+
+function Install-LeanTTYEcdsaImportSource {
+    $sshKeygen = Get-Command ssh-keygen.exe -ErrorAction Stop
+    & $sshKeygen.Source `
+        -q -t ecdsa -b 256 `
+        -N $ecdsaPassphrase `
+        -C 'ecdsa-import@leantty-regression' `
+        -f $ecdsaLocalSourcePath
+    if ($LASTEXITCODE -ne 0 -or
+        -not (Test-Path -LiteralPath $ecdsaLocalSourcePath -PathType Leaf)) {
+        throw '[harness] Unable to create the temporary encrypted ECDSA import source'
+    }
+
+    $script:ecdsaSourceCleanupRequired = $true
+    $sendOutput = @(
+        & $hdc -t $Target file send -b com.leantty.app `
+            $ecdsaLocalSourcePath $ecdsaImportPath 2>&1
+    ) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or
+        $sendOutput -match '(?i)\[Fail\]|error' -or
+        $sendOutput -notmatch 'FileTransfer finish') {
+        throw "[infrastructure] Unable to send the ECDSA import source to the app sandbox: $sendOutput"
+    }
+    $sourceCheck = @(
+        & $hdc -t $Target shell -b com.leantty.app "stat -c '%a %u %g %s' $ecdsaSandboxPath" 2>&1
+    ) -join "`n"
+    if ($sourceCheck -notmatch '(?m)^\d{3,4} \d+ \d+ [1-9]\d*$') {
+        throw "[infrastructure] ECDSA import source is not visible in the app sandbox: $sourceCheck"
+    }
+}
+
+function Remove-LeanTTYEcdsaImportSource {
+    & $hdc -t $Target shell -b com.leantty.app "rm -f $ecdsaSandboxPath" | Out-Null
+    $absenceOutput = @(
+        & $hdc -t $Target shell -b com.leantty.app "ls $ecdsaSandboxPath" 2>&1
+    ) -join "`n"
+    if ($absenceOutput -notmatch 'No such file or directory') {
+        throw "Temporary ECDSA import source cleanup failed: $absenceOutput"
+    }
+    $script:ecdsaSourceCleanupRequired = $false
+    $script:ecdsaSourceAbsenceAudited = $true
 }
 
 function Read-FixtureCredentials {
@@ -1561,7 +1635,7 @@ function Write-AuthEvidence {
         fixture = [ordered]@{
             endpoint = "127.0.0.1:$FixturePort"
             transport = 'hdc-reverse-to-repository-only-russh-server'
-            credentials = 'runtime-generated-temporary-values'
+        credentials = 'runtime-generated-temporary-values'
             credentialClassification = 'repository-only-test-values-not-user-or-production-credentials'
             runSeconds = $fixtureRunSeconds
             selectedStageBudgetsSeconds = @($selectedStageNames | ForEach-Object {
@@ -1635,6 +1709,7 @@ function Write-AuthEvidence {
             'ctrl-c-authentication-cancellation-and-recovery',
             'pane-close-during-hidden-prompt-and-recovery',
             'key-comment-change-wrong-passphrase-visible-input-fingerprint-permissions-durable-restart',
+            'ecdsa-p256-encrypted-import-wrong-passphrase-authentication-durable-restart-and-cleanup',
             'publickey-encrypted-passphrase',
             'parallel-pane-independent-authentication',
             'minimize-restore-hidden-answer-continuity',
@@ -1646,6 +1721,7 @@ function Write-AuthEvidence {
         checks = @($checks)
         resourceManifest = [ordered]@{
             disposableKey = $keyName
+            ecdsaImportedKey = $ecdsaKeyName
             reversePort = $FixturePort
             fixtureDirectory = 'run-scoped-system-temporary-directory'
             knownHostEndpoint = "[127.0.0.1]:$FixturePort"
@@ -1655,6 +1731,8 @@ function Write-AuthEvidence {
             failure = $cleanupFailure
             productDeletePathUsed = $keyDeletePathUsed
             independentKeyAbsenceAudit = $keyAbsenceAudited
+            independentEcdsaKeyAbsenceAudit = $ecdsaKeyAbsenceAudited
+            independentEcdsaSourceAbsenceAudit = $ecdsaSourceAbsenceAudited
             knownHostRemovalCommandCompleted = $knownHostCleanupCompleted
             reverseMappingAbsenceAudit = (-not $mappingActive)
             fixtureProcessAbsenceAudit = $fixtureProcessAbsent
@@ -1662,6 +1740,7 @@ function Write-AuthEvidence {
         performanceMatrix = $performanceEvidence
         bellAttention = $bellEvidence
         keyCommentMaintenance = $keyCommentEvidence
+        ecdsaIdentityInterop = $ecdsaEvidence
         failureDomain = $failureDomain
         failure = $failure
     }
@@ -1706,7 +1785,7 @@ function Get-LeanTTYDeviceKeyProjectionMetadata {
     $publicText = ($publicOutput -join "`n").Trim()
     $match = [regex]::Match(
         $publicText,
-        '^(?<algorithm>ssh-ed25519|ssh-rsa) (?<blob>[A-Za-z0-9+/]+={0,3})(?: (?<comment>[^\r\n]*))?$'
+        '^(?<algorithm>ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) (?<blob>[A-Za-z0-9+/]+={0,3})(?: (?<comment>[^\r\n]*))?$'
     )
     if (-not $match.Success) {
         throw '[product] Disposable public-key projection is malformed'
@@ -1772,7 +1851,9 @@ try {
         $credentials.token,
         $credentials.second_token,
         $keyPassphrase,
-        $wrongKeyPassphrase
+        $wrongKeyPassphrase,
+        $ecdsaPassphrase,
+        $wrongEcdsaPassphrase
     )
 
     $existingMappings = @(& $hdc -t $Target fport ls 2>&1) -join "`n"
@@ -2609,6 +2690,70 @@ try {
     Complete-AuthStage -Name 'publickey-encrypted-passphrase'
     }
 
+    if (Test-AuthStageSelected -Name 'ecdsa-import-encrypted-and-restart') {
+    Start-AuthStage -Name 'ecdsa-import-encrypted-and-restart'
+    $ecdsaEvidence.selected = $true
+    Install-LeanTTYEcdsaImportSource
+    $ecdsaKeyCleanupRequired = $true
+    Submit-FocusedDeviceCommand `
+        -Command "key import $ecdsaImportPath $ecdsaKeyName" `
+        -LayoutName 'layout-ecdsa-import-command-focus.json'
+    Wait-AuthLog -Pattern 'KEY_IMPORT result=success,algorithm=ecdsa-p256'
+
+    $ecdsaMetadataBefore = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $ecdsaKeyName
+    $ecdsaEvidence.fingerprintBeforeRestart = $ecdsaMetadataBefore.fingerprint
+    $ecdsaEvidence.privateModeBeforeRestart = $ecdsaMetadataBefore.privateMode
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'publickey' -Identity $ecdsaKeyName
+    Wait-AuthLog -Pattern 'native auth event kind=private_key_passphrase'
+    Submit-AuthValue `
+        -Value $wrongEcdsaPassphrase `
+        -LayoutName 'layout-ecdsa-wrong-passphrase.json'
+    Wait-AuthLog -Pattern 'SSH error'
+    Assert-NoSecretExposure -LayoutName 'layout-ecdsa-wrong-passphrase-rejected.json'
+    $ecdsaEvidence.wrongPassphraseRejected = $true
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'publickey' -Identity $ecdsaKeyName
+    Wait-AuthLog -Pattern 'native auth event kind=private_key_passphrase'
+    Submit-AuthValue `
+        -Value $ecdsaPassphrase `
+        -LayoutName 'layout-ecdsa-correct-passphrase.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    $ecdsaEvidence.authenticatedBeforeRestart = $true
+    Close-FixtureShell
+
+    Restart-RegressionApp
+    $ecdsaMetadataAfter = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $ecdsaKeyName
+    $ecdsaEvidence.fingerprintAfterRestart = $ecdsaMetadataAfter.fingerprint
+    $ecdsaEvidence.privateModeAfterRestart = $ecdsaMetadataAfter.privateMode
+    if ($ecdsaMetadataAfter.fingerprint -cne $ecdsaMetadataBefore.fingerprint) {
+        throw '[product] Restart did not reopen the same imported ECDSA identity'
+    }
+    $ecdsaEvidence.durableIdentity = $true
+
+    Start-AuthCommand -User 'publickey' -Identity $ecdsaKeyName
+    Wait-AuthLog -Pattern 'native auth event kind=private_key_passphrase'
+    Submit-AuthValue `
+        -Value $ecdsaPassphrase `
+        -LayoutName 'layout-ecdsa-after-restart-passphrase.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    $ecdsaEvidence.authenticatedAfterRestart = $true
+    Close-FixtureShell
+
+    Remove-DisposableAuthKey `
+        -KeyName $ecdsaKeyName `
+        -LayoutPrefix 'layout-ecdsa-key-cleanup' | Out-Null
+    $ecdsaKeyCleanupRequired = $false
+    if (Test-LeanTTYDeviceKeyFilesPresent -Hdc $hdc -Target $Target -KeyName $ecdsaKeyName) {
+        throw '[product] Imported ECDSA identity remained after product deletion'
+    }
+    $ecdsaKeyAbsenceAudited = $true
+    Remove-LeanTTYEcdsaImportSource
+    Complete-AuthStage -Name 'ecdsa-import-encrypted-and-restart'
+    }
+
     if (Test-AuthStageSelected -Name 'parallel-pane-authentication') {
     Start-AuthStage -Name 'parallel-pane-authentication'
     Split-AuthPane
@@ -2682,7 +2827,7 @@ try {
 
     if (Test-AuthStageSelected -Name 'deleted-disposable-auth-key') {
     Start-AuthStage -Name 'deleted-disposable-auth-key'
-    Remove-DisposableAuthKey -LayoutPrefix 'layout-key-cleanup' | Out-Null
+    Remove-DisposableAuthKey -KeyName $keyName -LayoutPrefix 'layout-key-cleanup' | Out-Null
     $keyCleanupRequired = $false
     Complete-AuthStage -Name 'deleted-disposable-auth-key'
     }
@@ -2741,10 +2886,30 @@ try {
     if ($keyCleanupRequired -and -not [string]::IsNullOrWhiteSpace($appPid)) {
         try {
             Restart-RegressionApp
-            Remove-DisposableAuthKey -LayoutPrefix 'layout-key-finally-cleanup' | Out-Null
+            Remove-DisposableAuthKey `
+                -KeyName $keyName `
+                -LayoutPrefix 'layout-key-finally-cleanup' | Out-Null
             $keyCleanupRequired = $false
         } catch {
             $cleanupFailures.Add('Disposable SSH authentication key cleanup failed')
+        }
+    }
+    if ($ecdsaKeyCleanupRequired -and -not [string]::IsNullOrWhiteSpace($appPid)) {
+        try {
+            Restart-RegressionApp
+            Remove-DisposableAuthKey `
+                -KeyName $ecdsaKeyName `
+                -LayoutPrefix 'layout-ecdsa-key-finally-cleanup' | Out-Null
+            $ecdsaKeyCleanupRequired = $false
+        } catch {
+            $cleanupFailures.Add('Imported ECDSA authentication key cleanup failed')
+        }
+    }
+    if ($ecdsaSourceCleanupRequired) {
+        try {
+            Remove-LeanTTYEcdsaImportSource
+        } catch {
+            $cleanupFailures.Add('Temporary ECDSA import source cleanup failed')
         }
     }
     if (-not $knownHostCleanupCompleted -and -not [string]::IsNullOrWhiteSpace($appPid)) {
@@ -2805,6 +2970,18 @@ try {
     } catch {
         $cleanupFailures.Add('Disposable SSH authentication key absence audit failed')
     }
+    try {
+        if (Test-LeanTTYDeviceKeyFilesPresent `
+            -Hdc $hdc `
+            -Target $Target `
+            -KeyName $ecdsaKeyName) {
+            $cleanupFailures.Add('Imported ECDSA authentication key remained after cleanup audit')
+        } else {
+            $ecdsaKeyAbsenceAudited = $true
+        }
+    } catch {
+        $cleanupFailures.Add('Imported ECDSA authentication key absence audit failed')
+    }
     if (-not [string]::IsNullOrWhiteSpace($failure)) {
         foreach ($diagnostic in @(
             @{ source = $fixtureStdout; destination = 'failure-fixture-stdout.txt' },
@@ -2840,6 +3017,8 @@ try {
     $secrets = @()
     $keyPassphrase = ''
     $wrongKeyPassphrase = ''
+    $ecdsaPassphrase = ''
+    $wrongEcdsaPassphrase = ''
     $keyComment = ''
     if ($cleanupFailures.Count -eq 0) {
         $cleanupResult = 'passed'

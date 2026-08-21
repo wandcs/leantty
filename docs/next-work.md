@@ -2,11 +2,11 @@
 
 > 状态：唯一有效的项目 TODO
 >
-> 更新日期：2026-08-21
+> 更新日期：2026-08-22
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：1.5 已授权产品切片已闭合；当前没有未完成的授权工程项
+> 当前工程阶段：1.5 产品开发范围已闭合；等待单独授权 release preparation
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -31,17 +31,20 @@
 ## 1.5 当前状态
 
 `ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v`、
-受控 config import/export 和 `ssh-keygen -c` 已分别完成专项实现、聚焦软件门与所需的物理
-ARM64 HarmonyOS PC 闭环。`AddressFamily` / `ssh -4/-6` 因当前设备没有可重复的全局 IPv6
-fixture 路径而暂缓；UpdateHostKeys 因 russh 缺少完整 proof request/reply、session binding 和
-验签公开 API 而按安全停止条件裁剪。专项完成事实和重新进入条件保留在 roadmap 与对应设计
-文档，不在本文件复制历史 checklist。
+受控 config import/export、`ssh-keygen -c` 和现有 OpenSSH ECDSA P-256/P-384/P-521 Identity
+导入/使用已分别完成专项实现、映射软件门、签名 ARM64 debug HAP 与所需的物理 HarmonyOS PC
+闭环。ECDSA 复用既有 Identity、口令、comment、durable asset、direct/ProxyJump、`put/get` 和
+删除路径，不新增生成入口或第二套状态。
 
-当前没有尚未完成且已经授权的 1.5 工程项。ECDSA 互操作仍是候选集合，必须单独通过库、
-安全、真实样本与物理机互操作门禁后才能写入本文件；1.5 正式候选、版本元数据、完整验证、
-签名、GitHub Release 和 AppGallery 交付也必须由维护者单独启动 release preparation，不能由
-开发期签名 HAP 或局部真机证据自动推导。推广手册只提供稳定工作方法；没有单独写入本文件的
-Pxx 不属于当前活动任务。
+`AddressFamily` / `ssh -4/-6` 因当前设备没有可重复的全局 IPv6 fixture 路径而暂缓；
+UpdateHostKeys 因 russh 缺少完整 proof request/reply、session binding 和验签公开 API 而按安全
+停止条件裁剪。专项完成事实和重新进入条件保留在 roadmap 与对应设计文档，不在本文件复制历史
+checklist。
+
+当前没有继续授权的 1.5 产品开发项。ECDSA 生成、certificate、FIDO/PKCS#11 和通用算法覆盖仍
+不进入范围。1.5 正式候选、版本元数据、完整验证、production 签名、GitHub Release 和 AppGallery
+交付必须由维护者单独启动 release preparation；开发期签名 HAP 和局部真机诊断证据不能自动
+推导为正式候选或商店能力。推广手册只提供稳定工作方法；未单独写入本文件的 Pxx 不属于活动任务。
 
 ## 维护规则
 

@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit'
 import { SshKeyManager } from '../ssh/SshKeyManager'
-import { KeyPairInfo } from '../../common/types/SshKeyTypes'
+import { algorithmDisplayName, KeyPairInfo } from '../../common/types/SshKeyTypes'
 import { CommandParser, CommandParseResult, KeyCommandResult, KeyCommandKind } from './CommandParser'
 import { SshConfig } from '../ssh/SshConfig'
 import { Logger } from '../../common/logger/Logger'
@@ -74,7 +74,8 @@ const KEY_HELP: string =
   '\r\nUsage: key list | key import <path> [<key-name>] | ' +
   'key export <key-name> [<file-name>] | key rm <key-name>\r\n\r\n' +
   '<key-name> is the name shown by "key list". <file-name> is the optional Downloads basename; ' +
-  'it defaults to <key-name>. The private key and .pub file are never overwritten.\r\n'
+  'it defaults to <key-name>. Import accepts OpenSSH Ed25519, RSA and ECDSA P-256/P-384/P-521 ' +
+  'private keys; generation remains Ed25519/RSA only. Files are never overwritten.\r\n'
 const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] ' +
   '[--connect-timeout <1-300|default>] [--server-alive-interval <0-3600|default>] ' +
   '[--server-alive-count-max <1-100|default>]\r\n' +
@@ -190,7 +191,7 @@ export class KeyCommandService {
     ctx.writeOutput('  ----          ----      -----------\r\n')
     for (let i = 0; i < keys.length; i++) {
       let name: string = KeyCommandService.fileName(keys[i].filePath)
-      let algo: string = keys[i].algorithm === 0 ? 'ed25519' : 'rsa'
+      let algo: string = algorithmDisplayName(keys[i].algorithm)
       ctx.writeOutput('  ' + KeyCommandService.safeText(name).padEnd(14, ' ') + algo.padEnd(10, ' ') +
         KeyCommandService.safeText(keys[i].fingerprint) + '\r\n')
     }
@@ -222,6 +223,7 @@ export class KeyCommandService {
         KeyCommandService.safeText(key.filePath) + '.') + '\r\n')
       ctx.writeOutput('  Fingerprint: ' + KeyCommandService.safeText(key.fingerprint) + '\r\n')
       ctx.writeOutput(LocalCommandOutput.prompt())
+      logger.info('KEY_IMPORT result=success,algorithm=' + algorithmDisplayName(key.algorithm))
     } catch (e) {
       logger.warn('Key import failed: ' + e)
       ctx.writeError('The key could not be imported.\r\nCheck the Downloads path and key format, then try again.')
@@ -255,7 +257,7 @@ export class KeyCommandService {
       return
     }
     let name: string = KeyCommandService.fileName(key.filePath)
-    let algo: string = key.algorithm === 0 ? 'ED25519' : 'RSA'
+    let algo: string = algorithmDisplayName(key.algorithm).toUpperCase()
     ctx.writeOutput('\r\n' + KeyCommandService.safeText(key.fingerprint) + ' ' +
       KeyCommandService.safeText(name) + ' (' + algo + ')\r\n' + LocalCommandOutput.prompt())
   }

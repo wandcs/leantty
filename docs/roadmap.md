@@ -2,7 +2,7 @@
 
 > 状态：当前版本路线；采用滚动规划
 >
-> 更新日期：2026-08-21
+> 更新日期：2026-08-22
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -373,9 +373,10 @@ russh `0.62.5` 能力门禁确认依赖只暴露公告回调，不提供 proof r
 一次性入口、固定结构化事件、字段级脱敏，以及 direct/ProxyJump 的物理 ARM64 HarmonyOS PC
 验收。config import/export 已完成真实样本、文件授权、严格导入、round-trip、原子失败恢复和
 物理 PC 闭环。`ssh-keygen -c` 已完成 OpenSSH 行为、当前 Ed25519/RSA 格式、`ssh-key`
-0.7.0-rc.11 comment 能力、原子提交边界、错误恢复和物理 PC 验证。至此 1.5 当前已授权的
-产品切片全部闭合；ECDSA 等其他候选在逐项通过门禁并写入活动清单前均不授权实现，正式发布
-准备也只在单独写入 `next-work.md` 后开始。
+0.7.0-rc.11 comment 能力、原子提交边界、错误恢复和物理 PC 验证。现有 OpenSSH ECDSA
+P-256/P-384/P-521 Identity 也已通过锁定库、加密格式、共同安全生命周期、签名 ARM64 构建和
+命名真机场景门禁，进入既有导入、认证、重启与删除路径；不新增 ECDSA 生成入口。1.5 已授权的
+产品开发范围至此闭合。正式 release preparation 仍须单独写入 `next-work.md` 后开始。
 
 ## 拟议 milestone：1.6 — 长任务注意力与返回路径
 

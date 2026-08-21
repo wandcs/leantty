@@ -3137,7 +3137,7 @@ mod tests {
     };
     use napi_ohos::Status;
     use russh::client;
-    use russh::keys::{Algorithm, PrivateKey, PrivateKeyWithHashAlg, PublicKey};
+    use russh::keys::{Algorithm, EcdsaCurve, PrivateKey, PrivateKeyWithHashAlg, PublicKey};
     use russh::server::{self, Auth, Handler, Msg, Server as _, Session};
     use russh::{Channel, ChannelMsg, Disconnect};
     use std::future::{pending, ready};
@@ -3251,6 +3251,51 @@ mod tests {
         async fn check_server_key(&mut self, _: &PublicKey) -> Result<bool, Self::Error> {
             Ok(true)
         }
+    }
+
+    #[tokio::test]
+    async fn locked_russh_stack_authenticates_standard_ecdsa_curves() {
+        let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap();
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let mut server = ActorServer { event_tx };
+        let config = Arc::new(server::Config {
+            keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap()],
+            ..Default::default()
+        });
+        let running = server.run_on_socket(config, &socket);
+        let server_handle = running.handle();
+
+        let client = async move {
+            for curve in [
+                EcdsaCurve::NistP256,
+                EcdsaCurve::NistP384,
+                EcdsaCurve::NistP521,
+            ] {
+                let config = Arc::new(client::Config::default());
+                let key = Arc::new(
+                    PrivateKey::random(&mut rand::rng(), Algorithm::Ecdsa { curve }).unwrap(),
+                );
+                let mut session = client::connect(config, address, ActorClient).await.unwrap();
+                assert!(session
+                    .authenticate_publickey("user", PrivateKeyWithHashAlg::new(key, None))
+                    .await
+                    .unwrap()
+                    .success());
+                session
+                    .disconnect(Disconnect::ByApplication, "test complete", "")
+                    .await
+                    .unwrap();
+            }
+        };
+
+        let managed_client = async move {
+            let result = tokio::time::timeout(Duration::from_secs(15), client).await;
+            server_handle.shutdown("test complete".to_string());
+            result.expect("ECDSA authentication gate timed out");
+        };
+        let (server_result, ()) = tokio::join!(running, managed_client);
+        server_result.unwrap();
     }
 
     #[tokio::test]

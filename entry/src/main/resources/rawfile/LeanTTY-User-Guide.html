@@ -1167,7 +1167,8 @@ ssh-keygen -l -f id_work
 ssh-copy-id -i id_work user@example.com</code></pre>
         <ul class="feature-list">
           <li>生成 Ed25519 和 RSA-4096 密钥</li>
-          <li>导入并使用加密私钥</li>
+          <li>导入并使用 OpenSSH Ed25519、RSA 及 ECDSA P-256/P-384/P-521 私钥（包括加密私钥）</li>
+          <li>新密钥生成仍限于 Ed25519 和 RSA-4096</li>
           <li>交互式修改私钥口令</li>
           <li>密码和键盘交互式（keyboard-interactive）认证</li>
           <li>按服务器要求连续尝试多种认证方式</li>
@@ -1691,7 +1692,8 @@ ssh-keygen -l -f id_work
 ssh-copy-id -i id_work user@example.com</code></pre>
         <ul class="feature-list">
           <li>Ed25519 and RSA-4096 generation</li>
-          <li>Encrypted private-key import and use</li>
+          <li>OpenSSH Ed25519, RSA and ECDSA P-256/P-384/P-521 import and use, including encrypted keys</li>
+          <li>New-key generation remains limited to Ed25519 and RSA-4096</li>
           <li>Interactive passphrase change</li>
           <li>Password and keyboard-interactive authentication</li>
           <li>Multi-method authentication sequences</li>

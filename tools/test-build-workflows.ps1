@@ -524,6 +524,22 @@ try {
         ) "Native acceptance source injection did not restore $path byte-for-byte"
     }
 
+    $sshAuthHarnessText = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'tools\verify-ssh-auth-pc.ps1')
+    )
+    foreach ($requiredEcdsaHarnessContract in @(
+        "'ecdsa-import-encrypted-and-restart'",
+        'KEY_IMPORT result=success,algorithm=ecdsa-p256',
+        'Install-LeanTTYEcdsaImportSource',
+        'fingerprintAfterRestart',
+        'independentEcdsaKeyAbsenceAudit',
+        'independentEcdsaSourceAbsenceAudit'
+    )) {
+        Assert-True ($sshAuthHarnessText.Contains($requiredEcdsaHarnessContract)) (
+            "SSH authentication harness omitted ECDSA contract: $requiredEcdsaHarnessContract"
+        )
+    }
+
     Assert-LeanTTYHarnessOnlyPaths `
         -ChangedPaths @('tools/verify-ssh-auth-pc.ps1', 'docs/quality-strategy.md') `
         -AllowedPaths @('tools/verify-ssh-auth-pc.ps1', 'docs/*.md')

@@ -6,6 +6,11 @@
 
 ### Added
 
+- Added import and use of existing OpenSSH ECDSA P-256, P-384 and P-521
+  identities, including encrypted private keys. Imported ECDSA identities reuse
+  the existing fingerprint, passphrase, comment, export, durable restart,
+  direct/ProxyJump authentication, file-transfer and deletion paths. New-key
+  generation remains limited to Ed25519 and RSA-4096.
 - Added OpenSSH-compatible `ssh-keygen -c -f <identity>` comment maintenance.
   Encrypted keys request the existing passphrase through masked input before a
   visible new-comment prompt. LeanTTY preserves the fingerprint, public wire

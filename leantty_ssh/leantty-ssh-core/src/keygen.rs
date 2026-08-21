@@ -35,7 +35,14 @@ pub fn inspect_private_key(key_path: &str) -> Result<KeyInspection, String> {
         .map_err(|e| format!("parse private key failed: {}", e))?;
     let public_key = private_key.public_key();
     let algorithm = public_key.algorithm().as_str().to_string();
-    if algorithm != "ssh-ed25519" && algorithm != "ssh-rsa" {
+    if !matches!(
+        algorithm.as_str(),
+        "ssh-ed25519"
+            | "ssh-rsa"
+            | "ecdsa-sha2-nistp256"
+            | "ecdsa-sha2-nistp384"
+            | "ecdsa-sha2-nistp521"
+    ) {
         return Err(format!("unsupported private key type: {}", algorithm));
     }
     Ok(KeyInspection {
@@ -711,6 +718,31 @@ mod tests {
         change_private_key_passphrase_with_replace, export_key_pair, generate_key_pair,
         inspect_private_key, load_private_key, read_key_comment,
     };
+    use russh::keys::ssh_key::{Algorithm, EcdsaCurve, LineEnding, PrivateKey};
+    use std::path::{Path, PathBuf};
+
+    fn write_ecdsa_pair(
+        root: &Path,
+        name: &str,
+        curve: EcdsaCurve,
+        passphrase: &str,
+        comment: &str,
+    ) -> PathBuf {
+        std::fs::create_dir_all(root).unwrap();
+        let path = root.join(name);
+        let mut key = PrivateKey::random(&mut rand::rng(), Algorithm::Ecdsa { curve }).unwrap();
+        key.set_comment(comment);
+        let public = key.public_key().to_string();
+        let stored = if passphrase.is_empty() {
+            key
+        } else {
+            key.encrypt(&mut rand::rng(), passphrase).unwrap()
+        };
+        std::fs::write(&path, stored.to_openssh(LineEnding::LF).unwrap().as_bytes()).unwrap();
+        let public_path = PathBuf::from(format!("{}.pub", path.to_string_lossy()));
+        std::fs::write(public_path, public).unwrap();
+        path
+    }
 
     #[test]
     fn uses_requested_name_and_refuses_overwrite() {
@@ -751,6 +783,76 @@ mod tests {
         assert!(!inspected.encrypted);
         assert!(inspected.public_key.ends_with("test@host"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inspects_all_standard_ecdsa_private_keys() {
+        let root =
+            std::env::temp_dir().join(format!("leantty-ecdsa-inspect-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let cases = [
+            (EcdsaCurve::NistP256, "ecdsa-sha2-nistp256"),
+            (EcdsaCurve::NistP384, "ecdsa-sha2-nistp384"),
+            (EcdsaCurve::NistP521, "ecdsa-sha2-nistp521"),
+        ];
+
+        for (index, (curve, expected)) in cases.into_iter().enumerate() {
+            for encrypted in [false, true] {
+                let passphrase = if encrypted { "curve-secret" } else { "" };
+                let path = write_ecdsa_pair(
+                    &root,
+                    &format!("curve-{index}-{encrypted}"),
+                    curve,
+                    passphrase,
+                    "existing@openssh",
+                );
+                let inspected = inspect_private_key(path.to_str().unwrap()).unwrap();
+                assert_eq!(inspected.algorithm, expected);
+                assert_eq!(inspected.encrypted, encrypted);
+                assert!(inspected.public_key.starts_with(expected));
+                assert!(load_private_key(path.to_str().unwrap(), passphrase).is_ok());
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ecdsa_identity_reuses_passphrase_and_comment_transactions() {
+        let root =
+            std::env::temp_dir().join(format!("leantty-ecdsa-lifecycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = write_ecdsa_pair(
+            &root,
+            "existing-ecdsa",
+            EcdsaCurve::NistP256,
+            "old-secret",
+            "old@openssh",
+        );
+        let path_text = path.to_str().unwrap();
+        let fingerprint = inspect_private_key(path_text).unwrap().fingerprint;
+
+        change_private_key_passphrase(path_text, "old-secret", "new-secret").unwrap();
+        assert!(load_private_key(path_text, "old-secret").is_err());
+        change_key_comment(path_text, "new-secret", "new@leantty").unwrap();
+
+        let inspected = inspect_private_key(path_text).unwrap();
+        assert_eq!(inspected.algorithm, "ecdsa-sha2-nistp256");
+        assert_eq!(inspected.fingerprint, fingerprint);
+        assert!(inspected.encrypted);
+        assert_eq!(
+            load_private_key(path_text, "new-secret")
+                .unwrap()
+                .comment()
+                .as_str()
+                .unwrap(),
+            "new@leantty"
+        );
+        assert!(std::fs::read_to_string(path.with_extension("pub"))
+            .unwrap()
+            .ends_with("new@leantty"));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

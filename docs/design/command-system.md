@@ -181,7 +181,7 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 | `-R` 删除 known-hosts | 必须做 | 当前核心；精确删除并原子持久化 |
 | `-c` 修改 comment | 应该做 | 1.5；复用同一 key identity 和提交入口 |
 | safe `-b/-C/-f` | 必须做受控子集 | 与生成 mode 一起保持明确范围 |
-| ECDSA key 导入和认证 | 应该做，待实现证据 | 1.5 候选；不要求新增 ECDSA 生成入口 |
+| ECDSA key 导入和认证 | 应该做，已闭合 | 1.5；支持既有 OpenSSH P-256/P-384/P-521 Identity，不新增生成入口 |
 | public-key 格式转换 `-i/-e` | 不做标准 mode | 通过受控 `key import/export` 覆盖实际平台边界 |
 | known-host hashing `-H` | 内部安全能力 | 可按产品策略读写散列；不复制 `.old` 文件语义 |
 | passphrase flags `-N/-P` | 不做 | 秘密不得进入命令文本和历史 |
@@ -301,7 +301,7 @@ ProxyJump 最多帮助 Mosh 的 SSH bootstrap；它不转发 UDP。只有目标 
 | 1.2 | 不强行加入命令能力；保持终端搜索的单一主题 |
 | 1.3 | 已采纳 `put/get`；SFTP 只作内部 subsystem，不开放 `scp/sftp` |
 | 1.4 | 启动性能；`ProxyJump` 配置与标准 `-J`，首版单跳并保持 jump/target 双重信任与认证。HSL 专用入口因公开发现门禁失败而裁剪，手工 HSL Host 仍复用现有 SSH 命令、认证和主机信任 |
-| 1.5 | `ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v` 与受控 config import/export 已闭合；`-4/-6` / `AddressFamily` 因真机 IPv6 fixture 门禁暂缓；UpdateHostKeys 因 russh 0.62.5 缺少完整 proof 公开 API 而裁剪。`ssh-keygen -c` 已通过格式/身份不变量、口令路径与原子提交门禁并进入局部实现；ECDSA 导入/认证仍待逐项晋级 |
+| 1.5 | `ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v`、受控 config import/export、`ssh-keygen -c` 与现有 ECDSA P-256/P-384/P-521 Identity 导入/认证已闭合；`-4/-6` / `AddressFamily` 因真机 IPv6 fixture 门禁暂缓；UpdateHostKeys 因 russh 0.62.5 缺少完整 proof 公开 API 而裁剪。ECDSA 不包含生成入口 |
 | 1.6 | 长任务注意力与返回路径；不为版本号强行增加命令能力 |
 | 1.7 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
 

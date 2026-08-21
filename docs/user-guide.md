@@ -182,8 +182,9 @@ ssh-keygen -t rsa -f id_rsa_work -C work
 
 The generation command creates Ed25519 or RSA-4096 keys and refuses to overwrite
 an existing private or public file. It does not currently ask for a new key
-passphrase. An encrypted OpenSSH private key can be imported and will request
-its passphrase when used.
+passphrase. Existing OpenSSH Ed25519, RSA and ECDSA P-256/P-384/P-521 private
+keys can be imported; an encrypted key requests its passphrase when used. ECDSA
+generation is not provided.
 
 Change, add or remove the passphrase of a verified private key:
 
@@ -226,8 +227,9 @@ key rm id_work
 Important behavior:
 
 - Import accepts a private-key file path available to the application, derives
-  and verifies the matching public key, and rejects an incomplete or invalid
-  pair.
+  and verifies the matching public key, and rejects an incomplete, invalid or
+  unsupported key. Supported imported identities are OpenSSH Ed25519, RSA and
+  ECDSA P-256/P-384/P-521 keys.
 - Export requests access to the HarmonyOS Downloads directory and writes both
   the private key and `<name>.pub`.
 - Export never overwrites either destination. Choose another basename when one
