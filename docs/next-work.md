@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：完成 1.5 第三个产品切片的 ServerAlive 收口验证
+> 当前工程阶段：启动 1.5 第四个产品切片的 UpdateHostKeys 进入门禁
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -30,52 +30,32 @@
 
 ## 1.5 当前活动工作
 
-### 第三个切片：验证并配置化现有 SSH keepalive
+### 第四个切片：UpdateHostKeys 标准基线与进入判断
 
-用户在 Wi-Fi、休眠恢复、NAT 或链路黑洞导致 SSH 连接半开时，应在可理解的有限时间内得到
-明确断开并沿用现有重连路径，而不是让 Pane 永久停在看似 connected 的状态。这个结果必须
-使用 SSH 加密通道内的 server-alive 请求，不能以 TCP keepalive、定时写 shell 字节、自动重连
-或后台 Session 代替。
+用户已经可信连接并认证到正确服务器后，服务器可能因正常轮换而同时提供新的主机密钥。LeanTTY
+应评估能否通过标准 SSH 扩展验证并原子更新唯一 `known_hosts`，减少下一次连接被迫删除整条
+信任记录并重新走 TOFU 的风险。这个切片首先只建立标准、库能力和受控失败边界；没有证据前
+不实现自动持久化，也绝不把当前连接遇到的未知/变化主机密钥当作轮换直接接受。
 
-LeanTTY 当前 direct、ProxyJump target 和文件传输连接已经由同一个 russh 配置固定启用
-`30s` interval / `3` count；这不是待新增的第二套计时机制。OpenSSH 的配置默认是
-`ServerAliveInterval 0` / `ServerAliveCountMax 3`，而 russh `0.62.5` 在达到 `max` 后的下一次
-interval 才报告 `KeepaliveTimeout`，不能把两者当成已经等价。这个切片只考虑唯一 OpenSSH
-config 中的标准 `ServerAliveInterval` 与
-`ServerAliveCountMax`。它不增加通用 `-o`、网络自动切换、Session roaming、自动重试、全局
-定时器框架或第二套连接状态；jump 和 target 是否分别需要 keepalive，必须由 russh 能力和受控
-半开证据决定，不能从字段命名猜测。
+1. [ ] 建立 OpenSSH `UpdateHostKeys` 的标准与默认行为基线：明确扩展协商、服务端证明、何时
+   允许增加/删除 key、通配 Host 与非默认端口表示、HashKnownHosts、跳板 target/jump 分层和
+   用户显式关闭语义；只使用上游协议/实现资料，不从命令名称猜测行为。
+2. [ ] 审计 russh `0.62.5` client/server 能力和 LeanTTY 当前 handler 生命周期，证明能否观察
+   `hostkeys-00@openssh.com`、请求 `hostkeys-prove-00@openssh.com` 并验证每个 key 的签名；若库
+   无法提供完整证明链，停止实现并记录重新进入条件，不自建未经审计的旁路协议 parser。
+3. [ ] 扩展 repository-only 双服务器 fixture，覆盖 valid add、valid replace、证明失败、未知算法、
+   重复/畸形 payload、连接中断、target/jump 串扰和普通不支持扩展的服务器；所有场景先只观察，
+   不修改设备 `known_hosts`。
+4. [ ] 基于证据形成专项方案并做进入/裁剪决定。若进入，只允许当前已验证 Host 的 opt-in/受控
+   config 子集、原子 no-follow 持久化、失败保留原文件、明确用户结果和立即重连验证；不加入
+   CA/certificate 管理、后台扫描、静默 TOFU、全局一键接受或第二份主机信任存储。
 
-1. [x] 建立 OpenSSH 与 russh 语义基线：OpenSSH 在未收到服务端数据后发送加密通道内请求，
-   interval `0` 关闭、count 默认 `3`；russh 发送 `keepalive@openssh.com`、任意收到的 SSH packet
-   都复位计数，并在 `alive_timeouts > keepalive_max` 时报告超时。现有固定 `30s/3` 配置覆盖
-   direct、ProxyJump target 和文件传输连接；jump transport 仍须由受控半开证据决定。
-2. [x] 扩展仓库受控 SSH fixture，以传输层单向丢包分别模拟正常应答、目标半开、
-   jump 半开和普通远端静默；先在桌面与物理 PC 上证明“仍连接但请求无应答”可重复，不能以
-   主动 close、进程退出、端口拒绝或短 `ConnectTimeout` 冒充半开。direct target 已由桌面
-   `100ms/3` 时序测试和物理 PC 未改动 `30s/3` 诊断证明；普通静默、target-over-jump 和 jump
-   transport 均已由自动化与物理 PC 证明。
-3. [x] 形成专项方案并锁定最小 Host 入口、有效范围、错误文案、断开计时和 terminal 保留语义：
-   interval 接受 `0-3600` 秒，count 接受 `1-100`；未配置使用 LeanTTY `30/3`，interval `0`
-   显式关闭。OpenSSH count `0` 与 russh `0` 语义相反，必须在网络动作前明确拒绝。
-4. [x] 实现 config 解析/编辑和现有 russh 配置传播；不新增 ArkTS timer 或第二套
-   connection lifecycle。未显式配置时先保留 LeanTTY 现有 `30s/3` 可靠性默认，显式 interval
-   `0` 关闭。direct/target、命名 jump、reconnect 与 Host-based `put/get` 使用各自解析值，native
-   边界再次校验范围；jump driver 自身的 keepalive 结束也进入同一个用户可见关闭路径。
-5. [ ] 补齐 ArkTS/Rust/fixture 自动化与最小 ARM64 build，再在物理 PC 上验证正常静默连接不被
-   误断、确定半开按配置断开、现有默认与显式关闭、direct/ProxyJump 分层、休眠恢复、立即重连和双 Pane
-   隔离；只有 server-alive 请求/应答与用户可见 Session 结果共同成立才算通过。当前 ArkTS/native/
-   fixture 自动化、签名 ARM64 build、默认 `30s/3` direct/ProxyJump，以及显式 `2s/2` target/jump
-   双层黑洞、用户可见超时和立即重连已通过；剩余显式 interval `0`、文件传输、休眠恢复与双 Pane
-   的最小收口场景。
-
-`ConnectTimeout` 与基本 SSH escape 已完成并归档到专项设计。`AddressFamily` / `ssh -4/-6`
-已完成标准基线，
-但当前物理 PC 没有全局 IPv6 默认路由，HDC reverse 也没有提供可用的 `::1` SSH fixture；按
-真机进入门禁暂不实现，不能以 parser 或字段传播测试代替。除本节已经晋级的 keepalive 外，
-路线图中的主机密钥轮换、诊断、config 导入导出和 ECDSA 互操作仍是候选集合，不因 1.5
-milestone 已启动而整体获得
-实现授权。推广手册也只提供稳定工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
+`ConnectTimeout`、基本 SSH escape 与 `ServerAliveInterval/ServerAliveCountMax` 已完成并归档到
+专项设计。`AddressFamily` / `ssh -4/-6` 已完成标准基线，但当前物理 PC 没有全局 IPv6 默认
+路由，HDC reverse 也没有提供可用的 `::1` SSH fixture；按真机进入门禁暂不实现，不能以 parser
+或字段传播测试代替。除本节晋级的 UpdateHostKeys 基线外，安全诊断、config 导入导出、
+`ssh-keygen -c` 和 ECDSA 互操作仍是候选集合，不因 1.5 milestone 已启动而整体获得实现授权。
+推广手册只提供稳定工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
 
 ## 维护规则
 

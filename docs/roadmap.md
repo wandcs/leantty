@@ -366,9 +366,10 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 命令边界与单项门禁见 [`design/command-system.md`](design/command-system.md)。该 milestone
 已进入 `next-work.md`。首个 `ConnectTimeout` 切片已经闭合。`AddressFamily` / `ssh -4/-6`
 完成标准基线后因当前物理 PC 缺少可重复的全局 IPv6/IPv6 SSH fixture 路径而暂缓，不能以
-parser 测试代替；第二个基本 SSH escape（`~.`、`~?`、`~I`）切片已经闭合。当前只授权
-`ServerAliveInterval/ServerAliveCountMax` 半开检测的第三个切片进入门禁，其他候选在逐项
-写入活动清单前均不授权实现。
+parser 测试代替；第二个基本 SSH escape（`~.`、`~?`、`~I`）和第三个
+`ServerAliveInterval/ServerAliveCountMax` 半开检测切片已经闭合。当前只授权 UpdateHostKeys
+标准、russh 能力和受控 fixture 的第四个进入门禁；是否实现持久化必须由该门禁另行决定，
+其他候选在逐项写入活动清单前均不授权实现。
 
 ## 拟议 milestone：1.6 — 长任务注意力与返回路径
 

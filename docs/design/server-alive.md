@@ -1,6 +1,6 @@
 # ServerAliveInterval / ServerAliveCountMax
 
-> 状态：Implemented；配置化双层黑洞已通过物理 PC，收口验证中
+> 状态：Completed
 >
 > 更新日期：2026-08-21
 >
@@ -89,9 +89,25 @@ keepalive 超时，移除控制文件后立即复用两层 known_hosts 和认证
 `029dc64d900d59787a84408238ae5afa77e371a23f6a061189527679189d545a`；测试 Host、known_hosts、
 HDC mapping、fixture 与临时凭据均由成功路径和 finally 清理。
 
-## 剩余收口验证
+最终收口使用同一测试签名 ARM64 HAP，SHA-256 为
+`d33c6a9a4b611b83d3880443244c84d495b53fe02a0019ab8754be370ea94409`：
 
-1. 验证明示 interval `0` 的正常静默连接不发送探测且不误断，以及 Host-based 文件传输使用
-   target 值。
-2. 完成休眠恢复与双 Pane 隔离的最小真机场景；验收结束必须删除 Host、known_hosts、reverse
-   mapping、fixture socket、控制文件和临时凭据。
+- 显式 interval `0` 的 target 与 jump transport 分别进入受控 server-output 黑洞，各自持续
+  8 秒且未产生 KeepaliveTimeout；黑洞期间目标 fixture 仍收到同一连接的受控输入。由于已经
+  丢弃的加密 SSH packet 不能在移除控制文件后补回，每层证据完成后使用本地 `~.` 释放 Session，
+  再移除黑洞并通过原 Host/known_hosts 立即重连。证据位于
+  `build/verification/proxy-jump-20260821-212054/summary.json`。
+- Host-based GET 使用 target 的显式 `1s/1`，受控黑洞后在 `2234ms` 只产生一次
+  `KEEPALIVE_TIMEOUT` 并回到 IDLE；失败下载未暴露 final 或 temporary 文件，移除黑洞后同一
+  Host 重试完成。证据位于
+  `build/verification/put-get-20260821-212829/device-get-server-alive.json`。
+- 已连接的双层 ProxyJump Session 在系统 suspend/wake 后保留同一应用进程、terminal 状态和
+  目标输入，正常退出后完成终端复位。证据位于
+  `build/verification/proxy-jump-20260821-213120/summary.json`。
+- 两个 Pane 使用四个独立 fixture 凭据和两条 ProxyJump route；输入只到达各自 target，关闭
+  左侧 route 后右侧仍可交互并独立关闭。证据位于
+  `build/verification/proxy-jump-20260821-213304/summary.json`。
+
+全部场景完成后 run-scoped Host、known_hosts、HDC mapping、fixture、控制文件与临时凭据均已
+清理，HDC mapping 列表为 `[Empty]`。这些是 1.5 开发期 change-scoped 物理证据，不替代正式
+release candidate 的完整 L4 发布验收。
