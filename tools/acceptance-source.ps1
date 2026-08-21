@@ -1149,6 +1149,28 @@ function Add-LeanTTYAcceptanceSource {
         $text.session `
         $keyChangeAnchor `
         ($keyChangeAnchor + "    this.logAcceptanceInputSubmit('key-passphrase-change')`n")
+    $keyCommentPassphraseAnchor = @'
+  private submitKeyCommentPassphrase(): void {
+    if (this.mode !== TerminalMode.KEY_COMMENT_PASSPHRASE_INPUT ||
+      this.keyCommentChangeStage !== KeyCommentChangeStage.PASSPHRASE) {
+      return
+    }
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session `
+        $keyCommentPassphraseAnchor `
+        ($keyCommentPassphraseAnchor + "    this.logAcceptanceInputSubmit('key-comment-passphrase')`n")
+    $keyCommentAnchor = @'
+  private submitKeyCommentChange(): void {
+    if (this.mode !== TerminalMode.KEY_COMMENT_INPUT ||
+      this.keyCommentChangeStage !== KeyCommentChangeStage.COMMENT) {
+      return
+    }
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session `
+        $keyCommentAnchor `
+        ($keyCommentAnchor + "    this.logAcceptanceInputSubmit('key-comment')`n")
     $sessionMethod = @'
   private logAcceptanceInputSubmit(kind: string): void {
     if (ACCEPTANCE_TESTS) {

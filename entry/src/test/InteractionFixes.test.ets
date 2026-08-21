@@ -667,6 +667,24 @@ export default function interactionFixesTest() {
         .assertEqual(true)
     })
 
+    it('parsesOnlyTheInteractiveKeyCommentChangeForm', 0, () => {
+      let standard: KeyCommandResult = CommandParser.parseSshKeygen('ssh-keygen -c -f deploy')
+      let reordered: KeyCommandResult = CommandParser.parseSshKeygen('ssh-keygen -f ~/.ssh/deploy -c')
+      expect(standard.kind).assertEqual(KeyCommandKind.KEY_COMMENT_CHANGE)
+      expect(standard.keyName).assertEqual('deploy')
+      expect(reordered.kind).assertEqual(KeyCommandKind.KEY_COMMENT_CHANGE)
+      expect(reordered.keyName).assertEqual('~/.ssh/deploy')
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c').errorMessage.length > 0).assertEqual(true)
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c -f one -f two').errorMessage.length > 0)
+        .assertEqual(true)
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c -f deploy -C inline').errorMessage.length > 0)
+        .assertEqual(true)
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c -f deploy -p').errorMessage.length > 0)
+        .assertEqual(true)
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c -f deploy extra').errorMessage.length > 0)
+        .assertEqual(true)
+    })
+
     it('parsesExactOpenSshKnownHostRemovalTargets', 0, () => {
       let defaultPort: KeyCommandResult = CommandParser.parseSshKeygen('ssh-keygen -R server.example.com')
       let customPort: KeyCommandResult =

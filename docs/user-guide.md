@@ -197,6 +197,20 @@ key, or leave the new passphrase empty to remove encryption. `Ctrl+C`, a wrong
 old passphrase, a confirmation mismatch or a commit failure leaves the existing
 key active. Passphrases are not accepted through command options.
 
+Change or remove the comment on an existing verified key pair:
+
+```text
+ssh-keygen -c -f id_work
+```
+
+For an encrypted key, LeanTTY first asks for the current passphrase through
+non-echoing input. It then shows the current comment and accepts one visible
+replacement; leave the replacement empty to remove the comment. Spaces and
+UTF-8 text are retained. Control characters and comments over 1023 UTF-8 bytes
+are rejected. Success keeps the same fingerprint, key algorithm, encryption
+state and passphrase, and updates both the private key and `.pub` line. `Ctrl+C`,
+an incorrect passphrase or a commit failure leaves the previous pair active.
+
 Inspect and manage verified keys:
 
 ```text
@@ -321,7 +335,7 @@ the file.
 | `ssh [-p port] [-i identity] user@host` | Connect directly |
 | `ssh [-p port] [-i identity] host-name` | Connect through saved configuration |
 | `ssh -G host-name` | Show the supported effective configuration |
-| `ssh-keygen -t ...`, `-y`, `-l`, `-p`, `-F`, `-R` | Generate, inspect or maintain SSH assets |
+| `ssh-keygen -t ...`, `-y`, `-l`, `-p`, `-c`, `-F`, `-R` | Generate, inspect or maintain SSH assets |
 | `ssh-copy-id -i ...` | Install one public key |
 | `put [-p port] [-i identity] local-file host:remote-path` | Upload one Downloads file through SFTP |
 | `get [-p port] [-i identity] host:remote-file [local-path]` | Download one SFTP file into Downloads |

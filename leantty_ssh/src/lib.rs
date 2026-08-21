@@ -3026,6 +3026,24 @@ pub fn ssh_change_private_key_passphrase(
 }
 
 #[napi]
+pub fn ssh_read_key_comment(key_path: String, mut passphrase: String) -> Result<String> {
+    let result = keygen::read_key_comment(&key_path, &passphrase);
+    passphrase.zeroize();
+    result.map_err(|error| napi_error(&error))
+}
+
+#[napi]
+pub fn ssh_change_key_comment(
+    key_path: String,
+    mut passphrase: String,
+    new_comment: String,
+) -> Result<String> {
+    let result = keygen::change_key_comment(&key_path, &passphrase, &new_comment);
+    passphrase.zeroize();
+    result.map_err(|error| napi_error(&error))
+}
+
+#[napi]
 pub fn ssh_export_key_pair(
     private_path: String,
     public_path: String,

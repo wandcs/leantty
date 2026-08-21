@@ -6,6 +6,12 @@
 
 ### Added
 
+- Added OpenSSH-compatible `ssh-keygen -c -f <identity>` comment maintenance.
+  Encrypted keys request the existing passphrase through masked input before a
+  visible new-comment prompt. LeanTTY preserves the fingerprint, public wire
+  key, encryption state, passphrase, 0600 private permissions and durable key
+  identity while committing one matching private/public comment; empty input
+  removes it, and failed projection or durable commits restore the old pair.
 - Added controlled `config import <Downloads-file-name>` and `config export
   [<Downloads-file-name>]` commands for one canonical OpenSSH config. Import
   validates before commit, preserves comments, whitespace, line endings,

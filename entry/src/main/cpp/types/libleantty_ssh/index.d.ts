@@ -77,6 +77,8 @@ export declare function sshStartFileTransfer(
 ): string
 export declare function sshGenerateKeyPair(algorithm: string, passphrase: string, outputDir: string, fileName: string, comment: string): Promise<string>
 export declare function sshChangePrivateKeyPassphrase(keyPath: string, oldPassphrase: string, newPassphrase: string): void
+export declare function sshReadKeyComment(keyPath: string, passphrase: string): string
+export declare function sshChangeKeyComment(keyPath: string, passphrase: string, newComment: string): string
 export declare function sshExportKeyPair(privatePath: string, publicPath: string, outputDir: string, fileName: string): void
 export declare function sshReadPublicKey(keyPath: string): string
 export declare function sshInspectPrivateKey(keyPath: string): string

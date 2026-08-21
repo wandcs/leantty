@@ -33,7 +33,7 @@
 ### 第七个切片：实现 `ssh-keygen -c` key comment
 
 用户从其他 OpenSSH 环境导入或长期维护 Identity 时，应能修正公钥注释而不生成一把新 key、
-改变 fingerprint、削弱私钥加密或制造公私钥两份身份。标准、`ssh-key` 0.6.7、当前 Ed25519/RSA
+改变 fingerprint、削弱私钥加密或制造公私钥两份身份。标准、`ssh-key` 0.7.0-rc.11、当前 Ed25519/RSA
 格式和提交边界审计已通过进入门禁，专项合同见
 [`design/key-comment-change.md`](design/key-comment-change.md)。
 

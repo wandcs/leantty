@@ -76,7 +76,8 @@ export enum KeyCommandKind {
   KEY_PASSPHRASE_CHANGE = 16,
   HOST_KEY_FIND = 17,
   CONFIG_IMPORT = 18,
-  CONFIG_EXPORT = 19
+  CONFIG_EXPORT = 19,
+  KEY_COMMENT_CHANGE = 20
 }
 
 export class KeyCommandResult {
@@ -769,6 +770,7 @@ export class CommandParser {
     let publicMode: boolean = false
     let fingerprintMode: boolean = false
     let passphraseMode: boolean = false
+    let commentChangeMode: boolean = false
     let keyTypeSpecified: boolean = false
     let commentSpecified: boolean = false
     let keyFileCount: number = 0
@@ -791,6 +793,9 @@ export class CommandParser {
       } else if (parts[i] === '-p') {
         if (passphraseMode) { result.errorMessage = 'ssh-keygen: duplicate option -p'; return result }
         passphraseMode = true
+      } else if (parts[i] === '-c') {
+        if (commentChangeMode) { result.errorMessage = 'ssh-keygen: duplicate option -c'; return result }
+        commentChangeMode = true
       } else if (parts[i] === '-f') {
         if (i + 1 >= parts.length) { result.errorMessage = 'ssh-keygen: missing filename after -f'; return result }
         keyFileCount += 1
@@ -806,7 +811,17 @@ export class CommandParser {
       }
       i += 1
     }
-    if (passphraseMode) {
+    if (commentChangeMode) {
+      if (passphraseMode || publicMode || fingerprintMode || keyTypeSpecified || commentSpecified) {
+        result.errorMessage = 'ssh-keygen: -c cannot be combined with key generation, passphrase or inspection options'
+      } else if (keyFileCount !== 1 || result.keyName.length === 0) {
+        result.errorMessage = 'ssh-keygen: -c requires exactly one -f <identity>'
+      } else if (unexpectedArgument.length > 0) {
+        result.errorMessage = 'ssh-keygen: unexpected argument ' + unexpectedArgument
+      } else {
+        result.kind = KeyCommandKind.KEY_COMMENT_CHANGE
+      }
+    } else if (passphraseMode) {
       if (publicMode || fingerprintMode || keyTypeSpecified || commentSpecified) {
         result.errorMessage = 'ssh-keygen: -p cannot be combined with key generation or inspection options'
       } else if (keyFileCount !== 1 || result.keyName.length === 0) {

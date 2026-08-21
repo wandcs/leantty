@@ -220,6 +220,7 @@ Formal release software gate, candidate build and deployment use one command:
 ```powershell
 .\tools\verify-pc.ps1
 .\tools\verify-key-passphrase-pc.ps1
+.\tools\verify-ssh-auth-pc.ps1 -DiagnosticHap -HapPath <signed-test-hap> -Only key-comment-change-and-restart
 .\tools\verify-ssh-matrix-pc.ps1
 ```
 
@@ -238,6 +239,12 @@ volatile build tree with its SHA-256, Git identity and software evidence.
 `verify-key-passphrase-pc.ps1` is the first feature-owned physical scenario. It
 installs an already retained clean candidate, drives real application state,
 records JSON evidence and never rebuilds the HAP.
+
+`verify-ssh-auth-pc.ps1 -Only key-comment-change-and-restart` is the bounded
+1.5 comment-maintenance scenario. It generates and encrypts one disposable key,
+rejects a wrong passphrase, changes the visible comment, compares the exact
+OpenSSH fingerprint and 0600 mode before/after/restart, then authenticates to
+the controlled fixture with the unchanged passphrase and deletes the key.
 
 `verify-ssh-matrix-pc.ps1` is the formal SSH physical entry. It runs four
 isolated groups in the fixed order below against one retained candidate, stops

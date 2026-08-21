@@ -4,6 +4,7 @@ import { KeyAlgorithm, KeyPairInfo, KeyGenerationResult, algorithmToString } fro
 import { FileUtils } from '../../common/utils/FileUtils'
 import { Logger } from '../../common/logger/Logger'
 import { DurableStateManager } from '../persistence/DurableStateManager'
+import { KeyCommentCommitPolicy } from '../persistence/KeyCommentCommitPolicy'
 import sshNative from 'libleantty_ssh.so'
 
 const logger: Logger = new Logger('SshKeyManager')
@@ -197,6 +198,31 @@ export class SshKeyManager {
       }
       throw new Error('Failed to retain changed private key; the original passphrase remains active: ' + e)
     }
+  }
+
+  static readKeyComment(context: common.Context, keyName: string, passphrase: string): string {
+    let key: KeyPairInfo | null = SshKeyManager.findKeyByName(context, keyName)
+    if (key === null) {
+      throw new Error('Key not found or invalid: ' + keyName)
+    }
+    return sshNative.sshReadKeyComment(key.filePath, passphrase)
+  }
+
+  static changeKeyComment(
+    context: common.Context, keyName: string, passphrase: string, newComment: string
+  ): string {
+    let key: KeyPairInfo | null = SshKeyManager.findKeyByName(context, keyName)
+    if (key === null) {
+      throw new Error('Key not found or invalid: ' + keyName)
+    }
+    let keyPath: string = key.filePath
+    return KeyCommentCommitPolicy.commit(
+      (): string => { return sshNative.sshChangeKeyComment(keyPath, passphrase, newComment) },
+      (): void => { DurableStateManager.captureKeyPair(context, keyName) },
+      (oldComment: string): void => {
+        sshNative.sshChangeKeyComment(keyPath, passphrase, oldComment)
+      }
+    )
   }
 
   private static validateExportFileName(name: string): string | null {

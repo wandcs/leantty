@@ -405,6 +405,13 @@ try {
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_SUBMIT')) (
             'Debug acceptance source injection omitted input telemetry'
         )
+        Assert-True (($injectedText -join "`n").Contains(
+                "logAcceptanceInputSubmit('key-comment-passphrase')"
+            ) -and ($injectedText -join "`n").Contains(
+                "logAcceptanceInputSubmit('key-comment')"
+            )) (
+            'Debug acceptance source injection omitted key-comment input telemetry'
+        )
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_LOCAL_CLEANUP_FAILURE')) (
             'Debug acceptance source injection omitted local cleanup failure control'
         )

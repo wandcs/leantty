@@ -1,6 +1,6 @@
 # SSH key comment change
 
-> Status: implementation authorized on 2026-08-21
+> Status: implemented; routine physical validation pending on 2026-08-21
 >
 > Scope: LeanTTY 1.5 `ssh-keygen -c -f <identity>`
 
@@ -25,7 +25,7 @@ comment. Its current
 loads the private key, rewrites it with the same passphrase, derives the public
 key and saves the same new comment to `.pub`.
 
-LeanTTY's `ssh-key` 0.6.7 dependency exposes `PrivateKey::comment`,
+LeanTTY's locked `ssh-key` 0.7.0-rc.11 dependency exposes `PrivateKey::comment`,
 `PrivateKey::set_comment`, OpenSSH encode/decode, decrypt/encrypt and fingerprint
 operations. The current key owner already stores only verified OpenSSH-format
 Ed25519/RSA pairs and has a passphrase-change path with a 0600 temporary file,
@@ -33,6 +33,30 @@ fsync, identity verification, atomic replacement and durable rollback.
 
 The entry gate therefore passes. No new dependency, key model or storage
 authority is required.
+
+## Physical-automation research record
+
+Research refreshed on 2026-08-21 for the question: can the existing HarmonyOS
+PC harness safely reuse targeted UiTest text input for the visible comment and
+masked passphrase stages, and which observation should decide success?
+
+- Huawei's HarmonyOS V13 UiTest reference documents `Component.inputText` as
+  text input for text components.
+- The OpenHarmony arkXtest guide defines UiTest as component search and GUI
+  operation support. Current upstream event-observer work also records that a
+  component text-change event is not reliably emitted by `inputText` in its
+  tested branch.
+
+The verifier therefore reuses the established uniquely focused terminal
+`inputText` path, injects Enter only once, and does not use a text-change event,
+layout text or a fixed delay as the verdict. It requires the acceptance-only
+non-content submit marker, then compares the sandbox `.pub` fingerprint/comment
+and private-file mode, repeats the comparison after an application restart and
+uses the controlled SSH server as the unchanged-passphrase authentication
+oracle. The relevant platform sources are the
+[HarmonyOS UiTest API](https://developer.huawei.com/consumer/cn/doc/harmonyos-references-V13/js-apis-uitest-V13),
+[OpenHarmony arkXtest guide](https://gitee.com/openharmony/docs/blob/master/en/application-dev/application-test/arkxtest-guidelines.md)
+and [upstream event-observer change](https://gitee.com/openharmony/testfwk_arkxtest/pulls/1108).
 
 ## Contract
 

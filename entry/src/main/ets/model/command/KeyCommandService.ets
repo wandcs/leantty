@@ -27,6 +27,7 @@ const HELP_TEXT: string =
   '  ssh-keygen -y -f <identity>                    Show a public key\r\n' +
   '  ssh-keygen -l -f <identity>[.pub]               Show a fingerprint\r\n' +
   '  ssh-keygen -p -f <identity>                     Change a private-key passphrase\r\n' +
+  '  ssh-keygen -c -f <identity>                     Change a key comment\r\n' +
   '  ssh-keygen -F <host>|[<host>]:<port>            Find trusted host keys\r\n' +
   '  ssh-keygen -R <host>|[<host>]:<port>            Remove trusted host keys\r\n' +
   '  ssh-copy-id -i <key-name> [-p <port>] <user>@<host>  Install a public key\r\n' +
@@ -63,6 +64,7 @@ const SSH_HELP: string = '\r\nUsage: ssh [-v] [-p <port>] [-i <identity>] [-J <j
 const KEYGEN_HELP: string = '\r\nUsage: ssh-keygen [-t <ed25519|rsa>] [-f <key-name>] [-C <comment>]\r\n' +
   '       ssh-keygen -y -f <identity>\r\n       ssh-keygen -l -f <identity>[.pub]\r\n' +
   '       ssh-keygen -p -f <identity>\r\n' +
+  '       ssh-keygen -c -f <identity>\r\n' +
   '       ssh-keygen -F <host>|[<host>]:<port>\r\n' +
   '       ssh-keygen -R <host>|[<host>]:<port>\r\n\r\n' +
   'Creates, inspects or updates keys, and finds or removes trusted host records in LeanTTY ~/.ssh.\r\n'
@@ -105,6 +107,7 @@ export interface KeyCommandContext {
   writeError: (msg: string) => void
   writeOutput: (text: string) => void
   beginKeyPassphraseChange: (keyName: string) => void
+  beginKeyCommentChange: (keyName: string, hasPassphrase: boolean) => void
   confirmKeyDelete: (name: string, fingerprint: string, onConfirm: () => void, onCancel: () => void) => void
   showTopLevelHelp: (helpText: string) => void
 }
@@ -129,6 +132,10 @@ export class KeyCommandService {
     if (result.kind === KeyCommandKind.KEYINFO) { KeyCommandService.executeKeyinfo(result, ctx); return }
     if (result.kind === KeyCommandKind.KEY_PASSPHRASE_CHANGE) {
       KeyCommandService.executeKeyPassphraseChange(result, ctx)
+      return
+    }
+    if (result.kind === KeyCommandKind.KEY_COMMENT_CHANGE) {
+      KeyCommandService.executeKeyCommentChange(result, ctx)
       return
     }
     if (result.kind === KeyCommandKind.KEYEXPORT) { KeyCommandService.executeKeyexport(result, ctx); return }
@@ -261,6 +268,16 @@ export class KeyCommandService {
       return
     }
     ctx.beginKeyPassphraseChange(KeyCommandService.fileName(key.filePath))
+  }
+
+  private static executeKeyCommentChange(result: KeyCommandResult, ctx: KeyCommandContext): void {
+    let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
+    if (key === null) {
+      ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
+      return
+    }
+    ctx.beginKeyCommentChange(KeyCommandService.fileName(key.filePath), key.hasPassphrase)
   }
 
   private static executeKeyrm(result: KeyCommandResult, ctx: KeyCommandContext): void {

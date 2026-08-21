@@ -49,6 +49,7 @@ param(
         'unsupported-method-error-and-recovery',
         'ctrl-c-authentication-cancellation-and-recovery',
         'pane-close-during-hidden-prompt-and-recovery',
+        'key-comment-change-and-restart',
         'publickey-encrypted-passphrase',
         'parallel-pane-authentication',
         'minimize-restore-hidden-prompt',
@@ -134,6 +135,7 @@ if (-not $DiagnosticHap) {
         -AllowedHarnessPaths @(
             'tools/verify-ssh-auth-pc.ps1',
             'tools/verify-ssh-matrix-pc.ps1',
+            'tools/acceptance-source.ps1',
             'tools/verify-terminal-search-pc.ps1',
             'tools/verify-file-transfer-pc.ps1',
             'tools/verify-put-get-pc.ps1',
@@ -148,6 +150,7 @@ if (-not $DiagnosticHap) {
             'leantty_ssh/ssh-auth-fixture/src/main.rs',
             'docs/quality-strategy.md',
             'docs/design/ssh-authentication.md',
+            'docs/design/key-comment-change.md',
             'docs/design/terminal-search.md',
             'docs/next-work.md',
             'docs/dev-environment.md'
@@ -195,6 +198,20 @@ $credentials = @{}
 $secrets = @()
 $keyName = 'ltty_reg_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
 $keyPassphrase = New-LeanTTYRegressionSecret
+$wrongKeyPassphrase = New-LeanTTYRegressionSecret
+$keyComment = 'comment' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+$keyCommentEvidence = [ordered]@{
+    selected = $false
+    fingerprintBefore = ''
+    fingerprintAfter = ''
+    fingerprintAfterRestart = ''
+    privateModeBefore = ''
+    privateModeAfter = ''
+    privateModeAfterRestart = ''
+    exactCommentAfter = $false
+    exactCommentAfterRestart = $false
+    visibleInputScreenshot = ''
+}
 $keyCleanupRequired = $false
 $keyDeletePathUsed = $false
 $keyAbsenceAudited = $false
@@ -252,6 +269,7 @@ $authGroupDefinitions = [ordered]@{
             'publickey-then-keyboard-interactive',
             'keyboard-interactive-zero-prompt',
             'unsupported-method-error-and-recovery',
+            'key-comment-change-and-restart',
             'publickey-encrypted-passphrase'
         )
         setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-run-scoped-keys'
@@ -322,6 +340,7 @@ $availableStages = @(
     'ctrl-c-authentication-cancellation-and-recovery',
     'pane-close-during-hidden-prompt-and-recovery',
     'encrypted-disposable-auth-key',
+    'key-comment-change-and-restart',
     'publickey-encrypted-passphrase',
     'parallel-pane-authentication',
     'minimize-restore-hidden-prompt',
@@ -344,13 +363,18 @@ $keyStages = @(
     'publickey-unencrypted',
     'publickey-then-password',
     'publickey-then-keyboard-interactive',
-    'publickey-encrypted-passphrase'
+    'publickey-encrypted-passphrase',
+    'key-comment-change-and-restart'
 )
 if (@($keyStages | Where-Object { $selectedStages.Contains($_) }).Count -gt 0) {
     [void]$selectedStages.Add('generated-disposable-auth-key')
     [void]$selectedStages.Add('deleted-disposable-auth-key')
 }
 if ($selectedStages.Contains('publickey-encrypted-passphrase')) {
+    [void]$selectedStages.Add('encrypted-disposable-auth-key')
+}
+if ($selectedStages.Contains('key-comment-change-and-restart')) {
+    [void]$selectedStages.Add('publickey-encrypted-passphrase')
     [void]$selectedStages.Add('encrypted-disposable-auth-key')
 }
 $selectedStageNames = @($availableStages | Where-Object { $selectedStages.Contains($_) })
@@ -382,6 +406,7 @@ function Get-LeanTTYFixtureStageBudgetSeconds {
         'ctrl-c-authentication-cancellation-and-recovery' = 300
         'pane-close-during-hidden-prompt-and-recovery' = 300
         'encrypted-disposable-auth-key' = 180
+        'key-comment-change-and-restart' = 240
         'publickey-encrypted-passphrase' = 150
         'parallel-pane-authentication' = 480
         'minimize-restore-hidden-prompt' = 240
@@ -1609,6 +1634,7 @@ function Write-AuthEvidence {
             'unsupported-method-error-and-recovery',
             'ctrl-c-authentication-cancellation-and-recovery',
             'pane-close-during-hidden-prompt-and-recovery',
+            'key-comment-change-wrong-passphrase-visible-input-fingerprint-permissions-durable-restart',
             'publickey-encrypted-passphrase',
             'parallel-pane-independent-authentication',
             'minimize-restore-hidden-answer-continuity',
@@ -1635,6 +1661,7 @@ function Write-AuthEvidence {
         }
         performanceMatrix = $performanceEvidence
         bellAttention = $bellEvidence
+        keyCommentMaintenance = $keyCommentEvidence
         failureDomain = $failureDomain
         failure = $failure
     }
@@ -1661,6 +1688,54 @@ function Get-LeanTTYPreferencesDigest {
         throw 'Unexpected LeanTTY Preferences digest response'
     }
     return $match.Groups['digest'].Value.ToLowerInvariant()
+}
+
+function Get-LeanTTYDeviceKeyProjectionMetadata {
+    param([Parameter(Mandatory = $true)][string]$KeyName)
+
+    if ($KeyName -notmatch '^ltty_reg_(?:[0-9a-f]{10}|[a-p]{10})$') {
+        throw '[harness] Key metadata request is outside the disposable-key namespace'
+    }
+    $sshDirectory = '/data/app/el2/100/base/com.leantty.app/haps/entry/files/.ssh'
+    $privatePath = "$sshDirectory/$KeyName"
+    $publicPath = "$privatePath.pub"
+    $publicOutput = @(& $hdc -t $Target shell -b com.leantty.app "cat $publicPath" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw '[harness] Unable to read disposable public-key projection metadata'
+    }
+    $publicText = ($publicOutput -join "`n").Trim()
+    $match = [regex]::Match(
+        $publicText,
+        '^(?<algorithm>ssh-ed25519|ssh-rsa) (?<blob>[A-Za-z0-9+/]+={0,3})(?: (?<comment>[^\r\n]*))?$'
+    )
+    if (-not $match.Success) {
+        throw '[product] Disposable public-key projection is malformed'
+    }
+    try {
+        $wireBytes = [Convert]::FromBase64String($match.Groups['blob'].Value)
+    } catch {
+        throw '[product] Disposable public-key projection contains invalid base64 key data'
+    }
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $hasher.ComputeHash($wireBytes)
+    } finally {
+        $hasher.Dispose()
+    }
+    $fingerprint = 'SHA256:' + [Convert]::ToBase64String($digest).TrimEnd('=')
+    $modeOutput = @(& $hdc -t $Target shell -b com.leantty.app "stat -c %a $privatePath" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw '[harness] Unable to inspect disposable private-key permissions'
+    }
+    $privateMode = ($modeOutput -join "`n").Trim()
+    if ($privateMode -notmatch '^600$') {
+        throw "[product] Disposable private-key mode is not 0600: $privateMode"
+    }
+    return [pscustomobject]@{
+        fingerprint = $fingerprint
+        comment = $match.Groups['comment'].Value
+        privateMode = $privateMode
+    }
 }
 
 try {
@@ -1696,7 +1771,8 @@ try {
         $credentials.account,
         $credentials.token,
         $credentials.second_token,
-        $keyPassphrase
+        $keyPassphrase,
+        $wrongKeyPassphrase
     )
 
     $existingMappings = @(& $hdc -t $Target fport ls 2>&1) -join "`n"
@@ -2460,6 +2536,69 @@ try {
     Complete-AuthStage -Name 'encrypted-disposable-auth-key'
     }
 
+    if (Test-AuthStageSelected -Name 'key-comment-change-and-restart') {
+    Start-AuthStage -Name 'key-comment-change-and-restart'
+    $keyCommentEvidence.selected = $true
+    $metadataBefore = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $keyName
+    $keyCommentEvidence.fingerprintBefore = $metadataBefore.fingerprint
+    $keyCommentEvidence.privateModeBefore = $metadataBefore.privateMode
+    Submit-FocusedDeviceCommand `
+        -Command "ssh-keygen -c -f $keyName" `
+        -LayoutName 'layout-key-comment-command-focus.json'
+    Wait-AuthLog -Pattern 'KEY_COMMENT_CHANGE stage=passphrase'
+    Submit-AuthValue `
+        -Value $wrongKeyPassphrase `
+        -LayoutName 'layout-key-comment-wrong-passphrase.json'
+    Wait-AuthLog -Pattern 'KEY_COMMENT_CHANGE result=passphrase-rejected stage=passphrase'
+    Submit-AuthValue `
+        -Value $keyPassphrase `
+        -LayoutName 'layout-key-comment-passphrase.json'
+    Wait-AuthLog -Pattern 'KEY_COMMENT_CHANGE stage=comment'
+
+    $commentInputNode = Focus-ActiveCommandInput `
+        -LayoutName 'layout-key-comment-visible-input-focus.json'
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Invoke-TemporaryFixtureAuthText -Value $keyComment -InputNode $commentInputNode
+    Assert-NoSecretExposure -LayoutName 'layout-key-comment-visible-input.json'
+    $visibleInputScreenshot = Join-Path $EvidenceDirectory 'key-comment-visible-input.png'
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath $visibleInputScreenshot
+    $keyCommentEvidence.visibleInputScreenshot = 'key-comment-visible-input.png'
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    try {
+        Wait-AuthLog `
+            -Pattern 'ACCEPTANCE_INPUT_SUBMIT sequence=\d+,kind=key-comment' `
+            -TimeoutSeconds 10
+        Wait-AuthLog -Pattern 'KEY_COMMENT_CHANGE result=success'
+    } catch {
+        throw '[unknown] Key comment submission outcome is unknown; restart the isolated scenario'
+    }
+
+    $metadataAfter = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $keyName
+    $keyCommentEvidence.fingerprintAfter = $metadataAfter.fingerprint
+    $keyCommentEvidence.privateModeAfter = $metadataAfter.privateMode
+    $keyCommentEvidence.exactCommentAfter = $metadataAfter.comment -ceq $keyComment
+    if ($metadataAfter.fingerprint -cne $metadataBefore.fingerprint) {
+        throw '[product] Key comment change altered the public-key fingerprint'
+    }
+    if (-not $keyCommentEvidence.exactCommentAfter) {
+        throw '[product] Public-key projection did not retain the exact new comment'
+    }
+
+    Restart-RegressionApp
+    $metadataAfterRestart = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $keyName
+    $keyCommentEvidence.fingerprintAfterRestart = $metadataAfterRestart.fingerprint
+    $keyCommentEvidence.privateModeAfterRestart = $metadataAfterRestart.privateMode
+    $keyCommentEvidence.exactCommentAfterRestart = $metadataAfterRestart.comment -ceq $keyComment
+    if ($metadataAfterRestart.fingerprint -cne $metadataBefore.fingerprint -or
+        -not $keyCommentEvidence.exactCommentAfterRestart) {
+        throw '[product] Restart did not reopen the durable key comment and original identity'
+    }
+    Complete-AuthStage -Name 'key-comment-change-and-restart'
+    }
+
     if (Test-AuthStageSelected -Name 'publickey-encrypted-passphrase') {
     Start-AuthStage -Name 'publickey-encrypted-passphrase'
     Start-AuthCommand -User 'publickey' -Identity $keyName
@@ -2700,6 +2839,8 @@ try {
     $credentials = @{}
     $secrets = @()
     $keyPassphrase = ''
+    $wrongKeyPassphrase = ''
+    $keyComment = ''
     if ($cleanupFailures.Count -eq 0) {
         $cleanupResult = 'passed'
     } else {
