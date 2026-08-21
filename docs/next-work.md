@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：启动 1.5 第四个产品切片的 UpdateHostKeys 进入门禁
+> 当前工程阶段：启动 1.5 第五个产品切片的安全诊断进入门禁
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -30,31 +30,34 @@
 
 ## 1.5 当前活动工作
 
-### 第四个切片：UpdateHostKeys 标准基线与进入判断
+### 第五个切片：安全 `ssh -v` 诊断基线与进入判断
 
-用户已经可信连接并认证到正确服务器后，服务器可能因正常轮换而同时提供新的主机密钥。LeanTTY
-应评估能否通过标准 SSH 扩展验证并原子更新唯一 `known_hosts`，减少下一次连接被迫删除整条
-信任记录并重新走 TOFU 的风险。这个切片首先只建立标准、库能力和受控失败边界；没有证据前
-不实现自动持久化，也绝不把当前连接遇到的未知/变化主机密钥当作轮换直接接受。
+用户在连接、主机校验、认证、ProxyJump 或半开连接失败时，应能在 LeanTTY 内看到下一步真正
+有用的诊断，而不必换到另一台电脑。该能力不能复制 russh/OpenSSH 原始日志：原始 host、IP、
+username、路径、key material、认证回答或 terminal 内容都可能扩大本地暴露面。这个切片首先
+只建立安全事件目录、数据边界和库能力；没有证据前不开放持久日志或分享入口。
 
-1. [ ] 建立 OpenSSH `UpdateHostKeys` 的标准与默认行为基线：明确扩展协商、服务端证明、何时
-   允许增加/删除 key、通配 Host 与非默认端口表示、HashKnownHosts、跳板 target/jump 分层和
-   用户显式关闭语义；只使用上游协议/实现资料，不从命令名称猜测行为。
-2. [ ] 审计 russh `0.62.5` client/server 能力和 LeanTTY 当前 handler 生命周期，证明能否观察
-   `hostkeys-00@openssh.com`、请求 `hostkeys-prove-00@openssh.com` 并验证每个 key 的签名；若库
-   无法提供完整证明链，停止实现并记录重新进入条件，不自建未经审计的旁路协议 parser。
-3. [ ] 扩展 repository-only 双服务器 fixture，覆盖 valid add、valid replace、证明失败、未知算法、
-   重复/畸形 payload、连接中断、target/jump 串扰和普通不支持扩展的服务器；所有场景先只观察，
-   不修改设备 `known_hosts`。
-4. [ ] 基于证据形成专项方案并做进入/裁剪决定。若进入，只允许当前已验证 Host 的 opt-in/受控
-   config 子集、原子 no-follow 持久化、失败保留原文件、明确用户结果和立即重连验证；不加入
-   CA/certificate 管理、后台扫描、静默 TOFU、全局一键接受或第二份主机信任存储。
+1. [ ] 盘点 direct、ProxyJump target/jump、reconnect 与 `put/get` 的现有结构化事件和错误来源，
+   用真实失败样本建立最小诊断问题集；区分 DNS/TCP、SSH version/KEX、host verification、auth、
+   PTY、keepalive、remote close 与用户取消，不用 UI 文案或原始 log 反推状态。
+2. [ ] 建立字段级安全分级与默认脱敏规则：证明 password/passphrase/OTP/private key、session key、
+   terminal input/output 永不进入诊断；host/IP/user/path/fingerprint 只在当前终端按用户动作有界
+   显示，不持久化、不进入系统日志，target/jump 分层但不串资产。
+3. [ ] 审计 russh `0.62.5` 与 LeanTTY 当前 handler/driver 能否在不启用全局 trace log 的情况下
+   提供这些结构化节点；用 repository-only fixture 覆盖至少 DNS/拒绝、握手/KEX、host key、
+   多方法 auth、jump/target、keepalive 与取消，并加入禁止敏感值出现的自动化断言。
+4. [ ] 基于证据形成专项方案并做进入/裁剪决定。若进入，优先使用一次连接、默认关闭、仅当前
+   Pane 可见且随 Session 结束丢弃的 `ssh -v`；不加入日志文件、历史中心、遥测、自动上传、
+   “复制全部原始日志”或第二套连接状态机。
 
 `ConnectTimeout`、基本 SSH escape 与 `ServerAliveInterval/ServerAliveCountMax` 已完成并归档到
 专项设计。`AddressFamily` / `ssh -4/-6` 已完成标准基线，但当前物理 PC 没有全局 IPv6 默认
 路由，HDC reverse 也没有提供可用的 `::1` SSH fixture；按真机进入门禁暂不实现，不能以 parser
-或字段传播测试代替。除本节晋级的 UpdateHostKeys 基线外，安全诊断、config 导入导出、
-`ssh-keygen -c` 和 ECDSA 互操作仍是候选集合，不因 1.5 milestone 已启动而整体获得实现授权。
+或字段传播测试代替。UpdateHostKeys 已完成标准与 russh `0.62.5` 能力审计；依赖缺少完整 proof
+request/reply、session binding 和验签公开 API，因此按安全停止条件裁剪，重新进入条件记录在
+[`design/update-host-keys.md`](design/update-host-keys.md)。除本节晋级的安全诊断基线外，config
+导入导出、`ssh-keygen -c` 和 ECDSA 互操作仍是候选集合，不因 1.5 milestone 已启动而整体获得
+实现授权。
 推广手册只提供稳定工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
 
 ## 维护规则
