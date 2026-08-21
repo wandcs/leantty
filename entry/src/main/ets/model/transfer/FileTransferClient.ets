@@ -115,7 +115,7 @@ export class FileTransferClient {
       this.pendingLayer = ''
       return true
     } catch (e) {
-      this.logger.error('Transfer password response failed: ' + e)
+      this.logger.error('Transfer password response failed')
       return false
     }
   }
@@ -132,7 +132,7 @@ export class FileTransferClient {
       this.pendingLayer = ''
       return true
     } catch (e) {
-      this.logger.error('Transfer key passphrase response failed: ' + e)
+      this.logger.error('Transfer key passphrase response failed')
       return false
     }
   }
@@ -150,7 +150,7 @@ export class FileTransferClient {
       this.pendingAuthChallenge = null
       return true
     } catch (e) {
-      this.logger.error('Transfer keyboard-interactive response failed: ' + e)
+      this.logger.error('Transfer keyboard-interactive response failed')
       return false
     }
   }
@@ -169,7 +169,7 @@ export class FileTransferClient {
       this.pendingLayer = ''
       return true
     } catch (e) {
-      this.logger.error('Transfer host-key response failed: ' + e)
+      this.logger.error('Transfer host-key response failed')
       return false
     }
   }
@@ -183,7 +183,7 @@ export class FileTransferClient {
     try {
       sshNative.sshDisconnect(this.transferId)
     } catch (e) {
-      this.logger.error('Transfer cancellation failed: ' + e)
+      this.logger.error('Transfer cancellation failed')
     }
   }
 

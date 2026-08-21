@@ -369,9 +369,10 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 parser 测试代替；第二个基本 SSH escape（`~.`、`~?`、`~I`）和第三个
 `ServerAliveInterval/ServerAliveCountMax` 半开检测切片已经闭合。UpdateHostKeys 的标准与
 russh `0.62.5` 能力门禁确认依赖只暴露公告回调，不提供 proof request/reply、session binding
-和验签所需公开 API；该候选按用户信任原则裁剪并记录重新进入条件。当前只授权安全 `ssh -v`
-的结构化事件、字段级脱敏和受控 fixture 进入门禁；是否实现用户入口必须由该门禁另行决定，
-其他候选在逐项写入活动清单前均不授权实现。
+和验签所需公开 API；该候选按用户信任原则裁剪并记录重新进入条件。安全 `ssh -v` 已完成
+一次性入口、固定结构化事件、字段级脱敏，以及 direct/ProxyJump 的物理 ARM64 HarmonyOS PC
+验收。当前只授权 config import/export 的真实样本、文件授权、round-trip 与原子失败恢复进入
+门禁；是否实现用户入口必须由该门禁另行决定，其他候选在逐项写入活动清单前均不授权实现。
 
 ## 拟议 milestone：1.6 — 长任务注意力与返回路径
 

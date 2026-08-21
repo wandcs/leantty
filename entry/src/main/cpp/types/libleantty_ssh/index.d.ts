@@ -17,6 +17,10 @@ export interface TransportEvent {
   kind: string
   data: Uint8Array
   result: string
+  layer: string
+  stage: string
+  status: string
+  reason: string
 }
 export interface FileTransferEvent {
   kind: string
@@ -36,7 +40,8 @@ export declare function sshConnect(
   jumpConnectTimeoutMs: number,
   jumpServerAliveIntervalSeconds: number, jumpServerAliveCountMax: number,
   knownHostsPath: string, connectTimeoutMs: number,
-  serverAliveIntervalSeconds: number, serverAliveCountMax: number, generation: number,
+  serverAliveIntervalSeconds: number, serverAliveCountMax: number,
+  verbose: boolean, generation: number,
   onTransport: (event: TransportEvent) => void,
   onControl: (event: string) => void,
   onAuth: (event: AuthEvent) => void

@@ -14,8 +14,8 @@ const HELP_TEXT: string =
   'Syntax: <...> is required; [...] is optional; <a|b> means choose one.\r\n' +
   '\r\n' +
   'Connection\r\n' +
-  '  ssh [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
-  '  ssh [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n' +
+  '  ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
+  '  ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n' +
   '\r\n' +
   'File transfer\r\n' +
   '  put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
@@ -48,11 +48,12 @@ const HELP_TEXT: string =
   '\r\n' +
   'Connected SSH: after a newline, use ~? for supported escapes.\r\n'
 
-const SSH_HELP: string = '\r\nUsage: ssh [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
-  '       ssh [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n\r\n' +
+const SSH_HELP: string = '\r\nUsage: ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
+  '       ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n\r\n' +
   'Host settings, including ProxyJump, ConnectTimeout and ServerAlive, come from ~/.ssh/config.\r\n' +
   'Command options take precedence where LeanTTY provides one.\r\n' +
   '<jump> is one saved Host or [user@]host[:port]. Use -J none to bypass a saved ProxyJump.\r\n' +
+  '-v shows fixed, redacted connection stages in this pane for this attempt only.\r\n' +
   'ProxyCommand and multi-hop chains are not supported.\r\n' +
   'While connected, enter ~? after a newline to list supported SSH escapes.\r\n'
 const KEYGEN_HELP: string = '\r\nUsage: ssh-keygen [-t <ed25519|rsa>] [-f <key-name>] [-C <comment>]\r\n' +

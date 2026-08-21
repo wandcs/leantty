@@ -70,6 +70,45 @@ export default function interactionFixesTest() {
       expect(SshClient.isCurrentAuthEvent('', 7, '', 7)).assertEqual(false)
     })
 
+    it('parsesOneShotSafeSshVerboseWithoutChangingTheSavedHost', 0, () => {
+      let config: SshConfig = new SshConfig()
+      let verbose: CommandParseResult = CommandParser.parseCommand('ssh -v root@example.com', config)
+      let normal: CommandParseResult = CommandParser.parseCommand('ssh root@example.com', config)
+      let duplicate: CommandParseResult = CommandParser.parseCommand('ssh -v -v root@example.com', config)
+      let unsupported: CommandParseResult = CommandParser.parseCommand('ssh -vv root@example.com', config)
+      expect(verbose.isValid).assertEqual(true)
+      expect(verbose.verbose).assertEqual(true)
+      expect(normal.verbose).assertEqual(false)
+      expect(duplicate.errorMessage).assertEqual('Duplicate SSH option: -v')
+      expect(unsupported.errorMessage).assertEqual('Unsupported SSH option: -vv')
+    })
+
+    it('keepsVerboseDiagnosticsOnAClosedFieldWhitelist', 0, () => {
+      let label: string = SshClient.safeRustEventLogLabel(
+        'HOST_KEY_PROMPT:target\tssh-ed25519 SHA256:secret\t[private.example]:2222 ssh-ed25519 secret')
+      expect(label).assertEqual('rust event: HOST_KEY_PROMPT:target\tredacted')
+      expect(label.includes('secret')).assertEqual(false)
+      expect(SshClient.safeRustEventLogLabel('AUTH:target:authentication was rejected'))
+        .assertEqual('rust event: AUTH:target:authentication was rejected')
+      expect(SshClient.safeRustEventLogLabel('AUTH:target:server says private.example'))
+        .assertEqual('rust event: AUTH:target')
+      expect(SessionViewModel.safeSshErrorLogLabel('target:connection timed out after 1000 ms'))
+        .assertEqual('SSH error: target:connection timed out after 1000 ms')
+      expect(SessionViewModel.safeSshErrorLogLabel('target:private.example refused the key'))
+        .assertEqual('SSH error')
+      let line: string = SessionViewModel.formatSshDiagnostic(
+        '{"layer":"target","stage":"connect","status":"started","host":"private.example"}')
+      expect(line.includes('Target transport: started.')).assertEqual(true)
+      expect(line.includes('private.example')).assertEqual(false)
+      let rejected: string = SessionViewModel.formatSshDiagnostic(
+        '{"layer":"target","stage":"raw_packet","status":"started"}')
+      expect(rejected.includes('Diagnostic event rejected.')).assertEqual(true)
+      let refused: string = SessionViewModel.formatSshDiagnostic(
+        '{"layer":"target","stage":"connect","status":"failed","reason":"tcp_refused","error":"private.example"}')
+      expect(refused.includes('Target TCP connection: refused.')).assertEqual(true)
+      expect(refused.includes('private.example')).assertEqual(false)
+    })
+
     it('parsesKeySubcommandsFromTheCorrectArgument', 0, () => {
       let config: SshConfig = new SshConfig()
       let showResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =

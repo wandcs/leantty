@@ -22,6 +22,7 @@ param(
     [ValidateSet('Target', 'Jump', 'Both')][string]$HostKeyRotationLayer = 'Both',
     [switch]$ParallelPanes,
     [switch]$SuspendAfterConnect,
+    [switch]$SshDiagnostics,
     [ValidateSet('None', 'Target', 'Jump', 'Both')]
     [string]$ServerAliveBlackhole = 'None',
     [ValidateRange(0, 3600)][int]$ServerAliveIntervalSeconds = 30,
@@ -72,6 +73,11 @@ if ($ServerAliveBlackhole -ne 'None' -and
     ($ParallelPanes -or $SuspendAfterConnect -or $IncludeHostKeyRotation -or
         $FailureScenario -ne 'None')) {
     throw 'Server-alive blackhole verification must run as an independent successful connection scenario'
+}
+if ($SshDiagnostics -and
+    ($ParallelPanes -or $SuspendAfterConnect -or $IncludeHostKeyRotation -or
+        $ServerAliveBlackhole -ne 'None' -or $FailureScenario -ne 'None')) {
+    throw 'Safe SSH diagnostics must run as an independent successful ProxyJump scenario'
 }
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + `
     [IO.Path]::DirectorySeparatorChar
@@ -706,7 +712,8 @@ try {
         Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$SecondJumpPort"
         Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$SecondTargetPort"
     }
-    $proxyCommand = "ssh -p $TargetPort -J password@127.0.0.1:$JumpPort password@127.0.0.1"
+    $diagnosticOption = if ($SshDiagnostics) { ' -v' } else { '' }
+    $proxyCommand = "ssh$diagnosticOption -p $TargetPort -J password@127.0.0.1:$JumpPort password@127.0.0.1"
     if ($ServerAliveBlackhole -ne 'None') {
         Submit-ProxyCommand -Command "host rm $serverAliveTargetAlias"
         Submit-ProxyCommand -Command "host rm $serverAliveJumpAlias"
@@ -862,6 +869,10 @@ try {
         return
     }
     Submit-ProxyCommand -Command $proxyCommand
+    if ($SshDiagnostics) {
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=jump, stage=connect, status=started, reason=none'
+    }
 
     Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
     Submit-HostKeyDecisionUntilResult `
@@ -985,6 +996,16 @@ try {
         -JumpPassword $jumpFixture.password `
         -ExpectedPattern 'rust event: HOST_KEY_PROMPT:target\t' `
         -CurrentPrompt
+    if ($SshDiagnostics) {
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=jump, stage=authentication, status=succeeded, reason=none'
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=jump, stage=tunnel, status=succeeded, reason=none'
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=target, stage=connect, status=started, reason=none'
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=target, stage=host_key, status=waiting, reason=none'
+    }
     Submit-HostKeyDecisionUntilResult `
         -ExpectedPattern 'native auth event kind=password, layer=target'
     if ($FailureScenario -eq 'CancelAtTargetAuthentication') {
@@ -1057,6 +1078,32 @@ try {
         -Command $proxyCommand `
         -JumpPassword $jumpFixture.password `
         -TargetPassword $targetFixture.password
+    if ($SshDiagnostics) {
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=target, stage=session, status=succeeded, reason=none'
+        Submit-ConnectedProxyInputUntilFixture `
+            -Text 'ltty-input-check diagnosticsproxy' `
+            -FixtureLog $targetStderr `
+            -ExpectedPattern 'input case=diagnosticsproxy result=matched'
+        $diagnosticLogs = Get-LeanTTYAppLogs `
+            -Hdc $hdc `
+            -Target $targetId `
+            -ProcessId $appPid
+        $safeDiagnosticLines = @($diagnosticLogs -split "`n" | Where-Object {
+            $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+        }) -join "`n"
+        if ($safeDiagnosticLines.Contains('127.0.0.1') -or
+            $safeDiagnosticLines.Contains('SHA256:') -or
+            $safeDiagnosticLines.Contains($jumpFixture.password) -or
+            $safeDiagnosticLines.Contains($targetFixture.password)) {
+            throw 'Safe ProxyJump diagnostics exposed host, fingerprint or temporary credentials'
+        }
+        [IO.File]::WriteAllText(
+            (Join-Path $EvidenceDirectory 'ssh-diagnostics-hilog.txt'),
+            $safeDiagnosticLines,
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
 
     Save-LeanTTYDeviceScreenshot `
         -Hdc $hdc `
@@ -1432,8 +1479,8 @@ try {
     Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
 
     Write-ProxySummary `
-        -Scenario ($IncludeHostKeyRotation ?
-            ('host-key-rotation-' + $HostKeyRotationLayer.ToLowerInvariant()) : 'success') `
+        -Scenario ($SshDiagnostics ? 'safe-ssh-diagnostics' : ($IncludeHostKeyRotation ?
+            ('host-key-rotation-' + $HostKeyRotationLayer.ToLowerInvariant()) : 'success')) `
         -Authentication 'password-per-layer-with-distinct-temporary-secrets' `
         -HostKeyVerification $(if ($IncludeHostKeyRotation) {
             'first-use-confirmed-and-' + $HostKeyRotationLayer.ToLowerInvariant() +

@@ -46,6 +46,7 @@ export class SshConnectOptions {
   connectTimeoutMs: number
   serverAliveIntervalSeconds: number
   serverAliveCountMax: number
+  verbose: boolean
 
   constructor() {
     this.host = ''
@@ -65,5 +66,6 @@ export class SshConnectOptions {
     this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
     this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
     this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+    this.verbose = false
   }
 }

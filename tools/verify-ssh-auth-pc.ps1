@@ -33,6 +33,7 @@ param(
     [string]$Group = '',
     [ValidateSet(
         'password-success',
+        'ssh-diagnostics',
         'terminal-key-input',
         'transport-main-path',
         'ssh-escape',
@@ -231,7 +232,10 @@ $attemptId = [Guid]::NewGuid().ToString('N')
 $runMode = if (-not $DiagnosticHap -and $Only.Count -eq 0) { 'acceptance' } else { 'diagnostic' }
 $authGroupDefinitions = [ordered]@{
     'transport-performance' = [ordered]@{
-        stages = @('terminal-key-input', 'transport-main-path', 'ssh-escape', 'performance-matrix')
+        stages = @(
+            'ssh-diagnostics', 'terminal-key-input', 'transport-main-path', 'ssh-escape',
+            'performance-matrix'
+        )
         setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-known-host-boundary'
         resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'transparency-preference')
         primaryOracle = 'fixture-received-bytes-and-device-clock-performance-records'
@@ -300,6 +304,7 @@ $selectedGroupManifest = if (-not [string]::IsNullOrWhiteSpace($Group)) {
 }
 $availableStages = @(
     'password-success',
+    'ssh-diagnostics',
     'terminal-key-input',
     'transport-main-path',
     'ssh-escape',
@@ -359,6 +364,7 @@ function Get-LeanTTYFixtureStageBudgetSeconds {
     param([Parameter(Mandatory = $true)][string]$StageName)
     $budgets = @{
         'password-success' = 150
+        'ssh-diagnostics' = 300
         'terminal-key-input' = 180
         'transport-main-path' = 300
         'ssh-escape' = 360
@@ -735,35 +741,32 @@ function Submit-FocusedDeviceCommand {
         } | Out-Null
 }
 
-function Assert-AuthCommandLoopbackTarget {
-    $logs = ''
+function Assert-AuthCommandStarted {
     try {
-        $logs = Wait-LeanTTYAppLog `
+        Wait-LeanTTYAppLog `
             -Hdc $hdc `
             -Target $Target `
             -ProcessId $appPid `
-            -Pattern 'SSH connect initiated:' `
-            -TimeoutSeconds 5
+            -Pattern 'SSH connect initiated' `
+            -TimeoutSeconds 5 | Out-Null
     } catch {
-        throw '[environment] Device key injection changed the SSH command target'
-    }
-    $matches = [regex]::Matches($logs, 'SSH connect initiated:\s+(?<host>[^\s]+)')
-    if ($matches.Count -eq 0 -or
-        $matches[$matches.Count - 1].Groups['host'].Value -cne '127.0.0.1') {
-        throw '[environment] Device key injection changed the SSH command target'
+        throw '[environment] Device key injection did not start the SSH command'
     }
 }
 
 function Start-AuthCommand {
     param(
         [Parameter(Mandatory = $true)][string]$User,
-        [string]$Identity = ''
+        [string]$Identity = '',
+        [ValidateRange(1, 65535)][int]$Port = $FixturePort,
+        [switch]$SshVerbose
     )
     $identityOption = if ([string]::IsNullOrWhiteSpace($Identity)) { '' } else { " -i $Identity" }
+    $verboseOption = if ($SshVerbose) { ' -v' } else { '' }
     Submit-FocusedDeviceCommand `
-        -Command "ssh -p $FixturePort$identityOption $User@127.0.0.1" `
+        -Command "ssh$verboseOption -p $Port$identityOption $User@127.0.0.1" `
         -LayoutName 'layout-command-focus.json'
-    Assert-AuthCommandLoopbackTarget
+    Assert-AuthCommandStarted
 }
 
 function Close-FixtureShell {
@@ -1591,6 +1594,7 @@ function Write-AuthEvidence {
             ForEach-Object { $_.name })
         declaredCoverage = @(
             'password-success',
+            'one-shot-safe-ssh-diagnostics-default-off-refusal-and-cancel',
             'transport-main-path-input-large-paste-continuous-output-resize-disconnect-reconnect',
             'ssh-escape-line-start-local-actions-remote-bytes-reconnect-and-pane-isolation',
             'server-alive-real-duration-target-blackhole-error-and-immediate-reconnect',
@@ -1758,6 +1762,120 @@ try {
     Wait-AuthLog -Pattern 'SSH session connected'
     Close-FixtureShell
     Complete-AuthStage -Name 'password-success'
+    }
+
+    if (Test-AuthStageSelected -Name 'ssh-diagnostics') {
+    Start-AuthStage -Name 'ssh-diagnostics'
+    Submit-FocusedDeviceCommand `
+        -Command "ssh-keygen -R [127.0.0.1]:$FixturePort" `
+        -LayoutName 'layout-diagnostics-known-host-reset.json'
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+
+    Start-AuthCommand -User 'password' -SshVerbose
+    Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=connect, status=started, reason=none'
+    Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=host_key, status=waiting, reason=none'
+    Wait-AuthLog -Pattern 'rust event: HOST_KEY_PROMPT:target\tredacted'
+    Invoke-AuthUiText -Text 'yes'
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    Wait-AuthLog -Pattern 'native auth event kind=password, layer=target'
+    $preAuthLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    $preAuthDiagnostics = @(
+        'stage=connect, status=started',
+        'stage=host_key, status=started',
+        'stage=host_key, status=waiting',
+        'stage=host_key, status=succeeded',
+        'stage=connect, status=succeeded',
+        'stage=authentication, status=started',
+        'stage=authentication, status=waiting'
+    )
+    $lastDiagnosticIndex = -1
+    foreach ($expectedDiagnostic in $preAuthDiagnostics) {
+        $diagnosticIndex = $preAuthLogs.IndexOf($expectedDiagnostic, $lastDiagnosticIndex + 1)
+        if ($diagnosticIndex -lt 0) {
+            throw "[product] Ordered safe pre-auth SSH diagnostic is missing: $expectedDiagnostic"
+        }
+        $lastDiagnosticIndex = $diagnosticIndex
+    }
+    $preAuthDiagnosticLogs = @($preAuthLogs -split "`n" | Where-Object {
+        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+    }) -join "`n"
+    if ($preAuthDiagnosticLogs.Contains('127.0.0.1') -or
+        $preAuthDiagnosticLogs.Contains('SHA256:')) {
+        throw '[product] Pre-auth SSH diagnostics exposed a host or fingerprint in HarmonyOS logs'
+    }
+    Save-SafeDiagnosticText -Text $preAuthLogs -FileName 'ssh-diagnostics-pre-auth-hilog.txt'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-diagnostics-password.json'
+    Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=session, status=succeeded, reason=none'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check diagnostics' `
+        -Pattern 'input case=diagnostics result=matched'
+    $verboseLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    $expectedDiagnostics = @(
+        'stage=authentication, status=succeeded',
+        'stage=channel, status=started',
+        'stage=channel, status=succeeded',
+        'stage=pty, status=started',
+        'stage=pty, status=succeeded',
+        'stage=shell, status=started',
+        'stage=shell, status=succeeded',
+        'stage=session, status=succeeded'
+    )
+    $lastDiagnosticIndex = -1
+    foreach ($expectedDiagnostic in $expectedDiagnostics) {
+        $diagnosticIndex = $verboseLogs.IndexOf($expectedDiagnostic, $lastDiagnosticIndex + 1)
+        if ($diagnosticIndex -lt 0) {
+            throw "[product] Ordered safe SSH diagnostic is missing: $expectedDiagnostic"
+        }
+        $lastDiagnosticIndex = $diagnosticIndex
+    }
+    $verboseDiagnosticLogs = @($verboseLogs -split "`n" | Where-Object {
+        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+    }) -join "`n"
+    if ($verboseDiagnosticLogs.Contains('127.0.0.1') -or
+        $verboseDiagnosticLogs.Contains('SHA256:')) {
+        throw '[product] SSH diagnostics exposed a host or fingerprint in HarmonyOS logs'
+    }
+    Save-SafeDiagnosticText -Text $verboseLogs -FileName 'ssh-diagnostics-success-hilog.txt'
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'ssh-diagnostics-success.png')
+    Close-FixtureShell
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password, layer=target'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-diagnostics-normal-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    $normalLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    if ($normalLogs.Contains('SSH diagnostic layer=')) {
+        throw '[product] Normal SSH emitted verbose diagnostic events'
+    }
+    Close-FixtureShell
+
+    $refusedPort = if ($FixturePort -lt 65535) { $FixturePort + 1 } else { $FixturePort - 1 }
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'password' -Port $refusedPort -SshVerbose
+    Wait-AuthLog `
+        -Pattern 'SSH diagnostic layer=target, stage=connect, status=failed, reason=tcp_refused'
+    Wait-AuthLog -Pattern 'SSH error'
+    $refusedLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    $refusedDiagnosticLogs = @($refusedLogs -split "`n" | Where-Object {
+        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+    }) -join "`n"
+    if ($refusedDiagnosticLogs.Contains('127.0.0.1') -or
+        $refusedDiagnosticLogs.Contains('SHA256:')) {
+        throw '[product] Refused-connection diagnostics exposed a host or fingerprint'
+    }
+    Save-SafeDiagnosticText -Text $refusedLogs -FileName 'ssh-diagnostics-refused-hilog.txt'
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'password' -SshVerbose
+    Wait-AuthLog -Pattern 'native auth event kind=password, layer=target'
+    Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+    Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=session, status=cancelled, reason=none'
+    Complete-AuthStage -Name 'ssh-diagnostics'
     }
 
     if (Test-AuthStageSelected -Name 'terminal-key-input') {

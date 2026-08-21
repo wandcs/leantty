@@ -1,4 +1,11 @@
-import { AuthChallengeInfo, AuthPromptInfo, HostKeyChangedInfo, SshClient, SshClientEvent } from '../model/ssh/SshClient'
+import {
+  AuthChallengeInfo,
+  AuthPromptInfo,
+  HostKeyChangedInfo,
+  SshClient,
+  SshClientEvent,
+  SshDiagnosticInfo
+} from '../model/ssh/SshClient'
 import util from '@ohos.util'
 import { SshConnectOptions } from '../common/types/SshTypes'
 import { SshSession, SshSessionState } from '../model/ssh/SshSession'
@@ -297,6 +304,7 @@ export class SessionViewModel {
       opts.connectTimeoutMs = request.connectTimeoutMs
       opts.serverAliveIntervalSeconds = request.serverAliveIntervalSeconds
       opts.serverAliveCountMax = request.serverAliveCountMax
+      opts.verbose = request.verbose
       if (!this.pendingKeypush) {
         let key: KeyPairInfo | null = this.resolvePrivateKey(request.identityFile)
         if (key !== null) {
@@ -312,12 +320,12 @@ export class SessionViewModel {
         }
       }
       await this.sshClient.connect(opts)
-      this.logger.info('SSH connect initiated: ' + request.host)
+      this.logger.info('SSH connect initiated')
     } catch (e) {
       this.session.setState(SshSessionState.FAILED)
       this.session.setErrorMessage('' + e)
       this.setMode(TerminalMode.IDLE)
-      this.logger.warn('SSH connection start failed: ' + e)
+      this.logger.warn('SSH connection start failed')
       this.finishSshTerminalOwnership(() => {
         this.writeError('The SSH connection could not start.',
           'Check the Host, network and credentials, then try again.')
@@ -522,7 +530,10 @@ export class SessionViewModel {
         this.onSshError(data)
         break
       case SshClientEvent.WARNING:
-        this.logger.warn('SSH warning: ' + data)
+        this.logger.warn('SSH warning')
+        break
+      case SshClientEvent.DIAGNOSTIC:
+        this.writeTerminal('\r\n' + SessionViewModel.formatSshDiagnostic(data) + '\r\n')
         break
     }
   }
@@ -534,7 +545,7 @@ export class SessionViewModel {
     }
     this.session.setState(SshSessionState.CONNECTED)
     let connectedTitle: string = this.session.getConnectionTitle()
-    this.logger.info('Connected tab title=' + connectedTitle)
+    this.logger.info('SSH session connected')
     this.notifyTitleChange(connectedTitle)
     this.notifyStateChange()
     this.sshClient.resize(this.lastCols, this.lastRows)
@@ -662,7 +673,7 @@ export class SessionViewModel {
     }
     this.clearAuthChallenge()
     if (this.pendingKeypush) {
-      this.logger.warn('Key installation SSH error: ' + errorDetail)
+      this.logger.warn('Key installation SSH error')
       this.failKeypush('Key installation failed.\r\nCheck the Host, network and credentials, then try again.')
       return
     }
@@ -671,7 +682,7 @@ export class SessionViewModel {
     this.session.setState(SshSessionState.FAILED)
     this.session.setErrorMessage(errorDetail)
     this.setMode(TerminalMode.IDLE)
-    this.logger.warn('SSH error: ' + errorDetail)
+    this.logger.warn(SessionViewModel.safeSshErrorLogLabel(errorDetail))
     this.finishSshTerminalOwnership(() => {
       this.writeError(SessionViewModel.sshFailureTitle(errorDetail),
         'Check the Host, network and credentials, then try again.')
@@ -743,6 +754,56 @@ export class SessionViewModel {
       return 'The target host connection failed.'
     }
     return 'The SSH connection failed.'
+  }
+
+  static formatSshDiagnostic(data: string): string {
+    let record: Record<string, string>
+    try {
+      record = JSON.parse(data)
+    } catch (e) {
+      return LocalCommandOutput.status('SSH', 'Diagnostic event rejected.')
+    }
+    let info: SshDiagnosticInfo = new SshDiagnosticInfo()
+    info.layer = '' + record['layer']
+    info.stage = '' + record['stage']
+    info.status = '' + record['status']
+    info.reason = record['reason'] === undefined ? '' : '' + record['reason']
+    let layer: string = info.layer === 'jump' ? 'Jump' : (info.layer === 'target' ? 'Target' : '')
+    let stage: string = ''
+    if (info.stage === 'connect') { stage = 'transport' }
+    else if (info.stage === 'host_key') { stage = 'host key verification' }
+    else if (info.stage === 'authentication') { stage = 'authentication' }
+    else if (info.stage === 'tunnel') { stage = 'jump tunnel' }
+    else if (info.stage === 'channel') { stage = 'session channel' }
+    else if (info.stage === 'pty') { stage = 'PTY request' }
+    else if (info.stage === 'shell') { stage = 'shell request' }
+    else if (info.stage === 'session') { stage = 'session' }
+    else if (info.stage === 'keepalive') { stage = 'keepalive' }
+    let status: string = info.status.replace('_', ' ')
+    let fixedFailure: string = ''
+    if (info.reason === 'name_resolution') { fixedFailure = 'name resolution: failed.' }
+    else if (info.reason === 'tcp_refused') { fixedFailure = 'TCP connection: refused.' }
+    else if (info.reason === 'tcp_timeout') { fixedFailure = 'TCP connection: timed out.' }
+    else if (info.reason === 'tcp_failed') { fixedFailure = 'TCP connection: failed.' }
+    else if (info.reason === 'ssh_version') { fixedFailure = 'SSH version exchange: failed.' }
+    else if (info.reason === 'key_exchange') { fixedFailure = 'key exchange: failed.' }
+    else if (info.reason === 'transport_failed') { fixedFailure = 'transport: failed.' }
+    if (fixedFailure.length > 0 && info.stage === 'connect' && info.status === 'failed' && layer.length > 0) {
+      return LocalCommandOutput.status('SSH', layer + ' ' + fixedFailure)
+    }
+    if (layer.length === 0 || stage.length === 0 ||
+      ['started', 'waiting', 'succeeded', 'failed', 'timed out', 'cancelled', 'closed'].indexOf(status) < 0 ||
+      info.reason.length > 0) {
+      return LocalCommandOutput.status('SSH', 'Diagnostic event rejected.')
+    }
+    return LocalCommandOutput.status('SSH', layer + ' ' + stage + ': ' + status + '.')
+  }
+
+  static safeSshErrorLogLabel(errorDetail: string): string {
+    if (errorDetail === 'SSH keepalive timed out') { return 'SSH error: SSH keepalive timed out' }
+    let safeFailures: RegExp = /^(jump|target):(authentication was rejected|no supported authentication method is available|connection timed out after \d+ ms|direct-tcpip failed|direct-tcpip timed out after \d+ ms)$/
+    if (safeFailures.test(errorDetail)) { return 'SSH error: ' + errorDetail }
+    return 'SSH error'
   }
 
   private notifyStateChange(): void {
@@ -1148,7 +1209,7 @@ export class SessionViewModel {
         await this.ensureSshEnvironment()
       } catch (e) {
         this.sshEnvironmentCommandPending = false
-        this.logger.warn('SSH environment preparation failed: ' + e)
+        this.logger.warn('SSH environment preparation failed')
         this.writeError('The SSH environment is unavailable.',
           'Try the command again. If the problem continues, restart LeanTTY.')
         return
@@ -1205,7 +1266,7 @@ export class SessionViewModel {
 
   private beginSshEnvironmentPreparation(): void {
     this.ensureSshEnvironment().catch((e: Error) => {
-      this.logger.warn('Background SSH environment preparation failed: ' + e)
+      this.logger.warn('Background SSH environment preparation failed')
     })
   }
 
@@ -1378,7 +1439,7 @@ export class SessionViewModel {
         break
       case SshClientEvent.ERROR:
         this.transferControlFailureCode = 'HOST_KEY_ERROR'
-        this.logger.warn('Transfer authentication control error: ' + data)
+        this.logger.warn('Transfer authentication control error')
         break
       default:
         break

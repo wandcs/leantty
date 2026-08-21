@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：启动 1.5 第五个产品切片的安全诊断进入门禁
+> 当前工程阶段：启动 1.5 第六个产品切片的 config import/export 进入门禁
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -30,34 +30,34 @@
 
 ## 1.5 当前活动工作
 
-### 第五个切片：安全 `ssh -v` 诊断基线与进入判断
+### 第六个切片：受控 config import/export 进入门禁
 
-用户在连接、主机校验、认证、ProxyJump 或半开连接失败时，应能在 LeanTTY 内看到下一步真正
-有用的诊断，而不必换到另一台电脑。该能力不能复制 russh/OpenSSH 原始日志：原始 host、IP、
-username、路径、key material、认证回答或 terminal 内容都可能扩大本地暴露面。这个切片首先
-只建立安全事件目录、数据边界和库能力；没有证据前不开放持久日志或分享入口。
+用户从已有 OpenSSH 环境迁移到 HarmonyOS PC 时，应能把一份明确授权的 config 安全并入
+LeanTTY 唯一 `~/.ssh/config`，并在需要时把这份资产导出备份；不能因此建立第二份配置权威、
+静默忽略会改变连接安全或路由的 directive，或覆盖用户无法恢复的原文。本切片先建立真实样本、
+文件授权边界、round-trip 合同和失败恢复门禁，再决定最小命令入口。
 
-1. [ ] 盘点 direct、ProxyJump target/jump、reconnect 与 `put/get` 的现有结构化事件和错误来源，
-   用真实失败样本建立最小诊断问题集；区分 DNS/TCP、SSH version/KEX、host verification、auth、
-   PTY、keepalive、remote close 与用户取消，不用 UI 文案或原始 log 反推状态。
-2. [ ] 建立字段级安全分级与默认脱敏规则：证明 password/passphrase/OTP/private key、session key、
-   terminal input/output 永不进入诊断；host/IP/user/path/fingerprint 只在当前终端按用户动作有界
-   显示，不持久化、不进入系统日志，target/jump 分层但不串资产。
-3. [ ] 审计 russh `0.62.5` 与 LeanTTY 当前 handler/driver 能否在不启用全局 trace log 的情况下
-   提供这些结构化节点；用 repository-only fixture 覆盖至少 DNS/拒绝、握手/KEX、host key、
-   多方法 auth、jump/target、keepalive 与取消，并加入禁止敏感值出现的自动化断言。
-4. [ ] 基于证据形成专项方案并做进入/裁剪决定。若进入，优先使用一次连接、默认关闭、仅当前
-   Pane 可见且随 Session 结束丢弃的 `ssh -v`；不加入日志文件、历史中心、遥测、自动上传、
-   “复制全部原始日志”或第二套连接状态机。
+1. [ ] 收集受控真实 config 样本，覆盖注释、空白、重复 Host pattern、通配符、非默认端口、
+   `ProxyJump`、当前受支持 directive、未知 directive、`Include`、`Match`、token expansion 与
+   CRLF/LF；按“连接语义关键 / 可原样保留 / 必须拒绝”建立样本目录。
+2. [ ] 审计 HarmonyOS 文件选择/保存授权与当前 Downloads/文件传输边界，决定 import/export 的
+   单次用户动作、取消、同名冲突和可恢复失败语义；不得申请目录级常驻扫描权限或后台同步。
+3. [ ] 验证当前 `SshConfig` parser/writer 能否在导入、后续 `host add|set|rm` 和导出后字节级保留
+   非 LeanTTY 管理原文；建立 parse → validate → atomic replace → reopen 的故障注入与 round-trip
+   fixture，禁止半写、重复权威和关键 directive 静默降级。
+4. [ ] 基于证据形成专项方案并做进入/裁剪决定。若进入，只增加局部 `config import/export`，
+   复用唯一 config 和现有文件授权；不支持 `ssh -F`、通用文件管理器、目录监听、云同步或第二套
+   Host 数据库。
 
 `ConnectTimeout`、基本 SSH escape 与 `ServerAliveInterval/ServerAliveCountMax` 已完成并归档到
 专项设计。`AddressFamily` / `ssh -4/-6` 已完成标准基线，但当前物理 PC 没有全局 IPv6 默认
 路由，HDC reverse 也没有提供可用的 `::1` SSH fixture；按真机进入门禁暂不实现，不能以 parser
 或字段传播测试代替。UpdateHostKeys 已完成标准与 russh `0.62.5` 能力审计；依赖缺少完整 proof
 request/reply、session binding 和验签公开 API，因此按安全停止条件裁剪，重新进入条件记录在
-[`design/update-host-keys.md`](design/update-host-keys.md)。除本节晋级的安全诊断基线外，config
-导入导出、`ssh-keygen -c` 和 ECDSA 互操作仍是候选集合，不因 1.5 milestone 已启动而整体获得
-实现授权。
+[`design/update-host-keys.md`](design/update-host-keys.md)。安全 `ssh -v` 已完成固定事件、脱敏、
+direct/ProxyJump 真机闭环，见 [`design/ssh-diagnostics.md`](design/ssh-diagnostics.md)。除本节
+晋级的 config import/export 门禁外，`ssh-keygen -c` 和 ECDSA 互操作仍是候选集合，不因 1.5
+milestone 已启动而整体获得实现授权。
 推广手册只提供稳定工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
 
 ## 维护规则

@@ -41,6 +41,10 @@ pub struct TransportEvent {
     pub kind: String,
     pub data: Uint8Array,
     pub result: String,
+    pub layer: String,
+    pub stage: String,
+    pub status: String,
+    pub reason: String,
 }
 
 impl TransportEvent {
@@ -49,6 +53,10 @@ impl TransportEvent {
             kind: "data".to_string(),
             data: data.into(),
             result: String::new(),
+            layer: String::new(),
+            stage: String::new(),
+            status: String::new(),
+            reason: String::new(),
         }
     }
 
@@ -57,7 +65,29 @@ impl TransportEvent {
             kind: "close".to_string(),
             data: Vec::new().into(),
             result,
+            layer: String::new(),
+            stage: String::new(),
+            status: String::new(),
+            reason: String::new(),
         }
+    }
+
+    fn diagnostic(layer: ConnectionLayer, stage: &str, status: &str) -> Self {
+        Self {
+            kind: "diagnostic".to_string(),
+            data: Vec::new().into(),
+            result: String::new(),
+            layer: layer.as_str().to_string(),
+            stage: stage.to_string(),
+            status: status.to_string(),
+            reason: String::new(),
+        }
+    }
+
+    fn diagnostic_failure(layer: ConnectionLayer, stage: &str, reason: &str) -> Self {
+        let mut event = Self::diagnostic(layer, stage, "failed");
+        event.reason = reason.to_string();
+        event
     }
 }
 
@@ -449,6 +479,61 @@ fn send_transport_close(callback: &JsTransportCallback, result: String) -> bool 
     true
 }
 
+fn send_transport_diagnostic(
+    callback: &JsTransportCallback,
+    enabled: bool,
+    layer: ConnectionLayer,
+    stage: &str,
+    status: &str,
+) {
+    if !enabled {
+        return;
+    }
+    let event = TransportEvent::diagnostic(layer, stage, status);
+    let status = callback.call(event, ThreadsafeFunctionCallMode::Blocking);
+    if status != Status::Ok {
+        eprintln!("[LTTY_SSH] callback=transport_diagnostic status={}", status);
+    }
+}
+
+fn send_transport_failure_diagnostic(
+    callback: &JsTransportCallback,
+    enabled: bool,
+    layer: ConnectionLayer,
+    stage: &str,
+    reason: &str,
+) {
+    if !enabled {
+        return;
+    }
+    let event = TransportEvent::diagnostic_failure(layer, stage, reason);
+    let status = callback.call(event, ThreadsafeFunctionCallMode::Blocking);
+    if status != Status::Ok {
+        eprintln!("[LTTY_SSH] callback=transport_diagnostic status={}", status);
+    }
+}
+
+fn connect_failure_reason(error: &russh::Error, can_resolve_name: bool) -> &'static str {
+    match error {
+        russh::Error::IO(io_error) => match io_error.kind() {
+            std::io::ErrorKind::ConnectionRefused => "tcp_refused",
+            std::io::ErrorKind::TimedOut => "tcp_timeout",
+            _ if can_resolve_name && io_error.raw_os_error().is_none() => "name_resolution",
+            _ => "tcp_failed",
+        },
+        russh::Error::Version => "ssh_version",
+        russh::Error::KexInit
+        | russh::Error::Kex
+        | russh::Error::NoCommonAlgo { .. }
+        | russh::Error::UnknownAlgo
+        | russh::Error::WrongServerSig
+        | russh::Error::PacketAuth
+        | russh::Error::StrictKeyExchangeViolation { .. }
+        | russh::Error::DecryptionError => "key_exchange",
+        _ => "transport_failed",
+    }
+}
+
 fn send_control(callback: &JsCallback, event: &str) {
     let _ = try_send_callback(callback, event.to_string(), "control");
 }
@@ -493,6 +578,8 @@ struct ClientHandler {
     known_hosts_path: PathBuf,
     host_key_rx: SharedHostKeyReceiver,
     connect_progress_tx: tokio::sync::mpsc::Sender<ConnectProgress>,
+    transport_callback: Option<JsTransportCallback>,
+    verbose: bool,
     control_callback: JsCallback,
     auth_callback: JsAuthCallback,
 }
@@ -518,13 +605,27 @@ impl russh::client::Handler for ClientHandler {
         &mut self,
         server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> std::result::Result<bool, Self::Error> {
+        if let Some(callback) = &self.transport_callback {
+            send_transport_diagnostic(callback, self.verbose, self.layer, "host_key", "started");
+        }
         match russh::keys::known_hosts::check_known_hosts_path(
             &self.host,
             self.port,
             server_public_key,
             &self.known_hosts_path,
         ) {
-            Ok(true) => Ok(true),
+            Ok(true) => {
+                if let Some(callback) = &self.transport_callback {
+                    send_transport_diagnostic(
+                        callback,
+                        self.verbose,
+                        self.layer,
+                        "host_key",
+                        "succeeded",
+                    );
+                }
+                Ok(true)
+            }
             Ok(false) => {
                 let fingerprint = server_public_key
                     .fingerprint(russh::keys::HashAlg::Sha256)
@@ -555,6 +656,15 @@ impl russh::client::Handler for ClientHandler {
                         public_key
                     ),
                 );
+                if let Some(callback) = &self.transport_callback {
+                    send_transport_diagnostic(
+                        callback,
+                        self.verbose,
+                        self.layer,
+                        "host_key",
+                        "waiting",
+                    );
+                }
                 let _ = self
                     .connect_progress_tx
                     .send(ConnectProgress::WaitingForUser)
@@ -564,9 +674,27 @@ impl russh::client::Handler for ClientHandler {
                     .connect_progress_tx
                     .send(ConnectProgress::NetworkActivityResumed)
                     .await;
+                if let Some(callback) = &self.transport_callback {
+                    send_transport_diagnostic(
+                        callback,
+                        self.verbose,
+                        self.layer,
+                        "host_key",
+                        if accepted { "succeeded" } else { "failed" },
+                    );
+                }
                 Ok(accepted)
             }
             Err(error) => {
+                if let Some(callback) = &self.transport_callback {
+                    send_transport_diagnostic(
+                        callback,
+                        self.verbose,
+                        self.layer,
+                        "host_key",
+                        "failed",
+                    );
+                }
                 let new_fingerprint = server_public_key
                     .fingerprint(russh::keys::HashAlg::Sha256)
                     .to_string();
@@ -892,11 +1020,19 @@ async fn run_authentication(
             } => (auth_method_kinds(remaining_methods), partial_success),
         };
         let action = state.select_next_method(&remaining_methods, partial_success);
+        let action_name = match &action {
+            AuthAction::AttemptPublicKey => "public_key",
+            AuthAction::RequestPrivateKeyPassphrase => "private_key_passphrase",
+            AuthAction::RequestPassword => "password",
+            AuthAction::StartKeyboardInteractive => "keyboard_interactive",
+            AuthAction::PresentChallenge(_) => "challenge",
+            AuthAction::Fail(_) => "fail",
+        };
         eprintln!(
-            "[LTTY_SSH] session={} layer={} stage=auth_select action={:?} partial_success={}",
+            "[LTTY_SSH] session={} layer={} stage=auth_select action={} partial_success={}",
             session_id,
             layer.as_str(),
-            action,
+            action_name,
             partial_success
         );
 
@@ -1271,6 +1407,7 @@ async fn run_session(
     connect_timeout: Duration,
     server_alive_interval_seconds: u32,
     server_alive_count_max: u32,
+    verbose: bool,
     transport_callback: JsTransportCallback,
     control_callback: JsCallback,
     auth_callback: JsAuthCallback,
@@ -1295,10 +1432,14 @@ async fn run_session(
     let mut jump_ssh = None;
 
     if !jump_host.is_empty() {
-        eprintln!(
-            "[LTTY_SSH] session={} layer=jump stage=connect host={} port={}",
-            session_id, jump_host, jump_port
+        send_transport_diagnostic(
+            &transport_callback,
+            verbose,
+            ConnectionLayer::Jump,
+            "connect",
+            "started",
         );
+        eprintln!("[LTTY_SSH] session={} layer=jump stage=connect", session_id);
         let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(2);
         let handler = ClientHandler {
             session_id,
@@ -1309,6 +1450,8 @@ async fn run_session(
             known_hosts_path: known_hosts_path.clone(),
             host_key_rx: host_key_rx.clone(),
             connect_progress_tx: progress_tx,
+            transport_callback: Some(transport_callback.clone()),
+            verbose,
             control_callback: control_callback.clone(),
             auth_callback: auth_callback.clone(),
         };
@@ -1323,10 +1466,24 @@ async fn run_session(
         {
             ConnectWaitResult::Connected(handle) => handle,
             ConnectWaitResult::Failed(error) => {
+                send_transport_failure_diagnostic(
+                    &transport_callback,
+                    verbose,
+                    ConnectionLayer::Jump,
+                    "connect",
+                    connect_failure_reason(&error, true),
+                );
                 send_control(&control_callback, &format!("CONNECT:jump:{error}"));
                 return;
             }
             ConnectWaitResult::TimedOut => {
+                send_transport_diagnostic(
+                    &transport_callback,
+                    verbose,
+                    ConnectionLayer::Jump,
+                    "connect",
+                    "timed_out",
+                );
                 send_control(
                     &control_callback,
                     &format!(
@@ -1342,6 +1499,20 @@ async fn run_session(
             "[LTTY_SSH] session={} layer=jump stage=kex_complete",
             session_id
         );
+        send_transport_diagnostic(
+            &transport_callback,
+            verbose,
+            ConnectionLayer::Jump,
+            "connect",
+            "succeeded",
+        );
+        send_transport_diagnostic(
+            &transport_callback,
+            verbose,
+            ConnectionLayer::Jump,
+            "authentication",
+            "started",
+        );
         match run_authentication(
             session_id,
             generation,
@@ -1356,12 +1527,27 @@ async fn run_session(
         )
         .await
         {
-            AuthenticationOutcome::Authenticated => {}
+            AuthenticationOutcome::Authenticated => {
+                send_transport_diagnostic(
+                    &transport_callback,
+                    verbose,
+                    ConnectionLayer::Jump,
+                    "authentication",
+                    "succeeded",
+                );
+            }
             AuthenticationOutcome::Cancelled => {
                 disconnect_client(&mut jump).await;
                 return;
             }
             AuthenticationOutcome::Failed(error) => {
+                send_transport_diagnostic(
+                    &transport_callback,
+                    verbose,
+                    ConnectionLayer::Jump,
+                    "authentication",
+                    "failed",
+                );
                 send_control(&control_callback, &format!("AUTH:jump:{error}"));
                 disconnect_client(&mut jump).await;
                 return;
@@ -1370,9 +1556,16 @@ async fn run_session(
         jump_ssh = Some(jump);
     }
 
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "connect",
+        "started",
+    );
     eprintln!(
-        "[LTTY_SSH] session={} layer=target stage=connect host={} port={}",
-        session_id, host, port
+        "[LTTY_SSH] session={} layer=target stage=connect",
+        session_id
     );
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel(2);
     let target_handler = ClientHandler {
@@ -1384,10 +1577,20 @@ async fn run_session(
         known_hosts_path,
         host_key_rx,
         connect_progress_tx: progress_tx,
+        transport_callback: Some(transport_callback.clone()),
+        verbose,
         control_callback: control_callback.clone(),
         auth_callback: auth_callback.clone(),
     };
+    let target_uses_jump = jump_ssh.is_some();
     let target_connect_result = if let Some(jump) = jump_ssh.as_mut() {
+        send_transport_diagnostic(
+            &transport_callback,
+            verbose,
+            ConnectionLayer::Jump,
+            "tunnel",
+            "started",
+        );
         let tunnel = match wait_for_auth_exchange(
             jump.channel_open_direct_tcpip(host.clone(), port.into(), "127.0.0.1", 0),
             connect_timeout,
@@ -1397,6 +1600,13 @@ async fn run_session(
         {
             AuthExchangeResult::Completed(channel) => channel,
             AuthExchangeResult::Failed(error) => {
+                send_transport_diagnostic(
+                    &transport_callback,
+                    verbose,
+                    ConnectionLayer::Jump,
+                    "tunnel",
+                    "failed",
+                );
                 send_control(
                     &control_callback,
                     &format!("CHANNEL:jump:direct-tcpip failed: {error}"),
@@ -1405,6 +1615,13 @@ async fn run_session(
                 return;
             }
             AuthExchangeResult::TimedOut => {
+                send_transport_diagnostic(
+                    &transport_callback,
+                    verbose,
+                    ConnectionLayer::Jump,
+                    "tunnel",
+                    "timed_out",
+                );
                 send_control(
                     &control_callback,
                     &format!(
@@ -1420,6 +1637,13 @@ async fn run_session(
                 return;
             }
         };
+        send_transport_diagnostic(
+            &transport_callback,
+            verbose,
+            ConnectionLayer::Jump,
+            "tunnel",
+            "succeeded",
+        );
         wait_for_connect(
             russh::client::connect_stream(target_config, tunnel.into_stream(), target_handler),
             connect_timeout,
@@ -1439,6 +1663,13 @@ async fn run_session(
     let mut ssh = match target_connect_result {
         ConnectWaitResult::Connected(handle) => handle,
         ConnectWaitResult::Failed(error) => {
+            send_transport_failure_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "connect",
+                connect_failure_reason(&error, !target_uses_jump),
+            );
             send_control(&control_callback, &format!("CONNECT:target:{error}"));
             if let Some(jump) = jump_ssh.as_mut() {
                 disconnect_client(jump).await;
@@ -1446,6 +1677,13 @@ async fn run_session(
             return;
         }
         ConnectWaitResult::TimedOut => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "connect",
+                "timed_out",
+            );
             send_control(
                 &control_callback,
                 &format!(
@@ -1469,6 +1707,20 @@ async fn run_session(
         "[LTTY_SSH] session={} layer=target stage=kex_complete",
         session_id
     );
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "connect",
+        "succeeded",
+    );
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "authentication",
+        "started",
+    );
 
     match run_authentication(
         session_id,
@@ -1484,18 +1736,40 @@ async fn run_session(
     )
     .await
     {
-        AuthenticationOutcome::Authenticated => {}
+        AuthenticationOutcome::Authenticated => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "authentication",
+                "succeeded",
+            );
+        }
         AuthenticationOutcome::Cancelled => {
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
         AuthenticationOutcome::Failed(error) => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "authentication",
+                "failed",
+            );
             send_control(&control_callback, &format!("AUTH:target:{error}"));
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
     }
 
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "channel",
+        "started",
+    );
     let channel = match wait_for_auth_exchange(
         ssh.channel_open_session(),
         connect_timeout,
@@ -1505,11 +1779,25 @@ async fn run_session(
     {
         AuthExchangeResult::Completed(value) => value,
         AuthExchangeResult::Failed(error) => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "channel",
+                "failed",
+            );
             send_control(&control_callback, &format!("CHANNEL:target:{error}"));
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
         AuthExchangeResult::TimedOut => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "channel",
+                "timed_out",
+            );
             send_control(
                 &control_callback,
                 &format!(
@@ -1525,7 +1813,21 @@ async fn run_session(
             return;
         }
     };
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "channel",
+        "succeeded",
+    );
 
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "pty",
+        "started",
+    );
     match wait_for_auth_exchange(
         channel.request_pty(false, "xterm-256color", 80, 24, 0, 0, &[]),
         connect_timeout,
@@ -1533,13 +1835,35 @@ async fn run_session(
     )
     .await
     {
-        AuthExchangeResult::Completed(()) => {}
+        AuthExchangeResult::Completed(()) => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "pty",
+                "succeeded",
+            );
+        }
         AuthExchangeResult::Failed(error) => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "pty",
+                "failed",
+            );
             send_control(&control_callback, &format!("PTY:target:{error}"));
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
         AuthExchangeResult::TimedOut => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "pty",
+                "timed_out",
+            );
             send_control(
                 &control_callback,
                 &format!(
@@ -1556,6 +1880,13 @@ async fn run_session(
         }
     }
 
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "shell",
+        "started",
+    );
     match wait_for_auth_exchange(
         channel.request_shell(true),
         connect_timeout,
@@ -1563,13 +1894,35 @@ async fn run_session(
     )
     .await
     {
-        AuthExchangeResult::Completed(()) => {}
+        AuthExchangeResult::Completed(()) => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "shell",
+                "succeeded",
+            );
+        }
         AuthExchangeResult::Failed(error) => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "shell",
+                "failed",
+            );
             send_control(&control_callback, &format!("SHELL:target:{error}"));
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
         AuthExchangeResult::TimedOut => {
+            send_transport_diagnostic(
+                &transport_callback,
+                verbose,
+                ConnectionLayer::Target,
+                "shell",
+                "timed_out",
+            );
             send_control(
                 &control_callback,
                 &format!(
@@ -1587,6 +1940,13 @@ async fn run_session(
     }
 
     eprintln!("[LTTY_SSH] session={} stage=connected", session_id);
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "session",
+        "succeeded",
+    );
     send_control(&control_callback, "CONNECTED");
 
     let (mut channel_read, channel_write) = channel.split();
@@ -1760,13 +2120,22 @@ async fn run_session(
                     interval_seconds,
                     count_max
                 );
+                send_transport_diagnostic(
+                    &transport_callback,
+                    verbose,
+                    layer,
+                    "keepalive",
+                    "timed_out",
+                );
                 true
             }
             Err(error) => {
                 eprintln!(
-                    "[LTTY_SSH] session={} stage=connection_task_failed error={}",
-                    session_id, error
+                    "[LTTY_SSH] session={} stage=connection_task_failed",
+                    session_id
                 );
+                let _ = error;
+                send_transport_diagnostic(&transport_callback, verbose, layer, "session", "failed");
                 false
             }
             Ok(()) => false,
@@ -1783,6 +2152,17 @@ async fn run_session(
     } else {
         exit_code.to_string()
     };
+    send_transport_diagnostic(
+        &transport_callback,
+        verbose,
+        ConnectionLayer::Target,
+        "session",
+        if local_disconnect_requested {
+            "cancelled"
+        } else {
+            "closed"
+        },
+    );
     let _ = send_transport_close(&transport_callback, close_result);
 
     eprintln!("[LTTY_SSH] session={} stage=closed", session_id);
@@ -1838,6 +2218,8 @@ async fn run_file_transfer(
         known_hosts_path: PathBuf::from(known_hosts_path),
         host_key_rx: Arc::new(tokio::sync::Mutex::new(host_key_rx)),
         connect_progress_tx,
+        transport_callback: None,
+        verbose: false,
         control_callback: control_callback.clone(),
         auth_callback: auth_callback.clone(),
     };
@@ -2139,6 +2521,7 @@ pub fn ssh_connect(
     connect_timeout_ms: u32,
     server_alive_interval_seconds: u32,
     server_alive_count_max: u32,
+    verbose: bool,
     generation: u32,
     on_transport: Function<'_, TransportEvent, ()>,
     on_control: Function<'_, String, ()>,
@@ -2259,6 +2642,7 @@ pub fn ssh_connect(
         Duration::from_millis(connect_timeout_ms as u64),
         server_alive_interval_seconds,
         server_alive_count_max,
+        verbose,
         transport_callback,
         control_callback,
         auth_callback,
@@ -2731,7 +3115,7 @@ mod tests {
         wait_for_file_transfer, wait_for_host_key_decision, AuthExchangeResult, AuthMethod,
         AuthWaitResult, ConnectProgress, ConnectWaitResult, ConnectionLayer, FileTransferEvent,
         FileTransferWaitResult, HostKeyDecision, LayeredAuthMethod, OutputDeliveryMetrics,
-        AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
+        TransportEvent, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
     };
     use napi_ohos::Status;
     use russh::client;
@@ -2747,6 +3131,44 @@ mod tests {
     use tokio::sync::{mpsc, Notify};
 
     const ACTOR_TEST_WINDOW_BYTES: usize = 16 * 1024;
+
+    #[test]
+    fn diagnostic_transport_events_contain_only_fixed_metadata_fields() {
+        let event =
+            TransportEvent::diagnostic(ConnectionLayer::Target, "authentication", "waiting");
+        assert_eq!(event.kind, "diagnostic");
+        assert_eq!(event.layer, "target");
+        assert_eq!(event.stage, "authentication");
+        assert_eq!(event.status, "waiting");
+        assert!(event.reason.is_empty());
+        assert!(event.result.is_empty());
+    }
+
+    #[test]
+    fn connect_failures_are_reduced_to_safe_fixed_reasons() {
+        assert_eq!(
+            super::connect_failure_reason(
+                &russh::Error::IO(std::io::Error::from(std::io::ErrorKind::ConnectionRefused)),
+                true,
+            ),
+            "tcp_refused"
+        );
+        assert_eq!(
+            super::connect_failure_reason(&russh::Error::Version, true),
+            "ssh_version"
+        );
+        assert_eq!(
+            super::connect_failure_reason(&russh::Error::Kex, true),
+            "key_exchange"
+        );
+        assert_eq!(
+            super::connect_failure_reason(
+                &russh::Error::IO(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)),
+                false,
+            ),
+            "tcp_failed"
+        );
+    }
 
     #[derive(Debug)]
     enum ActorServerEvent {

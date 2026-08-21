@@ -6,6 +6,12 @@
 
 ### Added
 
+- Added one-shot `ssh -v` diagnostics for the current Pane and connection
+  attempt. LeanTTY shows fixed, redacted jump/target stages and safely
+  classifies name resolution, TCP, SSH version and key-exchange failures
+  without enabling raw russh logs, persisting diagnostic state or exposing
+  hosts, identities, paths, fingerprints, prompts, credentials or terminal
+  content. Normal `ssh` and reconnect remain non-verbose by default.
 - Added line-start SSH escapes for an active terminal: `~.` disconnects the
   current Pane's Session, `~?` lists only LeanTTY-supported escapes, `~I` shows
   a sanitized target and optional jump route, and `~~` sends one literal

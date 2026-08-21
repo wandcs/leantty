@@ -29,6 +29,7 @@ export class CommandParseResult {
   connectTimeoutMs: number
   serverAliveIntervalSeconds: number
   serverAliveCountMax: number
+  verbose: boolean
   errorMessage: string
 
   constructor() {
@@ -50,6 +51,7 @@ export class CommandParseResult {
     this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
     this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
     this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+    this.verbose = false
     this.errorMessage = ''
   }
 }
@@ -303,6 +305,7 @@ export class CommandParser {
     let identitySpecified: boolean = false
     let explicitJump: string = ''
     let jumpSpecified: boolean = false
+    let verboseSpecified: boolean = false
     for (let i = 0; i < args.length; i++) {
       if (args[i] === '-p') {
         if (i + 1 >= args.length) { result.errorMessage = 'Missing port after -p'; return result }
@@ -324,6 +327,10 @@ export class CommandParser {
         explicitJump = args[i + 1]
         jumpSpecified = true
         i++
+      } else if (args[i] === '-v') {
+        if (verboseSpecified) { result.errorMessage = 'Duplicate SSH option: -v'; return result }
+        result.verbose = true
+        verboseSpecified = true
       } else if (args[i].startsWith('-')) {
         result.errorMessage = 'Unsupported SSH option: ' + args[i]; return result
       } else if (target.length === 0) {

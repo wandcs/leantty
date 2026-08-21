@@ -301,7 +301,7 @@ ProxyJump 最多帮助 Mosh 的 SSH bootstrap；它不转发 UDP。只有目标 
 | 1.2 | 不强行加入命令能力；保持终端搜索的单一主题 |
 | 1.3 | 已采纳 `put/get`；SFTP 只作内部 subsystem，不开放 `scp/sftp` |
 | 1.4 | 启动性能；`ProxyJump` 配置与标准 `-J`，首版单跳并保持 jump/target 双重信任与认证。HSL 专用入口因公开发现门禁失败而裁剪，手工 HSL Host 仍复用现有 SSH 命令、认证和主机信任 |
-| 1.5 | `ConnectTimeout`、基本 SSH escape 与 `ServerAliveInterval/ServerAliveCountMax` 已闭合；`-4/-6` / `AddressFamily` 因真机 IPv6 fixture 门禁暂缓；UpdateHostKeys 因 russh 0.62.5 缺少完整 proof 公开 API 而裁剪。当前只晋级安全 `-v` 的结构化事件、脱敏与受控 fixture 基线，是否实现由证据另行决定；config import/export、`ssh-keygen -c`、ECDSA 导入/认证仍逐项晋级 |
+| 1.5 | `ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax` 与安全 `ssh -v` 已闭合；`-4/-6` / `AddressFamily` 因真机 IPv6 fixture 门禁暂缓；UpdateHostKeys 因 russh 0.62.5 缺少完整 proof 公开 API 而裁剪。当前只晋级 config import/export 的真实样本、文件授权、round-trip 与原子失败恢复门禁；`ssh-keygen -c`、ECDSA 导入/认证仍逐项晋级 |
 | 1.6 | 长任务注意力与返回路径；不为版本号强行增加命令能力 |
 | 1.7 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
 

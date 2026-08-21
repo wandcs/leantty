@@ -759,8 +759,9 @@ foreach ($scriptName in @(
             -not $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
             $content.Contains("'ltty-exit'") -and
             $content.Contains("'shell command=exit result=closed'") -and
-            $content.Contains('Assert-AuthCommandLoopbackTarget') -and
-            $content.Contains("'[environment] Device key injection changed the SSH command target'") -and
+            $content.Contains('Assert-AuthCommandStarted') -and
+            $content.Contains("'[environment] Device key injection did not start the SSH command'") -and
+            -not $content.Contains('SSH connect initiated:') -and
             $content.Contains('Activate-RegressionWindow') -and
             $content.Contains('function Assert-RegressionProcessUnchanged') -and
             ([regex]::Matches($content, 'Assert-RegressionProcessUnchanged -Action').Count -eq 3) -and
@@ -827,6 +828,7 @@ foreach ($scriptName in @(
         )
         foreach ($groupedStage in @(
                 'password-success',
+                'ssh-diagnostics',
                 'terminal-key-input',
                 'transport-main-path',
                 'performance-matrix',
