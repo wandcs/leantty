@@ -273,6 +273,7 @@ function Wait-FileTransferAuthenticationState {
         [ValidateRange(1, 60)][int]$TimeoutSeconds
     )
 
+    Ensure-FileTransferAuthenticationObserver
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $lastSnapshot = ''
     $lastSnapshotError = ''
@@ -590,6 +591,7 @@ function Complete-TerminalTextWithTab {
                     -Hdc $hdc -Target $Target -Text $Suffix -InputNode $inputNode
             }
             $prepared.command = $completedPrefix + $Suffix
+            Set-FileTransferAuthenticationObservationCursor
         } `
         -ExpectedCommandProvider { param($inputAttempt) $prepared.command } | Out-Null
 }
@@ -3425,6 +3427,19 @@ try {
     if ($ServerAliveBlackhole -and -not [string]::IsNullOrWhiteSpace($appProcessId)) {
         if ($serverAliveHostConfigured) {
             try {
+                Stop-FileTransferAuthenticationObserver
+                & $hdc -t $Target shell 'aa force-stop com.leantty.app' | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw 'Unable to restart LeanTTY before run-scoped Host cleanup'
+                }
+                Start-Sleep -Milliseconds 500
+                $cleanupLaunch = Start-LeanTTYRegressionApp `
+                    -Hdc $hdc `
+                    -Target $Target `
+                    -CredentialPath (Get-LeanTTYDeviceUnlockPasswordPath) `
+                    -RepositoryRoot $repoRoot
+                $appProcessId = $cleanupLaunch.processId
+                Focus-TerminalInput -Name 'server-alive-host-finally-cleanup-ready'
                 Submit-TerminalText `
                     -Text "host rm $serverAliveHostAlias" `
                     -LayoutName 'server-alive-host-finally-cleanup'
