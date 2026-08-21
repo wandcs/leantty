@@ -1195,6 +1195,12 @@ try {
             Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
             $blackholeWatch = [Diagnostics.Stopwatch]::StartNew()
             New-Item -ItemType File -Path $dropPath -Force | Out-Null
+            if ($ServerAliveIntervalSeconds -eq 0) {
+                Submit-ConnectedProxyInputUntilFixture `
+                    -Text "ltty-input-check ${blackholeLayer}alivedropstart" `
+                    -FixtureLog $targetStderr `
+                    -ExpectedPattern "input case=${blackholeLayer}alivedropstart result=matched"
+            }
             Wait-ProxyFixtureLog `
                 -Path $dropFixtureLog `
                 -Pattern 'transport proxy client=.* mode=drop-server-output' `
