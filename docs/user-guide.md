@@ -84,6 +84,8 @@ The current documented `ssh_config` subset is:
 | `IdentityFile` | Selects a verified LeanTTY key by supported reference |
 | `ProxyJump` | Uses one saved Host or one `[user@]host[:port]` jump |
 | `ConnectTimeout` | Uses 1–300 whole seconds; defaults to 15 seconds |
+| `ServerAliveInterval` | Uses 0–3600 whole seconds; `0` disables probes |
+| `ServerAliveCountMax` | Uses 1–100 unanswered probes |
 
 OpenSSH first-value behavior is preserved for these fields. An unknown or
 unsupported directive in a matching Host block causes `ssh` and `ssh -G` to
@@ -92,6 +94,34 @@ LeanTTY does not yet evaluate `Match` conditions, any `Match` block is rejected
 instead of being silently ignored. Unsupported directives in unrelated Host
 blocks do not block the selected Host, and LeanTTY preserves their source text
 when it edits its own managed Host section.
+
+To migrate one existing config file, first place it in Downloads, then run:
+
+```text
+config import workstation.conf
+```
+
+Import is available only while the current config has no existing non-LeanTTY
+text. If such text already exists, export it first and explicitly run
+`config import workstation.conf --replace`; LeanTTY replaces that unmanaged
+body instead of inventing merge precedence. Existing LeanTTY-managed Hosts
+remain first. `Include`, `Match`, token or
+environment expansion and quoted supported values are rejected because LeanTTY
+cannot reproduce their effective authority safely. Comments, whitespace,
+line endings, repeated Host patterns, wildcards and unknown directives are
+retained exactly. An unknown directive in a matching block still stops that
+connection explicitly; it is not silently treated as supported.
+
+Export the active config without overwriting an existing Downloads file:
+
+```text
+config export
+config export workstation-backup.conf
+```
+
+The default file name is `leantty-ssh-config`. Import/export accepts one
+Downloads basename, not a path, directory, profile, background watcher or
+alternate `ssh -F` config.
 
 `ConnectTimeout` limits TCP setup and the initial SSH handshake/key exchange. It
 uses the target Host value for direct SSH, the target layer, reconnect and
@@ -296,6 +326,7 @@ the file.
 | `put [-p port] [-i identity] local-file host:remote-path` | Upload one Downloads file through SFTP |
 | `get [-p port] [-i identity] host:remote-file [local-path]` | Download one SFTP file into Downloads |
 | `key list/import/export/rm` | Manage LeanTTY key pairs |
+| `config import/export` | Migrate or back up the single OpenSSH config through Downloads |
 | `host add/set/list/rm` | Manage LeanTTY Host entries |
 | `exit` | Close the current idle pane or tab path |
 

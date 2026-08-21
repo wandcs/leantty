@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit'
 import { FileUtils } from '../../common/utils/FileUtils'
 import { DurableAssetStore } from './DurableAssetStore'
+import { SshConfigCommitPolicy } from './SshConfigCommitPolicy'
 
 const INITIALIZED_PATH: string = '_meta/initialized'
 const FONT_SIZE_PATH: string = 'settings/terminal-font-size'
@@ -76,8 +77,13 @@ export class DurableStateManager {
   }
 
   static commitSshConfig(context: common.Context, content: string): void {
-    DurableStateManager.requireStore().write(SSH_CONFIG_PATH, content)
-    FileUtils.writeTextFile(FileUtils.getSshDir(context) + '/config', content)
+    let store: DurableAssetStore = DurableStateManager.requireStore()
+    let configPath: string = FileUtils.getSshDir(context) + '/config'
+    let previous: string | null = store.read(SSH_CONFIG_PATH)
+    SshConfigCommitPolicy.commit(previous, content,
+      (projected: string): void => FileUtils.writeTextFile(configPath, projected),
+      (durable: string): void => store.write(SSH_CONFIG_PATH, durable),
+      (): void => FileUtils.removeFile(configPath))
   }
 
   static commitKnownHostLine(context: common.Context, line: string): void {

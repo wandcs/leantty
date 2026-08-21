@@ -37,6 +37,10 @@ const HELP_TEXT: string =
   '  key export <key-name> [<file-name>]             Export a key pair to Downloads\r\n' +
   '  key rm <key-name>                               Delete a verified key pair\r\n' +
   '\r\n' +
+  'OpenSSH config\r\n' +
+  '  config import <Downloads-file-name> [--replace] Import one config file\r\n' +
+  '  config export [<Downloads-file-name>]            Export the active config\r\n' +
+  '\r\n' +
   'Host configuration\r\n' +
   '  host add <name> <user>@<host>[:<port>] [options]  Add a host\r\n' +
   '  host set <name> <user>@<host>[:<port>] [options]  Update a host\r\n' +
@@ -78,6 +82,13 @@ const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<p
   '--server-alive-interval uses whole seconds; 0 disables probes and default restores 30.\r\n' +
   '--server-alive-count-max controls unanswered probes; default restores 3.\r\n' +
   'Legacy alias commands remain temporarily supported.\r\n'
+const CONFIG_HELP: string =
+  '\r\nUsage: config import <Downloads-file-name> [--replace]\r\n' +
+  '       config export [<Downloads-file-name>]\r\n\r\n' +
+  'Import accepts one regular UTF-8 file from Downloads when the current config has no existing ' +
+  'non-LeanTTY text. Export first, then use --replace to explicitly replace existing non-LeanTTY text. ' +
+  'Existing LeanTTY-managed Hosts stay first. Include, Match and token expansion are rejected.\r\n' +
+  'Export defaults to leantty-ssh-config and never overwrites an existing Downloads file.\r\n'
 const TRANSFER_HELP: string =
   '\r\nUsage: put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
   '       get [-p <port>] [-i <identity>] [--] <host>:<remote-file> [local-path]\r\n\r\n' +
@@ -121,6 +132,14 @@ export class KeyCommandService {
       return
     }
     if (result.kind === KeyCommandKind.KEYEXPORT) { KeyCommandService.executeKeyexport(result, ctx); return }
+    if (result.kind === KeyCommandKind.CONFIG_IMPORT) {
+      KeyCommandService.executeConfigImport(result, ctx)
+      return
+    }
+    if (result.kind === KeyCommandKind.CONFIG_EXPORT) {
+      KeyCommandService.executeConfigExport(result, ctx)
+      return
+    }
     if (result.kind === KeyCommandKind.HOST_KEY_FIND) {
       KeyCommandService.executeHostKeyFind(result, ctx)
       return
@@ -146,6 +165,7 @@ export class KeyCommandService {
     if (topic === 'ssh-copy-id') { ctx.writeOutput(COPY_ID_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'key' || topic === 'keys') { ctx.writeOutput(KEY_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'host' || topic === 'alias') { ctx.writeOutput(HOST_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'config') { ctx.writeOutput(CONFIG_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'put' || topic === 'get' || topic === 'scp') {
       ctx.writeOutput(TRANSFER_HELP + LocalCommandOutput.prompt()); return
     }
@@ -311,6 +331,34 @@ export class KeyCommandService {
     } catch (e) {
       logger.warn('Key export failed: ' + e)
       ctx.writeError('The key pair could not be exported.\r\nCheck Downloads access and the file name, then try again.')
+    }
+  }
+
+  private static async executeConfigImport(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
+    try {
+      await ctx.sshConfig.importFromDownloads(ctx.context, result.sourcePath, result.replaceExisting)
+      logger.info('CONFIG_IMPORT result=success,replace=' + result.replaceExisting.toString())
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Imported OpenSSH config from Downloads.') +
+        '\r\n  ' + KeyCommandService.safeText(result.sourcePath) +
+        '\r\n  Unsupported directives remain visible and block matching connections.\r\n' +
+        LocalCommandOutput.prompt())
+    } catch (e) {
+      logger.warn('Config import failed: ' + e)
+      ctx.writeError('The config could not be imported.\r\n' +
+        KeyCommandService.safeText('' + e) + '\r\nThe previous config remains active.')
+    }
+  }
+
+  private static async executeConfigExport(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
+    try {
+      await ctx.sshConfig.exportToDownloads(ctx.context, result.destinationName)
+      logger.info('CONFIG_EXPORT result=success')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Exported OpenSSH config to Downloads.') +
+        '\r\n  ' + KeyCommandService.safeText(result.destinationName) + '\r\n' + LocalCommandOutput.prompt())
+    } catch (e) {
+      logger.warn('Config export failed: ' + e)
+      ctx.writeError('The config could not be exported.\r\n' +
+        KeyCommandService.safeText('' + e) + '\r\nChoose another Downloads file name and try again.')
     }
   }
 

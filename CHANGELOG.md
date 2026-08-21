@@ -6,6 +6,15 @@
 
 ### Added
 
+- Added controlled `config import <Downloads-file-name>` and `config export
+  [<Downloads-file-name>]` commands for one canonical OpenSSH config. Import
+  validates before commit, preserves comments, whitespace, line endings,
+  repeated Host patterns and unknown source text across later managed Host
+  edits, rejects `Include`, `Match`, token expansion and a second unmanaged
+  import unless `--replace` is explicit, and rolls the runtime projection back
+  if durable commit fails.
+  Export uses the existing Downloads authorization and never overwrites an
+  existing file.
 - Added one-shot `ssh -v` diagnostics for the current Pane and connection
   attempt. LeanTTY shows fixed, redacted jump/target stages and safely
   classifies name resolution, TCP, SSH version and key-exchange failures

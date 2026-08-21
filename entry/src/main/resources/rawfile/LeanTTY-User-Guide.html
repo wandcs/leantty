@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="5">
+  <meta name="leantty-guide-revision" content="6">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LeanTTY 1.5.0 使用指南 / User Guide</title>
@@ -1092,6 +1092,20 @@ ssh work</code></pre>
           <code>--connect-timeout default</code> 可删除显式值并恢复 15 秒默认值。
         </p>
 
+        <h3>迁移或备份 OpenSSH config</h3>
+        <pre><code>config import workstation.conf
+config import workstation.conf --replace
+config export
+config export workstation-backup.conf</code></pre>
+        <p>
+          import 从 Downloads 读取一个普通 UTF-8 文件；已有非 LeanTTY 正文时，先导出并显式使用
+          <code>--replace</code>，LeanTTY 不自行发明合并优先级。已有 managed Host 保持在最前。
+          注释、空白、换行、重复 Host pattern、通配符
+          和未知 directive 原样保留。<code>Include</code>、<code>Match</code>、token expansion 和受支持
+          值的 quoting 会被拒绝；匹配到未知 directive 的连接也会明确失败，不会静默降级。
+          export 默认写入 <code>leantty-ssh-config</code>，已有 Downloads 文件永不覆盖。
+        </p>
+
         <h3>通过一个 SSH 跳板连接</h3>
         <pre><code>host add jump gateway@jump.example.com
 host add private deploy@target.example.com -J jump
@@ -1289,6 +1303,7 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>不连接服务器，只显示 LeanTTY 最终会采用的配置。</td></tr>
               <tr><td><code>put …</code></td><td>通过 SFTP 上传 Downloads 中的一个文件。</td></tr>
               <tr><td><code>get …</code></td><td>通过 SFTP 下载一个文件到 Downloads。</td></tr>
+              <tr><td><code>config import|export</code></td><td>通过 Downloads 迁移或备份唯一 OpenSSH config。</td></tr>
               <tr><td><code>host add|set|list|rm</code></td><td>管理 OpenSSH Host 配置中由 LeanTTY 拥有的区域。</td></tr>
               <tr><td><code>key list|import|export|rm</code></td><td>管理已经验证的 LeanTTY 密钥对。</td></tr>
               <tr><td><code>ssh-keygen …</code></td><td>生成、检查或更新密钥与主机信任记录。</td></tr>
@@ -1300,7 +1315,7 @@ get work:/reports/latest.csv reports/</code></pre>
 
         <p>
           使用 <code>help ssh</code>、<code>help put</code>、<code>help get</code>、
-          <code>help host</code>、<code>help key</code>、
+          <code>help config</code>、<code>help host</code>、<code>help key</code>、
           <code>help ssh-keygen</code> 或 <code>&lt;command&gt; --help</code> 查看准确语法。
           不支持的选项会明确失败，不会被静默忽略。
         </p>
@@ -1598,6 +1613,21 @@ ssh work</code></pre>
           <code>--connect-timeout default</code> to remove the explicit value and restore 15 seconds.
         </p>
 
+        <h3>Migrate or back up OpenSSH config</h3>
+        <pre><code>config import workstation.conf
+config import workstation.conf --replace
+config export
+config export workstation-backup.conf</code></pre>
+        <p>
+          Import reads one regular UTF-8 file from Downloads. When non-LeanTTY text already exists,
+          export it first and explicitly use <code>--replace</code>; LeanTTY does not invent merge
+          precedence. Managed Hosts remain first. Comments, whitespace,
+          line endings, repeated Host patterns, wildcards and unknown directives are preserved exactly.
+          <code>Include</code>, <code>Match</code>, token expansion and quoting in supported values are
+          rejected. A matching unknown directive also blocks the connection explicitly. Export defaults
+          to <code>leantty-ssh-config</code> and never overwrites an existing Downloads file.
+        </p>
+
         <h3>Connect through one SSH jump host</h3>
         <pre><code>host add jump gateway@jump.example.com
 host add private deploy@target.example.com -J jump
@@ -1801,6 +1831,7 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>Show the supported effective configuration without connecting.</td></tr>
               <tr><td><code>put …</code></td><td>Upload one Downloads file through SFTP.</td></tr>
               <tr><td><code>get …</code></td><td>Download one SFTP file into Downloads.</td></tr>
+              <tr><td><code>config import|export</code></td><td>Migrate or back up the single OpenSSH config through Downloads.</td></tr>
               <tr><td><code>host add|set|list|rm</code></td><td>Manage LeanTTY's section of OpenSSH host configuration.</td></tr>
               <tr><td><code>key list|import|export|rm</code></td><td>Manage verified LeanTTY key pairs.</td></tr>
               <tr><td><code>ssh-keygen …</code></td><td>Generate, inspect or update keys and trusted-host records.</td></tr>
@@ -1812,7 +1843,7 @@ get work:/reports/latest.csv reports/</code></pre>
 
         <p>
           Use <code>help ssh</code>, <code>help put</code>, <code>help get</code>,
-          <code>help host</code>, <code>help key</code>,
+          <code>help config</code>, <code>help host</code>, <code>help key</code>,
           <code>help ssh-keygen</code> or <code>&lt;command&gt; --help</code> for exact syntax.
           Unsupported options fail explicitly instead of being silently ignored.
         </p>

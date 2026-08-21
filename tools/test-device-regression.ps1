@@ -1189,6 +1189,21 @@ $fileTransferVerifier = Get-Content -LiteralPath (
 $putGetVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-put-get-pc.ps1'
 ) -Raw
+$configVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-config-import-export-pc.ps1'
+) -Raw
+Assert-True (
+    $configVerifier.Contains("gate = 'config-import-export-physical-pc'") -and
+    $configVerifier.Contains('Submit-LeanTTYDeviceCommand') -and
+    $configVerifier.Contains('CONFIG_IMPORT result=success,replace=true') -and
+    $configVerifier.Contains('CONFIG_EXPORT result=success') -and
+    $configVerifier.Contains('Export conflict changed the existing Downloads file') -and
+    $configVerifier.Contains('Restart did not reopen the imported durable config') -and
+    $configVerifier.Contains('Product-path cleanup did not restore the original unmanaged config bytes') -and
+    $configVerifier.Contains('Remove-ConfigDeviceFiles') -and
+    $configVerifier.Contains('cleanupComplete = $cleanupComplete') -and
+    $configVerifier.Contains("acceptanceEligible = `$false")
+) 'Config import/export physical verifier lost input, persistence, conflict, evidence or cleanup controls'
 Assert-True (
     $terminalPane.Contains('.onKeyPreIme') -and
     $terminalPane.Contains('.onInterceptKeyEvent') -and

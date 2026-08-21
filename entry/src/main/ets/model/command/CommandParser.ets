@@ -74,7 +74,9 @@ export enum KeyCommandKind {
   KEYEXPORT = 14,
   HOST_KEY_REMOVE = 15,
   KEY_PASSPHRASE_CHANGE = 16,
-  HOST_KEY_FIND = 17
+  HOST_KEY_FIND = 17,
+  CONFIG_IMPORT = 18,
+  CONFIG_EXPORT = 19
 }
 
 export class KeyCommandResult {
@@ -92,6 +94,7 @@ export class KeyCommandResult {
   sshServerAliveCountMax: number
   errorMessage: string
   legacySyntax: boolean
+  replaceExisting: boolean
 
   constructor() {
     this.kind = KeyCommandKind.KEYS
@@ -108,6 +111,7 @@ export class KeyCommandResult {
     this.sshServerAliveCountMax = -1
     this.errorMessage = ''
     this.legacySyntax = false
+    this.replaceExisting = false
   }
 }
 
@@ -246,6 +250,35 @@ export class CommandParser {
       result.kind = KeyCommandKind.KEYS
       result.errorMessage = 'Usage: key list | key import <path> [<key-name>] | ' +
         'key export <key-name> [<file-name>] | key rm <key-name>'
+      return result
+    }
+
+    if (words[0] === 'config' && words[1] === 'import') {
+      let result: KeyCommandResult = new KeyCommandResult()
+      result.kind = KeyCommandKind.CONFIG_IMPORT
+      if (words.length !== 3 && !(words.length === 4 && words[3] === '--replace')) {
+        result.errorMessage = 'Usage: config import <Downloads-file-name> [--replace]'
+      } else {
+        result.sourcePath = words[2]
+        result.replaceExisting = words.length === 4
+      }
+      return result
+    }
+    if (words[0] === 'config' && words[1] === 'export') {
+      let result: KeyCommandResult = new KeyCommandResult()
+      result.kind = KeyCommandKind.CONFIG_EXPORT
+      if (words.length > 3) {
+        result.errorMessage = 'Usage: config export [<Downloads-file-name>]'
+      } else {
+        result.destinationName = words.length === 3 ? words[2] : SshConfig.defaultExportName()
+      }
+      return result
+    }
+    if (words[0] === 'config') {
+      let result: KeyCommandResult = new KeyCommandResult()
+      result.kind = KeyCommandKind.CONFIG_EXPORT
+      result.errorMessage = 'Usage: config import <Downloads-file-name> [--replace] | ' +
+        'config export [<Downloads-file-name>]'
       return result
     }
 
