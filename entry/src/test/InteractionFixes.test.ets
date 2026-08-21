@@ -794,6 +794,38 @@ export default function interactionFixesTest() {
       expect(config.previewConfigText().includes('  ConnectTimeout ')).assertEqual(false)
     })
 
+    it('validatesAndPersistsManagedHostServerAliveSettings', 0, () => {
+      let configured: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --server-alive-interval 0 --server-alive-count-max 7')
+      let reset: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host set prod deploy@example.com --server-alive-interval default --server-alive-count-max default')
+      let invalidInterval: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --server-alive-interval 3601')
+      let invalidCount: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --server-alive-count-max 0')
+      let duplicate: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --server-alive-count-max 2 --server-alive-count-max 3')
+      expect(configured.errorMessage).assertEqual('')
+      expect(configured.sshServerAliveIntervalSeconds).assertEqual(0)
+      expect(configured.sshServerAliveCountMax).assertEqual(7)
+      expect(reset.sshServerAliveIntervalSeconds).assertEqual(30)
+      expect(reset.sshServerAliveCountMax).assertEqual(3)
+      expect(invalidInterval.errorMessage.includes('whole seconds 0-3600')).assertEqual(true)
+      expect(invalidCount.errorMessage.includes('must be 1-100')).assertEqual(true)
+      expect(duplicate.errorMessage).assertEqual('Duplicate host option: --server-alive-count-max')
+
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('')
+      config.addAlias('prod', configured.sshHost, configured.sshPort, configured.sshUser,
+        null, null, configured.sshServerAliveIntervalSeconds, configured.sshServerAliveCountMax)
+      expect(config.previewConfigText().includes('  ServerAliveInterval 0\n')).assertEqual(true)
+      expect(config.previewConfigText().includes('  ServerAliveCountMax 7\n')).assertEqual(true)
+      config.addAlias('prod', reset.sshHost, reset.sshPort, reset.sshUser,
+        null, null, reset.sshServerAliveIntervalSeconds, reset.sshServerAliveCountMax)
+      expect(config.previewConfigText().includes('  ServerAliveInterval ')).assertEqual(false)
+      expect(config.previewConfigText().includes('  ServerAliveCountMax ')).assertEqual(false)
+    })
+
     it('persistsProxyJumpInTheSingleManagedHostConfig', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('')
@@ -1128,12 +1160,52 @@ export default function interactionFixesTest() {
       }
     })
 
+    it('resolvesServerAliveBoundsWithOpenSshFirstValueSemantics', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName prod.example.com\n  User deploy\n' +
+        '  ServerAliveInterval 0\n  ServerAliveCountMax 100\n\nHost *\n' +
+        '  ServerAliveInterval 60\n  ServerAliveCountMax 5\n')
+      let connection = CommandParser.parseInput('ssh prod', config)
+      let transfer = CommandParser.parseInput('get prod:/report.txt', config)
+      expect(connection instanceof CommandParseResult).assertEqual(true)
+      expect(transfer instanceof TransferCommandResult).assertEqual(true)
+      if (connection instanceof CommandParseResult) {
+        expect(connection.isValid).assertEqual(true)
+        expect(connection.serverAliveIntervalSeconds).assertEqual(0)
+        expect(connection.serverAliveCountMax).assertEqual(100)
+      }
+      if (transfer instanceof TransferCommandResult) {
+        expect(transfer.serverAliveIntervalSeconds).assertEqual(0)
+        expect(transfer.serverAliveCountMax).assertEqual(100)
+      }
+      for (let value of ['3601', '-1', '1.5', 'forever']) {
+        let invalid: SshConfig = new SshConfig()
+        invalid.loadFromText('Host prod\n  User deploy\n  ServerAliveInterval ' + value + '\n')
+        let result = CommandParser.parseInput('ssh prod', invalid)
+        if (result instanceof CommandParseResult) {
+          expect(result.isValid).assertEqual(false)
+          expect(result.errorMessage.includes('expected whole seconds 0-3600')).assertEqual(true)
+        }
+      }
+      for (let value of ['0', '101', '-1', '1.5', 'forever']) {
+        let invalid: SshConfig = new SshConfig()
+        invalid.loadFromText('Host prod\n  User deploy\n  ServerAliveCountMax ' + value + '\n')
+        let result = CommandParser.parseInput('ssh prod', invalid)
+        if (result instanceof CommandParseResult) {
+          expect(result.isValid).assertEqual(false)
+          expect(result.errorMessage.includes('expected count 1-100')).assertEqual(true)
+        }
+      }
+    })
+
     it('resolvesSingleProxyJumpWithSeparateHostIdentityAndOverrides', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName target.example.com\n  User target-user\n' +
-        '  IdentityFile target-key\n  ConnectTimeout 9\n  ProxyJump jump-user@bastion:2200\n\n' +
+        '  IdentityFile target-key\n  ConnectTimeout 9\n  ServerAliveInterval 11\n' +
+        '  ServerAliveCountMax 2\n  ProxyJump jump-user@bastion:2200\n\n' +
         'Host bastion\n  HostName jump.example.com\n  User config-jump-user\n' +
-        '  Port 2222\n  IdentityFile jump-key\n  ConnectTimeout 4\n')
+        '  Port 2222\n  IdentityFile jump-key\n  ConnectTimeout 4\n' +
+        '  ServerAliveInterval 17\n  ServerAliveCountMax 6\n')
       let parsed = CommandParser.parseInput('ssh prod', config)
       expect(parsed instanceof CommandParseResult).assertEqual(true)
       if (parsed instanceof CommandParseResult) {
@@ -1148,6 +1220,10 @@ export default function interactionFixesTest() {
         expect(parsed.jumpIdentityFile).assertEqual('jump-key')
         expect(parsed.connectTimeoutMs).assertEqual(9000)
         expect(parsed.jumpConnectTimeoutMs).assertEqual(4000)
+        expect(parsed.serverAliveIntervalSeconds).assertEqual(11)
+        expect(parsed.serverAliveCountMax).assertEqual(2)
+        expect(parsed.jumpServerAliveIntervalSeconds).assertEqual(17)
+        expect(parsed.jumpServerAliveCountMax).assertEqual(6)
       }
     })
 

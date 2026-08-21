@@ -2225,6 +2225,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn silent_shell_stays_connected_when_ssh_keepalive_replies_arrive() -> AsyncTestResult {
+        let server_socket = TcpListener::bind("127.0.0.1:0").await?;
+        let server_address = server_socket.local_addr()?;
+        let server_config = Arc::new(russh::server::Config {
+            keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)?],
+            ..Default::default()
+        });
+        let mut fixture = FixtureServer::new(credentials());
+        let running = fixture.run_on_socket(server_config, &server_socket);
+        let server_handle = running.handle();
+
+        let client = async move {
+            let client_config = Arc::new(client::Config {
+                keepalive_interval: Some(Duration::from_millis(100)),
+                keepalive_max: 3,
+                ..Default::default()
+            });
+            let mut ssh = client::connect(client_config, server_address, SftpTestClient).await?;
+            if !ssh
+                .authenticate_password(USER_PASSWORD, "password-value")
+                .await?
+                .success()
+            {
+                return Err(io::Error::other("silent-shell fixture password was rejected").into());
+            }
+            let channel = ssh.channel_open_session().await?;
+            channel.request_shell(true).await?;
+
+            if timeout(Duration::from_millis(650), &mut ssh).await.is_ok() {
+                return Err(io::Error::other(
+                    "silent shell closed despite receiving SSH keepalive replies",
+                )
+                .into());
+            }
+            ssh.disconnect(russh::Disconnect::ByApplication, "test complete", "")
+                .await?;
+            Ok::<(), Box<dyn Error + Send + Sync>>(())
+        };
+
+        let managed_client = async move {
+            let result = timeout(Duration::from_secs(2), client).await;
+            server_handle.shutdown("test complete".to_string());
+            match result {
+                Ok(result) => result,
+                Err(error) => Err(error.into()),
+            }
+        };
+        let (server_result, client_result) = tokio::join!(running, managed_client);
+        server_result
+            .map_err(|error| -> Box<dyn Error + Send + Sync> { Box::new(error) })
+            .and(client_result)
+    }
+
+    #[tokio::test]
     async fn shell_channel_consumes_more_than_the_default_message_buffer() -> AsyncTestResult {
         let socket = TcpListener::bind("127.0.0.1:0").await?;
         let address = socket.local_addr()?;

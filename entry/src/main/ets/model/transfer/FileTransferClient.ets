@@ -22,6 +22,8 @@ export class FileTransferOptions {
   privateKeyRequiresPassphrase: boolean = false
   knownHostsPath: string = ''
   connectTimeoutMs: number = 15000
+  serverAliveIntervalSeconds: number = 30
+  serverAliveCountMax: number = 3
   paneId: string = ''
   remotePath: string = ''
   localPath: string = ''
@@ -73,6 +75,8 @@ export class FileTransferClient {
       options.privateKeyRequiresPassphrase,
       options.knownHostsPath,
       options.connectTimeoutMs,
+      options.serverAliveIntervalSeconds,
+      options.serverAliveCountMax,
       this.generation,
       options.paneId,
       options.remotePath,

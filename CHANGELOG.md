@@ -19,6 +19,12 @@
   exchange, reports jump and target timeouts separately, keeps user-driven host
   verification and authentication waits outside the deadline, and retains the
   existing 15-second default when the directive is absent.
+- Added controlled `ServerAliveInterval` and `ServerAliveCountMax` Host
+  settings for direct SSH, one-hop ProxyJump, reconnect and Host-based
+  `put/get`. LeanTTY keeps its existing `30s/3` reliability default, accepts
+  intervals `0-3600` seconds (`0` disables probes) and counts `1-100`, applies
+  target and named-jump values independently, and reports an encrypted-channel
+  keepalive timeout through the existing Session close and reconnect path.
 
 ## [1.4.0] - 2026-08-19
 

@@ -268,7 +268,11 @@ export class SessionViewModel {
     this.session.setJumpUsername(request.jumpUsername)
     this.session.setJumpIdentityFile(request.jumpIdentityFile)
     this.session.setJumpConnectTimeoutMs(request.jumpConnectTimeoutMs)
+    this.session.setJumpServerAliveIntervalSeconds(request.jumpServerAliveIntervalSeconds)
+    this.session.setJumpServerAliveCountMax(request.jumpServerAliveCountMax)
     this.session.setConnectTimeoutMs(request.connectTimeoutMs)
+    this.session.setServerAliveIntervalSeconds(request.serverAliveIntervalSeconds)
+    this.session.setServerAliveCountMax(request.serverAliveCountMax)
     this.notifyStateChange()
 
     try {
@@ -287,8 +291,12 @@ export class SessionViewModel {
       opts.jumpPort = request.jumpPort
       opts.jumpUsername = request.jumpUsername
       opts.jumpConnectTimeoutMs = request.jumpConnectTimeoutMs
+      opts.jumpServerAliveIntervalSeconds = request.jumpServerAliveIntervalSeconds
+      opts.jumpServerAliveCountMax = request.jumpServerAliveCountMax
       opts.knownHostsPath = this.knownHostsPath
       opts.connectTimeoutMs = request.connectTimeoutMs
+      opts.serverAliveIntervalSeconds = request.serverAliveIntervalSeconds
+      opts.serverAliveCountMax = request.serverAliveCountMax
       if (!this.pendingKeypush) {
         let key: KeyPairInfo | null = this.resolvePrivateKey(request.identityFile)
         if (key !== null) {
@@ -358,7 +366,11 @@ export class SessionViewModel {
     request.jumpUsername = this.session.getJumpUsername()
     request.jumpIdentityFile = this.session.getJumpIdentityFile()
     request.jumpConnectTimeoutMs = this.session.getJumpConnectTimeoutMs()
+    request.jumpServerAliveIntervalSeconds = this.session.getJumpServerAliveIntervalSeconds()
+    request.jumpServerAliveCountMax = this.session.getJumpServerAliveCountMax()
     request.connectTimeoutMs = this.session.getConnectTimeoutMs()
+    request.serverAliveIntervalSeconds = this.session.getServerAliveIntervalSeconds()
+    request.serverAliveCountMax = this.session.getServerAliveCountMax()
     let previousClient: SshClient = this.sshClient
     previousClient.onEvent(() => {})
     previousClient.onData(() => {})
@@ -1273,6 +1285,8 @@ export class SessionViewModel {
       options.username = command.username
       options.knownHostsPath = this.knownHostsPath
       options.connectTimeoutMs = command.connectTimeoutMs
+      options.serverAliveIntervalSeconds = command.serverAliveIntervalSeconds
+      options.serverAliveCountMax = command.serverAliveCountMax
       options.paneId = this.paneId
       options.remotePath = command.remotePath
       if (key !== null) {

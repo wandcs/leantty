@@ -34,7 +34,9 @@ export declare function sshConnect(
   jumpHost: string, jumpPort: number, jumpUser: string,
   jumpPrivateKeyPath: string, jumpPrivateKeyRequiresPassphrase: boolean,
   jumpConnectTimeoutMs: number,
-  knownHostsPath: string, connectTimeoutMs: number, generation: number,
+  jumpServerAliveIntervalSeconds: number, jumpServerAliveCountMax: number,
+  knownHostsPath: string, connectTimeoutMs: number,
+  serverAliveIntervalSeconds: number, serverAliveCountMax: number, generation: number,
   onTransport: (event: TransportEvent) => void,
   onControl: (event: string) => void,
   onAuth: (event: AuthEvent) => void
@@ -61,7 +63,8 @@ export declare function sshDisconnect(sessionId: string): void
 export declare function sshStartFileTransfer(
   direction: string, host: string, port: number, user: string,
   privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
-  knownHostsPath: string, connectTimeoutMs: number, generation: number,
+  knownHostsPath: string, connectTimeoutMs: number,
+  serverAliveIntervalSeconds: number, serverAliveCountMax: number, generation: number,
   paneId: string, remotePath: string, localPath: string, localDescriptor: number,
   onControl: (event: string) => void,
   onAuth: (event: AuthEvent) => void,

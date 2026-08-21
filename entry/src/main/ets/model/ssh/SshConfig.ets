@@ -3,7 +3,11 @@ import { common } from '@kit.AbilityKit'
 import { DurableStateManager } from '../persistence/DurableStateManager'
 import {
   DEFAULT_SSH_CONNECT_TIMEOUT_MS,
-  MAX_SSH_CONNECT_TIMEOUT_SECONDS
+  MAX_SSH_CONNECT_TIMEOUT_SECONDS,
+  DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
+  DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX,
+  MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
+  MAX_SSH_SERVER_ALIVE_COUNT_MAX
 } from '../../common/types/SshTypes'
 
 const MANAGED_BEGIN: string = '# >>> LeanTTY managed hosts >>>'
@@ -17,6 +21,8 @@ export class SshConfigHost {
   identityFile: string
   proxyJump: string
   connectTimeoutMs: number
+  serverAliveIntervalSeconds: number
+  serverAliveCountMax: number
   errorMessage: string
 
   constructor(alias: string) {
@@ -27,6 +33,8 @@ export class SshConfigHost {
     this.identityFile = ''
     this.proxyJump = ''
     this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
     this.errorMessage = ''
   }
 }
@@ -102,7 +110,8 @@ export class SshConfig {
   }
 
   addAlias(alias: string, hostname: string, port: number, user: string, proxyJump: string | null = null,
-    connectTimeoutMs: number | null = null): void {
+    connectTimeoutMs: number | null = null, serverAliveIntervalSeconds: number | null = null,
+    serverAliveCountMax: number | null = null): void {
     let existing: SshConfigHost | null = null
     for (let i = 0; i < this.hosts.length; i++) {
       if (this.hosts[i].alias === alias) {
@@ -116,6 +125,8 @@ export class SshConfig {
       existing.user = user
       if (proxyJump !== null) { existing.proxyJump = proxyJump }
       if (connectTimeoutMs !== null) { existing.connectTimeoutMs = connectTimeoutMs }
+      if (serverAliveIntervalSeconds !== null) { existing.serverAliveIntervalSeconds = serverAliveIntervalSeconds }
+      if (serverAliveCountMax !== null) { existing.serverAliveCountMax = serverAliveCountMax }
     } else {
       let host: SshConfigHost = new SshConfigHost(alias)
       host.hostname = hostname
@@ -123,6 +134,8 @@ export class SshConfig {
       host.user = user
       if (proxyJump !== null) { host.proxyJump = proxyJump }
       if (connectTimeoutMs !== null) { host.connectTimeoutMs = connectTimeoutMs }
+      if (serverAliveIntervalSeconds !== null) { host.serverAliveIntervalSeconds = serverAliveIntervalSeconds }
+      if (serverAliveCountMax !== null) { host.serverAliveCountMax = serverAliveCountMax }
       this.hosts.push(host)
     }
     this.removePending(this.pendingRemovals, alias)
@@ -193,6 +206,12 @@ export class SshConfig {
     }
     if (host.connectTimeoutMs !== DEFAULT_SSH_CONNECT_TIMEOUT_MS) {
       text += '  ConnectTimeout ' + Math.floor(host.connectTimeoutMs / 1000).toString() + newline
+    }
+    if (host.serverAliveIntervalSeconds !== DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS) {
+      text += '  ServerAliveInterval ' + host.serverAliveIntervalSeconds.toString() + newline
+    }
+    if (host.serverAliveCountMax !== DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX) {
+      text += '  ServerAliveCountMax ' + host.serverAliveCountMax.toString() + newline
     }
     return text + newline
   }
@@ -322,6 +341,8 @@ export class SshConfig {
     let identitySet: boolean = false
     let proxyJumpSet: boolean = false
     let connectTimeoutSet: boolean = false
+    let serverAliveIntervalSet: boolean = false
+    let serverAliveCountMaxSet: boolean = false
     let active: boolean = true
     let lines: string[] = this.sourceText.split(/\r?\n/)
     for (let i = 0; i < lines.length; i++) {
@@ -404,8 +425,29 @@ export class SshConfig {
           resolved.errorMessage = this.configError(alias, name, i + 1,
             'expected whole seconds 1-' + MAX_SSH_CONNECT_TIMEOUT_SECONDS.toString())
         }
+      } else if (lowerName === 'serveraliveinterval' && !serverAliveIntervalSet) {
+        let seconds: number = parseInt(value, 10)
+        if (/^\d+$/.test(value) && !isNaN(seconds) && seconds >= 0 &&
+          seconds <= MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS) {
+          resolved.serverAliveIntervalSeconds = seconds
+          serverAliveIntervalSet = true
+        } else if (resolved.errorMessage.length === 0) {
+          resolved.errorMessage = this.configError(alias, name, i + 1,
+            'expected whole seconds 0-' + MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS.toString())
+        }
+      } else if (lowerName === 'serveralivecountmax' && !serverAliveCountMaxSet) {
+        let count: number = parseInt(value, 10)
+        if (/^\d+$/.test(value) && !isNaN(count) && count >= 1 &&
+          count <= MAX_SSH_SERVER_ALIVE_COUNT_MAX) {
+          resolved.serverAliveCountMax = count
+          serverAliveCountMaxSet = true
+        } else if (resolved.errorMessage.length === 0) {
+          resolved.errorMessage = this.configError(alias, name, i + 1,
+            'expected count 1-' + MAX_SSH_SERVER_ALIVE_COUNT_MAX.toString())
+        }
       } else if (lowerName !== 'hostname' && lowerName !== 'port' && lowerName !== 'user' &&
         lowerName !== 'identityfile' && lowerName !== 'proxyjump' && lowerName !== 'connecttimeout' &&
+        lowerName !== 'serveraliveinterval' && lowerName !== 'serveralivecountmax' &&
         resolved.errorMessage.length === 0) {
         resolved.errorMessage = this.configError(alias, name, i + 1, 'directive is not supported')
       }
@@ -474,7 +516,8 @@ export class SshConfig {
   private configError(alias: string, directive: string, line: number, reason: string): string {
     return 'SSH config error for ' + alias + ' at line ' + line.toString() + ': ' +
       directive + ' ' + reason +
-      '. Supported directives: Host, HostName, User, Port, IdentityFile, ProxyJump, ConnectTimeout.'
+      '. Supported directives: Host, HostName, User, Port, IdentityFile, ProxyJump, ConnectTimeout, ' +
+      'ServerAliveInterval, ServerAliveCountMax.'
   }
 
   private stripInlineComment(line: string): string {

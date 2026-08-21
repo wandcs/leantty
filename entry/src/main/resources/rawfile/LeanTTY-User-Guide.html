@@ -1073,10 +1073,17 @@ ssh -i id_work user@example.com</code></pre>
         <h3>保存一个短名称</h3>
         <pre><code>host add work user@example.com:2222
 host set work user@example.com:2222 --connect-timeout 9
+host set work user@example.com:2222 --server-alive-interval 30 --server-alive-count-max 3
 ssh work</code></pre>
         <p>
           保存的 Host 写在 <code>~/.ssh/config</code> 中由 LeanTTY 管理的区域。连接前可用
           <code>ssh -G work</code> 查看 LeanTTY 最终会采用哪些配置。
+        </p>
+        <p>
+          <code>ServerAliveInterval</code> 接受 0 到 3600 的整数秒，
+          <code>ServerAliveCountMax</code> 接受 1 到 100；LeanTTY 未配置时保留 30 秒/3 次默认值。
+          interval 设为 0 会关闭 SSH 加密通道内探测。命名跳板和目标分别使用自己的值，
+          <code>default</code> 可删除对应显式值；<code>ssh -G</code> 会显示最终值。
         </p>
         <p>
           已有 OpenSSH Host 可设置 <code>ConnectTimeout 1</code> 到 <code>ConnectTimeout 300</code>
@@ -1570,10 +1577,18 @@ ssh -i id_work user@example.com</code></pre>
         <h3>Save a short name</h3>
         <pre><code>host add work user@example.com:2222
 host set work user@example.com:2222 --connect-timeout 9
+host set work user@example.com:2222 --server-alive-interval 30 --server-alive-count-max 3
 ssh work</code></pre>
         <p>
           Saved hosts use LeanTTY's managed section of <code>~/.ssh/config</code>. Inspect the
           supported effective values before connecting with <code>ssh -G work</code>.
+        </p>
+        <p>
+          <code>ServerAliveInterval</code> accepts whole seconds from 0 through 3600 and
+          <code>ServerAliveCountMax</code> accepts 1 through 100; when absent, LeanTTY retains its
+          30-second/3-count default. Interval 0 disables encrypted SSH-channel probes. Named jump and
+          target Hosts use their own values, <code>default</code> removes the corresponding explicit
+          value, and <code>ssh -G</code> shows the effective values.
         </p>
         <p>
           An existing OpenSSH Host may set <code>ConnectTimeout 1</code> through

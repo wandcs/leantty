@@ -1,6 +1,6 @@
 # ServerAliveInterval / ServerAliveCountMax
 
-> 状态：Implementing；direct target 黑洞已通过桌面与物理 PC 门禁
+> 状态：Implemented；配置化双层黑洞已通过物理 PC，收口验证中
 >
 > 更新日期：2026-08-21
 >
@@ -40,7 +40,14 @@ russh `0.62.5` 的可观察行为与 OpenSSH 不完全相同：
   静默撤销现有半开检测，且与“失败必须可观察、不能表现为无响应”的项目原则冲突。
 - 显式 `ServerAliveInterval 0` 关闭 russh keepalive；`default` 删除 Host 中的显式 directive，
   恢复 LeanTTY 产品默认，而不冒充 OpenSSH 编译默认。
+- `ServerAliveInterval` 只接受 `0–3600` 的十进制秒数；`ServerAliveCountMax` 只接受 `1–100`。
+  OpenSSH client 在 count `0` 时会在第一次 interval 检查即断开，而 russh `0.62.5` 把
+  `keepalive_max=0` 解释为不因 keepalive 超时；两者无法忠实映射，因此 count `0` 和超出受控
+  范围的值在任何网络动作前明确失败，不静默替换。
 - 配置只进入唯一 `~/.ssh/config` 和现有 Host 编辑命令，不增加 GUI 设置或通用 `-o`。
+- Host 入口为 `--server-alive-interval <0-3600|default>` 与
+  `--server-alive-count-max <1-100|default>`；两项可独立设置，重复 option 失败，`default` 只删除
+  对应 directive。`ssh -G` 输出 target 有效值，并在 ProxyJump 时另列 jump 有效值。
 - target Host 的有效值用于 direct/target、reconnect 和 `put/get`。命名 jump Host 应使用自己的
   有效值；一次性 jump endpoint 使用 LeanTTY 默认。最终分层行为仍须由受控 target/jump 黑洞
   真机证据确认。
@@ -68,12 +75,23 @@ SHA-256 为 `0345c8418e766a9697e7f7aa177d5bf369cd49c8e177ac1271c3fe7da287ac2e`�
 诊断，不替代 1.5 正式候选验收。Host/known_hosts、HDC reverse、fixture 进程、控制文件与临时
 凭据的清理审计通过。
 
-## 进入实现前仍须闭合
+同一签名 HAP 随后通过 ProxyJump 两层真实黑洞：target-over-jump 为 `120425ms`，jump
+transport 为 `120342ms`；每层都先由自己的 fixture 观察到 server-output drop，再由设备显示
+keepalive 超时，移除控制文件后立即复用两层 known_hosts 和认证路径重连。最终 target fixture
+收到恢复输入，HDC mapping 清空。证据位于
+`build/verification/proxy-jump-20260821-104113/summary.json`。
 
-1. 以同一 fixture 证明普通静默 shell 不误断，并确定 ProxyJump 的 jump transport 与 target
-   transport 分层结果；若 jump driver 错误没有进入用户可恢复路径，先修正现有所有权。
-2. 锁定配置整数边界、`ServerAliveCountMax 0` 在 russh 中的用户可解释语义、`ssh -G` 输出和
-   Host 编辑命令，再授权解析与传播实现。
-3. 实现后补齐 direct、ProxyJump、transfer、取消、Pane close、休眠恢复、立即重连和双 Pane
-   隔离的最小自动化与真机场景；验收结束必须删除 Host、known_hosts、reverse mapping、fixture
-   socket、控制文件和临时凭据。
+配置实现后的签名 ARM64 HAP 又通过显式 `2s/2` Host 配置验证：target-over-jump 在
+`6487ms`、jump transport 在 `6544ms` 显示同一用户可见 keepalive 超时，均符合 russh
+`max + 1` interval；两层都完成 fixture 单向丢包、立即重连、恢复输入和干净关闭。验证过程还
+暴露并修复了 jump driver 先于 target driver 超时时未进入用户可见错误路径的竞态。证据位于
+`build/verification/proxy-jump-20260821-111530/summary.json`，签名 HAP SHA-256 为
+`029dc64d900d59787a84408238ae5afa77e371a23f6a061189527679189d545a`；测试 Host、known_hosts、
+HDC mapping、fixture 与临时凭据均由成功路径和 finally 清理。
+
+## 剩余收口验证
+
+1. 验证明示 interval `0` 的正常静默连接不发送探测且不误断，以及 Host-based 文件传输使用
+   target 值。
+2. 完成休眠恢复与双 Pane 隔离的最小真机场景；验收结束必须删除 Host、known_hosts、reverse
+   mapping、fixture socket、控制文件和临时凭据。

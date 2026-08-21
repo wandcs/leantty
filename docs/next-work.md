@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：验证并配置化 1.5 第三个产品切片的现有 SSH keepalive
+> 当前工程阶段：完成 1.5 第三个产品切片的 ServerAlive 收口验证
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -50,19 +50,24 @@ config 中的标准 `ServerAliveInterval` 与
    interval `0` 关闭、count 默认 `3`；russh 发送 `keepalive@openssh.com`、任意收到的 SSH packet
    都复位计数，并在 `alive_timeouts > keepalive_max` 时报告超时。现有固定 `30s/3` 配置覆盖
    direct、ProxyJump target 和文件传输连接；jump transport 仍须由受控半开证据决定。
-2. [ ] 扩展仓库受控 SSH fixture，以传输层单向丢包分别模拟正常应答、目标半开、
+2. [x] 扩展仓库受控 SSH fixture，以传输层单向丢包分别模拟正常应答、目标半开、
    jump 半开和普通远端静默；先在桌面与物理 PC 上证明“仍连接但请求无应答”可重复，不能以
    主动 close、进程退出、端口拒绝或短 `ConnectTimeout` 冒充半开。direct target 已由桌面
-   `100ms/3` 时序测试和物理 PC 未改动 `30s/3` 诊断证明；jump 分层与普通静默仍待闭合。
-3. [ ] 形成专项方案并锁定最小 Host 入口、有效范围、错误文案、断开计时和 terminal 保留语义；
-   若 russh 没有稳定的 SSH-level keepalive/应答可观察接口，或 fixture 不能证明真实黑洞路径，
-   停在门禁并裁剪，不新增自定义协议或周期 shell 数据。
-4. [ ] 门禁通过后才实现 config 解析/编辑和现有 russh 配置传播；不新增 ArkTS timer 或第二套
+   `100ms/3` 时序测试和物理 PC 未改动 `30s/3` 诊断证明；普通静默、target-over-jump 和 jump
+   transport 均已由自动化与物理 PC 证明。
+3. [x] 形成专项方案并锁定最小 Host 入口、有效范围、错误文案、断开计时和 terminal 保留语义：
+   interval 接受 `0-3600` 秒，count 接受 `1-100`；未配置使用 LeanTTY `30/3`，interval `0`
+   显式关闭。OpenSSH count `0` 与 russh `0` 语义相反，必须在网络动作前明确拒绝。
+4. [x] 实现 config 解析/编辑和现有 russh 配置传播；不新增 ArkTS timer 或第二套
    connection lifecycle。未显式配置时先保留 LeanTTY 现有 `30s/3` 可靠性默认，显式 interval
-   `0` 关闭；只有证据证明改变默认更可靠时才重新评估。
+   `0` 关闭。direct/target、命名 jump、reconnect 与 Host-based `put/get` 使用各自解析值，native
+   边界再次校验范围；jump driver 自身的 keepalive 结束也进入同一个用户可见关闭路径。
 5. [ ] 补齐 ArkTS/Rust/fixture 自动化与最小 ARM64 build，再在物理 PC 上验证正常静默连接不被
    误断、确定半开按配置断开、现有默认与显式关闭、direct/ProxyJump 分层、休眠恢复、立即重连和双 Pane
-   隔离；只有 server-alive 请求/应答与用户可见 Session 结果共同成立才算通过。
+   隔离；只有 server-alive 请求/应答与用户可见 Session 结果共同成立才算通过。当前 ArkTS/native/
+   fixture 自动化、签名 ARM64 build、默认 `30s/3` direct/ProxyJump，以及显式 `2s/2` target/jump
+   双层黑洞、用户可见超时和立即重连已通过；剩余显式 interval `0`、文件传输、休眠恢复与双 Pane
+   的最小收口场景。
 
 `ConnectTimeout` 与基本 SSH escape 已完成并归档到专项设计。`AddressFamily` / `ssh -4/-6`
 已完成标准基线，

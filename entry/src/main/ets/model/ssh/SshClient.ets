@@ -95,8 +95,12 @@ export class SshClient {
         options.jumpPrivateKeyPath,
         options.jumpPrivateKeyRequiresPassphrase,
         options.jumpConnectTimeoutMs,
+        options.jumpServerAliveIntervalSeconds,
+        options.jumpServerAliveCountMax,
         options.knownHostsPath,
         options.connectTimeoutMs,
+        options.serverAliveIntervalSeconds,
+        options.serverAliveCountMax,
         this.generation,
         (event: NativeTransportEvent) => {
           this.handleNativeTransportEvent(event)

@@ -3,7 +3,11 @@ import { KeyAlgorithm } from '../../common/types/SshKeyTypes'
 import { TerminalTextPolicy } from '../../common/security/TerminalTextPolicy'
 import {
   DEFAULT_SSH_CONNECT_TIMEOUT_MS,
-  MAX_SSH_CONNECT_TIMEOUT_SECONDS
+  MAX_SSH_CONNECT_TIMEOUT_SECONDS,
+  DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
+  DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX,
+  MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
+  MAX_SSH_SERVER_ALIVE_COUNT_MAX
 } from '../../common/types/SshTypes'
 
 export class CommandParseResult {
@@ -20,7 +24,11 @@ export class CommandParseResult {
   jumpUsername: string
   jumpIdentityFile: string
   jumpConnectTimeoutMs: number
+  jumpServerAliveIntervalSeconds: number
+  jumpServerAliveCountMax: number
   connectTimeoutMs: number
+  serverAliveIntervalSeconds: number
+  serverAliveCountMax: number
   errorMessage: string
 
   constructor() {
@@ -37,7 +45,11 @@ export class CommandParseResult {
     this.jumpUsername = ''
     this.jumpIdentityFile = ''
     this.jumpConnectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.jumpServerAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.jumpServerAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
     this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
     this.errorMessage = ''
   }
 }
@@ -74,6 +86,8 @@ export class KeyCommandResult {
   sshUser: string
   sshJump: string
   sshConnectTimeoutMs: number
+  sshServerAliveIntervalSeconds: number
+  sshServerAliveCountMax: number
   errorMessage: string
   legacySyntax: boolean
 
@@ -88,6 +102,8 @@ export class KeyCommandResult {
     this.sshUser = ''
     this.sshJump = ''
     this.sshConnectTimeoutMs = -1
+    this.sshServerAliveIntervalSeconds = -1
+    this.sshServerAliveCountMax = -1
     this.errorMessage = ''
     this.legacySyntax = false
   }
@@ -107,6 +123,8 @@ export class TransferCommandResult {
   username: string
   identityFile: string
   connectTimeoutMs: number
+  serverAliveIntervalSeconds: number
+  serverAliveCountMax: number
   localPath: string
   remotePath: string
   automaticLocalName: boolean
@@ -122,6 +140,8 @@ export class TransferCommandResult {
     this.username = ''
     this.identityFile = ''
     this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
     this.localPath = ''
     this.remotePath = ''
     this.automaticLocalName = false
@@ -249,7 +269,8 @@ export class CommandParser {
       result.kind = KeyCommandKind.ALIAS_LIST
       result.legacySyntax = words[0] === 'alias'
       result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] ' +
-        '[--connect-timeout <1-300|default>] | ' +
+        '[--connect-timeout <1-300|default>] [--server-alive-interval <0-3600|default>] ' +
+        '[--server-alive-count-max <1-100|default>] | ' +
         'host rm <host-name> | host list'
       return result
     }
@@ -324,6 +345,8 @@ export class CommandParser {
       result.username = host.user
       if (result.identityFile.length === 0) { result.identityFile = host.identityFile }
       result.connectTimeoutMs = host.connectTimeoutMs
+      result.serverAliveIntervalSeconds = host.serverAliveIntervalSeconds
+      result.serverAliveCountMax = host.serverAliveCountMax
       result.isAlias = true
       CommandParser.applyProxyJump(jumpSpecified ? explicitJump : host.proxyJump, sshConfig, result)
       if (result.errorMessage.length > 0) { result.isValid = false }
@@ -400,6 +423,8 @@ export class CommandParser {
       jumpUser = explicitUser.length > 0 ? explicitUser : jumpAlias.user
       jumpIdentity = jumpAlias.identityFile
       result.jumpConnectTimeoutMs = jumpAlias.connectTimeoutMs
+      result.jumpServerAliveIntervalSeconds = jumpAlias.serverAliveIntervalSeconds
+      result.jumpServerAliveCountMax = jumpAlias.serverAliveCountMax
     }
     if (jumpUser.length === 0) {
       result.errorMessage = 'ProxyJump host must define User: ' + jumpDisplayHost
@@ -544,6 +569,8 @@ export class CommandParser {
     result.username = connection.username
     result.identityFile = connection.identityFile
     result.connectTimeoutMs = connection.connectTimeoutMs
+    result.serverAliveIntervalSeconds = connection.serverAliveIntervalSeconds
+    result.serverAliveCountMax = connection.serverAliveCountMax
     result.isValid = true
     return result
   }
@@ -917,8 +944,9 @@ export class CommandParser {
     let parts: string[] = input.split(/\s+/)
     let operation: string = parts.length >= 2 && parts[1] === 'set' ? 'set' : 'add'
     let usage: string = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] ' +
-      '[-J <jump>] [--connect-timeout <1-300|default>]'
-    if (parts.length < 4 || parts.length > 8 || parts.length % 2 !== 0) {
+      '[-J <jump>] [--connect-timeout <1-300|default>] ' +
+      '[--server-alive-interval <0-3600|default>] [--server-alive-count-max <1-100|default>]'
+    if (parts.length < 4 || parts.length > 12 || parts.length % 2 !== 0) {
       result.errorMessage = usage
       return result
     }
@@ -955,6 +983,40 @@ export class CommandParser {
             return result
           }
           result.sshConnectTimeoutMs = seconds * 1000
+        }
+      } else if (option === '--server-alive-interval') {
+        if (result.sshServerAliveIntervalSeconds >= 0) {
+          result.errorMessage = 'Duplicate host option: --server-alive-interval'
+          return result
+        }
+        if (value === 'default') {
+          result.sshServerAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+        } else {
+          let seconds: number = parseInt(value, 10)
+          if (!/^\d+$/.test(value) || isNaN(seconds) || seconds < 0 ||
+            seconds > MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS) {
+            result.errorMessage = 'Server alive interval must be whole seconds 0-' +
+              MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS.toString() + ', or default'
+            return result
+          }
+          result.sshServerAliveIntervalSeconds = seconds
+        }
+      } else if (option === '--server-alive-count-max') {
+        if (result.sshServerAliveCountMax >= 0) {
+          result.errorMessage = 'Duplicate host option: --server-alive-count-max'
+          return result
+        }
+        if (value === 'default') {
+          result.sshServerAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+        } else {
+          let count: number = parseInt(value, 10)
+          if (!/^\d+$/.test(value) || isNaN(count) || count < 1 ||
+            count > MAX_SSH_SERVER_ALIVE_COUNT_MAX) {
+            result.errorMessage = 'Server alive count max must be 1-' +
+              MAX_SSH_SERVER_ALIVE_COUNT_MAX.toString() + ', or default'
+            return result
+          }
+          result.sshServerAliveCountMax = count
         }
       } else {
         result.errorMessage = 'Unsupported host option: ' + option

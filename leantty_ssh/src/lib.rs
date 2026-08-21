@@ -267,17 +267,34 @@ async fn wait_for_host_key_decision(
 
 const FINAL_DELIVERY_RETRY_ATTEMPTS: u32 = 128;
 const FINAL_DELIVERY_RETRY_DELAY: Duration = Duration::from_millis(16);
-const SSH_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
-const SSH_KEEPALIVE_MAX: usize = 3;
+const SSH_KEEPALIVE_INTERVAL_MAX_SECONDS: u32 = 3600;
+const SSH_KEEPALIVE_COUNT_MAX: u32 = 100;
 const AUTH_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn build_client_config() -> russh::client::Config {
+fn build_client_config(interval_seconds: u32, count_max: u32) -> russh::client::Config {
     russh::client::Config {
-        keepalive_interval: Some(SSH_KEEPALIVE_INTERVAL),
-        keepalive_max: SSH_KEEPALIVE_MAX,
+        keepalive_interval: (interval_seconds > 0)
+            .then(|| Duration::from_secs(interval_seconds as u64)),
+        keepalive_max: count_max as usize,
         ..Default::default()
     }
+}
+
+fn validate_keepalive(interval_seconds: u32, count_max: u32, layer: &str) -> Result<()> {
+    if interval_seconds > SSH_KEEPALIVE_INTERVAL_MAX_SECONDS {
+        let message = format!(
+            "{layer} server alive interval must be between 0 and {SSH_KEEPALIVE_INTERVAL_MAX_SECONDS}"
+        );
+        return Err(napi_error(&message));
+    }
+    if count_max == 0 || count_max > SSH_KEEPALIVE_COUNT_MAX {
+        let message = format!(
+            "{layer} server alive count max must be between 1 and {SSH_KEEPALIVE_COUNT_MAX}"
+        );
+        return Err(napi_error(&message));
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -1224,6 +1241,15 @@ async fn disconnect_session_route(
     }
 }
 
+async fn wait_for_jump_connection(
+    jump: &mut Option<russh::client::Handle<ClientHandler>>,
+) -> std::result::Result<(), russh::Error> {
+    match jump.as_mut() {
+        Some(handle) => handle.await,
+        None => std::future::pending().await,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_session(
     session_id: u32,
@@ -1239,15 +1265,26 @@ async fn run_session(
     jump_private_key_path: String,
     jump_private_key_requires_passphrase: bool,
     jump_connect_timeout: Duration,
+    jump_server_alive_interval_seconds: u32,
+    jump_server_alive_count_max: u32,
     known_hosts_path: String,
     connect_timeout: Duration,
+    server_alive_interval_seconds: u32,
+    server_alive_count_max: u32,
     transport_callback: JsTransportCallback,
     control_callback: JsCallback,
     auth_callback: JsAuthCallback,
     mut receivers: SessionReceivers,
 ) {
     let _cleanup_guard = SessionCleanupGuard(session_id);
-    let config = Arc::new(build_client_config());
+    let jump_config = Arc::new(build_client_config(
+        jump_server_alive_interval_seconds,
+        jump_server_alive_count_max,
+    ));
+    let target_config = Arc::new(build_client_config(
+        server_alive_interval_seconds,
+        server_alive_count_max,
+    ));
     let host_key_rx = Arc::new(tokio::sync::Mutex::new(
         receivers
             .host_key_rx
@@ -1275,8 +1312,7 @@ async fn run_session(
             control_callback: control_callback.clone(),
             auth_callback: auth_callback.clone(),
         };
-        let connect =
-            russh::client::connect(config.clone(), (jump_host.as_str(), jump_port), handler);
+        let connect = russh::client::connect(jump_config, (jump_host.as_str(), jump_port), handler);
         let mut jump = match wait_for_connect(
             connect,
             jump_connect_timeout,
@@ -1385,7 +1421,7 @@ async fn run_session(
             }
         };
         wait_for_connect(
-            russh::client::connect_stream(config, tunnel.into_stream(), target_handler),
+            russh::client::connect_stream(target_config, tunnel.into_stream(), target_handler),
             connect_timeout,
             &mut receivers.disconnect_rx,
             &mut progress_rx,
@@ -1393,7 +1429,7 @@ async fn run_session(
         .await
     } else {
         wait_for_connect(
-            russh::client::connect(config, (host.as_str(), port), target_handler),
+            russh::client::connect(target_config, (host.as_str(), port), target_handler),
             connect_timeout,
             &mut receivers.disconnect_rx,
             &mut progress_rx,
@@ -1574,6 +1610,8 @@ async fn run_session(
     let mut exit_code: i32 = -1;
     let mut connection_task_ended = false;
     let mut connection_task_result = None;
+    let mut connection_task_layer = ConnectionLayer::Target;
+    let mut jump_connection_task_consumed = false;
     let mut local_disconnect_requested = false;
 
     loop {
@@ -1634,6 +1672,12 @@ async fn run_session(
             connection_task_result = Some(result);
             break;
           }
+          result = wait_for_jump_connection(&mut jump_ssh) => {
+            connection_task_result = Some(result);
+            connection_task_layer = ConnectionLayer::Jump;
+            jump_connection_task_consumed = true;
+            break;
+          }
           result = &mut channel_writer, if channel_writer_active => {
             channel_writer_active = false;
             send_control(
@@ -1676,23 +1720,45 @@ async fn run_session(
         }
     }
     let connection_result = if let Some(result) = connection_task_result {
-        Some(result)
+        Some((connection_task_layer, result))
     } else if connection_task_ended {
-        Some(ssh.await)
+        let completed_jump_result = if let Some(jump) = jump_ssh.as_mut() {
+            tokio::time::timeout(Duration::ZERO, jump).await.ok()
+        } else {
+            None
+        };
+        if let Some(result) = completed_jump_result {
+            jump_connection_task_consumed = true;
+            Some((ConnectionLayer::Jump, result))
+        } else {
+            Some((ConnectionLayer::Target, ssh.await))
+        }
     } else {
         None
     };
-    if let Some(jump) = jump_ssh.as_mut() {
-        disconnect_client(jump).await;
+    if !jump_connection_task_consumed {
+        if let Some(jump) = jump_ssh.as_mut() {
+            disconnect_client(jump).await;
+        }
     }
     let keepalive_timed_out = match connection_result {
-        Some(result) => match result {
+        Some((layer, result)) => match result {
             Err(russh::Error::KeepaliveTimeout) => {
+                let (interval_seconds, count_max) = match layer {
+                    ConnectionLayer::Jump => (
+                        jump_server_alive_interval_seconds,
+                        jump_server_alive_count_max,
+                    ),
+                    ConnectionLayer::Target => {
+                        (server_alive_interval_seconds, server_alive_count_max)
+                    }
+                };
                 eprintln!(
-                    "[LTTY_SSH] session={} stage=keepalive_timeout intervalSeconds={} max={}",
+                    "[LTTY_SSH] session={} layer={} stage=keepalive_timeout intervalSeconds={} max={}",
                     session_id,
-                    SSH_KEEPALIVE_INTERVAL.as_secs(),
-                    SSH_KEEPALIVE_MAX
+                    layer.as_str(),
+                    interval_seconds,
+                    count_max
                 );
                 true
             }
@@ -1738,6 +1804,8 @@ async fn run_file_transfer(
     local_file: std::fs::File,
     local_temp_path: String,
     connect_timeout: Duration,
+    server_alive_interval_seconds: u32,
+    server_alive_count_max: u32,
     control_callback: JsCallback,
     auth_callback: JsAuthCallback,
     transfer_callback: JsFileTransferCallback,
@@ -1756,7 +1824,10 @@ async fn run_file_transfer(
         FileTransferEvent::stage(transfer_id, &pane_id, generation, "preparing"),
         false,
     );
-    let config = Arc::new(build_client_config());
+    let config = Arc::new(build_client_config(
+        server_alive_interval_seconds,
+        server_alive_count_max,
+    ));
     let (connect_progress_tx, mut connect_progress_rx) = tokio::sync::mpsc::channel(2);
     let handler = ClientHandler {
         session_id: transfer_id,
@@ -2015,8 +2086,12 @@ pub fn ssh_connect(
     jump_private_key_path: String,
     jump_private_key_requires_passphrase: bool,
     jump_connect_timeout_ms: u32,
+    jump_server_alive_interval_seconds: u32,
+    jump_server_alive_count_max: u32,
     known_hosts_path: String,
     connect_timeout_ms: u32,
+    server_alive_interval_seconds: u32,
+    server_alive_count_max: u32,
     generation: u32,
     on_transport: Function<'_, TransportEvent, ()>,
     on_control: Function<'_, String, ()>,
@@ -2041,6 +2116,11 @@ pub fn ssh_connect(
         if jump_connect_timeout_ms == 0 {
             return Err(napi_error("jump connect timeout must be positive"));
         }
+        validate_keepalive(
+            jump_server_alive_interval_seconds,
+            jump_server_alive_count_max,
+            "jump",
+        )?;
         if host == jump_host && port == jump_port {
             return Err(napi_error("jump host must differ from target host"));
         }
@@ -2051,6 +2131,11 @@ pub fn ssh_connect(
     if connect_timeout_ms == 0 {
         return Err(napi_error("connect timeout must be positive"));
     }
+    validate_keepalive(
+        server_alive_interval_seconds,
+        server_alive_count_max,
+        "target",
+    )?;
     if generation == 0 {
         return Err(napi_error("generation must be positive"));
     }
@@ -2121,8 +2206,12 @@ pub fn ssh_connect(
         jump_private_key_path,
         jump_private_key_requires_passphrase,
         Duration::from_millis(jump_connect_timeout_ms as u64),
+        jump_server_alive_interval_seconds,
+        jump_server_alive_count_max,
         known_hosts_path,
         Duration::from_millis(connect_timeout_ms as u64),
+        server_alive_interval_seconds,
+        server_alive_count_max,
         transport_callback,
         control_callback,
         auth_callback,
@@ -2143,6 +2232,8 @@ pub fn ssh_start_file_transfer(
     private_key_requires_passphrase: bool,
     known_hosts_path: String,
     connect_timeout_ms: u32,
+    server_alive_interval_seconds: u32,
+    server_alive_count_max: u32,
     generation: u32,
     pane_id: String,
     remote_path: String,
@@ -2173,6 +2264,11 @@ pub fn ssh_start_file_transfer(
             "transfer timeout, generation and pane id must be valid",
         ));
     }
+    validate_keepalive(
+        server_alive_interval_seconds,
+        server_alive_count_max,
+        "transfer target",
+    )?;
     let local_file = match direction {
         transfer::Direction::Put => {
             if local_descriptor < 0 || !local_path.is_empty() {
@@ -2259,6 +2355,8 @@ pub fn ssh_start_file_transfer(
         local_file,
         local_path,
         Duration::from_millis(connect_timeout_ms as u64),
+        server_alive_interval_seconds,
+        server_alive_count_max,
         control_callback,
         auth_callback,
         transfer_callback,
@@ -2582,11 +2680,11 @@ mod tests {
     use super::{
         build_client_config, channel_writer_exit_message, is_current_auth_generation,
         run_channel_writer_core, send_scheduled_input, should_flush_immediately,
-        wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
+        validate_keepalive, wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
         wait_for_host_key_decision, AuthExchangeResult, AuthMethod, AuthWaitResult,
         ConnectProgress, ConnectWaitResult, ConnectionLayer, FileTransferEvent, HostKeyDecision,
         LayeredAuthMethod, OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
-        INPUT_WRITE_CHUNK_BYTES, SSH_KEEPALIVE_INTERVAL, SSH_KEEPALIVE_MAX,
+        INPUT_WRITE_CHUNK_BYTES,
     };
     use napi_ohos::Status;
     use russh::client;
@@ -2925,13 +3023,26 @@ mod tests {
 
     #[test]
     fn client_config_enables_bounded_keepalive_detection() {
-        let config = build_client_config();
-        assert_eq!(config.keepalive_interval, Some(SSH_KEEPALIVE_INTERVAL));
-        assert_eq!(config.keepalive_max, SSH_KEEPALIVE_MAX);
-        assert_eq!(SSH_KEEPALIVE_INTERVAL, Duration::from_secs(30));
-        assert_eq!(SSH_KEEPALIVE_MAX, 3);
+        let config = build_client_config(30, 3);
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(30)));
+        assert_eq!(config.keepalive_max, 3);
         assert_eq!(AUTH_EXCHANGE_TIMEOUT, Duration::from_secs(30));
         assert_eq!(AUTH_RESPONSE_TIMEOUT, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn client_config_can_disable_keepalive_probes() {
+        let config = build_client_config(0, 7);
+        assert_eq!(config.keepalive_interval, None);
+        assert_eq!(config.keepalive_max, 7);
+    }
+
+    #[test]
+    fn keepalive_bounds_reject_unrepresentable_values() {
+        assert!(validate_keepalive(3600, 100, "target").is_ok());
+        assert!(validate_keepalive(3601, 3, "target").is_err());
+        assert!(validate_keepalive(30, 0, "target").is_err());
+        assert!(validate_keepalive(30, 101, "target").is_err());
     }
 
     #[test]
