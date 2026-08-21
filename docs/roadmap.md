@@ -372,9 +372,10 @@ russh `0.62.5` 能力门禁确认依赖只暴露公告回调，不提供 proof r
 和验签所需公开 API；该候选按用户信任原则裁剪并记录重新进入条件。安全 `ssh -v` 已完成
 一次性入口、固定结构化事件、字段级脱敏，以及 direct/ProxyJump 的物理 ARM64 HarmonyOS PC
 验收。config import/export 已完成真实样本、文件授权、严格导入、round-trip、原子失败恢复和
-物理 PC 闭环。`ssh-keygen -c` 已通过 OpenSSH 行为、当前 Ed25519/RSA 格式、`ssh-key` 0.7.0-rc.11
-comment 能力和原子提交边界门禁，当前授权其局部实现与物理验证；ECDSA 等其他候选在逐项写入
-活动清单前均不授权实现。
+物理 PC 闭环。`ssh-keygen -c` 已完成 OpenSSH 行为、当前 Ed25519/RSA 格式、`ssh-key`
+0.7.0-rc.11 comment 能力、原子提交边界、错误恢复和物理 PC 验证。至此 1.5 当前已授权的
+产品切片全部闭合；ECDSA 等其他候选在逐项通过门禁并写入活动清单前均不授权实现，正式发布
+准备也只在单独写入 `next-work.md` 后开始。
 
 ## 拟议 milestone：1.6 — 长任务注意力与返回路径
 

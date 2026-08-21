@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：实现 1.5 第七个产品切片的 `ssh-keygen -c`
+> 当前工程阶段：1.5 已授权产品切片已闭合；当前没有未完成的授权工程项
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -28,37 +28,20 @@
 `quality-strategy.md`，研究、红绿证据和量化结果写入 `test-release-efficiency.md`。它不改变
 用户可见产品源，也不能替代 1.5 产品范围确认。
 
-## 1.5 当前活动工作
+## 1.5 当前状态
 
-### 第七个切片：实现 `ssh-keygen -c` key comment
+`ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v`、
+受控 config import/export 和 `ssh-keygen -c` 已分别完成专项实现、聚焦软件门与所需的物理
+ARM64 HarmonyOS PC 闭环。`AddressFamily` / `ssh -4/-6` 因当前设备没有可重复的全局 IPv6
+fixture 路径而暂缓；UpdateHostKeys 因 russh 缺少完整 proof request/reply、session binding 和
+验签公开 API 而按安全停止条件裁剪。专项完成事实和重新进入条件保留在 roadmap 与对应设计
+文档，不在本文件复制历史 checklist。
 
-用户从其他 OpenSSH 环境导入或长期维护 Identity 时，应能修正公钥注释而不生成一把新 key、
-改变 fingerprint、削弱私钥加密或制造公私钥两份身份。标准、`ssh-key` 0.7.0-rc.11、当前 Ed25519/RSA
-格式和提交边界审计已通过进入门禁，专项合同见
-[`design/key-comment-change.md`](design/key-comment-change.md)。
-
-1. [ ] 在 Rust core/NAPI 实现私钥与 `.pub` 的验证、同口令重编码、双文件 stage/replace/rollback，
-   覆盖无口令/有口令、空格与 Unicode/空注释、公私钥不一致、错误口令、两阶段替换失败、0600
-   权限、临时文件清理和 fingerprint/public wire key 不变。
-2. [ ] 增加 `ssh-keygen -c -f <identity>` parser 与交互状态：加密 key 复用 masked 旧口令输入，
-   新 comment 使用可见输入并支持空值删除；控制字符和超过 1023 UTF-8 bytes 的输入必须在写入前拒绝。
-3. [ ] 将成功 pair 纳入现有 durable Identity，建立 durable commit 失败时恢复旧 comment 的故障
-   注入；错误口令、取消、失败详情和日志不得泄露 passphrase 或私钥内容。
-4. [ ] 跑聚焦 Rust/ArkTS/策略门及命名物理 PC 场景，证明 fingerprint、加密状态、原口令认证、
-   restart/reopen 和测试 key 清理，再收口指南、CHANGELOG 与本清单。
-
-`ConnectTimeout`、基本 SSH escape 与 `ServerAliveInterval/ServerAliveCountMax` 已完成并归档到
-专项设计。受控 config import/export 已完成真实样本、严格导入、原文 round-trip、原子恢复与
-物理 PC 闭环，见 [`design/config-import-export.md`](design/config-import-export.md)。
-`AddressFamily` / `ssh -4/-6` 已完成标准基线，但当前物理 PC 没有全局 IPv6 默认
-路由，HDC reverse 也没有提供可用的 `::1` SSH fixture；按真机进入门禁暂不实现，不能以 parser
-或字段传播测试代替。UpdateHostKeys 已完成标准与 russh `0.62.5` 能力审计；依赖缺少完整 proof
-request/reply、session binding 和验签公开 API，因此按安全停止条件裁剪，重新进入条件记录在
-[`design/update-host-keys.md`](design/update-host-keys.md)。安全 `ssh -v` 已完成固定事件、脱敏、
-direct/ProxyJump 真机闭环，见 [`design/ssh-diagnostics.md`](design/ssh-diagnostics.md)。除本节
-晋级的 `ssh-keygen -c` 门禁外，ECDSA 互操作仍是候选集合，不因 1.5 milestone 已启动而获得
-实现授权。
-推广手册只提供稳定工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
+当前没有尚未完成且已经授权的 1.5 工程项。ECDSA 互操作仍是候选集合，必须单独通过库、
+安全、真实样本与物理机互操作门禁后才能写入本文件；1.5 正式候选、版本元数据、完整验证、
+签名、GitHub Release 和 AppGallery 交付也必须由维护者单独启动 release preparation，不能由
+开发期签名 HAP 或局部真机证据自动推导。推广手册只提供稳定工作方法；没有单独写入本文件的
+Pxx 不属于当前活动任务。
 
 ## 维护规则
 

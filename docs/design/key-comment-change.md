@@ -1,6 +1,6 @@
 # SSH key comment change
 
-> Status: implemented; routine physical validation pending on 2026-08-21
+> Status: implemented; routine physical validation passed on 2026-08-21
 >
 > Scope: LeanTTY 1.5 `ssh-keygen -c -f <identity>`
 
@@ -117,3 +117,24 @@ failure and does not claim the old/new comment is active.
 
 This routine slice will not run the unrelated physical matrix or formal
 release-package gate.
+
+## Completion evidence
+
+The implementation and focused acceptance harness are commit
+`bbd8b73e96ccd08f81b61fe56ed30d0dcf460132`. Focused policy, tooling, ArkTS,
+Rust core and Rust native checks passed in
+`build/verification/software-focused-20260821T155139661Z.json`.
+
+The named physical ARM64 HarmonyOS PC scenario passed from that clean source
+commit with signed debug HAP SHA-256
+`992a346748de3226b4fdf4b08f8d667699f5d764db83b18ff0f3f44d1793a4cc`; evidence
+is
+`build/verification/device-ssh-auth-20260821T154535902Z/device-ssh-auth.json`.
+It recorded wrong-passphrase rejection, visible Unicode comment input, equal
+fingerprints before, after and after restart, private-file mode `600` at all
+three observations, the exact new comment after change and restart, successful
+authentication with the unchanged passphrase, product-path deletion and an
+independent key-absence audit. The verifier also removed its known-host entry,
+HDC reverse mapping, fixture process and runtime credentials. This is routine
+diagnostic debug-package evidence (`runMode=diagnostic`), not formal
+release-candidate acceptance.
