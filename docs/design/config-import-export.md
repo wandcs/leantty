@@ -1,6 +1,6 @@
 # Controlled OpenSSH config import/export
 
-> Status: implementation and physical-device acceptance in progress
+> Status: completed on 2026-08-21
 >
 > Scope: LeanTTY 1.5 controlled migration into the single `~/.ssh/config`
 
@@ -107,3 +107,21 @@ the store is retained state and `.ssh/config` is its runtime materialization.
 
 The routine slice does not run the ungrouped software gate, formal
 `verify-pc.ps1`, release signing or the unrelated SSH/terminal physical matrix.
+
+## Completion evidence
+
+The implementation is commit `852f71d` and the app-scoped physical acceptance
+harness correction is commit `089daf4`. Focused policy, tooling, Web/user-guide
+and ArkTS checks passed in
+`build/verification/software-focused-20260821T150327305Z.json`.
+
+The named physical ARM64 HarmonyOS PC scenario passed from clean source commit
+`089daf4353c8d5c87abf6a63c320041d7f4b50f0` with signed debug HAP SHA-256
+`0c06916d314df8d24d07bae70dd8cde5111ec612ac94ba774a01342948893691`; evidence is
+`build/verification/config-import-export-20260821-151433/config-import-export.json`.
+It recorded 11 exact targeted input submissions with no mismatch, equal hashes
+for the active imported projection, restart projection and both exports,
+preserved an existing export across the no-replace conflict, restored the
+original unmanaged config hash, and removed both current and stale acceptance
+fixtures. This is routine debug-package evidence (`acceptanceEligible=false`),
+not formal release-candidate acceptance.
