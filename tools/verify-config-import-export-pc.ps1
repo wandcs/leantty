@@ -28,22 +28,12 @@ $deployedHapPath = if ([string]::IsNullOrWhiteSpace($HapPath)) {
 . (Join-Path $PSScriptRoot 'acceptance-source.ps1')
 
 $startedAt = [DateTimeOffset]::UtcNow
-$runId = [Guid]::NewGuid().ToString('N').Substring(0, 12)
-$prefix = "leantty-config-$runId"
-$fixtureName = "$prefix-import.conf"
-$originalName = "$prefix-original.conf"
-$cleanupName = "$prefix-cleanup.conf"
-$exportName = "$prefix-export.conf"
-$reopenName = "$prefix-reopen.conf"
-$restoredName = "$prefix-restored.conf"
-$deviceDownloads = '/storage/Users/currentUser/Download'
-$deviceNames = @($fixtureName, $originalName, $cleanupName, $exportName, $reopenName, $restoredName)
-$temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') +
-    [IO.Path]::DirectorySeparatorChar
-$localRoot = [IO.Path]::GetFullPath((Join-Path $temporaryRoot "leantty-config-$runId"))
-if (-not $localRoot.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Config import/export temporary root escaped the system temporary directory'
-}
+$fixtureName = 'leantty-config-acceptance-import.conf'
+$originalName = 'leantty-config-acceptance-original.conf'
+$cleanupName = 'leantty-config-acceptance-cleanup.conf'
+$exportName = 'leantty-config-acceptance-export.conf'
+$reopenName = 'leantty-config-acceptance-reopen.conf'
+$restoredName = 'leantty-config-acceptance-restored.conf'
 
 if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
     $EvidenceDirectory = Join-Path $repoRoot (
@@ -52,16 +42,6 @@ if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
 }
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
-New-Item -ItemType Directory -Path $localRoot | Out-Null
-
-$fixturePath = Join-Path $localRoot $fixtureName
-$originalPath = Join-Path $localRoot $originalName
-$cleanupPath = Join-Path $localRoot $cleanupName
-$exportPath = Join-Path $localRoot $exportName
-$reopenPath = Join-Path $localRoot $reopenName
-$restoredPath = Join-Path $localRoot $restoredName
-$conflictPath = Join-Path $localRoot ('conflict-' + $exportName)
-$restoredUnmanagedPath = Join-Path $localRoot ('unmanaged-' + $restoredName)
 
 $hdc = Resolve-Hdc
 $targetId = ''
@@ -74,18 +54,6 @@ $configModified = $false
 $configRestored = $false
 $commandObservations = [Collections.Generic.List[object]]::new()
 $hashes = [ordered]@{}
-
-function Invoke-ConfigHdcFile {
-    param(
-        [Parameter(Mandatory = $true)][ValidateSet('send', 'recv')][string]$Operation,
-        [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][string]$Destination
-    )
-    $output = @(& $script:hdc -t $script:targetId file $Operation $Source $Destination 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or $output -match '(?i)\[Fail\]|error') {
-        throw "[infrastructure] HDC file $Operation failed"
-    }
-}
 
 function Get-ConfigInputNode {
     $layoutPath = Join-Path $EvidenceDirectory 'command-focus.json'
@@ -118,8 +86,35 @@ function Submit-ConfigCommand {
         -ProcessId $script:appPid -Command $Command -Stage $Stage `
         -ObservationSink $commandObservations `
         -InputNodeProvider { param($inputAttempt) Get-ConfigInputNode } | Out-Null
-    Wait-LeanTTYAppLog -Hdc $script:hdc -Target $script:targetId -ProcessId $script:appPid `
-        -Pattern $SuccessPattern -TimeoutSeconds 30 | Out-Null
+    return Wait-LeanTTYAppLog -Hdc $script:hdc -Target $script:targetId -ProcessId $script:appPid `
+        -Pattern $SuccessPattern -TimeoutSeconds 30
+}
+
+function Invoke-ConfigAcceptanceCommand {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('prepare', 'observe', 'verify', 'cleanup')][string]$Action,
+        [Parameter(Mandatory = $true)][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$Pattern
+    )
+    return Submit-ConfigCommand -Command "__acceptance_config_$Action" -Stage $Stage -SuccessPattern $Pattern
+}
+
+function Get-ConfigAcceptanceHashes {
+    param([Parameter(Mandatory = $true)][string]$Logs, [Parameter(Mandatory = $true)][string]$State)
+    $match = [regex]::Match($Logs,
+        "ACCEPTANCE_CONFIG state=$State,.*?import=(?<import>[0-9a-f]{64}|missing)," +
+        'original=(?<original>[0-9a-f]{64}|missing),cleanup=(?<cleanup>[0-9a-f]{64}|missing),' +
+        'export=(?<export>[0-9a-f]{64}|missing),reopen=(?<reopen>[0-9a-f]{64}|missing),' +
+        'restored=(?<restored>[0-9a-f]{64}|missing)')
+    if (-not $match.Success) { throw '[harness] Config acceptance hash log was malformed' }
+    return [ordered]@{
+        import = $match.Groups['import'].Value
+        original = $match.Groups['original'].Value
+        cleanup = $match.Groups['cleanup'].Value
+        export = $match.Groups['export'].Value
+        reopen = $match.Groups['reopen'].Value
+        restored = $match.Groups['restored'].Value
+    }
 }
 
 function Restart-ConfigApp {
@@ -138,33 +133,6 @@ function Get-ConfigProjectionHash {
     $match = [regex]::Match(($output -join "`n"), '^(?<hash>[0-9a-fA-F]{64})\s+')
     if (-not $match.Success) { throw '[harness] App config projection hash was malformed' }
     return $match.Groups['hash'].Value.ToLowerInvariant()
-}
-
-function Remove-ConfigManagedRegion {
-    param([Parameter(Mandatory = $true)][string]$Text)
-    $pattern = '(?ms)\A[ \t]*# >>> LeanTTY managed hosts >>>\r?\n.*?' +
-        '^[ \t]*# <<< LeanTTY managed hosts <<<\r?\n(?:\r?\n)?'
-    if ($Text -notmatch '# >>> LeanTTY managed hosts >>>') { return $Text }
-    $clean = [regex]::Replace($Text, $pattern, '', 1)
-    if ($clean -eq $Text -or $clean -match '# (?:>>>|<<<) LeanTTY managed hosts') {
-        throw '[harness] Exported config contained an unexpected managed-region layout'
-    }
-    return $clean
-}
-
-function Remove-ConfigDeviceFiles {
-    foreach ($name in $deviceNames) {
-        if ($name -notmatch '^leantty-config-[0-9a-f]{12}-(?:import|original|cleanup|export|reopen|restored)\.conf$') {
-            throw '[harness] Config cleanup name escaped the disposable namespace'
-        }
-        & $script:hdc -t $script:targetId shell "rm -f $deviceDownloads/$name" 2>$null | Out-Null
-    }
-    $remaining = @(& $script:hdc -t $script:targetId shell "ls $deviceDownloads" 2>&1) -join "`n"
-    foreach ($name in $deviceNames) {
-        if ($remaining -match "(?m)^$([regex]::Escape($name))$") {
-            throw '[harness] A disposable config file remains in Downloads'
-        }
-    }
 }
 
 try {
@@ -198,40 +166,29 @@ try {
     Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
         -LocalPath (Join-Path $EvidenceDirectory 'initial-ready.json') -TimeoutSeconds 30 | Out-Null
 
-    Submit-ConfigCommand -Command "config export $originalName" -Stage 'backup-original' `
-        -SuccessPattern 'CONFIG_EXPORT result=success'
-    Invoke-ConfigHdcFile -Operation recv -Source "$deviceDownloads/$originalName" -Destination $originalPath
-    $originalText = [IO.File]::ReadAllText($originalPath)
-    $cleanupText = Remove-ConfigManagedRegion -Text $originalText
-    [IO.File]::WriteAllText($cleanupPath, $cleanupText, [Text.UTF8Encoding]::new($false))
-    $fixtureNewline = if ($originalText.Contains("`r`n")) { "`r`n" } else { "`n" }
-    $fixtureText = '# LeanTTY controlled config fixture' + $fixtureNewline +
-        'Host __ltty_config_fixture' + $fixtureNewline +
-        '  HostName fixture.example.test' + $fixtureNewline +
-        '  User deploy' + $fixtureNewline +
-        '  Port 2222' + $fixtureNewline +
-        '  ConnectTimeout 12' + $fixtureNewline +
-        '  ServerAliveInterval 30' + $fixtureNewline +
-        '  ServerAliveCountMax 3' + $fixtureNewline
-    [IO.File]::WriteAllText($fixturePath, $fixtureText, [Text.UTF8Encoding]::new($false))
-    Invoke-ConfigHdcFile -Operation send -Source $fixturePath `
-        -Destination "$deviceDownloads/$fixtureName"
-    Invoke-ConfigHdcFile -Operation send -Source $cleanupPath `
-        -Destination "$deviceDownloads/$cleanupName"
+    $prepareLogs = Invoke-ConfigAcceptanceCommand -Action prepare -Stage 'prepare-fixtures' `
+        -Pattern 'ACCEPTANCE_CONFIG state=prepared,.*staleCleaned=true'
+    $prepareMatch = [regex]::Match($prepareLogs,
+        'ACCEPTANCE_CONFIG state=prepared,fixture=(?<fixture>[0-9a-f]{64}),cleanup=(?<cleanup>[0-9a-f]{64})')
+    if (-not $prepareMatch.Success) { throw '[harness] Config fixture preparation log was malformed' }
+    $hashes.fixture = $prepareMatch.Groups['fixture'].Value
+    $hashes.originalUnmanaged = $prepareMatch.Groups['cleanup'].Value
 
-    Submit-ConfigCommand -Command "config import $fixtureName --replace" -Stage 'import-fixture' `
+    $null = Submit-ConfigCommand -Command "config export $originalName" -Stage 'backup-original' `
+        -SuccessPattern 'CONFIG_EXPORT result=success'
+    $null = Submit-ConfigCommand -Command "config import $fixtureName --replace" -Stage 'import-fixture' `
         -SuccessPattern 'CONFIG_IMPORT result=success,replace=true'
     $configModified = $true
     $hashes.importProjection = Get-ConfigProjectionHash
-    Submit-ConfigCommand -Command "config export $exportName" -Stage 'export-imported' `
+    $null = Submit-ConfigCommand -Command "config export $exportName" -Stage 'export-imported' `
         -SuccessPattern 'CONFIG_EXPORT result=success'
-    Invoke-ConfigHdcFile -Operation recv -Source "$deviceDownloads/$exportName" -Destination $exportPath
-    $hashes.exported = (Get-FileHash -LiteralPath $exportPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $beforeConflictLogs = Invoke-ConfigAcceptanceCommand -Action observe -Stage 'observe-before-conflict' `
+        -Pattern 'ACCEPTANCE_CONFIG state=observed,.*export=[0-9a-f]{64}'
+    $beforeConflictHashes = Get-ConfigAcceptanceHashes -Logs $beforeConflictLogs -State observed
+    $hashes.original = $beforeConflictHashes.original
+    $hashes.exported = $beforeConflictHashes.export
     if ($hashes.exported -ne $hashes.importProjection) {
         throw '[product] Exported config did not match the active projection'
-    }
-    if (-not [IO.File]::ReadAllText($exportPath).Contains($fixtureText)) {
-        throw '[product] Exported config did not preserve the imported source bytes'
     }
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
@@ -241,8 +198,10 @@ try {
         -InputNodeProvider { param($inputAttempt) Get-ConfigInputNode } | Out-Null
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
         -Pattern 'Config export failed:' -TimeoutSeconds 30 | Out-Null
-    Invoke-ConfigHdcFile -Operation recv -Source "$deviceDownloads/$exportName" -Destination $conflictPath
-    if ((Get-FileHash -LiteralPath $conflictPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hashes.exported) {
+    $afterConflictLogs = Invoke-ConfigAcceptanceCommand -Action observe -Stage 'observe-after-conflict' `
+        -Pattern 'ACCEPTANCE_CONFIG state=observed,.*export=[0-9a-f]{64}'
+    $afterConflictHashes = Get-ConfigAcceptanceHashes -Logs $afterConflictLogs -State observed
+    if ($afterConflictHashes.export -ne $hashes.exported) {
         throw '[product] Export conflict changed the existing Downloads file'
     }
 
@@ -251,34 +210,26 @@ try {
     if ($hashes.reopenProjection -ne $hashes.importProjection) {
         throw '[product] Restart did not reopen the imported durable config'
     }
-    Submit-ConfigCommand -Command "config export $reopenName" -Stage 'export-after-restart' `
+    $null = Submit-ConfigCommand -Command "config export $reopenName" -Stage 'export-after-restart' `
         -SuccessPattern 'CONFIG_EXPORT result=success'
-    Invoke-ConfigHdcFile -Operation recv -Source "$deviceDownloads/$reopenName" -Destination $reopenPath
-    $hashes.reopenedExport = (Get-FileHash -LiteralPath $reopenPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $null = Submit-ConfigCommand -Command "config import $cleanupName --replace" -Stage 'restore-original' `
+        -SuccessPattern 'CONFIG_IMPORT result=success,replace=true'
+    $configRestored = $true
+    $null = Submit-ConfigCommand -Command "config export $restoredName" -Stage 'export-restored' `
+        -SuccessPattern 'CONFIG_EXPORT result=success'
+    $verifyLogs = Invoke-ConfigAcceptanceCommand -Action verify -Stage 'verify-and-clean-fixtures' `
+        -Pattern 'ACCEPTANCE_CONFIG state=verified,passed=true,.*cleanupComplete=true'
+    $verifiedHashes = Get-ConfigAcceptanceHashes -Logs $verifyLogs -State verified
+    $hashes.reopenedExport = $verifiedHashes.reopen
+    $hashes.restored = $verifiedHashes.restored
+    $hashes.restoredUnmanaged = $verifiedHashes.cleanup
     if ($hashes.reopenedExport -ne $hashes.importProjection) {
         throw '[product] Export after restart did not match the imported config'
     }
-
-    Submit-ConfigCommand -Command "config import $cleanupName --replace" -Stage 'restore-original' `
-        -SuccessPattern 'CONFIG_IMPORT result=success,replace=true'
-    $configRestored = $true
-    Submit-ConfigCommand -Command "config export $restoredName" -Stage 'verify-restored' `
-        -SuccessPattern 'CONFIG_EXPORT result=success'
-    Invoke-ConfigHdcFile -Operation recv -Source "$deviceDownloads/$restoredName" -Destination $restoredPath
-    $hashes.original = (Get-FileHash -LiteralPath $originalPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $hashes.restored = (Get-FileHash -LiteralPath $restoredPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $restoredUnmanaged = Remove-ConfigManagedRegion -Text ([IO.File]::ReadAllText($restoredPath))
-    [IO.File]::WriteAllText($restoredUnmanagedPath, $restoredUnmanaged, [Text.UTF8Encoding]::new($false))
-    $hashes.originalUnmanaged = (Get-FileHash -LiteralPath $cleanupPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $hashes.restoredUnmanaged = (
-        Get-FileHash -LiteralPath $restoredUnmanagedPath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
     if ($hashes.restoredUnmanaged -ne $hashes.originalUnmanaged) {
         throw '[product] Product-path cleanup did not restore the original unmanaged config bytes'
     }
-
-    Remove-ConfigDeviceFiles
-    $cleanupComplete = (-not $configModified) -or $configRestored
+    $cleanupComplete = $true
     $result = 'passed'
 } catch {
     $failure = $_.Exception.Message
@@ -288,8 +239,7 @@ try {
 } finally {
     if (-not $cleanupComplete -and -not [string]::IsNullOrWhiteSpace($targetId)) {
         try {
-            if ($configModified -and -not $configRestored -and
-                (Test-Path -LiteralPath $cleanupPath -PathType Leaf)) {
+            if ($configModified -and -not $configRestored) {
                 try {
                     $recoveryStart = Start-LeanTTYRegressionApp -Hdc $script:hdc -Target $script:targetId `
                         -CredentialPath (Get-LeanTTYDeviceUnlockPasswordPath) -RepositoryRoot $repoRoot
@@ -297,14 +247,16 @@ try {
                     Wait-LeanTTYTerminalInputLayout -Hdc $script:hdc -Target $script:targetId `
                         -LocalPath (Join-Path $EvidenceDirectory 'cleanup-ready.json') `
                         -TimeoutSeconds 30 | Out-Null
-                    Submit-ConfigCommand -Command "config import $cleanupName --replace" `
+                    $null = Submit-ConfigCommand -Command "config import $cleanupName --replace" `
                         -Stage 'finally-restore-original' `
                         -SuccessPattern 'CONFIG_IMPORT result=success,replace=true'
                     $configRestored = $true
                 } catch {}
             }
-            Remove-ConfigDeviceFiles
-            $cleanupComplete = (-not $configModified) -or $configRestored
+            $cleanupLogs = Invoke-ConfigAcceptanceCommand -Action cleanup -Stage 'finally-clean-fixtures' `
+                -Pattern 'ACCEPTANCE_CONFIG state=cleaned,cleanupComplete=true'
+            $cleanupComplete = $cleanupLogs -match 'ACCEPTANCE_CONFIG state=cleaned,cleanupComplete=true' -and
+                ((-not $configModified) -or $configRestored)
         } catch {}
     }
     if ($awakeLeaseActive) {
@@ -350,11 +302,6 @@ try {
         (ConvertTo-Json -InputObject $evidence -Depth 10),
         [Text.UTF8Encoding]::new($false)
     )
-    try {
-        if (Test-Path -LiteralPath $localRoot) {
-            Remove-Item -LiteralPath $localRoot -Recurse -Force
-        }
-    } catch {}
 }
 
 if ($result -ne 'passed') { throw "Config import/export physical verification failed: $failure" }

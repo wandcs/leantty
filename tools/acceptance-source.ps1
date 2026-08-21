@@ -828,6 +828,8 @@ function Add-LeanTTYAcceptanceSource {
     $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
         "import { KeyCommandService, KeyCommandContext } from '../model/command/KeyCommandService'" `
         ("import { ACCEPTANCE_TESTS } from 'BuildProfile'`n" +
+            "import { Environment } from '@kit.CoreFileKit'`n" +
+            "import { DurableAssetFormat } from '../model/persistence/DurableAssetFormat'`n" +
             "import { DownloadsAccessManager } from '../model/transfer/DownloadsAccessManager'`n" +
             "import { KeyCommandService, KeyCommandContext } from '../model/command/KeyCommandService'")
     $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
@@ -853,6 +855,149 @@ function Add-LeanTTYAcceptanceSource {
 '@
     $text.session = Set-LeanTTYAcceptanceSourceText `
         $text.session $preparationAnchor $preparationReplacement
+    $configAcceptanceMethod = @'
+  private acceptanceConfigFileNames(): string[] {
+    return [
+      'leantty-config-acceptance-import.conf',
+      'leantty-config-acceptance-original.conf',
+      'leantty-config-acceptance-cleanup.conf',
+      'leantty-config-acceptance-export.conf',
+      'leantty-config-acceptance-reopen.conf',
+      'leantty-config-acceptance-restored.conf'
+    ]
+  }
+
+  private acceptanceConfigFileHash(root: string, name: string): string {
+    let path: string = root + '/' + name
+    if (!FileUtils.fileExists(path)) { return 'missing' }
+    return DurableAssetFormat.sha256(DurableAssetFormat.encodeText(FileUtils.readTextFile(path)))
+  }
+
+  private acceptanceRemoveManagedConfig(content: string): string {
+    let newline: string = content.includes('\r\n') ? '\r\n' : '\n'
+    let lines: string[] = content.split(/\r?\n/)
+    let output: string[] = []
+    let managed: boolean = false
+    let skipOwnedSeparator: boolean = false
+    for (let i = 0; i < lines.length; i++) {
+      let trimmed: string = lines[i].trim()
+      if (trimmed === '# >>> LeanTTY managed hosts >>>') { managed = true; continue }
+      if (trimmed === '# <<< LeanTTY managed hosts <<<') {
+        managed = false
+        skipOwnedSeparator = true
+        continue
+      }
+      if (skipOwnedSeparator) {
+        skipOwnedSeparator = false
+        if (lines[i].length === 0) { continue }
+      }
+      if (!managed) { output.push(lines[i]) }
+    }
+    return output.join(newline)
+  }
+
+  private cleanupAcceptanceConfigFiles(root: string): boolean {
+    let names: string[] = FileUtils.listFiles(root)
+    let pattern: RegExp = /^leantty-config-(?:acceptance-(?:import|original|cleanup|export|reopen|restored)|[0-9a-f]{12}-(?:import|original|cleanup|export|reopen|restored))\.conf$/
+    for (let i = 0; i < names.length; i++) {
+      if (pattern.test(names[i])) {
+        FileUtils.removeFile(root + '/' + names[i])
+      }
+    }
+    let remaining: string[] = FileUtils.listFiles(root)
+    for (let i = 0; i < remaining.length; i++) {
+      if (pattern.test(remaining[i])) { return false }
+    }
+    return true
+  }
+
+  private async runConfigMigrationAcceptance(action: string): Promise<void> {
+    if (!ACCEPTANCE_TESTS || this.context === null) { return }
+    let root: string = Environment.getUserDownloadDir().replace(/\/+$/, '')
+    try {
+      await DownloadsAccessManager.ensure(this.context)
+      if (action === 'prepare') {
+        if (!this.cleanupAcceptanceConfigFiles(root)) {
+          throw new Error('stale fixture cleanup failed')
+        }
+        let source: string = this.commandBarVm.getSshConfig().getConfigText()
+        let cleanup: string = this.acceptanceRemoveManagedConfig(source)
+        let newline: string = source.includes('\r\n') ? '\r\n' : '\n'
+        let fixture: string = '# LeanTTY controlled config fixture' + newline +
+          'Host __ltty_config_fixture' + newline +
+          '  HostName fixture.example.test' + newline +
+          '  User deploy' + newline +
+          '  Port 2222' + newline +
+          '  ConnectTimeout 12' + newline +
+          '  ServerAliveInterval 30' + newline +
+          '  ServerAliveCountMax 3' + newline
+        FileUtils.writeTextFile(root + '/leantty-config-acceptance-import.conf', fixture)
+        FileUtils.writeTextFile(root + '/leantty-config-acceptance-cleanup.conf', cleanup)
+        this.logger.info('ACCEPTANCE_CONFIG state=prepared,fixture=' +
+          DurableAssetFormat.sha256(DurableAssetFormat.encodeText(fixture)) + ',cleanup=' +
+          DurableAssetFormat.sha256(DurableAssetFormat.encodeText(cleanup)) + ',staleCleaned=true')
+        return
+      }
+      if (action === 'cleanup') {
+        let cleaned: boolean = this.cleanupAcceptanceConfigFiles(root)
+        this.logger.info('ACCEPTANCE_CONFIG state=cleaned,cleanupComplete=' + cleaned.toString())
+        return
+      }
+      let names: string[] = this.acceptanceConfigFileNames()
+      let hashes: string[] = []
+      for (let i = 0; i < names.length; i++) {
+        hashes.push(this.acceptanceConfigFileHash(root, names[i]))
+      }
+      let detail: string = 'import=' + hashes[0] + ',original=' + hashes[1] + ',cleanup=' + hashes[2] +
+        ',export=' + hashes[3] + ',reopen=' + hashes[4] + ',restored=' + hashes[5]
+      if (action === 'observe') {
+        this.logger.info('ACCEPTANCE_CONFIG state=observed,' + detail)
+        return
+      }
+      if (action !== 'verify') { throw new Error('unknown action') }
+      for (let i = 0; i < hashes.length; i++) {
+        if (hashes[i] === 'missing') { throw new Error('required acceptance file is missing') }
+      }
+      let fixture: string = FileUtils.readTextFile(root + '/' + names[0])
+      let original: string = FileUtils.readTextFile(root + '/' + names[1])
+      let cleanup: string = FileUtils.readTextFile(root + '/' + names[2])
+      let exported: string = FileUtils.readTextFile(root + '/' + names[3])
+      let reopened: string = FileUtils.readTextFile(root + '/' + names[4])
+      let restored: string = FileUtils.readTextFile(root + '/' + names[5])
+      if (!exported.includes(fixture) || exported !== reopened) {
+        throw new Error('imported bytes or restart export changed')
+      }
+      if (this.acceptanceRemoveManagedConfig(original) !== cleanup ||
+        this.acceptanceRemoveManagedConfig(restored) !== cleanup) {
+        throw new Error('original unmanaged config was not restored exactly')
+      }
+      let cleaned: boolean = this.cleanupAcceptanceConfigFiles(root)
+      if (!cleaned) { throw new Error('final fixture cleanup failed') }
+      this.logger.info('ACCEPTANCE_CONFIG state=verified,passed=true,' + detail + ',cleanupComplete=true')
+    } catch (e) {
+      let cleaned: boolean = this.cleanupAcceptanceConfigFiles(root)
+      this.logger.error('ACCEPTANCE_CONFIG state=' + action + ',passed=false,cleanupComplete=' +
+        cleaned.toString() + ',error=' + e)
+    }
+  }
+
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
+        '  private async executeCommandBuffer(): Promise<void> {' `
+        ($configAcceptanceMethod + '  private async executeCommandBuffer(): Promise<void> {')
+    $configCommandAnchor = @'
+    this.commandBarVm.addToHistory(cmd)
+'@
+    $configCommandReplacement = @'
+    if (ACCEPTANCE_TESTS && cmd.startsWith('__acceptance_config_')) {
+      await this.runConfigMigrationAcceptance(cmd.substring('__acceptance_config_'.length))
+      this.writePrompt()
+      return
+    }
+    this.commandBarVm.addToHistory(cmd)
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session $configCommandAnchor $configCommandReplacement
     $backpressureAnchor = @'
   private onFileTransferProgress(event: FileTransferProgress): void {
 '@

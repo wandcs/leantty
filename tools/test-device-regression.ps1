@@ -1200,7 +1200,10 @@ Assert-True (
     $configVerifier.Contains('Export conflict changed the existing Downloads file') -and
     $configVerifier.Contains('Restart did not reopen the imported durable config') -and
     $configVerifier.Contains('Product-path cleanup did not restore the original unmanaged config bytes') -and
-    $configVerifier.Contains('Remove-ConfigDeviceFiles') -and
+    $configVerifier.Contains('__acceptance_config_') -and
+    $configVerifier.Contains('ACCEPTANCE_CONFIG state=verified,passed=true') -and
+    -not $configVerifier.Contains('/storage/Users/currentUser/Download') -and
+    -not $configVerifier.Contains('file recv') -and
     $configVerifier.Contains('cleanupComplete = $cleanupComplete') -and
     $configVerifier.Contains("acceptanceEligible = `$false")
 ) 'Config import/export physical verifier lost input, persistence, conflict, evidence or cleanup controls'
@@ -1220,6 +1223,9 @@ Assert-True (
     $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_NOREPLACE') -and
     $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_FD') -and
     $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_MANAGER') -and
+    $acceptanceSource.Contains('ACCEPTANCE_CONFIG state=prepared') -and
+    $acceptanceSource.Contains('ACCEPTANCE_CONFIG state=verified,passed=true') -and
+    $acceptanceSource.Contains('__acceptance_config_') -and
     -not $acceptanceSource.Contains('Acceptance: Open Search') -and
     -not $acceptanceSource.Contains('Debug Material') -and
     $acceptanceSource.Contains('pasteClipboardForAcceptance') -and
