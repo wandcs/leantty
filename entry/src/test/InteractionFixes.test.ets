@@ -572,6 +572,10 @@ export default function interactionFixesTest() {
         .assertEqual(FileTransferFailureKind.SFTP_UNAVAILABLE)
       expect(FileTransferFailurePresenter.describe('NETWORK_TIMEOUT', '', 'get').kind)
         .assertEqual(FileTransferFailureKind.NETWORK)
+      let keepaliveTimeout: FileTransferFailureInfo =
+        FileTransferFailurePresenter.describe('KEEPALIVE_TIMEOUT', '', 'get')
+      expect(keepaliveTimeout.kind).assertEqual(FileTransferFailureKind.NETWORK)
+      expect(keepaliveTimeout.message.includes('SSH keepalive timed out')).assertEqual(true)
       expect(FileTransferFailurePresenter.describe('HOST_KEY_REJECTED', '', 'get').kind)
         .assertEqual(FileTransferFailureKind.HOST_VERIFICATION)
       expect(FileTransferFailurePresenter.describe('LOCAL_COMMIT', '', 'get').kind)

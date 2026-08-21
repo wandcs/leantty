@@ -26,6 +26,14 @@
   target and named-jump values independently, and reports an encrypted-channel
   keepalive timeout through the existing Session close and reconnect path.
 
+### Fixed
+
+- Made an active Host-based file transfer observe the same SSH connection
+  driver as an interactive Session. A configured server-alive timeout now
+  stops the transfer promptly with a clear network error, removes an owned
+  download temporary file and allows an immediate retry instead of waiting for
+  the separate SFTP operation timeout.
+
 ## [1.4.0] - 2026-08-19
 
 ### Added

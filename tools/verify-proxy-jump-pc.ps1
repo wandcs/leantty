@@ -24,7 +24,7 @@ param(
     [switch]$SuspendAfterConnect,
     [ValidateSet('None', 'Target', 'Jump', 'Both')]
     [string]$ServerAliveBlackhole = 'None',
-    [ValidateRange(1, 3600)][int]$ServerAliveIntervalSeconds = 30,
+    [ValidateRange(0, 3600)][int]$ServerAliveIntervalSeconds = 30,
     [ValidateRange(1, 100)][int]$ServerAliveCountMax = 3,
     [ValidateSet(
         'None', 'JumpAuthentication', 'TargetAuthentication',
@@ -1199,6 +1199,34 @@ try {
                 -Path $dropFixtureLog `
                 -Pattern 'transport proxy client=.* mode=drop-server-output' `
                 -TimeoutSeconds 60
+            if ($ServerAliveIntervalSeconds -eq 0) {
+                Start-Sleep -Seconds 8
+                $disabledIntervalLogs = Get-LeanTTYAppLogs `
+                    -Hdc $hdc -Target $targetId -ProcessId $appPid
+                if ($disabledIntervalLogs -match 'SSH error: SSH keepalive timed out') {
+                    throw "Disabled server-alive $blackholeLayer connection reported a timeout"
+                }
+                Submit-ConnectedProxyInputUntilFixture `
+                    -Text "ltty-input-check ${blackholeLayer}alivedisabled" `
+                    -FixtureLog $targetStderr `
+                    -ExpectedPattern "input case=${blackholeLayer}alivedisabled result=matched"
+                $blackholeWatch.Stop()
+                $serverAliveEvidence.Add([ordered]@{
+                    layer = $blackholeLayer
+                    elapsedMs = [int]$blackholeWatch.ElapsedMilliseconds
+                    configuredIntervalSeconds = 0
+                    configuredCountMax = $ServerAliveCountMax
+                    fixtureDropObserved = $true
+                    deviceTimeoutObserved = $false
+                    sameConnectionInputObserved = $true
+                })
+                Save-LeanTTYDeviceScreenshot `
+                    -Hdc $hdc `
+                    -Target $targetId `
+                    -LocalPath (Join-Path $EvidenceDirectory "$blackholeLayer-alive-disabled.png")
+                Remove-Item -LiteralPath $dropPath -Force
+                continue
+            }
             $keepaliveTimeoutObserved = $false
             $expectedTimeoutSeconds = $ServerAliveIntervalSeconds * ($ServerAliveCountMax + 1)
             $timeoutWaitSeconds = [Math]::Max(20, $expectedTimeoutSeconds + 25)
@@ -1255,16 +1283,36 @@ try {
         Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
         Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
         Write-ProxySummary `
-            -Scenario ('server-alive-blackhole-' + $ServerAliveBlackhole.ToLowerInvariant()) `
-            -Authentication 'both-layer-passwords-accepted-before-each-blackhole' `
-            -HostKeyVerification 'both-known-host-keys-reused-after-each-timeout' `
-            -KnownHostReconnect $true `
+            -Scenario $(if ($ServerAliveIntervalSeconds -eq 0) {
+                'server-alive-disabled-blackhole-' + $ServerAliveBlackhole.ToLowerInvariant()
+            } else {
+                'server-alive-blackhole-' + $ServerAliveBlackhole.ToLowerInvariant()
+            }) `
+            -Authentication $(if ($ServerAliveIntervalSeconds -eq 0) {
+                'both-layer-passwords-accepted-before-blackholes'
+            } else {
+                'both-layer-passwords-accepted-before-each-blackhole'
+            }) `
+            -HostKeyVerification $(if ($ServerAliveIntervalSeconds -eq 0) {
+                'both-first-use-host-keys-confirmed-before-blackholes'
+            } else {
+                'both-known-host-keys-reused-after-each-timeout'
+            }) `
+            -KnownHostReconnect ($ServerAliveIntervalSeconds -ne 0) `
             -TargetHostKeyRotationRecovered $false `
             -JumpHostKeyRotationRecovered $false `
-            -ExpectedFailureLayer ($blackholeLayers -join ',') `
+            -ExpectedFailureLayer $(if ($ServerAliveIntervalSeconds -eq 0) {
+                ''
+            } else {
+                $blackholeLayers -join ','
+            }) `
             -TargetShellOpened $true `
             -TargetShellClosedCleanly $true `
-            -Lifecycle 'each encrypted transport blackholed independently; timeout and immediate reconnect observed'
+            -Lifecycle $(if ($ServerAliveIntervalSeconds -eq 0) {
+                'each encrypted transport blackholed independently; no timeout and same-connection input observed'
+            } else {
+                'each encrypted transport blackholed independently; timeout and immediate reconnect observed'
+            })
         return
     }
     Submit-SecretOrDecision -Text 'ltty-exit'

@@ -26,6 +26,9 @@ param(
     [switch]$DisconnectGet,
     [switch]$MinimizeGet,
     [switch]$SuspendGet,
+    [switch]$ServerAliveBlackhole,
+    [ValidateRange(1, 3600)][int]$ServerAliveIntervalSeconds = 1,
+    [ValidateRange(1, 100)][int]$ServerAliveCountMax = 1,
     [switch]$SelectionCopy,
     [switch]$FileNameMatrix,
     [switch]$TabCompletionMatrix,
@@ -48,7 +51,7 @@ $Target = Resolve-LeanTTYRegressionTarget -Hdc $hdc -Target $Target
 $exclusiveModes = @(
     $CancelGet, $CloseApplication, $ClosePane, $FailRemoteCleanup, $FailLocalCleanup,
     $LocalDiskFull, $Backpressure, $ForceTerminate, $LateEvents, $DisconnectGet, $MinimizeGet,
-    $SuspendGet,
+    $SuspendGet, $ServerAliveBlackhole,
     $SelectionCopy, $FileNameMatrix,
     $TabCompletionMatrix, $AuthenticationMatrix,
     (-not [string]::IsNullOrWhiteSpace($SftpFailure))
@@ -57,7 +60,7 @@ $exclusiveModes = @(
 if ($exclusiveModes.Count -gt 1) {
     throw (
         'CancelGet, CloseApplication, ClosePane, FailRemoteCleanup, FailLocalCleanup, LocalDiskFull, ' +
-        'Backpressure, ForceTerminate, LateEvents, DisconnectGet, MinimizeGet, SuspendGet, SelectionCopy, FileNameMatrix, ' +
+        'Backpressure, ForceTerminate, LateEvents, DisconnectGet, MinimizeGet, SuspendGet, ServerAliveBlackhole, SelectionCopy, FileNameMatrix, ' +
         'TabCompletionMatrix, ' +
         'AuthenticationMatrix and SftpFailure are mutually exclusive'
     )
@@ -95,6 +98,7 @@ $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('leantty-put-get-' + $attem
 $fixtureReady = Join-Path $fixtureRoot 'fixture-ready'
 $fixtureCredentials = Join-Path $fixtureRoot 'server-credentials'
 $fixtureSftpRoot = Join-Path $fixtureRoot 'sftp-root'
+$fixtureServerOutputDrop = Join-Path $fixtureRoot 'drop-server-output'
 $fixtureStdout = Join-Path $EvidenceDirectory 'fixture-stdout.log'
 $fixtureStderr = Join-Path $EvidenceDirectory 'fixture-stderr.log'
 $fixtureProcess = $null
@@ -118,6 +122,8 @@ $authObservationStderr = ''
 $authObservationFiles = [Collections.Generic.List[string]]::new()
 $authObservationRecords = [Collections.Generic.List[object]]::new()
 $commandObservations = [Collections.Generic.List[object]]::new()
+$serverAliveHostAlias = 'ltty-transfer-alive-' + $attemptToken.Substring(0, 12)
+$serverAliveHostConfigured = $false
 $sourceKind = 'generated-random'
 $sourceBytesCount = if ($SelectionCopy) {
     1MB
@@ -134,6 +140,8 @@ if ($SftpDelayMilliseconds -eq 0) {
     } elseif ($CloseApplication -or $ClosePane -or $DisconnectGet -or $MinimizeGet -or $SuspendGet -or
         $ForceTerminate -or $LateEvents) {
         $SftpDelayMilliseconds = 250
+    } elseif ($ServerAliveBlackhole) {
+        $SftpDelayMilliseconds = 5000
     } elseif ($Backpressure) {
         $SftpDelayMilliseconds = 100
     } elseif ($CancelGet) {
@@ -1280,6 +1288,9 @@ try {
         ),
         '-SftpFault', $sftpFault
     )
+    if ($ServerAliveBlackhole) {
+        $fixtureArguments += '-EnableServerOutputDrop'
+    }
     $fixtureProcess = Start-Process `
         -FilePath 'pwsh.exe' `
         -ArgumentList $fixtureArguments `
@@ -1360,6 +1371,23 @@ try {
     }
     if ($fixtureState -notmatch 'state=prepared') { throw 'Transfer fixture was not prepared' }
     Focus-TerminalInput -Name 'after-fixture-prepare'
+
+    if ($ServerAliveBlackhole) {
+        Submit-TerminalText `
+            -Text "host rm $serverAliveHostAlias" `
+            -LayoutName 'server-alive-host-reset'
+        Submit-TerminalText `
+            -Text (
+                "host add $serverAliveHostAlias password@127.0.0.1:$FixturePort " +
+                    "--server-alive-interval $ServerAliveIntervalSeconds " +
+                    "--server-alive-count-max $ServerAliveCountMax"
+            ) `
+            -LayoutName 'server-alive-host-add'
+        Wait-LeanTTYAppLog `
+            -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+            -Pattern "Host added: $serverAliveHostAlias" -TimeoutSeconds 10 | Out-Null
+        $serverAliveHostConfigured = $true
+    }
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     if ($TabCompletionMatrix) {
@@ -2706,8 +2734,13 @@ try {
     } else {
         '/' + $remoteGetName
     }
+    $commandRemoteEndpoint = if ($ServerAliveBlackhole) {
+        "${serverAliveHostAlias}:$commandRemotePath"
+    } else {
+        "-p $FixturePort password@127.0.0.1:$commandRemotePath"
+    }
     Complete-TerminalTextWithTab `
-        -Prefix "get -p $FixturePort password@127.0.0.1:$commandRemotePath $localDirectoryName" `
+        -Prefix "get $commandRemoteEndpoint $localDirectoryName" `
         -LayoutName 'get-command'
     if ($StallPreparation) {
         $preparationResult = Wait-LeanTTYAppLog `
@@ -2719,6 +2752,128 @@ try {
         }
     } else {
         Complete-PasswordAuthentication -Stage 'get'
+    }
+    if ($ServerAliveBlackhole) {
+        $transferringLogs = Wait-LeanTTYAppLog `
+            -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+            -Pattern 'FILE_TRANSFER phase=TRANSFERRING|FILE_TRANSFER result=' `
+            -TimeoutSeconds 30
+        if ($transferringLogs -notmatch 'FILE_TRANSFER phase=TRANSFERRING') {
+            throw 'Host-based GET reached a terminal state before the blackhole point'
+        }
+
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        $blackholeStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        New-Item -ItemType File -Path $fixtureServerOutputDrop -Force | Out-Null
+        $dropObserved = $false
+        $dropStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        while ($dropStopwatch.Elapsed.TotalSeconds -lt 15) {
+            if ((Read-SftpFixtureLogText) -match 'transport proxy client=.* mode=drop-server-output') {
+                $dropObserved = $true
+                break
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        if (-not $dropObserved) {
+            throw 'Host-based GET fixture did not enter the server-output blackhole'
+        }
+        $keepaliveResult = Wait-LeanTTYAppLog `
+            -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+            -Pattern 'FILE_TRANSFER result=(failed code=KEEPALIVE_TIMEOUT|completed|cancelled)' `
+            -TimeoutSeconds 20
+        $idleResult = Wait-LeanTTYAppLog `
+            -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+            -Pattern 'FILE_TRANSFER phase=IDLE' -TimeoutSeconds 20
+        $blackholeStopwatch.Stop()
+        if ($keepaliveResult -notmatch 'FILE_TRANSFER result=failed code=KEEPALIVE_TIMEOUT' -or
+            $idleResult -notmatch 'FILE_TRANSFER phase=IDLE') {
+            throw 'Host-based GET did not fail with KEEPALIVE_TIMEOUT and return to IDLE'
+        }
+        $blackholeLogs = Get-LeanTTYAppLogs `
+            -Hdc $hdc -Target $Target -ProcessId $appProcessId
+        $terminalMatches = @([regex]::Matches(
+                $blackholeLogs,
+                'FILE_TRANSFER result=(cancelled|failed|completed)'
+            ))
+        if ($terminalMatches.Count -ne 1 -or
+            $terminalMatches[0].Groups[1].Value -ne 'failed') {
+            throw 'Host-based GET did not emit exactly one failed terminal result'
+        }
+        $expectedTimeoutSeconds = $ServerAliveIntervalSeconds * ($ServerAliveCountMax + 1)
+        if ($blackholeStopwatch.Elapsed.TotalSeconds -lt [Math]::Max(1, $expectedTimeoutSeconds - 2) -or
+            $blackholeStopwatch.Elapsed.TotalSeconds -gt ($expectedTimeoutSeconds + 15)) {
+            throw 'Host-based GET keepalive timeout fell outside the configured russh window'
+        }
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'get-keepalive-timeout.png')
+
+        $failedCleanupState = Invoke-TransferFixtureAction -Stage 'fixture-keepalive-failed-cleanup'
+        if ($failedCleanupState -notmatch (
+                'state=cleaned,originalPreserved=true,numberedPresent=false,temporaryPresent=false'
+            )) {
+            throw 'Keepalive-timed-out GET exposed a final file or retained its local temporary file'
+        }
+        $fixtureState = Invoke-TransferFixtureAction -Stage 'fixture-keepalive-retry-prepare'
+        if ($fixtureState -notmatch 'state=prepared') {
+            throw 'Keepalive-timed-out GET could not restore the Downloads fixture for retry'
+        }
+        Remove-Item -LiteralPath $fixtureServerOutputDrop -Force
+
+        Focus-TerminalInput -Name 'server-alive-retry-ready'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        Complete-TerminalTextWithTab `
+            -Prefix "get $commandRemoteEndpoint $localDirectoryName" `
+            -LayoutName 'get-keepalive-retry-command'
+        Complete-PasswordAuthentication -Stage 'get-keepalive-retry'
+        $retryResult = Wait-LeanTTYAppLog `
+            -Hdc $hdc -Target $Target -ProcessId $appProcessId `
+            -Pattern "FILE_TRANSFER result=(completed direction=get,bytes=$expectedCompletionBytes|failed code=\S+)" `
+            -TimeoutSeconds 60
+        if ($retryResult -notmatch "FILE_TRANSFER result=completed direction=get,bytes=$expectedCompletionBytes") {
+            throw 'Host-based GET did not complete after removing the blackhole and retrying'
+        }
+        $cleanupState = Invoke-TransferFixtureAction -Stage 'fixture-keepalive-retry-cleanup'
+        if ($cleanupState -notmatch (
+                'state=cleaned,originalPreserved=true,numberedPresent=true,temporaryPresent=false'
+            )) {
+            throw 'Recovered Host-based GET did not preserve and clean the completed Downloads file'
+        }
+        Submit-TerminalText `
+            -Text "host rm $serverAliveHostAlias" `
+            -LayoutName 'server-alive-host-cleanup'
+        $serverAliveHostConfigured = $false
+        Submit-TerminalText `
+            -Text "ssh-keygen -R [127.0.0.1]:$FixturePort" `
+            -LayoutName 'server-alive-known-host-cleanup'
+        Save-LeanTTYDeviceScreenshot `
+            -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory 'get-keepalive-recovered.png')
+
+        [ordered]@{
+            recordedAt = (Get-Date).ToString('o')
+            gate = '1.5-host-file-transfer-server-alive'
+            result = 'passed'
+            direction = 'get'
+            hostAlias = 'run-scoped-and-removed'
+            configuredIntervalSeconds = $ServerAliveIntervalSeconds
+            configuredCountMax = $ServerAliveCountMax
+            timeoutMs = [int]$blackholeStopwatch.ElapsedMilliseconds
+            terminalResult = 'failed exactly once with KEEPALIVE_TIMEOUT, then returned to IDLE'
+            retry = 'same Host completed after the controlled blackhole was removed'
+            localCleanup = 'failed temporary absent; retry final observed and fixture cleaned'
+            sourceDirty = (@(git -C $repoRoot status --short).Count -gt 0)
+            sourceCommit = (git -C $repoRoot rev-parse HEAD)
+            hapSha256 = (Get-FileHash -LiteralPath (
+                    Join-Path $repoRoot 'entry\build\default\outputs\default\entry-default-signed.hap'
+                ) -Algorithm SHA256).Hash.ToLowerInvariant()
+        } | ConvertTo-Json -Depth 6 | Set-Content `
+            -LiteralPath (Join-Path $EvidenceDirectory 'device-get-server-alive.json') `
+            -Encoding utf8NoBOM
+        Write-Host (
+            'GET SERVER-ALIVE GATE PASSED: Host keepalive timeout, cleanup and retry recovered'
+        ) -ForegroundColor Green
+        return
     }
     if ($DisconnectGet) {
         $progressResult = Wait-LeanTTYAppLog `
@@ -3264,6 +3419,28 @@ try {
     $primaryFailure = $_
     throw
 } finally {
+    if (Test-Path -LiteralPath $fixtureServerOutputDrop -PathType Leaf) {
+        Remove-Item -LiteralPath $fixtureServerOutputDrop -Force
+    }
+    if ($ServerAliveBlackhole -and -not [string]::IsNullOrWhiteSpace($appProcessId)) {
+        if ($serverAliveHostConfigured) {
+            try {
+                Submit-TerminalText `
+                    -Text "host rm $serverAliveHostAlias" `
+                    -LayoutName 'server-alive-host-finally-cleanup'
+                $serverAliveHostConfigured = $false
+            } catch {
+                Write-Warning "Run-scoped Host may remain: $serverAliveHostAlias"
+            }
+        }
+        try {
+            Submit-TerminalText `
+                -Text "ssh-keygen -R [127.0.0.1]:$FixturePort" `
+                -LayoutName 'server-alive-known-host-finally-cleanup'
+        } catch {
+            Write-Warning 'Run-scoped file-transfer known_hosts entry may remain'
+        }
+    }
     $automationVerdict = if (@($commandObservations | Where-Object {
         $_.result -eq 'unknown'
     }).Count -gt 0) {

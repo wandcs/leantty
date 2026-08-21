@@ -1105,7 +1105,10 @@ foreach ($scriptName in @(
             $content.Contains('[IO.Path]::GetFullPath($HapPath)') -and
             $content.Contains('ProxyJump verification requires a signed HAP') -and
             $content.Contains('-HapPath $selectedHapPath') -and
-            $content.Contains('$script:proxyHapPath = $selectedHapPath')
+            $content.Contains('$script:proxyHapPath = $selectedHapPath') -and
+            $content.Contains('[ValidateRange(0, 3600)][int]$ServerAliveIntervalSeconds') -and
+            $content.Contains('sameConnectionInputObserved = $true') -and
+            $content.Contains('deviceTimeoutObserved = $false')
         ) 'ProxyJump physical scenario can submit an unverified command buffer'
     }
 }
@@ -1247,6 +1250,7 @@ Assert-True (
     $putGetVerifier.Contains('[switch]$ForceTerminate') -and
     $putGetVerifier.Contains('[switch]$LateEvents') -and
     $putGetVerifier.Contains('[switch]$DisconnectGet') -and
+    $putGetVerifier.Contains('[switch]$ServerAliveBlackhole') -and
     $putGetVerifier.Contains('[switch]$AuthenticationMatrix') -and
     $putGetVerifier.Contains("'-SftpFault'") -and
     $putGetVerifier.Contains('[IO.FileShare]::ReadWrite') -and
@@ -1283,6 +1287,10 @@ Assert-True (
     $putGetVerifier.Contains('cleanupFailureFinalPresent=false') -and
     $putGetVerifier.Contains('temporaryCount=1') -and
     $putGetVerifier.Contains('device-get-disconnect.json') -and
+    $putGetVerifier.Contains('device-get-server-alive.json') -and
+    $putGetVerifier.Contains('FILE_TRANSFER result=failed code=KEEPALIVE_TIMEOUT') -and
+    $putGetVerifier.Contains("'-EnableServerOutputDrop'") -and
+    $putGetVerifier.Contains('host rm $serverAliveHostAlias') -and
     $putGetVerifier.Contains('[switch]$MinimizeGet') -and
     $putGetVerifier.Contains('[switch]$SelectionCopy') -and
     $putGetVerifier.Contains('[switch]$FileNameMatrix') -and

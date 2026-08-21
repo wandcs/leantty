@@ -1275,36 +1275,40 @@ function Add-LeanTTYNativeAcceptanceSource {
     $native = Set-LeanTTYAcceptanceSourceText `
         $native $nativeCleanupAnchor $nativeCleanupReplacement
     $nativeDiskFullStartAnchor = @'
-    let result = transfer::execute(
+    let transfer_wait = wait_for_file_transfer(
+        transfer::execute(
 '@
     $nativeDiskFullStartReplacement = @'
-    let result = if direction == transfer::Direction::Get
+    let transfer_wait = if direction == transfer::Direction::Get
         && remote_path.ends_with("disk-full-source.bin")
     {
         eprintln!("[LTTY_SSH] ACCEPTANCE_LOCAL_DISK_FULL armed");
-        Err(transfer::TransferFailure::Failed {
+        FileTransferWaitResult::Completed(Err(transfer::TransferFailure::Failed {
             code: "WRITE",
             detail: "file write failed: No space left on device (os error 28)".to_string(),
-        })
+        }))
     } else {
-        transfer::execute(
+        wait_for_file_transfer(
+            transfer::execute(
 '@
     $native = Set-LeanTTYAcceptanceSourceText `
         $native $nativeDiskFullStartAnchor $nativeDiskFullStartReplacement
     $nativeDiskFullEndAnchor = @'
-        },
+            },
+        ),
+        &mut ssh,
     )
     .await;
-    let _ = transfer::bounded_operation(
-        sftp.close(),
+    let result = match transfer_wait {
 '@
     $nativeDiskFullEndReplacement = @'
-            },
+                },
+            ),
+            &mut ssh,
         )
         .await
     };
-    let _ = transfer::bounded_operation(
-        sftp.close(),
+    let result = match transfer_wait {
 '@
     $native = Set-LeanTTYAcceptanceSourceText `
         $native $nativeDiskFullEndAnchor $nativeDiskFullEndReplacement

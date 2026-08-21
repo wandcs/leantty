@@ -1987,52 +1987,82 @@ async fn run_file_transfer(
         FileTransferEvent::stage(transfer_id, &pane_id, generation, "transferring"),
         false,
     );
-    let result = transfer::execute(
-        &sftp,
-        direction,
-        &remote_path,
-        local_file,
-        transfer_id,
-        &mut disconnect_rx,
-        |update| {
-            let event = match update {
-                transfer::TransferUpdate::Progress { transferred, total } => {
-                    FileTransferEvent::progress(
-                        transfer_id,
-                        &pane_id,
-                        generation,
-                        transferred,
-                        total,
+    let transfer_wait = wait_for_file_transfer(
+        transfer::execute(
+            &sftp,
+            direction,
+            &remote_path,
+            local_file,
+            transfer_id,
+            &mut disconnect_rx,
+            |update| {
+                let event = match update {
+                    transfer::TransferUpdate::Progress { transferred, total } => {
+                        FileTransferEvent::progress(
+                            transfer_id,
+                            &pane_id,
+                            generation,
+                            transferred,
+                            total,
+                        )
+                    }
+                    transfer::TransferUpdate::Finalizing { transferred, total } => {
+                        FileTransferEvent::finalizing(
+                            transfer_id,
+                            &pane_id,
+                            generation,
+                            transferred,
+                            total,
+                        )
+                    }
+                };
+                let _ = send_file_transfer_event(&transfer_callback, event, false);
+            },
+        ),
+        &mut ssh,
+    )
+    .await;
+    let result = match transfer_wait {
+        FileTransferWaitResult::Completed(result) => {
+            let _ = transfer::bounded_operation(
+                sftp.close(),
+                &mut disconnect_rx,
+                "SFTP_CLOSE",
+                "SFTP session close failed",
+            )
+            .await;
+            let _ = transfer::bounded_operation(
+                ssh.disconnect(russh::Disconnect::ByApplication, "", ""),
+                &mut disconnect_rx,
+                "NETWORK",
+                "SSH transfer session disconnect failed",
+            )
+            .await;
+            result
+        }
+        FileTransferWaitResult::ConnectionEnded(result) => {
+            let (code, detail) = match result {
+                Err(russh::Error::KeepaliveTimeout) => {
+                    eprintln!(
+                        "[LTTY_SSH] transfer={} stage=keepalive_timeout intervalSeconds={} max={}",
+                        transfer_id, server_alive_interval_seconds, server_alive_count_max
+                    );
+                    (
+                        "KEEPALIVE_TIMEOUT",
+                        format!(
+                        "SSH keepalive timed out after interval {server_alive_interval_seconds}s and count {server_alive_count_max}"
+                    ),
                     )
                 }
-                transfer::TransferUpdate::Finalizing { transferred, total } => {
-                    FileTransferEvent::finalizing(
-                        transfer_id,
-                        &pane_id,
-                        generation,
-                        transferred,
-                        total,
-                    )
-                }
+                Err(error) => ("NETWORK", format!("SSH transfer connection ended: {error}")),
+                Ok(()) => (
+                    "NETWORK",
+                    "SSH transfer connection ended before the file transfer completed".to_string(),
+                ),
             };
-            let _ = send_file_transfer_event(&transfer_callback, event, false);
-        },
-    )
-    .await;
-    let _ = transfer::bounded_operation(
-        sftp.close(),
-        &mut disconnect_rx,
-        "SFTP_CLOSE",
-        "SFTP session close failed",
-    )
-    .await;
-    let _ = transfer::bounded_operation(
-        ssh.disconnect(russh::Disconnect::ByApplication, "", ""),
-        &mut disconnect_rx,
-        "NETWORK",
-        "SSH transfer session disconnect failed",
-    )
-    .await;
+            Err(transfer::TransferFailure::Failed { code, detail })
+        }
+    };
     match result {
         Ok((bytes, total_bytes)) => {
             let delivered = send_file_transfer_event(
@@ -2051,6 +2081,23 @@ async fn run_file_transfer(
             generation,
             failure,
         ),
+    }
+}
+
+enum FileTransferWaitResult<T> {
+    Completed(T),
+    ConnectionEnded(std::result::Result<(), russh::Error>),
+}
+
+async fn wait_for_file_transfer<F, D, T>(transfer: F, connection: D) -> FileTransferWaitResult<T>
+where
+    F: Future<Output = T>,
+    D: Future<Output = std::result::Result<(), russh::Error>>,
+{
+    tokio::select! {
+        biased;
+        result = transfer => FileTransferWaitResult::Completed(result),
+        result = connection => FileTransferWaitResult::ConnectionEnded(result),
     }
 }
 
@@ -2679,19 +2726,19 @@ pub fn ssh_protect_private_key(key_path: String) -> Result<()> {
 mod tests {
     use super::{
         build_client_config, channel_writer_exit_message, is_current_auth_generation,
-        run_channel_writer_core, send_scheduled_input, should_flush_immediately,
+        run_channel_writer_core, send_scheduled_input, should_flush_immediately, transfer,
         validate_keepalive, wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
-        wait_for_host_key_decision, AuthExchangeResult, AuthMethod, AuthWaitResult,
-        ConnectProgress, ConnectWaitResult, ConnectionLayer, FileTransferEvent, HostKeyDecision,
-        LayeredAuthMethod, OutputDeliveryMetrics, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT,
-        INPUT_WRITE_CHUNK_BYTES,
+        wait_for_file_transfer, wait_for_host_key_decision, AuthExchangeResult, AuthMethod,
+        AuthWaitResult, ConnectProgress, ConnectWaitResult, ConnectionLayer, FileTransferEvent,
+        FileTransferWaitResult, HostKeyDecision, LayeredAuthMethod, OutputDeliveryMetrics,
+        AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
     };
     use napi_ohos::Status;
     use russh::client;
     use russh::keys::{Algorithm, PrivateKey, PrivateKeyWithHashAlg, PublicKey};
     use russh::server::{self, Auth, Handler, Msg, Server as _, Session};
     use russh::{Channel, ChannelMsg, Disconnect};
-    use std::future::pending;
+    use std::future::{pending, ready};
     use std::net::SocketAddr;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
@@ -3286,5 +3333,37 @@ mod tests {
         .await;
 
         assert!(matches!(result, ConnectWaitResult::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn file_transfer_observes_keepalive_timeout_from_connection_driver() {
+        let result = tokio::time::timeout(
+            Duration::from_millis(50),
+            wait_for_file_transfer(
+                pending::<std::result::Result<(u64, u64), transfer::TransferFailure>>(),
+                ready(Err(russh::Error::KeepaliveTimeout)),
+            ),
+        )
+        .await
+        .expect("connection completion should stop a pending transfer");
+
+        assert!(matches!(
+            result,
+            FileTransferWaitResult::ConnectionEnded(Err(russh::Error::KeepaliveTimeout))
+        ));
+    }
+
+    #[tokio::test]
+    async fn completed_file_transfer_wins_over_simultaneous_connection_close() {
+        let result = wait_for_file_transfer(
+            ready(std::result::Result::<(u64, u64), transfer::TransferFailure>::Ok((7, 9))),
+            ready(Ok(())),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            FileTransferWaitResult::Completed(Ok((7, 9)))
+        ));
     }
 }
