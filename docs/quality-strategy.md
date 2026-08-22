@@ -217,6 +217,7 @@ can observe the result. Each failure must name the damaged responsibility.
 | `check-public-source.ps1` | `policy` | Public-tree secret, generated-file and prohibited-artifact policy |
 | `check-ssh-transport-flow.ps1` | `ssh-flow` | One generated N-API transport/control event schema across Rust typings and ArkTS, including removal of the retired split callbacks |
 | `check-keygen-async-flow.ps1` | `ssh-flow` | Cross-language asynchronous key-generation contract: blocking Rust work is isolated and the generated ArkTS API remains a Promise that callers await |
+| `test-terminal-policy.mjs` | `web` | Locked/generated Web assets, terminal policy behavior and necessary Web/ArkTS platform or security boundaries; product-private ArkTS control flow belongs in ArkTS or physical behavior tests |
 | `test-build-workflows.ps1` | `tooling` | Build/release locking, candidate identity, acceptance-source restoration, workflow failure and evidence contracts; product-private control flow is outside this check |
 | `test-device-regression.ps1` | `tooling` | Physical-harness input, evidence, cleanup and secret-safety contracts, plus unavoidable public ArkUI/lifecycle registration and filesystem security flags |
 | Package-policy checks registered by `test-regression.ps1` | `tooling` and build stages | ABI, production/test-source isolation and release-package artifact boundaries |

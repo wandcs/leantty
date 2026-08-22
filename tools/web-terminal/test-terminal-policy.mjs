@@ -832,26 +832,14 @@ assert.match(indexPage,
   /InteractionPolicy\.isTerminalCopyOrInterruptKey\([\s\S]*?runtime\.surface\.copyOrInterrupt\(\)[\s\S]*?return true/,
   'the pre-IME Ctrl+C route must target and consume only the active pane');
 assert.match(indexPage,
-  /private openActivePaneSearch\(\): void \{[\s\S]*?activePaneRuntime\(\)[\s\S]*?runtime\.surface\.openSearch\(\)/,
-  'shortcut and menu search must share the active-pane routing helper');
-assert.match(indexPage,
-  /private activePaneRuntime\(\): PaneRuntime \| null \{[\s\S]*?this\.appVm\.getActivePane\(\)[\s\S]*?this\.findPaneRuntime\(pane\.id\)/,
-  'search routing must resolve the stable active pane id instead of an adjacent runtime or index');
-assert.match(indexPage,
   /private deactivateActiveTab[\s\S]*?runtime\.viewModel\.requestBlur\(\)/,
   'tab switches must blur every pane in the departing tab before retaining or evicting its surfaces');
 assert.match(indexPage,
   /private restoreActivePaneFocus[\s\S]*?else \{\s*runtime\.viewModel\.requestBlur\(\)/,
   'pane switches must blur every non-active pane in the current tab');
 assert.match(indexPage,
-  /private recyclePaneWebView[\s\S]*?runtime\.detachSurface\(\)[\s\S]*?runtime\.generation \+= 1/,
-  'renderer exit must destroy the old pane surface before creating a new generation');
-assert.match(indexPage,
   /private finishTabCheckpoint[\s\S]*?runtime\.detachSurface\(\)/,
   'warm-tab eviction must detach every surface after its checkpoint boundary');
-assert.match(indexPage,
-  /private async disposeRuntime[\s\S]*?runtime\.detachSurface\(\)/,
-  'closing a pane or tab must destroy its terminal surface');
 assert.match(indexPage,
   /private onMainWindowVisibilityChanged[\s\S]*?captureMountedTerminalSnapshots\(\)/,
   'backgrounding the window must checkpoint every currently mounted terminal');
@@ -950,9 +938,6 @@ for (const shortcut of ['Ctrl+Alt+-', 'Ctrl+Alt+=', 'Ctrl+-', 'Ctrl+=']) {
 }
 assert.doesNotMatch(indexPage, /'Font Size \+'|'Reset Font Size'|'Font Size -'/,
   'the production menu must not retain three redundant font-size rows');
-assert.match(indexPage,
-  /private applyTheme\(\): void[\s\S]*for \(let i = 0; i < this\.paneRuntimes\.length; i\+\+\)[\s\S]*applyTerminalTheme\(themeJson\)/,
-  'changing transparency must reuse the theme bridge for every mounted pane');
 assert.match(indexPage,
   /contentBg = theme\.background\(this\.windowTransparencyAvailable\)[\s\S]*chromeBg = theme\.chromeBackground\(this\.windowTransparencyAvailable\)/,
   'both non-overlapping ArkUI surface owners must fall back to opaque when transparency is unavailable');

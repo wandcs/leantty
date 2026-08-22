@@ -79,6 +79,19 @@ export default function workspaceOwnershipTest() {
       expect(firstRuntime === secondRuntime).assertEqual(false)
     })
 
+    it('recyclingOnePaneAdvancesOnlyItsRendererGeneration', 0, () => {
+      let workspace: AppViewModel = createWorkspace()
+      let tab: TabInfo = workspace.addTab('one')
+      let rightPane: PaneInfo | null = workspace.splitPane(tab.id)
+      let leftRuntime: PaneRuntime | null = workspace.getPaneRuntime(tab.panes[0].id)
+      let rightRuntime: PaneRuntime | null = rightPane === null ? null : workspace.getPaneRuntime(rightPane.id)
+
+      leftRuntime?.recycleSurface()
+
+      expect(leftRuntime?.generation).assertEqual(1)
+      expect(rightRuntime?.generation).assertEqual(0)
+    })
+
     it('applicationCloseDisconnectKeepsOwnershipUntilPageDisposal', 0, async () => {
       let workspace: AppViewModel = createWorkspace()
       let tab: TabInfo = workspace.addTab('one')
