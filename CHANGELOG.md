@@ -54,6 +54,11 @@
 
 ### Fixed
 
+- Centered the terminal cell grid within its existing compact padding on both
+  axes, so character-cell rounding no longer accumulates against the right
+  edge. The scrollbar keeps its 8 px hit area with a 2 px visible thumb, while
+  OpenCode and other full-screen TUIs align evenly with normal and maximized
+  window bounds without increasing the base content inset.
 - Restored standard terminal color semantics under window transparency. LeanTTY
   now applies opacity only to its Chrome and content surfaces while keeping
   application-defined ANSI/TrueColor cell backgrounds opaque, removing the

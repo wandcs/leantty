@@ -224,17 +224,23 @@ assert.match(terminalHtml, /addEventListener\('wheel', handleAlternateWheel, tru
 assert.match(terminalHtml, /#terminal-container > \.xterm\s*\{[^}]*padding:\s*4px 2px 4px 10px;/s,
   'terminal padding must offset the scrollbar gutter without changing the total horizontal inset');
 assert.match(terminalHtml, /function fitAndCenterTerminalGrid\(\)/,
-  'terminal fitting must redistribute unused cell-grid height instead of leaving it all below the grid');
+  'terminal fitting must redistribute unused cell-grid space instead of leaving it on trailing edges');
 assert.match(terminalHtml,
   /centerGridLeadingPadding\(\s*TERMINAL_BASE_PADDING_TOP,\s*TERMINAL_BASE_PADDING_BOTTOM,/s,
   'terminal fitting must center rows with the tested layout policy');
+assert.match(terminalHtml,
+  /var TERMINAL_BASE_PADDING_LEFT = 10;[\s\S]*var TERMINAL_BASE_PADDING_RIGHT = 2;/,
+  'terminal fitting must preserve the compact horizontal inset around the scrollbar gutter');
+assert.match(terminalHtml,
+  /centerGridLeadingPadding\(\s*TERMINAL_BASE_PADDING_LEFT,\s*TERMINAL_BASE_PADDING_RIGHT \+\s*TERMINAL_SCROLLBAR_WIDTH,/s,
+  'terminal fitting must split unused column-grid width around both pane edges');
 assert.match(terminalHtml, /var TERMINAL_SCROLLBAR_WIDTH = 8;/,
   'the auto-hiding scrollbar must reserve less than one default terminal cell');
 assert.match(terminalHtml, /overviewRuler:\s*\{\s*width:\s*TERMINAL_SCROLLBAR_WIDTH\s*\}/,
   'xterm and FitAddon must share the slim scrollbar width');
 assert.match(terminalHtml,
-  /\.xterm \.xterm-scrollable-element > \.scrollbar\.vertical > \.slider\s*\{[^}]*border:\s*2px solid transparent;[^}]*background-clip:\s*content-box !important;/s,
-  'the scrollbar must keep an eight-pixel hit target with a compact visible thumb');
+  /\.xterm \.xterm-scrollable-element > \.scrollbar\.vertical > \.slider\s*\{[^}]*border:\s*3px solid transparent;[^}]*background-clip:\s*content-box !important;/s,
+  'the scrollbar must keep an eight-pixel hit target with a two-pixel visible thumb');
 assert.match(terminalHtml,
   /html, body,[^}]*#terminal-container,[^}]*#terminal-container > \.xterm,[^}]*\.xterm \.xterm-viewport\s*\{[^}]*background(?:-color)?:\s*transparent/s,
   'terminal padding and leftover cell space must expose the single ArkUI surface background');
