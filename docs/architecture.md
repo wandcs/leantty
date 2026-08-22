@@ -20,8 +20,8 @@ HarmonyOS UIAbility / App Shell
           └─ one or two Pane objects
               └─ PaneRuntime
                   ├─ SessionViewModel
-                  │   ├─ SshSession state
-                  │   ├─ local ltty command line
+                  │   ├─ local ltty command line and interaction mode
+                  │   ├─ SshSession lifecycle
                   │   └─ SshClient
                   │       └─ N-API → Rust/russh → SSH server
                   └─ TerminalSurfaceController
@@ -47,7 +47,8 @@ Session.
 | UIAbility and page | `entryability/EntryAbility.ets`, `pages/Index.ets` | Application/window lifecycle, rendering the workspace, active focus and system integration | SSH protocol rules or terminal byte interpretation |
 | AppViewModel | `viewmodel/AppViewModel.ets` | Stable Tab/Pane identifiers, active Tab/Pane and pane-visible state | Network connections or WebView instances |
 | PaneRuntime | `pages/Index.ets` | The pairing of one Pane identity with one SessionViewModel and TerminalSurfaceController | Cross-pane state |
-| SessionViewModel | `viewmodel/SessionViewModel.ets` | Local prompt modes, connection/authentication flow, error recovery and routing between SSH and the terminal surface | Global Tab ordering or Web rendering internals |
+| SessionViewModel | `viewmodel/SessionViewModel.ets` | Local command/prompt interaction, terminal presentation and routing user actions to the owning Session | SSH lifecycle transitions, global Tab ordering or Web rendering internals |
+| SshSession | `model/ssh/SshSession.ets` | The allowed connection, authentication, host-verification, connected, failure, close, reconnect and transfer-handoff transitions for one Pane | Prompt text, terminal rendering or native transport decoding |
 | SshClient | `model/ssh/SshClient.ets` | One N-API session handle, native event decoding and request/response correlation | UI text, Tab/Pane ownership or persistent asset policy |
 | Rust SSH layer | `leantty_ssh/src/lib.rs` | russh connection, host-key callback, authentication transport, PTY, SSH channel, byte stream, cancellation and keepalive | ArkUI state and user-facing decisions |
 | TerminalSurfaceController | `model/terminal/TerminalSurfaceController.ets` | One terminal surface lifecycle, in-process snapshot and detached output buffer | SSH authentication or persistent terminal history |
@@ -84,8 +85,9 @@ keyboard input at ltty>
   → independently scoped host-key decision for each layer
   → server-directed private-key, keyboard-interactive and password authentication
   → PTY request + remote shell
+  → structured lifecycle event consumed by SshSession
+  → SessionViewModel presents the accepted event
   → raw output callback
-  → SessionViewModel
   → TerminalSurfaceController
   → binary TerminalBridge packet
   → xterm.js
@@ -124,7 +126,10 @@ the authorized Downloads root and use no-follow descriptor ownership. A
 transfer never reuses the interactive PTY Session, and transfer, Pane and
 generation identifiers reject late events after cancellation or teardown.
 Temporary files are exclusive and task-owned; only an observed task may clean
-its own partial object.
+its own partial object. The Pane's `SshSession` also consumes transfer
+authentication and host-verification events so prompt handoff uses the same
+allowed lifecycle transitions; byte progress and finalization remain owned by
+`FileTransferLifecycle`.
 
 ## Host-key and authentication boundaries
 

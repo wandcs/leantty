@@ -8,6 +8,7 @@ import sshConfigImportTest from './SshConfigImport.test';
 import keyCommentCommitTest from './KeyCommentCommit.test';
 import keyPairDeletionTest from './KeyPairDeletion.test';
 import sshControlEventTest from './SshControlEvent.test';
+import sshSessionLifecycleTest from './SshSessionLifecycle.test';
 
 export default function testsuite() {
   paneModelTest();
@@ -20,4 +21,5 @@ export default function testsuite() {
   keyCommentCommitTest();
   keyPairDeletionTest();
   sshControlEventTest();
+  sshSessionLifecycleTest();
 }

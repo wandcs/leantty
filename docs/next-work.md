@@ -53,20 +53,6 @@ preparation；开发期签名 HAP 和局部真机诊断证据不能自动推导�
 再移动职责，完成后同步权威文档和验证证据并从本文件删除该分组。重构不得借机增加产品能力、
 通用框架、第二套状态或无真实调用方的抽象。
 
-### M1 Session 生命周期所有权
-
-- [ ] 为连接、认证、主机密钥确认、已连接、失败、主动关闭、取消和文件传输交接建立按事件链
-  组织的 characterization tests，覆盖重复/迟到事件和关闭后的清理行为。
-- [ ] 将 SSH Session 生命周期决策从 `SessionViewModel` 的 UI、提示文本和命令分发职责中分离，
-  复用现有 Session 模型形成一个明确所有者；`SessionViewModel` 只编排用户交互和终端呈现，
-  不保留第二套生命周期状态。
-- [ ] 保持 direct、ProxyJump、host-key、password/private-key、transfer handoff 和 reconnect 的
-  既有行为；通过 `arkts`、`ssh-flow` 及受影响的 Rust 聚焦门，并对实际受影响的 SSH 生命周期
-  运行最小 direct 真机主路径。
-
-可观察完成条件：生命周期状态及允许的转换只有一个权威所有者；测试按真实事件和输出断言，
-无需读取私有调用顺序；`SessionViewModel` 的连接事件分支明显收敛且没有兼容分叉。
-
 ### M2 Rust SSH Session 执行边界
 
 - [ ] 在 M1 的上层生命周期契约稳定后，为 `leantty_ssh::run_session` 的握手、认证、channel 建立、
