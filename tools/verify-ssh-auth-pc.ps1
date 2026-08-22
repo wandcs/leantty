@@ -33,8 +33,11 @@ param(
     [string]$Group = '',
     [ValidateSet(
         'password-success',
+        'ssh-diagnostics',
         'terminal-key-input',
         'transport-main-path',
+        'ssh-escape',
+        'server-alive',
         'performance-matrix',
         'bell-attention',
         'password-kbdint-mixed-echo',
@@ -46,6 +49,8 @@ param(
         'unsupported-method-error-and-recovery',
         'ctrl-c-authentication-cancellation-and-recovery',
         'pane-close-during-hidden-prompt-and-recovery',
+        'key-comment-change-and-restart',
+        'ecdsa-import-encrypted-and-restart',
         'publickey-encrypted-passphrase',
         'parallel-pane-authentication',
         'minimize-restore-hidden-prompt',
@@ -131,6 +136,7 @@ if (-not $DiagnosticHap) {
         -AllowedHarnessPaths @(
             'tools/verify-ssh-auth-pc.ps1',
             'tools/verify-ssh-matrix-pc.ps1',
+            'tools/acceptance-source.ps1',
             'tools/verify-terminal-search-pc.ps1',
             'tools/verify-file-transfer-pc.ps1',
             'tools/verify-put-get-pc.ps1',
@@ -145,6 +151,8 @@ if (-not $DiagnosticHap) {
             'leantty_ssh/ssh-auth-fixture/src/main.rs',
             'docs/quality-strategy.md',
             'docs/design/ssh-authentication.md',
+            'docs/design/key-comment-change.md',
+            'docs/design/ecdsa-key-interop.md',
             'docs/design/terminal-search.md',
             'docs/next-work.md',
             'docs/dev-environment.md'
@@ -166,6 +174,7 @@ $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) (
 )
 $fixtureControl = Join-Path $fixtureRoot 'control'
 $fixtureConnectedInputSnapshot = Join-Path $fixtureControl 'connected-input-snapshot'
+$fixtureServerOutputDrop = Join-Path $fixtureControl 'drop-server-output'
 $fixtureStdout = Join-Path $fixtureRoot 'stdout.log'
 $fixtureStderr = Join-Path $fixtureRoot 'stderr.log'
 New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
@@ -191,6 +200,44 @@ $credentials = @{}
 $secrets = @()
 $keyName = 'ltty_reg_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
 $keyPassphrase = New-LeanTTYRegressionSecret
+$wrongKeyPassphrase = New-LeanTTYRegressionSecret
+$ecdsaKeyName = 'ltty_reg_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
+$ecdsaSourceFileName = 'ltty_ecdsa_' + [Guid]::NewGuid().ToString('N').Substring(0, 10)
+$ecdsaLocalSourcePath = Join-Path $fixtureRoot $ecdsaSourceFileName
+$ecdsaImportPath = "/data/storage/el2/base/haps/entry/files/$ecdsaSourceFileName"
+$ecdsaSandboxPath = "/data/app/el2/100/base/com.leantty.app/haps/entry/files/$ecdsaSourceFileName"
+$ecdsaPassphrase = New-LeanTTYRegressionSecret
+$wrongEcdsaPassphrase = New-LeanTTYRegressionSecret
+$ecdsaKeyCleanupRequired = $false
+$ecdsaSourceCleanupRequired = $false
+$ecdsaKeyAbsenceAudited = $false
+$ecdsaSourceAbsenceAudited = $false
+$ecdsaEvidence = [ordered]@{
+    selected = $false
+    algorithm = 'ecdsa-sha2-nistp256'
+    encryptedSource = $true
+    wrongPassphraseRejected = $false
+    authenticatedBeforeRestart = $false
+    authenticatedAfterRestart = $false
+    fingerprintBeforeRestart = ''
+    fingerprintAfterRestart = ''
+    privateModeBeforeRestart = ''
+    privateModeAfterRestart = ''
+    durableIdentity = $false
+}
+$keyComment = 'comment' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+$keyCommentEvidence = [ordered]@{
+    selected = $false
+    fingerprintBefore = ''
+    fingerprintAfter = ''
+    fingerprintAfterRestart = ''
+    privateModeBefore = ''
+    privateModeAfter = ''
+    privateModeAfterRestart = ''
+    exactCommentAfter = $false
+    exactCommentAfterRestart = $false
+    visibleInputScreenshot = ''
+}
 $keyCleanupRequired = $false
 $keyDeletePathUsed = $false
 $keyAbsenceAudited = $false
@@ -228,7 +275,10 @@ $attemptId = [Guid]::NewGuid().ToString('N')
 $runMode = if (-not $DiagnosticHap -and $Only.Count -eq 0) { 'acceptance' } else { 'diagnostic' }
 $authGroupDefinitions = [ordered]@{
     'transport-performance' = [ordered]@{
-        stages = @('terminal-key-input', 'transport-main-path', 'performance-matrix')
+        stages = @(
+            'ssh-diagnostics', 'terminal-key-input', 'transport-main-path', 'ssh-escape',
+            'performance-matrix'
+        )
         setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-known-host-boundary'
         resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'transparency-preference')
         primaryOracle = 'fixture-received-bytes-and-device-clock-performance-records'
@@ -245,7 +295,9 @@ $authGroupDefinitions = [ordered]@{
             'publickey-then-keyboard-interactive',
             'keyboard-interactive-zero-prompt',
             'unsupported-method-error-and-recovery',
-            'publickey-encrypted-passphrase'
+            'key-comment-change-and-restart',
+            'publickey-encrypted-passphrase',
+            'ecdsa-import-encrypted-and-restart'
         )
         setup = 'fresh-fixture-reverse-mapping-clean-app-single-pane-and-run-scoped-keys'
         resources = @('fixture-process', 'reverse-port', 'known-host-entry', 'disposable-key-files')
@@ -297,8 +349,11 @@ $selectedGroupManifest = if (-not [string]::IsNullOrWhiteSpace($Group)) {
 }
 $availableStages = @(
     'password-success',
+    'ssh-diagnostics',
     'terminal-key-input',
     'transport-main-path',
+    'ssh-escape',
+    'server-alive',
     'performance-matrix',
     'bell-attention',
     'password-kbdint-mixed-echo',
@@ -312,7 +367,9 @@ $availableStages = @(
     'ctrl-c-authentication-cancellation-and-recovery',
     'pane-close-during-hidden-prompt-and-recovery',
     'encrypted-disposable-auth-key',
+    'key-comment-change-and-restart',
     'publickey-encrypted-passphrase',
+    'ecdsa-import-encrypted-and-restart',
     'parallel-pane-authentication',
     'minimize-restore-hidden-prompt',
     'process-stop-during-hidden-prompt-cleanup',
@@ -324,7 +381,9 @@ $selectedStages = [Collections.Generic.HashSet[string]]::new(
 if (-not [string]::IsNullOrWhiteSpace($Group)) {
     foreach ($name in $authGroupDefinitions[$Group].stages) { [void]$selectedStages.Add($name) }
 } elseif ($Only.Count -eq 0) {
-    foreach ($name in $availableStages) { [void]$selectedStages.Add($name) }
+    foreach ($name in $availableStages) {
+        if ($name -ne 'server-alive') { [void]$selectedStages.Add($name) }
+    }
 } else {
     foreach ($name in $Only) { [void]$selectedStages.Add($name) }
 }
@@ -332,13 +391,18 @@ $keyStages = @(
     'publickey-unencrypted',
     'publickey-then-password',
     'publickey-then-keyboard-interactive',
-    'publickey-encrypted-passphrase'
+    'publickey-encrypted-passphrase',
+    'key-comment-change-and-restart'
 )
 if (@($keyStages | Where-Object { $selectedStages.Contains($_) }).Count -gt 0) {
     [void]$selectedStages.Add('generated-disposable-auth-key')
     [void]$selectedStages.Add('deleted-disposable-auth-key')
 }
 if ($selectedStages.Contains('publickey-encrypted-passphrase')) {
+    [void]$selectedStages.Add('encrypted-disposable-auth-key')
+}
+if ($selectedStages.Contains('key-comment-change-and-restart')) {
+    [void]$selectedStages.Add('publickey-encrypted-passphrase')
     [void]$selectedStages.Add('encrypted-disposable-auth-key')
 }
 $selectedStageNames = @($availableStages | Where-Object { $selectedStages.Contains($_) })
@@ -352,8 +416,11 @@ function Get-LeanTTYFixtureStageBudgetSeconds {
     param([Parameter(Mandatory = $true)][string]$StageName)
     $budgets = @{
         'password-success' = 150
+        'ssh-diagnostics' = 300
         'terminal-key-input' = 180
         'transport-main-path' = 300
+        'ssh-escape' = 360
+        'server-alive' = 300
         'performance-matrix' = 540
         'bell-attention' = 240
         'password-kbdint-mixed-echo' = 300
@@ -367,6 +434,8 @@ function Get-LeanTTYFixtureStageBudgetSeconds {
         'ctrl-c-authentication-cancellation-and-recovery' = 300
         'pane-close-during-hidden-prompt-and-recovery' = 300
         'encrypted-disposable-auth-key' = 180
+        'key-comment-change-and-restart' = 240
+        'ecdsa-import-encrypted-and-restart' = 360
         'publickey-encrypted-passphrase' = 150
         'parallel-pane-authentication' = 480
         'minimize-restore-hidden-prompt' = 240
@@ -726,35 +795,32 @@ function Submit-FocusedDeviceCommand {
         } | Out-Null
 }
 
-function Assert-AuthCommandLoopbackTarget {
-    $logs = ''
+function Assert-AuthCommandStarted {
     try {
-        $logs = Wait-LeanTTYAppLog `
+        Wait-LeanTTYAppLog `
             -Hdc $hdc `
             -Target $Target `
             -ProcessId $appPid `
-            -Pattern 'SSH connect initiated:' `
-            -TimeoutSeconds 5
+            -Pattern 'SSH connect initiated' `
+            -TimeoutSeconds 5 | Out-Null
     } catch {
-        throw '[environment] Device key injection changed the SSH command target'
-    }
-    $matches = [regex]::Matches($logs, 'SSH connect initiated:\s+(?<host>[^\s]+)')
-    if ($matches.Count -eq 0 -or
-        $matches[$matches.Count - 1].Groups['host'].Value -cne '127.0.0.1') {
-        throw '[environment] Device key injection changed the SSH command target'
+        throw '[environment] Device key injection did not start the SSH command'
     }
 }
 
 function Start-AuthCommand {
     param(
         [Parameter(Mandatory = $true)][string]$User,
-        [string]$Identity = ''
+        [string]$Identity = '',
+        [ValidateRange(1, 65535)][int]$Port = $FixturePort,
+        [switch]$SshVerbose
     )
     $identityOption = if ([string]::IsNullOrWhiteSpace($Identity)) { '' } else { " -i $Identity" }
+    $verboseOption = if ($SshVerbose) { ' -v' } else { '' }
     Submit-FocusedDeviceCommand `
-        -Command "ssh -p $FixturePort$identityOption $User@127.0.0.1" `
+        -Command "ssh$verboseOption -p $Port$identityOption $User@127.0.0.1" `
         -LayoutName 'layout-command-focus.json'
-    Assert-AuthCommandLoopbackTarget
+    Assert-AuthCommandStarted
 }
 
 function Close-FixtureShell {
@@ -867,6 +933,91 @@ function Submit-ConnectedInputUntilAuthEvent {
     } catch {
         throw '[harness] Connected input application outcome is unknown; the scenario must be restarted'
     }
+}
+
+function Invoke-SshEscapeInputText {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    if ($Text -match '^[~?I.]+$') {
+        for ($physicalIndex = 0; $physicalIndex -lt $Text.Length; $physicalIndex++) {
+            $physicalCommand = switch ($Text[$physicalIndex]) {
+                '~' { 'uinput -K -d 2047 -d 2056 -u 2056 -u 2047' }
+                '?' { 'uinput -K -d 2047 -d 2064 -u 2064 -u 2047' }
+                'I' { 'uinput -K -d 2047 -d 2025 -u 2025 -u 2047' }
+                '.' { 'uinput -K -d 2044 -u 2044' }
+            }
+            & $hdc -t $Target shell $physicalCommand | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw '[environment] Unable to inject a physical SSH escape key'
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        return
+    }
+    $segmentStart = 0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        if ($Text[$index] -cne '~') { continue }
+        if ($index -gt $segmentStart) {
+            Invoke-AuthUiText -Text $Text.Substring($segmentStart, $index - $segmentStart)
+        }
+        & $hdc -t $Target shell 'uinput -K -d 2047 -d 2056 -u 2056 -u 2047' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to inject a physical tilde key' }
+        Start-Sleep -Milliseconds 250
+        $segmentStart = $index + 1
+    }
+    if ($segmentStart -lt $Text.Length) {
+        Invoke-AuthUiText -Text $Text.Substring($segmentStart)
+    }
+}
+
+function Assert-SshEscapeRemoteMapping {
+    param(
+        [Parameter(Mandatory = $true)][string]$TypedText,
+        [Parameter(Mandatory = $true)][string]$ExpectedRemoteText,
+        [Parameter(Mandatory = $true)][string]$CaseName
+    )
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
+        Invoke-SshEscapeInputText -Text $TypedText
+        $snapshot = Wait-FixtureConnectedInputSnapshot -Expected $ExpectedRemoteText
+        if ($snapshot.observed -and [string]$snapshot.value -ceq $ExpectedRemoteText) {
+            Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+            $cleared = Wait-FixtureConnectedInputSnapshot -Expected ''
+            if (-not $cleared.observed -or [string]$cleared.value -cne '') {
+                throw "[harness] SSH fixture input did not clear after $CaseName"
+            }
+            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+            Start-Sleep -Milliseconds 250
+            return
+        }
+        if ($attempt -lt 3) {
+            Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+            Wait-FixtureConnectedInputSnapshot -Expected '' | Out-Null
+            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    throw "[product] SSH escape remote mapping failed for $CaseName after exact-input retries"
+}
+
+function Assert-SshEscapeLocalOnly {
+    param(
+        [Parameter(Mandatory = $true)][string]$TypedText,
+        [Parameter(Mandatory = $true)][string]$LogPattern,
+        [Parameter(Mandatory = $true)][string]$CaseName
+    )
+    Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Invoke-SshEscapeInputText -Text $TypedText
+    Wait-AuthLog -Pattern $LogPattern -TimeoutSeconds 10
+    Start-Sleep -Milliseconds 500
+    $snapshot = Read-FixtureConnectedInputSnapshot
+    if ($snapshot.observed -and -not [string]::IsNullOrEmpty([string]$snapshot.value)) {
+        throw "[product] Local SSH escape reached the remote PTY for $CaseName"
+    }
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory ("ssh-escape-$CaseName.png"))
 }
 
 function Invoke-LeanTTYPasteShortcut {
@@ -1336,17 +1487,20 @@ function Invoke-ClosePaneDialog {
 }
 
 function Remove-DisposableAuthKey {
-    param([Parameter(Mandatory = $true)][string]$LayoutPrefix)
+    param(
+        [Parameter(Mandatory = $true)][string]$KeyName,
+        [Parameter(Mandatory = $true)][string]$LayoutPrefix
+    )
     if (-not (Test-LeanTTYDeviceKeyFilesPresent `
         -Hdc $hdc `
         -Target $Target `
-        -KeyName $keyName)) {
+        -KeyName $KeyName)) {
         return 'already-absent'
     }
     Clear-LeanTTYDeviceInput -Hdc $hdc -Target $Target
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-FocusedDeviceCommand `
-        -Command "key rm $keyName" `
+        -Command "key rm $KeyName" `
         -LayoutName "$LayoutPrefix-focus.json"
     $script:keyDeletePathUsed = $true
     Invoke-DeleteKeyDialog -LayoutName "$LayoutPrefix-dialog.json"
@@ -1354,10 +1508,52 @@ function Remove-DisposableAuthKey {
     if (Test-LeanTTYDeviceKeyFilesPresent `
         -Hdc $hdc `
         -Target $Target `
-        -KeyName $keyName) {
+        -KeyName $KeyName) {
         throw 'Disposable SSH authentication key remains after deletion'
     }
     return 'verified-absent'
+}
+
+function Install-LeanTTYEcdsaImportSource {
+    $sshKeygen = Get-Command ssh-keygen.exe -ErrorAction Stop
+    & $sshKeygen.Source `
+        -q -t ecdsa -b 256 `
+        -N $ecdsaPassphrase `
+        -C 'ecdsa-import@leantty-regression' `
+        -f $ecdsaLocalSourcePath
+    if ($LASTEXITCODE -ne 0 -or
+        -not (Test-Path -LiteralPath $ecdsaLocalSourcePath -PathType Leaf)) {
+        throw '[harness] Unable to create the temporary encrypted ECDSA import source'
+    }
+
+    $script:ecdsaSourceCleanupRequired = $true
+    $sendOutput = @(
+        & $hdc -t $Target file send -b com.leantty.app `
+            $ecdsaLocalSourcePath $ecdsaImportPath 2>&1
+    ) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or
+        $sendOutput -match '(?i)\[Fail\]|error' -or
+        $sendOutput -notmatch 'FileTransfer finish') {
+        throw "[infrastructure] Unable to send the ECDSA import source to the app sandbox: $sendOutput"
+    }
+    $sourceCheck = @(
+        & $hdc -t $Target shell -b com.leantty.app "stat -c '%a %u %g %s' $ecdsaSandboxPath" 2>&1
+    ) -join "`n"
+    if ($sourceCheck -notmatch '(?m)^\d{3,4} \d+ \d+ [1-9]\d*$') {
+        throw "[infrastructure] ECDSA import source is not visible in the app sandbox: $sourceCheck"
+    }
+}
+
+function Remove-LeanTTYEcdsaImportSource {
+    & $hdc -t $Target shell -b com.leantty.app "rm -f $ecdsaSandboxPath" | Out-Null
+    $absenceOutput = @(
+        & $hdc -t $Target shell -b com.leantty.app "ls $ecdsaSandboxPath" 2>&1
+    ) -join "`n"
+    if ($absenceOutput -notmatch 'No such file or directory') {
+        throw "Temporary ECDSA import source cleanup failed: $absenceOutput"
+    }
+    $script:ecdsaSourceCleanupRequired = $false
+    $script:ecdsaSourceAbsenceAudited = $true
 }
 
 function Read-FixtureCredentials {
@@ -1439,7 +1635,7 @@ function Write-AuthEvidence {
         fixture = [ordered]@{
             endpoint = "127.0.0.1:$FixturePort"
             transport = 'hdc-reverse-to-repository-only-russh-server'
-            credentials = 'runtime-generated-temporary-values'
+        credentials = 'runtime-generated-temporary-values'
             credentialClassification = 'repository-only-test-values-not-user-or-production-credentials'
             runSeconds = $fixtureRunSeconds
             selectedStageBudgetsSeconds = @($selectedStageNames | ForEach-Object {
@@ -1497,7 +1693,10 @@ function Write-AuthEvidence {
             ForEach-Object { $_.name })
         declaredCoverage = @(
             'password-success',
+            'one-shot-safe-ssh-diagnostics-default-off-refusal-and-cancel',
             'transport-main-path-input-large-paste-continuous-output-resize-disconnect-reconnect',
+            'ssh-escape-line-start-local-actions-remote-bytes-reconnect-and-pane-isolation',
+            'server-alive-real-duration-target-blackhole-error-and-immediate-reconnect',
             'five-mode-transparency-continuous-output-render-memory-gpu-hitch-distributions',
             'bell-active-inactive-tab-split-pane-coalescing-and-clear',
             'password-then-keyboard-interactive-mixed-echo',
@@ -1509,6 +1708,8 @@ function Write-AuthEvidence {
             'unsupported-method-error-and-recovery',
             'ctrl-c-authentication-cancellation-and-recovery',
             'pane-close-during-hidden-prompt-and-recovery',
+            'key-comment-change-wrong-passphrase-visible-input-fingerprint-permissions-durable-restart',
+            'ecdsa-p256-encrypted-import-wrong-passphrase-authentication-durable-restart-and-cleanup',
             'publickey-encrypted-passphrase',
             'parallel-pane-independent-authentication',
             'minimize-restore-hidden-answer-continuity',
@@ -1520,6 +1721,7 @@ function Write-AuthEvidence {
         checks = @($checks)
         resourceManifest = [ordered]@{
             disposableKey = $keyName
+            ecdsaImportedKey = $ecdsaKeyName
             reversePort = $FixturePort
             fixtureDirectory = 'run-scoped-system-temporary-directory'
             knownHostEndpoint = "[127.0.0.1]:$FixturePort"
@@ -1529,12 +1731,16 @@ function Write-AuthEvidence {
             failure = $cleanupFailure
             productDeletePathUsed = $keyDeletePathUsed
             independentKeyAbsenceAudit = $keyAbsenceAudited
+            independentEcdsaKeyAbsenceAudit = $ecdsaKeyAbsenceAudited
+            independentEcdsaSourceAbsenceAudit = $ecdsaSourceAbsenceAudited
             knownHostRemovalCommandCompleted = $knownHostCleanupCompleted
             reverseMappingAbsenceAudit = (-not $mappingActive)
             fixtureProcessAbsenceAudit = $fixtureProcessAbsent
         }
         performanceMatrix = $performanceEvidence
         bellAttention = $bellEvidence
+        keyCommentMaintenance = $keyCommentEvidence
+        ecdsaIdentityInterop = $ecdsaEvidence
         failureDomain = $failureDomain
         failure = $failure
     }
@@ -1563,6 +1769,54 @@ function Get-LeanTTYPreferencesDigest {
     return $match.Groups['digest'].Value.ToLowerInvariant()
 }
 
+function Get-LeanTTYDeviceKeyProjectionMetadata {
+    param([Parameter(Mandatory = $true)][string]$KeyName)
+
+    if ($KeyName -notmatch '^ltty_reg_(?:[0-9a-f]{10}|[a-p]{10})$') {
+        throw '[harness] Key metadata request is outside the disposable-key namespace'
+    }
+    $sshDirectory = '/data/app/el2/100/base/com.leantty.app/haps/entry/files/.ssh'
+    $privatePath = "$sshDirectory/$KeyName"
+    $publicPath = "$privatePath.pub"
+    $publicOutput = @(& $hdc -t $Target shell -b com.leantty.app "cat $publicPath" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw '[harness] Unable to read disposable public-key projection metadata'
+    }
+    $publicText = ($publicOutput -join "`n").Trim()
+    $match = [regex]::Match(
+        $publicText,
+        '^(?<algorithm>ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) (?<blob>[A-Za-z0-9+/]+={0,3})(?: (?<comment>[^\r\n]*))?$'
+    )
+    if (-not $match.Success) {
+        throw '[product] Disposable public-key projection is malformed'
+    }
+    try {
+        $wireBytes = [Convert]::FromBase64String($match.Groups['blob'].Value)
+    } catch {
+        throw '[product] Disposable public-key projection contains invalid base64 key data'
+    }
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $hasher.ComputeHash($wireBytes)
+    } finally {
+        $hasher.Dispose()
+    }
+    $fingerprint = 'SHA256:' + [Convert]::ToBase64String($digest).TrimEnd('=')
+    $modeOutput = @(& $hdc -t $Target shell -b com.leantty.app "stat -c %a $privatePath" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw '[harness] Unable to inspect disposable private-key permissions'
+    }
+    $privateMode = ($modeOutput -join "`n").Trim()
+    if ($privateMode -notmatch '^600$') {
+        throw "[product] Disposable private-key mode is not 0600: $privateMode"
+    }
+    return [pscustomobject]@{
+        fingerprint = $fingerprint
+        comment = $match.Groups['comment'].Value
+        privateMode = $privateMode
+    }
+}
+
 try {
     Write-Host '[device-auth] START fixture-and-device-preflight'
     $currentStage = 'fixture-and-device-preflight'
@@ -1577,6 +1831,9 @@ try {
         '-RunSeconds', $fixtureRunSeconds.ToString(),
         '-ControlDirectory', $fixtureControl
     )
+    if (Test-AuthStageSelected -Name 'server-alive') {
+        $fixtureArguments += '-EnableServerOutputDrop'
+    }
     if (-not [string]::IsNullOrWhiteSpace($Distribution)) {
         $fixtureArguments += @('-Distribution', $Distribution)
     }
@@ -1593,7 +1850,10 @@ try {
         $credentials.account,
         $credentials.token,
         $credentials.second_token,
-        $keyPassphrase
+        $keyPassphrase,
+        $wrongKeyPassphrase,
+        $ecdsaPassphrase,
+        $wrongEcdsaPassphrase
     )
 
     $existingMappings = @(& $hdc -t $Target fport ls 2>&1) -join "`n"
@@ -1659,6 +1919,120 @@ try {
     Wait-AuthLog -Pattern 'SSH session connected'
     Close-FixtureShell
     Complete-AuthStage -Name 'password-success'
+    }
+
+    if (Test-AuthStageSelected -Name 'ssh-diagnostics') {
+    Start-AuthStage -Name 'ssh-diagnostics'
+    Submit-FocusedDeviceCommand `
+        -Command "ssh-keygen -R [127.0.0.1]:$FixturePort" `
+        -LayoutName 'layout-diagnostics-known-host-reset.json'
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+
+    Start-AuthCommand -User 'password' -SshVerbose
+    Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=connect, status=started, reason=none'
+    Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=host_key, status=waiting, reason=none'
+    Wait-AuthLog -Pattern 'rust event: HOST_KEY_PROMPT:target\tredacted'
+    Invoke-AuthUiText -Text 'yes'
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    Wait-AuthLog -Pattern 'native auth event kind=password, layer=target'
+    $preAuthLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    $preAuthDiagnostics = @(
+        'stage=connect, status=started',
+        'stage=host_key, status=started',
+        'stage=host_key, status=waiting',
+        'stage=host_key, status=succeeded',
+        'stage=connect, status=succeeded',
+        'stage=authentication, status=started',
+        'stage=authentication, status=waiting'
+    )
+    $lastDiagnosticIndex = -1
+    foreach ($expectedDiagnostic in $preAuthDiagnostics) {
+        $diagnosticIndex = $preAuthLogs.IndexOf($expectedDiagnostic, $lastDiagnosticIndex + 1)
+        if ($diagnosticIndex -lt 0) {
+            throw "[product] Ordered safe pre-auth SSH diagnostic is missing: $expectedDiagnostic"
+        }
+        $lastDiagnosticIndex = $diagnosticIndex
+    }
+    $preAuthDiagnosticLogs = @($preAuthLogs -split "`n" | Where-Object {
+        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+    }) -join "`n"
+    if ($preAuthDiagnosticLogs.Contains('127.0.0.1') -or
+        $preAuthDiagnosticLogs.Contains('SHA256:')) {
+        throw '[product] Pre-auth SSH diagnostics exposed a host or fingerprint in HarmonyOS logs'
+    }
+    Save-SafeDiagnosticText -Text $preAuthLogs -FileName 'ssh-diagnostics-pre-auth-hilog.txt'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-diagnostics-password.json'
+    Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=session, status=succeeded, reason=none'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check diagnostics' `
+        -Pattern 'input case=diagnostics result=matched'
+    $verboseLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    $expectedDiagnostics = @(
+        'stage=authentication, status=succeeded',
+        'stage=channel, status=started',
+        'stage=channel, status=succeeded',
+        'stage=pty, status=started',
+        'stage=pty, status=succeeded',
+        'stage=shell, status=started',
+        'stage=shell, status=succeeded',
+        'stage=session, status=succeeded'
+    )
+    $lastDiagnosticIndex = -1
+    foreach ($expectedDiagnostic in $expectedDiagnostics) {
+        $diagnosticIndex = $verboseLogs.IndexOf($expectedDiagnostic, $lastDiagnosticIndex + 1)
+        if ($diagnosticIndex -lt 0) {
+            throw "[product] Ordered safe SSH diagnostic is missing: $expectedDiagnostic"
+        }
+        $lastDiagnosticIndex = $diagnosticIndex
+    }
+    $verboseDiagnosticLogs = @($verboseLogs -split "`n" | Where-Object {
+        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+    }) -join "`n"
+    if ($verboseDiagnosticLogs.Contains('127.0.0.1') -or
+        $verboseDiagnosticLogs.Contains('SHA256:')) {
+        throw '[product] SSH diagnostics exposed a host or fingerprint in HarmonyOS logs'
+    }
+    Save-SafeDiagnosticText -Text $verboseLogs -FileName 'ssh-diagnostics-success-hilog.txt'
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'ssh-diagnostics-success.png')
+    Close-FixtureShell
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password, layer=target'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-diagnostics-normal-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    $normalLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    if ($normalLogs.Contains('SSH diagnostic layer=')) {
+        throw '[product] Normal SSH emitted verbose diagnostic events'
+    }
+    Close-FixtureShell
+
+    $refusedPort = if ($FixturePort -lt 65535) { $FixturePort + 1 } else { $FixturePort - 1 }
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'password' -Port $refusedPort -SshVerbose
+    Wait-AuthLog `
+        -Pattern 'SSH diagnostic layer=target, stage=connect, status=failed, reason=tcp_refused'
+    Wait-AuthLog -Pattern 'SSH error'
+    $refusedLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    $refusedDiagnosticLogs = @($refusedLogs -split "`n" | Where-Object {
+        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+    }) -join "`n"
+    if ($refusedDiagnosticLogs.Contains('127.0.0.1') -or
+        $refusedDiagnosticLogs.Contains('SHA256:')) {
+        throw '[product] Refused-connection diagnostics exposed a host or fingerprint'
+    }
+    Save-SafeDiagnosticText -Text $refusedLogs -FileName 'ssh-diagnostics-refused-hilog.txt'
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'password' -SshVerbose
+    Wait-AuthLog -Pattern 'native auth event kind=password, layer=target'
+    Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+    Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=session, status=cancelled, reason=none'
+    Complete-AuthStage -Name 'ssh-diagnostics'
     }
 
     if (Test-AuthStageSelected -Name 'terminal-key-input') {
@@ -1770,6 +2144,163 @@ try {
         -Pattern 'input case=reconnect result=matched'
     Close-FixtureShell
     Complete-AuthStage -Name 'transport-main-path'
+    }
+
+    if (Test-AuthStageSelected -Name 'ssh-escape') {
+    Start-AuthStage -Name 'ssh-escape'
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-ssh-escape-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+
+    Assert-SshEscapeRemoteMapping `
+        -TypedText 'echo~.safe' `
+        -ExpectedRemoteText 'echo~.safe' `
+        -CaseName 'mid-line'
+    Assert-SshEscapeRemoteMapping `
+        -TypedText '~~literal' `
+        -ExpectedRemoteText '~literal' `
+        -CaseName 'literal-tilde'
+    Assert-SshEscapeRemoteMapping `
+        -TypedText '~xunknown' `
+        -ExpectedRemoteText '~xunknown' `
+        -CaseName 'unknown'
+
+    Assert-SshEscapeLocalOnly `
+        -TypedText '~?' `
+        -LogPattern 'SSH escape action=help' `
+        -CaseName 'help'
+    Assert-SshEscapeLocalOnly `
+        -TypedText '~I' `
+        -LogPattern 'SSH escape action=connection-info' `
+        -CaseName 'connection-info'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check afterescape' `
+        -Pattern 'input case=afterescape result=matched'
+
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-terminal-dirty escapealt' `
+        -Pattern 'terminal dirty case=escapealt result=enabled'
+    # Focus reporting can send ESC[I after the command's newline. Like OpenSSH,
+    # escape recognition resumes only after the user sends another newline.
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    Start-Sleep -Milliseconds 250
+    Assert-SshEscapeLocalOnly `
+        -TypedText '~?' `
+        -LogPattern 'SSH escape action=help' `
+        -CaseName 'alternate-screen-help'
+    Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
+    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2017
+    $alternateRemote = Wait-FixtureConnectedInputSnapshot -Expected 'a'
+    if (-not $alternateRemote.observed -or [string]$alternateRemote.value -cne 'a') {
+        throw '[product] Remote PTY input did not continue after alternate-screen escape help'
+    }
+    Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
+    Wait-FixtureConnectedInputSnapshot -Expected '' | Out-Null
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    Start-Sleep -Milliseconds 250
+
+    Assert-SshEscapeLocalOnly `
+        -TypedText '~.' `
+        -LogPattern 'SSH escape action=disconnect' `
+        -CaseName 'disconnect'
+    Wait-AuthLog -Pattern 'SSH closed' -TimeoutSeconds 15
+
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-ssh-escape-reconnect-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check escapereconnect' `
+        -Pattern 'input case=escapereconnect result=matched'
+
+    Split-AuthPane
+    Focus-AuthPane -Side 'right' -LayoutName 'layout-ssh-escape-right-idle.json'
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-ssh-escape-right-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+
+    Focus-AuthPane -Side 'left' -LayoutName 'layout-ssh-escape-left-pending.json'
+    Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
+    Invoke-SshEscapeInputText -Text '~'
+    Start-Sleep -Milliseconds 500
+    $pendingSnapshot = Read-FixtureConnectedInputSnapshot
+    if ($pendingSnapshot.observed -and -not [string]::IsNullOrEmpty([string]$pendingSnapshot.value)) {
+        throw '[product] A pending line-start escape reached the remote PTY'
+    }
+
+    Focus-AuthPane -Side 'right' -LayoutName 'layout-ssh-escape-right-isolation.json'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check rightescape' `
+        -Pattern 'input case=rightescape result=matched'
+
+    Focus-AuthPane -Side 'left' -LayoutName 'layout-ssh-escape-left-complete.json'
+    Assert-SshEscapeLocalOnly `
+        -TypedText '?' `
+        -LogPattern 'SSH escape action=help' `
+        -CaseName 'left-pane-isolation'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check leftescape' `
+        -Pattern 'input case=leftescape result=matched'
+
+    Focus-AuthPane -Side 'right' -LayoutName 'layout-ssh-escape-right-close.json'
+    Close-FixtureShell
+    Focus-AuthPane -Side 'left' -LayoutName 'layout-ssh-escape-left-close.json'
+    Close-FixtureShell
+    Complete-AuthStage -Name 'ssh-escape'
+    }
+
+    if (Test-AuthStageSelected -Name 'server-alive') {
+    Start-AuthStage -Name 'server-alive'
+    Remove-Item -LiteralPath $fixtureServerOutputDrop -Force -ErrorAction SilentlyContinue
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password -LayoutName 'layout-server-alive-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check serveralivebefore' `
+        -Pattern 'input case=serveralivebefore result=matched'
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    $serverAliveWatch = [Diagnostics.Stopwatch]::StartNew()
+    New-Item -ItemType File -Path $fixtureServerOutputDrop -Force | Out-Null
+    $keepaliveTimeoutObserved = $false
+    for ($waitSegment = 1; $waitSegment -le 3; $waitSegment++) {
+        try {
+            Wait-AuthLog -Pattern 'SSH error: SSH keepalive timed out' `
+                -TimeoutSeconds 50 | Out-Null
+            $keepaliveTimeoutObserved = $true
+            break
+        } catch {
+            if ($waitSegment -ge 3) { throw }
+        }
+    }
+    if (-not $keepaliveTimeoutObserved) {
+        throw '[product] Existing 30s/3 keepalive did not report a timeout'
+    }
+    $serverAliveWatch.Stop()
+    if ($serverAliveWatch.Elapsed.TotalSeconds -lt 105 -or
+        $serverAliveWatch.Elapsed.TotalSeconds -gt 145) {
+        throw ('[product] Existing 30s/3 keepalive timed out outside the russh max-plus-one ' +
+            "window: $([Math]::Round($serverAliveWatch.Elapsed.TotalSeconds, 3)) seconds")
+    }
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'server-alive-timeout.png')
+
+    Remove-Item -LiteralPath $fixtureServerOutputDrop -Force
+    Start-AuthCommand -User 'password'
+    Wait-AuthLog -Pattern 'native auth event kind=password'
+    Submit-AuthValue -Value $credentials.password `
+        -LayoutName 'layout-server-alive-reconnect-password.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    Submit-ConnectedInputUntilFixtureEvent `
+        -Text 'ltty-input-check serveralivereconnect' `
+        -Pattern 'input case=serveralivereconnect result=matched'
+    Close-FixtureShell
+    Complete-AuthStage -Name 'server-alive'
     }
 
     if (Test-AuthStageSelected -Name 'performance-matrix') {
@@ -2086,6 +2617,69 @@ try {
     Complete-AuthStage -Name 'encrypted-disposable-auth-key'
     }
 
+    if (Test-AuthStageSelected -Name 'key-comment-change-and-restart') {
+    Start-AuthStage -Name 'key-comment-change-and-restart'
+    $keyCommentEvidence.selected = $true
+    $metadataBefore = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $keyName
+    $keyCommentEvidence.fingerprintBefore = $metadataBefore.fingerprint
+    $keyCommentEvidence.privateModeBefore = $metadataBefore.privateMode
+    Submit-FocusedDeviceCommand `
+        -Command "ssh-keygen -c -f $keyName" `
+        -LayoutName 'layout-key-comment-command-focus.json'
+    Wait-AuthLog -Pattern 'KEY_COMMENT_CHANGE stage=passphrase'
+    Submit-AuthValue `
+        -Value $wrongKeyPassphrase `
+        -LayoutName 'layout-key-comment-wrong-passphrase.json'
+    Wait-AuthLog -Pattern 'KEY_COMMENT_CHANGE result=passphrase-rejected stage=passphrase'
+    Submit-AuthValue `
+        -Value $keyPassphrase `
+        -LayoutName 'layout-key-comment-passphrase.json'
+    Wait-AuthLog -Pattern 'KEY_COMMENT_CHANGE stage=comment'
+
+    $commentInputNode = Focus-ActiveCommandInput `
+        -LayoutName 'layout-key-comment-visible-input-focus.json'
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Invoke-TemporaryFixtureAuthText -Value $keyComment -InputNode $commentInputNode
+    Assert-NoSecretExposure -LayoutName 'layout-key-comment-visible-input.json'
+    $visibleInputScreenshot = Join-Path $EvidenceDirectory 'key-comment-visible-input.png'
+    Save-LeanTTYDeviceScreenshot `
+        -Hdc $hdc `
+        -Target $Target `
+        -LocalPath $visibleInputScreenshot
+    $keyCommentEvidence.visibleInputScreenshot = 'key-comment-visible-input.png'
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    try {
+        Wait-AuthLog `
+            -Pattern 'ACCEPTANCE_INPUT_SUBMIT sequence=\d+,kind=key-comment' `
+            -TimeoutSeconds 10
+        Wait-AuthLog -Pattern 'KEY_COMMENT_CHANGE result=success'
+    } catch {
+        throw '[unknown] Key comment submission outcome is unknown; restart the isolated scenario'
+    }
+
+    $metadataAfter = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $keyName
+    $keyCommentEvidence.fingerprintAfter = $metadataAfter.fingerprint
+    $keyCommentEvidence.privateModeAfter = $metadataAfter.privateMode
+    $keyCommentEvidence.exactCommentAfter = $metadataAfter.comment -ceq $keyComment
+    if ($metadataAfter.fingerprint -cne $metadataBefore.fingerprint) {
+        throw '[product] Key comment change altered the public-key fingerprint'
+    }
+    if (-not $keyCommentEvidence.exactCommentAfter) {
+        throw '[product] Public-key projection did not retain the exact new comment'
+    }
+
+    Restart-RegressionApp
+    $metadataAfterRestart = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $keyName
+    $keyCommentEvidence.fingerprintAfterRestart = $metadataAfterRestart.fingerprint
+    $keyCommentEvidence.privateModeAfterRestart = $metadataAfterRestart.privateMode
+    $keyCommentEvidence.exactCommentAfterRestart = $metadataAfterRestart.comment -ceq $keyComment
+    if ($metadataAfterRestart.fingerprint -cne $metadataBefore.fingerprint -or
+        -not $keyCommentEvidence.exactCommentAfterRestart) {
+        throw '[product] Restart did not reopen the durable key comment and original identity'
+    }
+    Complete-AuthStage -Name 'key-comment-change-and-restart'
+    }
+
     if (Test-AuthStageSelected -Name 'publickey-encrypted-passphrase') {
     Start-AuthStage -Name 'publickey-encrypted-passphrase'
     Start-AuthCommand -User 'publickey' -Identity $keyName
@@ -2094,6 +2688,70 @@ try {
     Wait-AuthLog -Pattern 'SSH session connected'
     Close-FixtureShell
     Complete-AuthStage -Name 'publickey-encrypted-passphrase'
+    }
+
+    if (Test-AuthStageSelected -Name 'ecdsa-import-encrypted-and-restart') {
+    Start-AuthStage -Name 'ecdsa-import-encrypted-and-restart'
+    $ecdsaEvidence.selected = $true
+    Install-LeanTTYEcdsaImportSource
+    $ecdsaKeyCleanupRequired = $true
+    Submit-FocusedDeviceCommand `
+        -Command "key import $ecdsaImportPath $ecdsaKeyName" `
+        -LayoutName 'layout-ecdsa-import-command-focus.json'
+    Wait-AuthLog -Pattern 'KEY_IMPORT result=success,algorithm=ecdsa-p256'
+
+    $ecdsaMetadataBefore = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $ecdsaKeyName
+    $ecdsaEvidence.fingerprintBeforeRestart = $ecdsaMetadataBefore.fingerprint
+    $ecdsaEvidence.privateModeBeforeRestart = $ecdsaMetadataBefore.privateMode
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'publickey' -Identity $ecdsaKeyName
+    Wait-AuthLog -Pattern 'native auth event kind=private_key_passphrase'
+    Submit-AuthValue `
+        -Value $wrongEcdsaPassphrase `
+        -LayoutName 'layout-ecdsa-wrong-passphrase.json'
+    Wait-AuthLog -Pattern 'SSH error'
+    Assert-NoSecretExposure -LayoutName 'layout-ecdsa-wrong-passphrase-rejected.json'
+    $ecdsaEvidence.wrongPassphraseRejected = $true
+
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Start-AuthCommand -User 'publickey' -Identity $ecdsaKeyName
+    Wait-AuthLog -Pattern 'native auth event kind=private_key_passphrase'
+    Submit-AuthValue `
+        -Value $ecdsaPassphrase `
+        -LayoutName 'layout-ecdsa-correct-passphrase.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    $ecdsaEvidence.authenticatedBeforeRestart = $true
+    Close-FixtureShell
+
+    Restart-RegressionApp
+    $ecdsaMetadataAfter = Get-LeanTTYDeviceKeyProjectionMetadata -KeyName $ecdsaKeyName
+    $ecdsaEvidence.fingerprintAfterRestart = $ecdsaMetadataAfter.fingerprint
+    $ecdsaEvidence.privateModeAfterRestart = $ecdsaMetadataAfter.privateMode
+    if ($ecdsaMetadataAfter.fingerprint -cne $ecdsaMetadataBefore.fingerprint) {
+        throw '[product] Restart did not reopen the same imported ECDSA identity'
+    }
+    $ecdsaEvidence.durableIdentity = $true
+
+    Start-AuthCommand -User 'publickey' -Identity $ecdsaKeyName
+    Wait-AuthLog -Pattern 'native auth event kind=private_key_passphrase'
+    Submit-AuthValue `
+        -Value $ecdsaPassphrase `
+        -LayoutName 'layout-ecdsa-after-restart-passphrase.json'
+    Wait-AuthLog -Pattern 'SSH session connected'
+    $ecdsaEvidence.authenticatedAfterRestart = $true
+    Close-FixtureShell
+
+    Remove-DisposableAuthKey `
+        -KeyName $ecdsaKeyName `
+        -LayoutPrefix 'layout-ecdsa-key-cleanup' | Out-Null
+    $ecdsaKeyCleanupRequired = $false
+    if (Test-LeanTTYDeviceKeyFilesPresent -Hdc $hdc -Target $Target -KeyName $ecdsaKeyName) {
+        throw '[product] Imported ECDSA identity remained after product deletion'
+    }
+    $ecdsaKeyAbsenceAudited = $true
+    Remove-LeanTTYEcdsaImportSource
+    Complete-AuthStage -Name 'ecdsa-import-encrypted-and-restart'
     }
 
     if (Test-AuthStageSelected -Name 'parallel-pane-authentication') {
@@ -2169,7 +2827,7 @@ try {
 
     if (Test-AuthStageSelected -Name 'deleted-disposable-auth-key') {
     Start-AuthStage -Name 'deleted-disposable-auth-key'
-    Remove-DisposableAuthKey -LayoutPrefix 'layout-key-cleanup' | Out-Null
+    Remove-DisposableAuthKey -KeyName $keyName -LayoutPrefix 'layout-key-cleanup' | Out-Null
     $keyCleanupRequired = $false
     Complete-AuthStage -Name 'deleted-disposable-auth-key'
     }
@@ -2228,10 +2886,30 @@ try {
     if ($keyCleanupRequired -and -not [string]::IsNullOrWhiteSpace($appPid)) {
         try {
             Restart-RegressionApp
-            Remove-DisposableAuthKey -LayoutPrefix 'layout-key-finally-cleanup' | Out-Null
+            Remove-DisposableAuthKey `
+                -KeyName $keyName `
+                -LayoutPrefix 'layout-key-finally-cleanup' | Out-Null
             $keyCleanupRequired = $false
         } catch {
             $cleanupFailures.Add('Disposable SSH authentication key cleanup failed')
+        }
+    }
+    if ($ecdsaKeyCleanupRequired -and -not [string]::IsNullOrWhiteSpace($appPid)) {
+        try {
+            Restart-RegressionApp
+            Remove-DisposableAuthKey `
+                -KeyName $ecdsaKeyName `
+                -LayoutPrefix 'layout-ecdsa-key-finally-cleanup' | Out-Null
+            $ecdsaKeyCleanupRequired = $false
+        } catch {
+            $cleanupFailures.Add('Imported ECDSA authentication key cleanup failed')
+        }
+    }
+    if ($ecdsaSourceCleanupRequired) {
+        try {
+            Remove-LeanTTYEcdsaImportSource
+        } catch {
+            $cleanupFailures.Add('Temporary ECDSA import source cleanup failed')
         }
     }
     if (-not $knownHostCleanupCompleted -and -not [string]::IsNullOrWhiteSpace($appPid)) {
@@ -2292,6 +2970,18 @@ try {
     } catch {
         $cleanupFailures.Add('Disposable SSH authentication key absence audit failed')
     }
+    try {
+        if (Test-LeanTTYDeviceKeyFilesPresent `
+            -Hdc $hdc `
+            -Target $Target `
+            -KeyName $ecdsaKeyName) {
+            $cleanupFailures.Add('Imported ECDSA authentication key remained after cleanup audit')
+        } else {
+            $ecdsaKeyAbsenceAudited = $true
+        }
+    } catch {
+        $cleanupFailures.Add('Imported ECDSA authentication key absence audit failed')
+    }
     if (-not [string]::IsNullOrWhiteSpace($failure)) {
         foreach ($diagnostic in @(
             @{ source = $fixtureStdout; destination = 'failure-fixture-stdout.txt' },
@@ -2326,6 +3016,10 @@ try {
     $credentials = @{}
     $secrets = @()
     $keyPassphrase = ''
+    $wrongKeyPassphrase = ''
+    $ecdsaPassphrase = ''
+    $wrongEcdsaPassphrase = ''
+    $keyComment = ''
     if ($cleanupFailures.Count -eq 0) {
         $cleanupResult = 'passed'
     } else {

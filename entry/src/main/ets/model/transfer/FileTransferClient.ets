@@ -22,6 +22,8 @@ export class FileTransferOptions {
   privateKeyRequiresPassphrase: boolean = false
   knownHostsPath: string = ''
   connectTimeoutMs: number = 15000
+  serverAliveIntervalSeconds: number = 30
+  serverAliveCountMax: number = 3
   paneId: string = ''
   remotePath: string = ''
   localPath: string = ''
@@ -73,6 +75,8 @@ export class FileTransferClient {
       options.privateKeyRequiresPassphrase,
       options.knownHostsPath,
       options.connectTimeoutMs,
+      options.serverAliveIntervalSeconds,
+      options.serverAliveCountMax,
       this.generation,
       options.paneId,
       options.remotePath,
@@ -111,7 +115,7 @@ export class FileTransferClient {
       this.pendingLayer = ''
       return true
     } catch (e) {
-      this.logger.error('Transfer password response failed: ' + e)
+      this.logger.error('Transfer password response failed')
       return false
     }
   }
@@ -128,7 +132,7 @@ export class FileTransferClient {
       this.pendingLayer = ''
       return true
     } catch (e) {
-      this.logger.error('Transfer key passphrase response failed: ' + e)
+      this.logger.error('Transfer key passphrase response failed')
       return false
     }
   }
@@ -146,7 +150,7 @@ export class FileTransferClient {
       this.pendingAuthChallenge = null
       return true
     } catch (e) {
-      this.logger.error('Transfer keyboard-interactive response failed: ' + e)
+      this.logger.error('Transfer keyboard-interactive response failed')
       return false
     }
   }
@@ -165,7 +169,7 @@ export class FileTransferClient {
       this.pendingLayer = ''
       return true
     } catch (e) {
-      this.logger.error('Transfer host-key response failed: ' + e)
+      this.logger.error('Transfer host-key response failed')
       return false
     }
   }
@@ -179,7 +183,7 @@ export class FileTransferClient {
     try {
       sshNative.sshDisconnect(this.transferId)
     } catch (e) {
-      this.logger.error('Transfer cancellation failed: ' + e)
+      this.logger.error('Transfer cancellation failed')
     }
   }
 

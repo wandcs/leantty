@@ -21,20 +21,28 @@
 
 | 功能点 | 状态 | milestone | 文档 |
 | --- | --- | --- | --- |
-| SSH 与 Mosh 命令体系 | Accepted 能力取舍基线 | 跨 1.1–1.6 | [`command-system.md`](command-system.md) |
+| SSH 与 Mosh 命令体系 | Accepted 能力取舍基线 | 跨 1.1–1.7 | [`command-system.md`](command-system.md) |
 | SSH keyboard-interactive 与多方法认证 | Verified / GitHub/AppGallery 已发布 | 1.1 | [`ssh-authentication.md`](ssh-authentication.md) |
 | 工作区键盘导航 | Verified / GitHub/AppGallery 已发布 | 1.1 | [`workspace-navigation.md`](workspace-navigation.md) |
 | 终端 scrollback 搜索 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`terminal-search.md`](terminal-search.md) |
 | 桌面终端界面与交互收敛 | Verified / 1.2–1.3 | 1.2–1.3 | [`ui-interaction-polish.md`](ui-interaction-polish.md) |
 | 最小单文件传输 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`file-transfer.md`](file-transfer.md) |
 | 终端输入调度与大粘贴连续可用性 | Verified / GitHub、AppGallery 已发布 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
-| SSH Session 终端状态隔离 | Verified 开发候选 / 正式发布门禁待执行 | 1.4 | [`terminal-session-state-isolation.md`](terminal-session-state-isolation.md) |
+| SSH Session 终端状态隔离 | Verified / GitHub、AppGallery 已发布 | 1.4 | [`terminal-session-state-isolation.md`](terminal-session-state-isolation.md) |
 | 本地命令提示符与输出规范 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`local-command-output.md`](local-command-output.md) |
 | 本地命令 Tab 补全 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`tab-completion.md`](tab-completion.md) |
-| 启动到首次输入性能 | Verified 开发候选 / 正式发布门禁待执行 | 1.4 | [`startup-performance.md`](startup-performance.md) |
+| 启动到首次输入性能 | Verified / GitHub、AppGallery 已发布 | 1.4 | [`startup-performance.md`](startup-performance.md) |
 | HSL 本地执行环境入口 | Closed / 进入门禁失败，专用入口已裁剪 | 1.4 决策 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
-| OpenSSH ProxyJump | Verified 开发候选 / 正式发布门禁待执行 | 1.4 | [`proxy-jump.md`](proxy-jump.md) |
-| Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.5 | [`mosh.md`](mosh.md) |
+| OpenSSH ProxyJump | Verified / GitHub、AppGallery 已发布 | 1.4 | [`proxy-jump.md`](proxy-jump.md) |
+| OpenSSH ConnectTimeout | Verified / 1.5 首个切片已闭合 | 1.5 | [`connect-timeout.md`](connect-timeout.md) |
+| Basic SSH escape | Verified / 1.5 第二个切片已闭合 | 1.5 | [`ssh-escape.md`](ssh-escape.md) |
+| OpenSSH ServerAlive | Verified / 1.5 第三个切片已闭合 | 1.5 | [`server-alive.md`](server-alive.md) |
+| 安全 SSH 诊断 | Verified / 1.5 第四个切片已闭合 | 1.5 | [`ssh-diagnostics.md`](ssh-diagnostics.md) |
+| 受控 OpenSSH config import/export | Verified / 1.5 第五个切片已闭合 | 1.5 | [`config-import-export.md`](config-import-export.md) |
+| UpdateHostKeys | Closed / 依赖能力门禁失败 | 1.5 决策 | [`update-host-keys.md`](update-host-keys.md) |
+| SSH key comment change | Verified / 1.5 第七个切片已闭合 | 1.5 | [`key-comment-change.md`](key-comment-change.md) |
+| ECDSA key interoperability | Verified / 1.5 第八个切片已闭合 | 1.5 | [`ecdsa-key-interop.md`](ecdsa-key-interop.md) |
+| Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.7 | [`mosh.md`](mosh.md) |
 
 ## 最小文档结构
 

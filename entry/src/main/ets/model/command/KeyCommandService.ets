@@ -1,6 +1,6 @@
 import { common } from '@kit.AbilityKit'
 import { SshKeyManager } from '../ssh/SshKeyManager'
-import { KeyPairInfo } from '../../common/types/SshKeyTypes'
+import { algorithmDisplayName, KeyPairInfo } from '../../common/types/SshKeyTypes'
 import { CommandParser, CommandParseResult, KeyCommandResult, KeyCommandKind } from './CommandParser'
 import { SshConfig } from '../ssh/SshConfig'
 import { Logger } from '../../common/logger/Logger'
@@ -14,8 +14,8 @@ const HELP_TEXT: string =
   'Syntax: <...> is required; [...] is optional; <a|b> means choose one.\r\n' +
   '\r\n' +
   'Connection\r\n' +
-  '  ssh [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
-  '  ssh [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n' +
+  '  ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
+  '  ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n' +
   '\r\n' +
   'File transfer\r\n' +
   '  put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
@@ -27,6 +27,7 @@ const HELP_TEXT: string =
   '  ssh-keygen -y -f <identity>                    Show a public key\r\n' +
   '  ssh-keygen -l -f <identity>[.pub]               Show a fingerprint\r\n' +
   '  ssh-keygen -p -f <identity>                     Change a private-key passphrase\r\n' +
+  '  ssh-keygen -c -f <identity>                     Change a key comment\r\n' +
   '  ssh-keygen -F <host>|[<host>]:<port>            Find trusted host keys\r\n' +
   '  ssh-keygen -R <host>|[<host>]:<port>            Remove trusted host keys\r\n' +
   '  ssh-copy-id -i <key-name> [-p <port>] <user>@<host>  Install a public key\r\n' +
@@ -37,23 +38,33 @@ const HELP_TEXT: string =
   '  key export <key-name> [<file-name>]             Export a key pair to Downloads\r\n' +
   '  key rm <key-name>                               Delete a verified key pair\r\n' +
   '\r\n' +
+  'OpenSSH config\r\n' +
+  '  config import <Downloads-file-name> [--replace] Import one config file\r\n' +
+  '  config export [<Downloads-file-name>]            Export the active config\r\n' +
+  '\r\n' +
   'Host configuration\r\n' +
-  '  host add <name> <user>@<host>[:<port>] [-J <jump>]  Add a host\r\n' +
-  '  host set <name> <user>@<host>[:<port>] [-J <jump>]  Update a host\r\n' +
+  '  host add <name> <user>@<host>[:<port>] [options]  Add a host\r\n' +
+  '  host set <name> <user>@<host>[:<port>] [options]  Update a host\r\n' +
   '  host rm <host-name>                            Remove a host\r\n' +
   '  host list                                      List hosts\r\n' +
   '\r\n' +
   '  help [<command>], <command> --help, ?           Show help\r\n' +
-  '  exit                                           Close this pane\r\n'
+  '  exit                                           Close this pane\r\n' +
+  '\r\n' +
+  'Connected SSH: after a newline, use ~? for supported escapes.\r\n'
 
-const SSH_HELP: string = '\r\nUsage: ssh [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
-  '       ssh [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n\r\n' +
-  'Host settings, including one ProxyJump, come from ~/.ssh/config; command options take precedence.\r\n' +
+const SSH_HELP: string = '\r\nUsage: ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
+  '       ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n\r\n' +
+  'Host settings, including ProxyJump, ConnectTimeout and ServerAlive, come from ~/.ssh/config.\r\n' +
+  'Command options take precedence where LeanTTY provides one.\r\n' +
   '<jump> is one saved Host or [user@]host[:port]. Use -J none to bypass a saved ProxyJump.\r\n' +
-  'ProxyCommand and multi-hop chains are not supported.\r\n'
+  '-v shows fixed, redacted connection stages in this pane for this attempt only.\r\n' +
+  'ProxyCommand and multi-hop chains are not supported.\r\n' +
+  'While connected, enter ~? after a newline to list supported SSH escapes.\r\n'
 const KEYGEN_HELP: string = '\r\nUsage: ssh-keygen [-t <ed25519|rsa>] [-f <key-name>] [-C <comment>]\r\n' +
   '       ssh-keygen -y -f <identity>\r\n       ssh-keygen -l -f <identity>[.pub]\r\n' +
   '       ssh-keygen -p -f <identity>\r\n' +
+  '       ssh-keygen -c -f <identity>\r\n' +
   '       ssh-keygen -F <host>|[<host>]:<port>\r\n' +
   '       ssh-keygen -R <host>|[<host>]:<port>\r\n\r\n' +
   'Creates, inspects or updates keys, and finds or removes trusted host records in LeanTTY ~/.ssh.\r\n'
@@ -63,11 +74,24 @@ const KEY_HELP: string =
   '\r\nUsage: key list | key import <path> [<key-name>] | ' +
   'key export <key-name> [<file-name>] | key rm <key-name>\r\n\r\n' +
   '<key-name> is the name shown by "key list". <file-name> is the optional Downloads basename; ' +
-  'it defaults to <key-name>. The private key and .pub file are never overwritten.\r\n'
-const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>]\r\n' +
+  'it defaults to <key-name>. Import accepts OpenSSH Ed25519, RSA and ECDSA P-256/P-384/P-521 ' +
+  'private keys; generation remains Ed25519/RSA only. Files are never overwritten.\r\n'
+const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] ' +
+  '[--connect-timeout <1-300|default>] [--server-alive-interval <0-3600|default>] ' +
+  '[--server-alive-count-max <1-100|default>]\r\n' +
   '       host rm <host-name>\r\n       host list\r\n\r\n' +
   '-J saves one ProxyJump in the same OpenSSH Host entry; -J none disables it.\r\n' +
+  '--connect-timeout saves whole seconds in that Host; default restores 15 seconds.\r\n' +
+  '--server-alive-interval uses whole seconds; 0 disables probes and default restores 30.\r\n' +
+  '--server-alive-count-max controls unanswered probes; default restores 3.\r\n' +
   'Legacy alias commands remain temporarily supported.\r\n'
+const CONFIG_HELP: string =
+  '\r\nUsage: config import <Downloads-file-name> [--replace]\r\n' +
+  '       config export [<Downloads-file-name>]\r\n\r\n' +
+  'Import accepts one regular UTF-8 file from Downloads when the current config has no existing ' +
+  'non-LeanTTY text. Export first, then use --replace to explicitly replace existing non-LeanTTY text. ' +
+  'Existing LeanTTY-managed Hosts stay first. Include, Match and token expansion are rejected.\r\n' +
+  'Export defaults to leantty-ssh-config and never overwrites an existing Downloads file.\r\n'
 const TRANSFER_HELP: string =
   '\r\nUsage: put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
   '       get [-p <port>] [-i <identity>] [--] <host>:<remote-file> [local-path]\r\n\r\n' +
@@ -84,6 +108,7 @@ export interface KeyCommandContext {
   writeError: (msg: string) => void
   writeOutput: (text: string) => void
   beginKeyPassphraseChange: (keyName: string) => void
+  beginKeyCommentChange: (keyName: string, hasPassphrase: boolean) => void
   confirmKeyDelete: (name: string, fingerprint: string, onConfirm: () => void, onCancel: () => void) => void
   showTopLevelHelp: (helpText: string) => void
 }
@@ -110,7 +135,19 @@ export class KeyCommandService {
       KeyCommandService.executeKeyPassphraseChange(result, ctx)
       return
     }
+    if (result.kind === KeyCommandKind.KEY_COMMENT_CHANGE) {
+      KeyCommandService.executeKeyCommentChange(result, ctx)
+      return
+    }
     if (result.kind === KeyCommandKind.KEYEXPORT) { KeyCommandService.executeKeyexport(result, ctx); return }
+    if (result.kind === KeyCommandKind.CONFIG_IMPORT) {
+      KeyCommandService.executeConfigImport(result, ctx)
+      return
+    }
+    if (result.kind === KeyCommandKind.CONFIG_EXPORT) {
+      KeyCommandService.executeConfigExport(result, ctx)
+      return
+    }
     if (result.kind === KeyCommandKind.HOST_KEY_FIND) {
       KeyCommandService.executeHostKeyFind(result, ctx)
       return
@@ -136,6 +173,7 @@ export class KeyCommandService {
     if (topic === 'ssh-copy-id') { ctx.writeOutput(COPY_ID_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'key' || topic === 'keys') { ctx.writeOutput(KEY_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'host' || topic === 'alias') { ctx.writeOutput(HOST_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'config') { ctx.writeOutput(CONFIG_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'put' || topic === 'get' || topic === 'scp') {
       ctx.writeOutput(TRANSFER_HELP + LocalCommandOutput.prompt()); return
     }
@@ -153,7 +191,7 @@ export class KeyCommandService {
     ctx.writeOutput('  ----          ----      -----------\r\n')
     for (let i = 0; i < keys.length; i++) {
       let name: string = KeyCommandService.fileName(keys[i].filePath)
-      let algo: string = keys[i].algorithm === 0 ? 'ed25519' : 'rsa'
+      let algo: string = algorithmDisplayName(keys[i].algorithm)
       ctx.writeOutput('  ' + KeyCommandService.safeText(name).padEnd(14, ' ') + algo.padEnd(10, ' ') +
         KeyCommandService.safeText(keys[i].fingerprint) + '\r\n')
     }
@@ -185,6 +223,7 @@ export class KeyCommandService {
         KeyCommandService.safeText(key.filePath) + '.') + '\r\n')
       ctx.writeOutput('  Fingerprint: ' + KeyCommandService.safeText(key.fingerprint) + '\r\n')
       ctx.writeOutput(LocalCommandOutput.prompt())
+      logger.info('KEY_IMPORT result=success,algorithm=' + algorithmDisplayName(key.algorithm))
     } catch (e) {
       logger.warn('Key import failed: ' + e)
       ctx.writeError('The key could not be imported.\r\nCheck the Downloads path and key format, then try again.')
@@ -218,7 +257,7 @@ export class KeyCommandService {
       return
     }
     let name: string = KeyCommandService.fileName(key.filePath)
-    let algo: string = key.algorithm === 0 ? 'ED25519' : 'RSA'
+    let algo: string = algorithmDisplayName(key.algorithm).toUpperCase()
     ctx.writeOutput('\r\n' + KeyCommandService.safeText(key.fingerprint) + ' ' +
       KeyCommandService.safeText(name) + ' (' + algo + ')\r\n' + LocalCommandOutput.prompt())
   }
@@ -231,6 +270,16 @@ export class KeyCommandService {
       return
     }
     ctx.beginKeyPassphraseChange(KeyCommandService.fileName(key.filePath))
+  }
+
+  private static executeKeyCommentChange(result: KeyCommandResult, ctx: KeyCommandContext): void {
+    let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
+    if (key === null) {
+      ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
+        '.\r\nTry: key list')
+      return
+    }
+    ctx.beginKeyCommentChange(KeyCommandService.fileName(key.filePath), key.hasPassphrase)
   }
 
   private static executeKeyrm(result: KeyCommandResult, ctx: KeyCommandContext): void {
@@ -304,6 +353,34 @@ export class KeyCommandService {
     }
   }
 
+  private static async executeConfigImport(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
+    try {
+      await ctx.sshConfig.importFromDownloads(ctx.context, result.sourcePath, result.replaceExisting)
+      logger.info('CONFIG_IMPORT result=success,replace=' + result.replaceExisting.toString())
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Imported OpenSSH config from Downloads.') +
+        '\r\n  ' + KeyCommandService.safeText(result.sourcePath) +
+        '\r\n  Unsupported directives remain visible and block matching connections.\r\n' +
+        LocalCommandOutput.prompt())
+    } catch (e) {
+      logger.warn('Config import failed: ' + e)
+      ctx.writeError('The config could not be imported.\r\n' +
+        KeyCommandService.safeText('' + e) + '\r\nThe previous config remains active.')
+    }
+  }
+
+  private static async executeConfigExport(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
+    try {
+      await ctx.sshConfig.exportToDownloads(ctx.context, result.destinationName)
+      logger.info('CONFIG_EXPORT result=success')
+      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Exported OpenSSH config to Downloads.') +
+        '\r\n  ' + KeyCommandService.safeText(result.destinationName) + '\r\n' + LocalCommandOutput.prompt())
+    } catch (e) {
+      logger.warn('Config export failed: ' + e)
+      ctx.writeError('The config could not be exported.\r\n' +
+        KeyCommandService.safeText('' + e) + '\r\nChoose another Downloads file name and try again.')
+    }
+  }
+
   private static executeAliasAdd(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let config: SshConfig = ctx.sshConfig
     if (!result.legacySyntax && config.findHost(result.keyName) !== null) {
@@ -332,11 +409,23 @@ export class KeyCommandService {
       return
     }
     config.addAlias(result.keyName, result.sshHost, result.sshPort, result.sshUser,
-      result.sshJump.length > 0 ? result.sshJump : null)
+      result.sshJump.length > 0 ? result.sshJump : null,
+      result.sshConnectTimeoutMs >= 0 ? result.sshConnectTimeoutMs : null,
+      result.sshServerAliveIntervalSeconds >= 0 ? result.sshServerAliveIntervalSeconds : null,
+      result.sshServerAliveCountMax >= 0 ? result.sshServerAliveCountMax : null)
     config.saveConfig(ctx.context)
     let info: string = result.keyName + ' -> ' + result.sshUser + '@' + result.sshHost
     if (result.sshPort !== 22) { info += ':' + result.sshPort.toString() }
     if (result.sshJump.length > 0) { info += ' via ' + result.sshJump }
+    if (result.sshConnectTimeoutMs >= 0) {
+      info += ' timeout=' + Math.floor(result.sshConnectTimeoutMs / 1000).toString() + 's'
+    }
+    if (result.sshServerAliveIntervalSeconds >= 0) {
+      info += ' server-alive-interval=' + result.sshServerAliveIntervalSeconds.toString() + 's'
+    }
+    if (result.sshServerAliveCountMax >= 0) {
+      info += ' server-alive-count-max=' + result.sshServerAliveCountMax.toString()
+    }
     ctx.writeOutput('\r\n' + LocalCommandOutput.success('Host ' +
       (updated ? 'updated: ' : 'added: ') + KeyCommandService.safeText(info) + '.') +
       '\r\n' + LocalCommandOutput.prompt())
@@ -359,11 +448,20 @@ export class KeyCommandService {
     if (connection.identityFile.length > 0) {
       ctx.writeOutput('identityfile ' + KeyCommandService.safeText(connection.identityFile) + '\r\n')
     }
+    ctx.writeOutput('connecttimeout ' + Math.floor(connection.connectTimeoutMs / 1000).toString() + '\r\n')
+    ctx.writeOutput('serveraliveinterval ' + connection.serverAliveIntervalSeconds.toString() + '\r\n')
+    ctx.writeOutput('serveralivecountmax ' + connection.serverAliveCountMax.toString() + '\r\n')
     if (connection.jumpHost.length > 0) {
       ctx.writeOutput('proxyjump ' + KeyCommandService.safeText(connection.jumpDisplayHost) + '\r\n')
       ctx.writeOutput('proxyjumphostname ' + KeyCommandService.safeText(connection.jumpHost) + '\r\n')
       ctx.writeOutput('proxyjumpuser ' + KeyCommandService.safeText(connection.jumpUsername) + '\r\n')
       ctx.writeOutput('proxyjumpport ' + connection.jumpPort.toString() + '\r\n')
+      ctx.writeOutput('proxyjumpconnecttimeout ' +
+        Math.floor(connection.jumpConnectTimeoutMs / 1000).toString() + '\r\n')
+      ctx.writeOutput('proxyjumpserveraliveinterval ' +
+        connection.jumpServerAliveIntervalSeconds.toString() + '\r\n')
+      ctx.writeOutput('proxyjumpserveralivecountmax ' +
+        connection.jumpServerAliveCountMax.toString() + '\r\n')
       if (connection.jumpIdentityFile.length > 0) {
         ctx.writeOutput('proxyjumpidentityfile ' +
           KeyCommandService.safeText(connection.jumpIdentityFile) + '\r\n')

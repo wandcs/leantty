@@ -138,6 +138,27 @@ export default function paneModelTest() {
       expect(session.getConnectionTitle()).assertEqual('user@172.16.100.2')
     })
 
+    it('retainsTheResolvedConnectTimeoutForReconnect', 0, () => {
+      let session: SshSession = new SshSession()
+      expect(session.getConnectTimeoutMs()).assertEqual(15000)
+      session.setConnectTimeoutMs(9000)
+      expect(session.getConnectTimeoutMs()).assertEqual(9000)
+    })
+
+    it('retainsBothResolvedServerAliveLayersForReconnect', 0, () => {
+      let session: SshSession = new SshSession()
+      expect(session.getServerAliveIntervalSeconds()).assertEqual(30)
+      expect(session.getServerAliveCountMax()).assertEqual(3)
+      session.setServerAliveIntervalSeconds(0)
+      session.setServerAliveCountMax(7)
+      session.setJumpServerAliveIntervalSeconds(15)
+      session.setJumpServerAliveCountMax(4)
+      expect(session.getServerAliveIntervalSeconds()).assertEqual(0)
+      expect(session.getServerAliveCountMax()).assertEqual(7)
+      expect(session.getJumpServerAliveIntervalSeconds()).assertEqual(15)
+      expect(session.getJumpServerAliveCountMax()).assertEqual(4)
+    })
+
     it('activePaneSelectionNeverCrossesTheActiveTab', 0, () => {
       let vm: AppViewModel = new AppViewModel()
       let first: TabInfo = vm.addTab('one')

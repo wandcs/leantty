@@ -759,8 +759,9 @@ foreach ($scriptName in @(
             -not $content.Contains("-Pattern 'ACCEPTANCE_IDLE_RESULT kind='") -and
             $content.Contains("'ltty-exit'") -and
             $content.Contains("'shell command=exit result=closed'") -and
-            $content.Contains('Assert-AuthCommandLoopbackTarget') -and
-            $content.Contains("'[environment] Device key injection changed the SSH command target'") -and
+            $content.Contains('Assert-AuthCommandStarted') -and
+            $content.Contains("'[environment] Device key injection did not start the SSH command'") -and
+            -not $content.Contains('SSH connect initiated:') -and
             $content.Contains('Activate-RegressionWindow') -and
             $content.Contains('function Assert-RegressionProcessUnchanged') -and
             ([regex]::Matches($content, 'Assert-RegressionProcessUnchanged -Action').Count -eq 3) -and
@@ -827,6 +828,7 @@ foreach ($scriptName in @(
         )
         foreach ($groupedStage in @(
                 'password-success',
+                'ssh-diagnostics',
                 'terminal-key-input',
                 'transport-main-path',
                 'performance-matrix',
@@ -1105,7 +1107,10 @@ foreach ($scriptName in @(
             $content.Contains('[IO.Path]::GetFullPath($HapPath)') -and
             $content.Contains('ProxyJump verification requires a signed HAP') -and
             $content.Contains('-HapPath $selectedHapPath') -and
-            $content.Contains('$script:proxyHapPath = $selectedHapPath')
+            $content.Contains('$script:proxyHapPath = $selectedHapPath') -and
+            $content.Contains('[ValidateRange(0, 3600)][int]$ServerAliveIntervalSeconds') -and
+            $content.Contains('sameConnectionInputObserved = $true') -and
+            $content.Contains('deviceTimeoutObserved = $false')
         ) 'ProxyJump physical scenario can submit an unverified command buffer'
     }
 }
@@ -1184,6 +1189,24 @@ $fileTransferVerifier = Get-Content -LiteralPath (
 $putGetVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-put-get-pc.ps1'
 ) -Raw
+$configVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-config-import-export-pc.ps1'
+) -Raw
+Assert-True (
+    $configVerifier.Contains("gate = 'config-import-export-physical-pc'") -and
+    $configVerifier.Contains('Submit-LeanTTYDeviceCommand') -and
+    $configVerifier.Contains('CONFIG_IMPORT result=success,replace=true') -and
+    $configVerifier.Contains('CONFIG_EXPORT result=success') -and
+    $configVerifier.Contains('Export conflict changed the existing Downloads file') -and
+    $configVerifier.Contains('Restart did not reopen the imported durable config') -and
+    $configVerifier.Contains('Product-path cleanup did not restore the original unmanaged config bytes') -and
+    $configVerifier.Contains('__acceptance_config_') -and
+    $configVerifier.Contains('ACCEPTANCE_CONFIG state=verified,passed=true') -and
+    -not $configVerifier.Contains('/storage/Users/currentUser/Download') -and
+    -not $configVerifier.Contains('file recv') -and
+    $configVerifier.Contains('cleanupComplete = $cleanupComplete') -and
+    $configVerifier.Contains("acceptanceEligible = `$false")
+) 'Config import/export physical verifier lost input, persistence, conflict, evidence or cleanup controls'
 Assert-True (
     $terminalPane.Contains('.onKeyPreIme') -and
     $terminalPane.Contains('.onInterceptKeyEvent') -and
@@ -1200,6 +1223,9 @@ Assert-True (
     $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_NOREPLACE') -and
     $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_FD') -and
     $acceptanceSource.Contains('ACCEPTANCE_DOWNLOADS_MANAGER') -and
+    $acceptanceSource.Contains('ACCEPTANCE_CONFIG state=prepared') -and
+    $acceptanceSource.Contains('ACCEPTANCE_CONFIG state=verified,passed=true') -and
+    $acceptanceSource.Contains('__acceptance_config_') -and
     -not $acceptanceSource.Contains('Acceptance: Open Search') -and
     -not $acceptanceSource.Contains('Debug Material') -and
     $acceptanceSource.Contains('pasteClipboardForAcceptance') -and
@@ -1247,6 +1273,7 @@ Assert-True (
     $putGetVerifier.Contains('[switch]$ForceTerminate') -and
     $putGetVerifier.Contains('[switch]$LateEvents') -and
     $putGetVerifier.Contains('[switch]$DisconnectGet') -and
+    $putGetVerifier.Contains('[switch]$ServerAliveBlackhole') -and
     $putGetVerifier.Contains('[switch]$AuthenticationMatrix') -and
     $putGetVerifier.Contains("'-SftpFault'") -and
     $putGetVerifier.Contains('[IO.FileShare]::ReadWrite') -and
@@ -1283,6 +1310,10 @@ Assert-True (
     $putGetVerifier.Contains('cleanupFailureFinalPresent=false') -and
     $putGetVerifier.Contains('temporaryCount=1') -and
     $putGetVerifier.Contains('device-get-disconnect.json') -and
+    $putGetVerifier.Contains('device-get-server-alive.json') -and
+    $putGetVerifier.Contains('FILE_TRANSFER result=failed code=KEEPALIVE_TIMEOUT') -and
+    $putGetVerifier.Contains("'-EnableServerOutputDrop'") -and
+    $putGetVerifier.Contains('host rm $serverAliveHostAlias') -and
     $putGetVerifier.Contains('[switch]$MinimizeGet') -and
     $putGetVerifier.Contains('[switch]$SelectionCopy') -and
     $putGetVerifier.Contains('[switch]$FileNameMatrix') -and

@@ -1,6 +1,14 @@
 import { SshConfig, SshConfigHost } from '../ssh/SshConfig'
 import { KeyAlgorithm } from '../../common/types/SshKeyTypes'
 import { TerminalTextPolicy } from '../../common/security/TerminalTextPolicy'
+import {
+  DEFAULT_SSH_CONNECT_TIMEOUT_MS,
+  MAX_SSH_CONNECT_TIMEOUT_SECONDS,
+  DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
+  DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX,
+  MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
+  MAX_SSH_SERVER_ALIVE_COUNT_MAX
+} from '../../common/types/SshTypes'
 
 export class CommandParseResult {
   isValid: boolean
@@ -15,6 +23,13 @@ export class CommandParseResult {
   jumpPort: number
   jumpUsername: string
   jumpIdentityFile: string
+  jumpConnectTimeoutMs: number
+  jumpServerAliveIntervalSeconds: number
+  jumpServerAliveCountMax: number
+  connectTimeoutMs: number
+  serverAliveIntervalSeconds: number
+  serverAliveCountMax: number
+  verbose: boolean
   errorMessage: string
 
   constructor() {
@@ -30,6 +45,13 @@ export class CommandParseResult {
     this.jumpPort = 22
     this.jumpUsername = ''
     this.jumpIdentityFile = ''
+    this.jumpConnectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.jumpServerAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.jumpServerAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+    this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+    this.verbose = false
     this.errorMessage = ''
   }
 }
@@ -52,7 +74,10 @@ export enum KeyCommandKind {
   KEYEXPORT = 14,
   HOST_KEY_REMOVE = 15,
   KEY_PASSPHRASE_CHANGE = 16,
-  HOST_KEY_FIND = 17
+  HOST_KEY_FIND = 17,
+  CONFIG_IMPORT = 18,
+  CONFIG_EXPORT = 19,
+  KEY_COMMENT_CHANGE = 20
 }
 
 export class KeyCommandResult {
@@ -65,8 +90,12 @@ export class KeyCommandResult {
   sshPort: number
   sshUser: string
   sshJump: string
+  sshConnectTimeoutMs: number
+  sshServerAliveIntervalSeconds: number
+  sshServerAliveCountMax: number
   errorMessage: string
   legacySyntax: boolean
+  replaceExisting: boolean
 
   constructor() {
     this.kind = KeyCommandKind.KEYS
@@ -78,8 +107,12 @@ export class KeyCommandResult {
     this.sshPort = 22
     this.sshUser = ''
     this.sshJump = ''
+    this.sshConnectTimeoutMs = -1
+    this.sshServerAliveIntervalSeconds = -1
+    this.sshServerAliveCountMax = -1
     this.errorMessage = ''
     this.legacySyntax = false
+    this.replaceExisting = false
   }
 }
 
@@ -96,6 +129,9 @@ export class TransferCommandResult {
   port: number
   username: string
   identityFile: string
+  connectTimeoutMs: number
+  serverAliveIntervalSeconds: number
+  serverAliveCountMax: number
   localPath: string
   remotePath: string
   automaticLocalName: boolean
@@ -110,6 +146,9 @@ export class TransferCommandResult {
     this.port = 22
     this.username = ''
     this.identityFile = ''
+    this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
     this.localPath = ''
     this.remotePath = ''
     this.automaticLocalName = false
@@ -215,6 +254,35 @@ export class CommandParser {
       return result
     }
 
+    if (words[0] === 'config' && words[1] === 'import') {
+      let result: KeyCommandResult = new KeyCommandResult()
+      result.kind = KeyCommandKind.CONFIG_IMPORT
+      if (words.length !== 3 && !(words.length === 4 && words[3] === '--replace')) {
+        result.errorMessage = 'Usage: config import <Downloads-file-name> [--replace]'
+      } else {
+        result.sourcePath = words[2]
+        result.replaceExisting = words.length === 4
+      }
+      return result
+    }
+    if (words[0] === 'config' && words[1] === 'export') {
+      let result: KeyCommandResult = new KeyCommandResult()
+      result.kind = KeyCommandKind.CONFIG_EXPORT
+      if (words.length > 3) {
+        result.errorMessage = 'Usage: config export [<Downloads-file-name>]'
+      } else {
+        result.destinationName = words.length === 3 ? words[2] : SshConfig.defaultExportName()
+      }
+      return result
+    }
+    if (words[0] === 'config') {
+      let result: KeyCommandResult = new KeyCommandResult()
+      result.kind = KeyCommandKind.CONFIG_EXPORT
+      result.errorMessage = 'Usage: config import <Downloads-file-name> [--replace] | ' +
+        'config export [<Downloads-file-name>]'
+      return result
+    }
+
     if ((words[0] === 'host' || words[0] === 'alias') && (words[1] === 'add' || words[1] === 'set')) {
       let result: KeyCommandResult = CommandParser.parseAliasAdd(trimmed)
       if (words[0] === 'host' && words[1] === 'set') { result.kind = KeyCommandKind.HOST_SET }
@@ -236,7 +304,9 @@ export class CommandParser {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.ALIAS_LIST
       result.legacySyntax = words[0] === 'alias'
-      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] | ' +
+      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] ' +
+        '[--connect-timeout <1-300|default>] [--server-alive-interval <0-3600|default>] ' +
+        '[--server-alive-count-max <1-100|default>] | ' +
         'host rm <host-name> | host list'
       return result
     }
@@ -269,6 +339,7 @@ export class CommandParser {
     let identitySpecified: boolean = false
     let explicitJump: string = ''
     let jumpSpecified: boolean = false
+    let verboseSpecified: boolean = false
     for (let i = 0; i < args.length; i++) {
       if (args[i] === '-p') {
         if (i + 1 >= args.length) { result.errorMessage = 'Missing port after -p'; return result }
@@ -290,6 +361,10 @@ export class CommandParser {
         explicitJump = args[i + 1]
         jumpSpecified = true
         i++
+      } else if (args[i] === '-v') {
+        if (verboseSpecified) { result.errorMessage = 'Duplicate SSH option: -v'; return result }
+        result.verbose = true
+        verboseSpecified = true
       } else if (args[i].startsWith('-')) {
         result.errorMessage = 'Unsupported SSH option: ' + args[i]; return result
       } else if (target.length === 0) {
@@ -310,6 +385,9 @@ export class CommandParser {
       result.port = explicitPort > 0 ? explicitPort : host.port
       result.username = host.user
       if (result.identityFile.length === 0) { result.identityFile = host.identityFile }
+      result.connectTimeoutMs = host.connectTimeoutMs
+      result.serverAliveIntervalSeconds = host.serverAliveIntervalSeconds
+      result.serverAliveCountMax = host.serverAliveCountMax
       result.isAlias = true
       CommandParser.applyProxyJump(jumpSpecified ? explicitJump : host.proxyJump, sshConfig, result)
       if (result.errorMessage.length > 0) { result.isValid = false }
@@ -385,6 +463,9 @@ export class CommandParser {
       jumpPort = explicitJumpPort ? parsed.port : jumpAlias.port
       jumpUser = explicitUser.length > 0 ? explicitUser : jumpAlias.user
       jumpIdentity = jumpAlias.identityFile
+      result.jumpConnectTimeoutMs = jumpAlias.connectTimeoutMs
+      result.jumpServerAliveIntervalSeconds = jumpAlias.serverAliveIntervalSeconds
+      result.jumpServerAliveCountMax = jumpAlias.serverAliveCountMax
     }
     if (jumpUser.length === 0) {
       result.errorMessage = 'ProxyJump host must define User: ' + jumpDisplayHost
@@ -528,6 +609,9 @@ export class CommandParser {
     result.port = connection.port
     result.username = connection.username
     result.identityFile = connection.identityFile
+    result.connectTimeoutMs = connection.connectTimeoutMs
+    result.serverAliveIntervalSeconds = connection.serverAliveIntervalSeconds
+    result.serverAliveCountMax = connection.serverAliveCountMax
     result.isValid = true
     return result
   }
@@ -686,6 +770,7 @@ export class CommandParser {
     let publicMode: boolean = false
     let fingerprintMode: boolean = false
     let passphraseMode: boolean = false
+    let commentChangeMode: boolean = false
     let keyTypeSpecified: boolean = false
     let commentSpecified: boolean = false
     let keyFileCount: number = 0
@@ -708,6 +793,9 @@ export class CommandParser {
       } else if (parts[i] === '-p') {
         if (passphraseMode) { result.errorMessage = 'ssh-keygen: duplicate option -p'; return result }
         passphraseMode = true
+      } else if (parts[i] === '-c') {
+        if (commentChangeMode) { result.errorMessage = 'ssh-keygen: duplicate option -c'; return result }
+        commentChangeMode = true
       } else if (parts[i] === '-f') {
         if (i + 1 >= parts.length) { result.errorMessage = 'ssh-keygen: missing filename after -f'; return result }
         keyFileCount += 1
@@ -723,7 +811,17 @@ export class CommandParser {
       }
       i += 1
     }
-    if (passphraseMode) {
+    if (commentChangeMode) {
+      if (passphraseMode || publicMode || fingerprintMode || keyTypeSpecified || commentSpecified) {
+        result.errorMessage = 'ssh-keygen: -c cannot be combined with key generation, passphrase or inspection options'
+      } else if (keyFileCount !== 1 || result.keyName.length === 0) {
+        result.errorMessage = 'ssh-keygen: -c requires exactly one -f <identity>'
+      } else if (unexpectedArgument.length > 0) {
+        result.errorMessage = 'ssh-keygen: unexpected argument ' + unexpectedArgument
+      } else {
+        result.kind = KeyCommandKind.KEY_COMMENT_CHANGE
+      }
+    } else if (passphraseMode) {
       if (publicMode || fingerprintMode || keyTypeSpecified || commentSpecified) {
         result.errorMessage = 'ssh-keygen: -p cannot be combined with key generation or inspection options'
       } else if (keyFileCount !== 1 || result.keyName.length === 0) {
@@ -900,22 +998,85 @@ export class CommandParser {
     result.kind = KeyCommandKind.ALIAS_ADD
     let parts: string[] = input.split(/\s+/)
     let operation: string = parts.length >= 2 && parts[1] === 'set' ? 'set' : 'add'
-    if (parts.length !== 4 && parts.length !== 6) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+    let usage: string = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] ' +
+      '[-J <jump>] [--connect-timeout <1-300|default>] ' +
+      '[--server-alive-interval <0-3600|default>] [--server-alive-count-max <1-100|default>]'
+    if (parts.length < 4 || parts.length > 12 || parts.length % 2 !== 0) {
+      result.errorMessage = usage
       return result
     }
-    if (parts.length === 6) {
-      if (parts[4] !== '-J' || parts[5].length === 0) {
-        result.errorMessage = 'Usage: host ' + operation +
-          ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+    for (let index: number = 4; index < parts.length; index += 2) {
+      let option: string = parts[index]
+      let value: string = parts[index + 1]
+      if (value.length === 0) {
+        result.errorMessage = usage
         return result
       }
-      if (parts[5].includes(',') || parts[5].includes('://') || parts[5].includes('%') ||
-        parts[5].includes('$')) {
-        result.errorMessage = 'Unsupported ProxyJump expression: only one [user@]host[:port] is supported'
+      if (option === '-J') {
+        if (result.sshJump.length > 0) {
+          result.errorMessage = 'Duplicate host option: -J'
+          return result
+        }
+        if (value.includes(',') || value.includes('://') || value.includes('%') || value.includes('$')) {
+          result.errorMessage = 'Unsupported ProxyJump expression: only one [user@]host[:port] is supported'
+          return result
+        }
+        result.sshJump = value
+      } else if (option === '--connect-timeout') {
+        if (result.sshConnectTimeoutMs >= 0) {
+          result.errorMessage = 'Duplicate host option: --connect-timeout'
+          return result
+        }
+        if (value === 'default') {
+          result.sshConnectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+        } else {
+          let seconds: number = parseInt(value, 10)
+          if (!/^\d+$/.test(value) || isNaN(seconds) || seconds < 1 ||
+            seconds > MAX_SSH_CONNECT_TIMEOUT_SECONDS) {
+            result.errorMessage = 'Connect timeout must be whole seconds 1-' +
+              MAX_SSH_CONNECT_TIMEOUT_SECONDS.toString() + ', or default'
+            return result
+          }
+          result.sshConnectTimeoutMs = seconds * 1000
+        }
+      } else if (option === '--server-alive-interval') {
+        if (result.sshServerAliveIntervalSeconds >= 0) {
+          result.errorMessage = 'Duplicate host option: --server-alive-interval'
+          return result
+        }
+        if (value === 'default') {
+          result.sshServerAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+        } else {
+          let seconds: number = parseInt(value, 10)
+          if (!/^\d+$/.test(value) || isNaN(seconds) || seconds < 0 ||
+            seconds > MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS) {
+            result.errorMessage = 'Server alive interval must be whole seconds 0-' +
+              MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS.toString() + ', or default'
+            return result
+          }
+          result.sshServerAliveIntervalSeconds = seconds
+        }
+      } else if (option === '--server-alive-count-max') {
+        if (result.sshServerAliveCountMax >= 0) {
+          result.errorMessage = 'Duplicate host option: --server-alive-count-max'
+          return result
+        }
+        if (value === 'default') {
+          result.sshServerAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+        } else {
+          let count: number = parseInt(value, 10)
+          if (!/^\d+$/.test(value) || isNaN(count) || count < 1 ||
+            count > MAX_SSH_SERVER_ALIVE_COUNT_MAX) {
+            result.errorMessage = 'Server alive count max must be 1-' +
+              MAX_SSH_SERVER_ALIVE_COUNT_MAX.toString() + ', or default'
+            return result
+          }
+          result.sshServerAliveCountMax = count
+        }
+      } else {
+        result.errorMessage = 'Unsupported host option: ' + option
         return result
       }
-      result.sshJump = parts[5]
     }
     result.keyName = parts[2]
     if (!/^[A-Za-z0-9._-]+$/.test(result.keyName)) {
@@ -925,13 +1086,13 @@ export class CommandParser {
     let target: string = parts[3]
     let atIdx: number = target.lastIndexOf('@')
     if (atIdx <= 0) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+      result.errorMessage = usage
       return result
     }
     result.sshUser = target.substring(0, atIdx)
     let hostPort: string = target.substring(atIdx + 1)
     if (hostPort.length === 0) {
-      result.errorMessage = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] [-J <jump>]'
+      result.errorMessage = usage
       return result
     }
     if (hostPort.startsWith('[')) {

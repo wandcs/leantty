@@ -2,7 +2,7 @@
 
 > 状态：当前版本路线；采用滚动规划
 >
-> 更新日期：2026-08-21
+> 更新日期：2026-08-22
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -251,8 +251,9 @@ release branch。
 1.4 包含两个核心结果：启动优化与 OpenSSH ProxyJump。前者缩短
 用户点击 LeanTTY 图标，到本地终端能够正确接收并显示第一个字母的时间；后者让用户通过一个
 标准 SSH 跳板机进入无法直接访问的目标执行环境。`v1.4.0` 已由不可变签名标签、
-精确发布源、GitHub Release 和归档发布产物冻结；AppGallery 上传、审核和商店可获取
-状态只在维护者报告结果后记录，不由本地源码或 GitHub 发布推断。
+精确发布源、GitHub Release 和归档发布产物冻结；维护者于 2026-08-22 确认匹配的
+production APP 已通过 AppGallery 审核并正式上架。该商店状态来自维护者确认，不由
+本地源码或 GitHub 发布推断。
 启动窗口出现、页面加载或 ArkWeb ready 只用于定位分段耗时；ProxyJump 仅解析成功、跳板已连
 或目标 TCP 可达也不等于目标 TTY 已可用。
 
@@ -364,8 +365,19 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 - 合并后仍按用户结果和证据控制范围，不让 1.5 变成无限的 OpenSSH 兼容版本。
 
 命令边界与单项门禁见 [`design/command-system.md`](design/command-system.md)。该 milestone
-已进入 `next-work.md`，但当前只授权收敛首个最小产品切片；上述候选在逐项写入活动清单前
-均不授权实现。
+已进入 `next-work.md`。首个 `ConnectTimeout` 切片已经闭合。`AddressFamily` / `ssh -4/-6`
+完成标准基线后因当前物理 PC 缺少可重复的全局 IPv6/IPv6 SSH fixture 路径而暂缓，不能以
+parser 测试代替；第二个基本 SSH escape（`~.`、`~?`、`~I`）和第三个
+`ServerAliveInterval/ServerAliveCountMax` 半开检测切片已经闭合。UpdateHostKeys 的标准与
+russh `0.62.5` 能力门禁确认依赖只暴露公告回调，不提供 proof request/reply、session binding
+和验签所需公开 API；该候选按用户信任原则裁剪并记录重新进入条件。安全 `ssh -v` 已完成
+一次性入口、固定结构化事件、字段级脱敏，以及 direct/ProxyJump 的物理 ARM64 HarmonyOS PC
+验收。config import/export 已完成真实样本、文件授权、严格导入、round-trip、原子失败恢复和
+物理 PC 闭环。`ssh-keygen -c` 已完成 OpenSSH 行为、当前 Ed25519/RSA 格式、`ssh-key`
+0.7.0-rc.11 comment 能力、原子提交边界、错误恢复和物理 PC 验证。现有 OpenSSH ECDSA
+P-256/P-384/P-521 Identity 也已通过锁定库、加密格式、共同安全生命周期、签名 ARM64 构建和
+命名真机场景门禁，进入既有导入、认证、重启与删除路径；不新增 ECDSA 生成入口。1.5 已授权的
+产品开发范围至此闭合。正式 release preparation 仍须单独写入 `next-work.md` 后开始。
 
 ## 拟议 milestone：1.6 — 长任务注意力与返回路径
 

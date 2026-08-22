@@ -20,7 +20,8 @@ export enum SshClientEvent {
   DATA = 'DATA',
   CLOSE = 'CLOSE',
   ERROR = 'ERROR',
-  WARNING = 'WARNING'
+  WARNING = 'WARNING',
+  DIAGNOSTIC = 'DIAGNOSTIC'
 }
 
 export class AuthPromptInfo {
@@ -44,11 +45,19 @@ export class HostKeyChangedInfo {
   port: number = 22
 }
 
+export class SshDiagnosticInfo {
+  layer: string = ''
+  stage: string = ''
+  status: string = ''
+  reason: string = ''
+}
+
 export class SshClient {
   private static nextGeneration: number = 1
   private sessionId: string = ''
   private generation: number = 0
   private connected: boolean = false
+  private verbose: boolean = false
   private waitingAuth: boolean = false
   private pendingLayer: string = ''
   private pendingKnownHostLine: string = ''
@@ -83,6 +92,7 @@ export class SshClient {
       }
       this.privateKeyPath = options.privateKeyPath
       this.jumpPrivateKeyPath = options.jumpPrivateKeyPath
+      this.verbose = options.verbose
       let id: string = sshNative.sshConnect(
         options.host,
         options.port,
@@ -94,8 +104,14 @@ export class SshClient {
         options.jumpUsername,
         options.jumpPrivateKeyPath,
         options.jumpPrivateKeyRequiresPassphrase,
+        options.jumpConnectTimeoutMs,
+        options.jumpServerAliveIntervalSeconds,
+        options.jumpServerAliveCountMax,
         options.knownHostsPath,
         options.connectTimeoutMs,
+        options.serverAliveIntervalSeconds,
+        options.serverAliveCountMax,
+        options.verbose,
         this.generation,
         (event: NativeTransportEvent) => {
           this.handleNativeTransportEvent(event)
@@ -110,7 +126,8 @@ export class SshClient {
       this.sessionId = id
       this.logger.info('SSH connect initiated, sessionId=' + id)
     } catch (e) {
-      this.logger.error('sshConnect N-API failed: ' + e)
+      this.verbose = false
+      this.logger.error('sshConnect N-API failed')
       throw new Error('SSH connect failed: ' + e)
     }
   }
@@ -127,7 +144,7 @@ export class SshClient {
       this.logger.info('Auth password sent')
       return true
     } catch (e) {
-      this.logger.error('sshAuthPassword failed: ' + e)
+      this.logger.error('sshAuthPassword failed')
       this.reportError(new SshError(SshErrorCode.Internal, 'Password authentication request failed', '' + e, 'client'))
       return false
     }
@@ -147,7 +164,7 @@ export class SshClient {
       this.logger.info('Private-key passphrase sent')
       return true
     } catch (e) {
-      this.logger.error('sshAuthPrivateKeyPassphrase failed: ' + e)
+      this.logger.error('sshAuthPrivateKeyPassphrase failed')
       this.reportError(new SshError(SshErrorCode.Internal, 'Private-key passphrase request failed', '' + e, 'client'))
       return false
     }
@@ -168,7 +185,7 @@ export class SshClient {
       this.logger.info('Keyboard-interactive responses sent, roundId=' + roundId.toString())
       return true
     } catch (e) {
-      this.logger.error('sshAuthKeyboardInteractiveResponses failed: ' + e)
+      this.logger.error('sshAuthKeyboardInteractiveResponses failed')
       this.reportError(new SshError(SshErrorCode.Internal, 'Authentication response request failed', '' + e, 'client'))
       return false
     }
@@ -208,7 +225,7 @@ export class SshClient {
     try {
       sshNative.sshWrite(this.sessionId, data)
     } catch (e) {
-      this.logger.error('sshWrite failed: ' + e)
+      this.logger.error('sshWrite failed')
       this.handleWarning('Write request rejected: ' + e)
     }
   }
@@ -220,7 +237,7 @@ export class SshClient {
     try {
       sshNative.sshResize(this.sessionId, cols, rows)
     } catch (e) {
-      this.logger.error('sshResize failed: ' + e)
+      this.logger.error('sshResize failed')
       this.handleWarning('Resize request rejected: ' + e)
     }
   }
@@ -232,7 +249,7 @@ export class SshClient {
     try {
       sshNative.sshSetOutputPaused(this.sessionId, paused)
     } catch (e) {
-      this.logger.error('sshSetOutputPaused failed: ' + e)
+      this.logger.error('sshSetOutputPaused failed')
       this.handleWarning('Output flow-control request rejected: ' + e)
     }
   }
@@ -242,15 +259,17 @@ export class SshClient {
       return
     }
     try {
+      this.emitDiagnostic('target', 'session', 'cancelled')
       sshNative.sshDisconnect(this.sessionId)
     } catch (e) {
-      this.logger.error('sshDisconnect failed: ' + e)
+      this.logger.error('sshDisconnect failed')
     }
     this.connected = false
     this.waitingAuth = false
     this.pendingLayer = ''
     this.pendingAuthChallenge = null
     this.sessionId = ''
+    this.verbose = false
   }
 
   onEvent(callback: (event: SshClientEvent, data: string) => void): void {
@@ -306,8 +325,69 @@ export class SshClient {
     return info
   }
 
+  static parseDiagnosticInfo(event: NativeTransportEvent): SshDiagnosticInfo | null {
+    let layers: string[] = ['jump', 'target']
+    let stages: string[] = [
+      'connect', 'host_key', 'authentication', 'tunnel', 'channel', 'pty', 'shell',
+      'session', 'keepalive'
+    ]
+    let statuses: string[] = ['started', 'waiting', 'succeeded', 'failed', 'timed_out', 'cancelled', 'closed']
+    let reasons: string[] = [
+      '', 'name_resolution', 'tcp_refused', 'tcp_timeout', 'tcp_failed', 'ssh_version',
+      'key_exchange', 'transport_failed'
+    ]
+    if (layers.indexOf(event.layer) < 0 || stages.indexOf(event.stage) < 0 ||
+      statuses.indexOf(event.status) < 0 || reasons.indexOf(event.reason) < 0 ||
+      (event.reason.length > 0 && (event.stage !== 'connect' || event.status !== 'failed'))) {
+      return null
+    }
+    let info: SshDiagnosticInfo = new SshDiagnosticInfo()
+    info.layer = event.layer
+    info.stage = event.stage
+    info.status = event.status
+    info.reason = event.reason
+    return info
+  }
+
+  static safeRustEventLogLabel(event: string): string {
+    if (event === 'CONNECTED') { return 'rust event: CONNECTED' }
+    let first: number = event.indexOf(':')
+    if (first < 0) { return 'rust event: OTHER' }
+    let kind: string = event.substring(0, first)
+    let rest: string = event.substring(first + 1)
+    let colon: number = rest.indexOf(':')
+    let tab: number = rest.indexOf('\t')
+    let second: number = colon < 0 ? tab : (tab < 0 ? colon : Math.min(colon, tab))
+    let layer: string = second >= 0 ? rest.substring(0, second) : rest
+    let allowedKinds: string[] = [
+      'HOST_KEY_PROMPT', 'HOST_KEY_CHANGED', 'HOST_KEY_ERROR', 'CONNECT', 'AUTH',
+      'KEY_ERROR', 'CHANNEL', 'PTY', 'SHELL', 'RESIZE_ERROR', 'WRITE_ERROR', 'OUTPUT_METRICS'
+    ]
+    if (allowedKinds.indexOf(kind) < 0) { return 'rust event: OTHER' }
+    if (layer === 'jump' || layer === 'target') {
+      let prefix: string = 'rust event: ' + kind + ':' + layer
+      if (kind === 'HOST_KEY_PROMPT' || kind === 'HOST_KEY_CHANGED') {
+        return prefix + '\tredacted'
+      }
+      let detail: string = second >= 0 && rest.charAt(second) === ':' ? rest.substring(second + 1) : ''
+      if (kind === 'AUTH' && (detail === 'authentication was rejected' ||
+        detail === 'no supported authentication method is available')) {
+        return prefix + ':' + detail
+      }
+      let timeout: RegExp = /^connection timed out after \d+ ms$/
+      if (kind === 'CONNECT' && timeout.test(detail)) { return prefix + ':' + detail }
+      let channelTimeout: RegExp = /^direct-tcpip timed out after \d+ ms$/
+      if (kind === 'CHANNEL' && layer === 'jump' &&
+        (detail === 'direct-tcpip failed' || channelTimeout.test(detail))) {
+        return prefix + ':' + detail
+      }
+      return prefix
+    }
+    return 'rust event: ' + kind
+  }
+
   private handleRustEvent(event: string): void {
-    this.logger.info('rust event: ' + event)
+    this.logger.info(SshClient.safeRustEventLogLabel(event))
     if (event === 'CONNECTED') {
       this.waitingAuth = false
       this.pendingLayer = ''
@@ -353,22 +433,30 @@ export class SshClient {
       this.logger.warn('Rejected stale native auth event, kind=' + event.kind)
       return
     }
-    this.logger.info('native auth event kind=' + event.kind + ', layer=' + event.layer)
     if (event.layer !== 'jump' && event.layer !== 'target') {
       this.handleError('AUTH:Invalid authentication layer')
       return
     }
+    let safeAuthKinds: string[] = ['banner', 'password', 'private_key_passphrase', 'challenge']
+    if (safeAuthKinds.indexOf(event.kind) >= 0) {
+      this.logger.info('native auth event kind=' + event.kind + ', layer=' + event.layer)
+    } else {
+      this.logger.info('native auth event rejected')
+    }
     if (event.kind === 'banner') {
+      this.emitDiagnostic(event.layer, 'authentication', 'waiting')
       this.emitEvent(SshClientEvent.AUTH_BANNER, event.text)
       return
     }
     if (event.kind === 'password') {
+      this.emitDiagnostic(event.layer, 'authentication', 'waiting')
       this.pendingLayer = event.layer
       this.waitingAuth = true
       this.emitEvent(SshClientEvent.PASSWORD_PROMPT, '')
       return
     }
     if (event.kind === 'private_key_passphrase') {
+      this.emitDiagnostic(event.layer, 'authentication', 'waiting')
       this.pendingLayer = event.layer
       this.waitingAuth = true
       let keyPath: string = event.layer === 'jump' ? this.jumpPrivateKeyPath : this.privateKeyPath
@@ -376,6 +464,7 @@ export class SshClient {
       return
     }
     if (event.kind === 'challenge') {
+      this.emitDiagnostic(event.layer, 'authentication', 'waiting')
       if (!Number.isInteger(event.roundId) || event.roundId < 1) {
         this.handleError('AUTH:Invalid keyboard-interactive round')
         return
@@ -418,7 +507,36 @@ export class SshClient {
       }
       return
     }
+    if (event.kind === 'diagnostic') {
+      if (!this.verbose) { return }
+      let info: SshDiagnosticInfo | null = SshClient.parseDiagnosticInfo(event)
+      if (info === null) {
+        this.logger.warn('Rejected invalid SSH diagnostic event')
+        return
+      }
+      this.logDiagnostic(info)
+      this.emitEvent(SshClientEvent.DIAGNOSTIC, JSON.stringify(info))
+      return
+    }
     this.handleError('CONNECT:Invalid native SSH transport event')
+  }
+
+  private emitDiagnostic(layer: string, stage: string, status: string): void {
+    if (!this.verbose) { return }
+    let nativeEvent: NativeTransportEvent = {
+      kind: 'diagnostic', data: new Uint8Array(0), result: '', layer: layer, stage: stage, status: status,
+      reason: ''
+    }
+    let info: SshDiagnosticInfo | null = SshClient.parseDiagnosticInfo(nativeEvent)
+    if (info !== null) {
+      this.logDiagnostic(info)
+      this.emitEvent(SshClientEvent.DIAGNOSTIC, JSON.stringify(info))
+    }
+  }
+
+  private logDiagnostic(info: SshDiagnosticInfo): void {
+    this.logger.info('SSH diagnostic layer=' + info.layer + ', stage=' + info.stage +
+      ', status=' + info.status + ', reason=' + (info.reason.length > 0 ? info.reason : 'none'))
   }
 
   private emitEvent(event: SshClientEvent, data: string): void {
@@ -432,7 +550,7 @@ export class SshClient {
   }
 
   private handleWarning(detail: string): void {
-    this.logger.warn('Recoverable SSH warning: ' + detail)
+    this.logger.warn('Recoverable SSH warning')
     this.emitEvent(SshClientEvent.WARNING, detail)
   }
 
@@ -442,6 +560,7 @@ export class SshClient {
     this.pendingLayer = ''
     this.pendingAuthChallenge = null
     this.sessionId = ''
+    this.verbose = false
     this.emitEvent(SshClientEvent.CLOSE, exitCode.toString())
   }
 
@@ -451,6 +570,7 @@ export class SshClient {
     this.pendingLayer = ''
     this.pendingAuthChallenge = null
     this.sessionId = ''
+    this.verbose = false
     let code: SshErrorCode = SshErrorCode.Internal
     let detail: string = errorStr
     if (errorStr.startsWith('CONNECT:')) {

@@ -4,6 +4,8 @@ import interactionFixesTest from './InteractionFixes.test';
 import keySafetyTest from './KeySafety.test';
 import durableAssetFormatTest from './DurableAssetFormat.test';
 import sshEnvironmentPreparationTest from './SshEnvironmentPreparation.test';
+import sshConfigImportTest from './SshConfigImport.test';
+import keyCommentCommitTest from './KeyCommentCommit.test';
 
 export default function testsuite() {
   paneModelTest();
@@ -12,4 +14,6 @@ export default function testsuite() {
   keySafetyTest();
   durableAssetFormatTest();
   sshEnvironmentPreparationTest();
+  sshConfigImportTest();
+  keyCommentCommitTest();
 }

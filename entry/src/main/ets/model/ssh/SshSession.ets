@@ -1,4 +1,9 @@
 import { SshSessionState } from '../../common/types/TerminalTypes'
+import {
+  DEFAULT_SSH_CONNECT_TIMEOUT_MS,
+  DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
+  DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+} from '../../common/types/SshTypes'
 
 export { SshSessionState }
 
@@ -14,6 +19,12 @@ export class SshSession {
   private jumpPort: number = 22
   private jumpUsername: string = ''
   private jumpIdentityFile: string = ''
+  private jumpConnectTimeoutMs: number = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+  private jumpServerAliveIntervalSeconds: number = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+  private jumpServerAliveCountMax: number = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+  private connectTimeoutMs: number = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+  private serverAliveIntervalSeconds: number = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+  private serverAliveCountMax: number = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
   private errorMessage: string = ''
   private exitCode: number = -1
 
@@ -104,6 +115,38 @@ export class SshSession {
   setJumpIdentityFile(identityFile: string): void {
     this.jumpIdentityFile = identityFile
   }
+
+  getJumpConnectTimeoutMs(): number {
+    return this.jumpConnectTimeoutMs
+  }
+
+  setJumpConnectTimeoutMs(connectTimeoutMs: number): void {
+    this.jumpConnectTimeoutMs = connectTimeoutMs
+  }
+
+  getJumpServerAliveIntervalSeconds(): number { return this.jumpServerAliveIntervalSeconds }
+
+  setJumpServerAliveIntervalSeconds(seconds: number): void { this.jumpServerAliveIntervalSeconds = seconds }
+
+  getJumpServerAliveCountMax(): number { return this.jumpServerAliveCountMax }
+
+  setJumpServerAliveCountMax(count: number): void { this.jumpServerAliveCountMax = count }
+
+  getConnectTimeoutMs(): number {
+    return this.connectTimeoutMs
+  }
+
+  setConnectTimeoutMs(connectTimeoutMs: number): void {
+    this.connectTimeoutMs = connectTimeoutMs
+  }
+
+  getServerAliveIntervalSeconds(): number { return this.serverAliveIntervalSeconds }
+
+  setServerAliveIntervalSeconds(seconds: number): void { this.serverAliveIntervalSeconds = seconds }
+
+  getServerAliveCountMax(): number { return this.serverAliveCountMax }
+
+  setServerAliveCountMax(count: number): void { this.serverAliveCountMax = count }
 
   getErrorMessage(): string {
     return this.errorMessage

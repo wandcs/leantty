@@ -17,6 +17,10 @@ export interface TransportEvent {
   kind: string
   data: Uint8Array
   result: string
+  layer: string
+  stage: string
+  status: string
+  reason: string
 }
 export interface FileTransferEvent {
   kind: string
@@ -33,7 +37,11 @@ export declare function sshConnect(
   privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
   jumpHost: string, jumpPort: number, jumpUser: string,
   jumpPrivateKeyPath: string, jumpPrivateKeyRequiresPassphrase: boolean,
-  knownHostsPath: string, connectTimeoutMs: number, generation: number,
+  jumpConnectTimeoutMs: number,
+  jumpServerAliveIntervalSeconds: number, jumpServerAliveCountMax: number,
+  knownHostsPath: string, connectTimeoutMs: number,
+  serverAliveIntervalSeconds: number, serverAliveCountMax: number,
+  verbose: boolean, generation: number,
   onTransport: (event: TransportEvent) => void,
   onControl: (event: string) => void,
   onAuth: (event: AuthEvent) => void
@@ -60,7 +68,8 @@ export declare function sshDisconnect(sessionId: string): void
 export declare function sshStartFileTransfer(
   direction: string, host: string, port: number, user: string,
   privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
-  knownHostsPath: string, connectTimeoutMs: number, generation: number,
+  knownHostsPath: string, connectTimeoutMs: number,
+  serverAliveIntervalSeconds: number, serverAliveCountMax: number, generation: number,
   paneId: string, remotePath: string, localPath: string, localDescriptor: number,
   onControl: (event: string) => void,
   onAuth: (event: AuthEvent) => void,
@@ -68,6 +77,8 @@ export declare function sshStartFileTransfer(
 ): string
 export declare function sshGenerateKeyPair(algorithm: string, passphrase: string, outputDir: string, fileName: string, comment: string): Promise<string>
 export declare function sshChangePrivateKeyPassphrase(keyPath: string, oldPassphrase: string, newPassphrase: string): void
+export declare function sshReadKeyComment(keyPath: string, passphrase: string): string
+export declare function sshChangeKeyComment(keyPath: string, passphrase: string, newComment: string): string
 export declare function sshExportKeyPair(privatePath: string, publicPath: string, outputDir: string, fileName: string): void
 export declare function sshReadPublicKey(keyPath: string): string
 export declare function sshInspectPrivateKey(keyPath: string): string

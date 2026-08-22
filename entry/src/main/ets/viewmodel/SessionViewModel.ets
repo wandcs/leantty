@@ -1,4 +1,11 @@
-import { AuthChallengeInfo, AuthPromptInfo, HostKeyChangedInfo, SshClient, SshClientEvent } from '../model/ssh/SshClient'
+import {
+  AuthChallengeInfo,
+  AuthPromptInfo,
+  HostKeyChangedInfo,
+  SshClient,
+  SshClientEvent,
+  SshDiagnosticInfo
+} from '../model/ssh/SshClient'
 import util from '@ohos.util'
 import { SshConnectOptions } from '../common/types/SshTypes'
 import { SshSession, SshSessionState } from '../model/ssh/SshSession'
@@ -20,6 +27,12 @@ import { DurableStateManager } from '../model/persistence/DurableStateManager'
 import { TerminalInputAction, TerminalInputActionKind, TerminalInputParser } from '../model/terminal/TerminalInputParser'
 import { TerminalMode } from '../common/types/TerminalTypes'
 import { ConnectionControl } from '../model/ssh/ConnectionControl'
+import {
+  SshEscapeEvent,
+  SshEscapeEventKind,
+  SshEscapeParser,
+  SshEscapeResult
+} from '../model/ssh/SshEscapeParser'
 import { TerminalSurfaceController } from '../model/terminal/TerminalSurfaceController'
 import { LocalCommandLine } from '../model/terminal/LocalCommandLine'
 import { LocalCommandOutput } from '../model/terminal/LocalCommandOutput'
@@ -56,6 +69,12 @@ enum KeyPassphraseChangeStage {
   CONFIRM_NEW_PASSPHRASE = 3
 }
 
+enum KeyCommentChangeStage {
+  NONE = 0,
+  PASSPHRASE = 1,
+  COMMENT = 2
+}
+
 export class SessionViewModel {
   private session: SshSession = new SshSession()
   private sshClient: SshClient = new SshClient()
@@ -71,6 +90,7 @@ export class SessionViewModel {
   private logger: Logger = new Logger('SessionViewModel')
 
   private mode: TerminalMode = TerminalMode.IDLE
+  private sshEscapeParser: SshEscapeParser = new SshEscapeParser()
   private commandLine: LocalCommandLine = new LocalCommandLine()
   private passwordBuffer: string = ''
   private hostKeyBuffer: string = ''
@@ -86,6 +106,11 @@ export class SessionViewModel {
   private oldKeyPassphrase: string = ''
   private newKeyPassphrase: string = ''
   private confirmedKeyPassphrase: string = ''
+  private keyCommentChangeStage: KeyCommentChangeStage = KeyCommentChangeStage.NONE
+  private keyCommentChangeKeyName: string = ''
+  private keyCommentPassphrase: string = ''
+  private currentKeyComment: string = ''
+  private newKeyComment: string = ''
   private authChallenge: AuthChallengeInfo | null = null
   private authPromptIndex: number = 0
   private authResponseBuffer: string = ''
@@ -260,6 +285,12 @@ export class SessionViewModel {
     this.session.setJumpPort(request.jumpPort)
     this.session.setJumpUsername(request.jumpUsername)
     this.session.setJumpIdentityFile(request.jumpIdentityFile)
+    this.session.setJumpConnectTimeoutMs(request.jumpConnectTimeoutMs)
+    this.session.setJumpServerAliveIntervalSeconds(request.jumpServerAliveIntervalSeconds)
+    this.session.setJumpServerAliveCountMax(request.jumpServerAliveCountMax)
+    this.session.setConnectTimeoutMs(request.connectTimeoutMs)
+    this.session.setServerAliveIntervalSeconds(request.serverAliveIntervalSeconds)
+    this.session.setServerAliveCountMax(request.serverAliveCountMax)
     this.notifyStateChange()
 
     try {
@@ -277,7 +308,14 @@ export class SessionViewModel {
       opts.jumpHost = request.jumpHost
       opts.jumpPort = request.jumpPort
       opts.jumpUsername = request.jumpUsername
+      opts.jumpConnectTimeoutMs = request.jumpConnectTimeoutMs
+      opts.jumpServerAliveIntervalSeconds = request.jumpServerAliveIntervalSeconds
+      opts.jumpServerAliveCountMax = request.jumpServerAliveCountMax
       opts.knownHostsPath = this.knownHostsPath
+      opts.connectTimeoutMs = request.connectTimeoutMs
+      opts.serverAliveIntervalSeconds = request.serverAliveIntervalSeconds
+      opts.serverAliveCountMax = request.serverAliveCountMax
+      opts.verbose = request.verbose
       if (!this.pendingKeypush) {
         let key: KeyPairInfo | null = this.resolvePrivateKey(request.identityFile)
         if (key !== null) {
@@ -293,12 +331,12 @@ export class SessionViewModel {
         }
       }
       await this.sshClient.connect(opts)
-      this.logger.info('SSH connect initiated: ' + request.host)
+      this.logger.info('SSH connect initiated')
     } catch (e) {
       this.session.setState(SshSessionState.FAILED)
       this.session.setErrorMessage('' + e)
       this.setMode(TerminalMode.IDLE)
-      this.logger.warn('SSH connection start failed: ' + e)
+      this.logger.warn('SSH connection start failed')
       this.finishSshTerminalOwnership(() => {
         this.writeError('The SSH connection could not start.',
           'Check the Host, network and credentials, then try again.')
@@ -328,6 +366,11 @@ export class SessionViewModel {
     if (cancelledKeyPassphraseChange) {
       this.logger.info('KEY_PASSPHRASE_CHANGE result=disconnected')
     }
+    let cancelledKeyCommentChange: boolean = this.keyCommentChangeStage !== KeyCommentChangeStage.NONE
+    this.clearKeyCommentChangeState()
+    if (cancelledKeyCommentChange) {
+      this.logger.info('KEY_COMMENT_CHANGE result=disconnected')
+    }
     this.setMode(TerminalMode.IDLE)
     this.releaseDisconnectedFlowControl()
     this.notifyStateChange()
@@ -346,6 +389,12 @@ export class SessionViewModel {
     request.jumpPort = this.session.getJumpPort()
     request.jumpUsername = this.session.getJumpUsername()
     request.jumpIdentityFile = this.session.getJumpIdentityFile()
+    request.jumpConnectTimeoutMs = this.session.getJumpConnectTimeoutMs()
+    request.jumpServerAliveIntervalSeconds = this.session.getJumpServerAliveIntervalSeconds()
+    request.jumpServerAliveCountMax = this.session.getJumpServerAliveCountMax()
+    request.connectTimeoutMs = this.session.getConnectTimeoutMs()
+    request.serverAliveIntervalSeconds = this.session.getServerAliveIntervalSeconds()
+    request.serverAliveCountMax = this.session.getServerAliveCountMax()
     let previousClient: SshClient = this.sshClient
     previousClient.onEvent(() => {})
     previousClient.onData(() => {})
@@ -425,6 +474,10 @@ export class SessionViewModel {
       this.completionEngine.finishEditing()
       this.completionRenderer.reset()
     }
+    if (this.mode !== newMode && (this.mode === TerminalMode.CONNECTED ||
+      newMode === TerminalMode.CONNECTED)) {
+      this.sshEscapeParser.reset()
+    }
     this.mode = newMode
     if (this.terminalSurface !== null) {
       this.terminalSurface.setInputMasked(SessionViewModel.isSecretInputMode(newMode))
@@ -441,7 +494,8 @@ export class SessionViewModel {
     return mode === TerminalMode.PASSWORD_INPUT ||
       mode === TerminalMode.KEY_PASSPHRASE_INPUT ||
       mode === TerminalMode.AUTH_CHALLENGE_INPUT ||
-      mode === TerminalMode.KEY_PASSPHRASE_CHANGE_INPUT
+      mode === TerminalMode.KEY_PASSPHRASE_CHANGE_INPUT ||
+      mode === TerminalMode.KEY_COMMENT_PASSPHRASE_INPUT
   }
 
   private onSshEvent(event: SshClientEvent, data: string): void {
@@ -493,7 +547,10 @@ export class SessionViewModel {
         this.onSshError(data)
         break
       case SshClientEvent.WARNING:
-        this.logger.warn('SSH warning: ' + data)
+        this.logger.warn('SSH warning')
+        break
+      case SshClientEvent.DIAGNOSTIC:
+        this.writeTerminal('\r\n' + SessionViewModel.formatSshDiagnostic(data) + '\r\n')
         break
     }
   }
@@ -505,7 +562,7 @@ export class SessionViewModel {
     }
     this.session.setState(SshSessionState.CONNECTED)
     let connectedTitle: string = this.session.getConnectionTitle()
-    this.logger.info('Connected tab title=' + connectedTitle)
+    this.logger.info('SSH session connected')
     this.notifyTitleChange(connectedTitle)
     this.notifyStateChange()
     this.sshClient.resize(this.lastCols, this.lastRows)
@@ -633,7 +690,7 @@ export class SessionViewModel {
     }
     this.clearAuthChallenge()
     if (this.pendingKeypush) {
-      this.logger.warn('Key installation SSH error: ' + errorDetail)
+      this.logger.warn('Key installation SSH error')
       this.failKeypush('Key installation failed.\r\nCheck the Host, network and credentials, then try again.')
       return
     }
@@ -642,7 +699,7 @@ export class SessionViewModel {
     this.session.setState(SshSessionState.FAILED)
     this.session.setErrorMessage(errorDetail)
     this.setMode(TerminalMode.IDLE)
-    this.logger.warn('SSH error: ' + errorDetail)
+    this.logger.warn(SessionViewModel.safeSshErrorLogLabel(errorDetail))
     this.finishSshTerminalOwnership(() => {
       this.writeError(SessionViewModel.sshFailureTitle(errorDetail),
         'Check the Host, network and credentials, then try again.')
@@ -716,6 +773,56 @@ export class SessionViewModel {
     return 'The SSH connection failed.'
   }
 
+  static formatSshDiagnostic(data: string): string {
+    let record: Record<string, string>
+    try {
+      record = JSON.parse(data)
+    } catch (e) {
+      return LocalCommandOutput.status('SSH', 'Diagnostic event rejected.')
+    }
+    let info: SshDiagnosticInfo = new SshDiagnosticInfo()
+    info.layer = '' + record['layer']
+    info.stage = '' + record['stage']
+    info.status = '' + record['status']
+    info.reason = record['reason'] === undefined ? '' : '' + record['reason']
+    let layer: string = info.layer === 'jump' ? 'Jump' : (info.layer === 'target' ? 'Target' : '')
+    let stage: string = ''
+    if (info.stage === 'connect') { stage = 'transport' }
+    else if (info.stage === 'host_key') { stage = 'host key verification' }
+    else if (info.stage === 'authentication') { stage = 'authentication' }
+    else if (info.stage === 'tunnel') { stage = 'jump tunnel' }
+    else if (info.stage === 'channel') { stage = 'session channel' }
+    else if (info.stage === 'pty') { stage = 'PTY request' }
+    else if (info.stage === 'shell') { stage = 'shell request' }
+    else if (info.stage === 'session') { stage = 'session' }
+    else if (info.stage === 'keepalive') { stage = 'keepalive' }
+    let status: string = info.status.replace('_', ' ')
+    let fixedFailure: string = ''
+    if (info.reason === 'name_resolution') { fixedFailure = 'name resolution: failed.' }
+    else if (info.reason === 'tcp_refused') { fixedFailure = 'TCP connection: refused.' }
+    else if (info.reason === 'tcp_timeout') { fixedFailure = 'TCP connection: timed out.' }
+    else if (info.reason === 'tcp_failed') { fixedFailure = 'TCP connection: failed.' }
+    else if (info.reason === 'ssh_version') { fixedFailure = 'SSH version exchange: failed.' }
+    else if (info.reason === 'key_exchange') { fixedFailure = 'key exchange: failed.' }
+    else if (info.reason === 'transport_failed') { fixedFailure = 'transport: failed.' }
+    if (fixedFailure.length > 0 && info.stage === 'connect' && info.status === 'failed' && layer.length > 0) {
+      return LocalCommandOutput.status('SSH', layer + ' ' + fixedFailure)
+    }
+    if (layer.length === 0 || stage.length === 0 ||
+      ['started', 'waiting', 'succeeded', 'failed', 'timed out', 'cancelled', 'closed'].indexOf(status) < 0 ||
+      info.reason.length > 0) {
+      return LocalCommandOutput.status('SSH', 'Diagnostic event rejected.')
+    }
+    return LocalCommandOutput.status('SSH', layer + ' ' + stage + ': ' + status + '.')
+  }
+
+  static safeSshErrorLogLabel(errorDetail: string): string {
+    if (errorDetail === 'SSH keepalive timed out') { return 'SSH error: SSH keepalive timed out' }
+    let safeFailures: RegExp = /^(jump|target):(authentication was rejected|no supported authentication method is available|connection timed out after \d+ ms|direct-tcpip failed|direct-tcpip timed out after \d+ ms)$/
+    if (safeFailures.test(errorDetail)) { return 'SSH error: ' + errorDetail }
+    return 'SSH error'
+  }
+
   private notifyStateChange(): void {
     if (this.onStateChange !== null) {
       this.onStateChange(this.session.getState())
@@ -766,13 +873,17 @@ export class SessionViewModel {
       this.cancelKeyPassphraseChange()
       return
     }
+    if ((this.mode === TerminalMode.KEY_COMMENT_PASSPHRASE_INPUT ||
+      this.mode === TerminalMode.KEY_COMMENT_INPUT) && data === '\u0003') {
+      this.cancelKeyCommentChange()
+      return
+    }
     if (ConnectionControl.shouldInterrupt(this.mode, data)) {
       this.cancelPendingConnection()
       return
     }
     if (this.mode === TerminalMode.CONNECTED) {
-      this.observePerfInput(data)
-      this.sshClient.write(data)
+      this.handleConnectedInput(data)
       return
     }
 
@@ -806,9 +917,66 @@ export class SessionViewModel {
       return
     }
 
+    if (this.mode === TerminalMode.KEY_COMMENT_PASSPHRASE_INPUT ||
+      this.mode === TerminalMode.KEY_COMMENT_INPUT) {
+      this.handleKeyCommentChangeInput(data)
+      return
+    }
+
     if (this.mode === TerminalMode.CONNECTING) {
       return
     }
+  }
+
+  private handleConnectedInput(data: string): void {
+    let result: SshEscapeResult = this.sshEscapeParser.consume(data)
+    for (let index = 0; index < result.events.length; index++) {
+      let event: SshEscapeEvent = result.events[index]
+      if (event.kind === SshEscapeEventKind.REMOTE_DATA) {
+        this.observePerfInput(event.data)
+        this.sshClient.write(event.data)
+      } else if (event.kind === SshEscapeEventKind.DISCONNECT) {
+        this.logger.info('SSH escape action=disconnect')
+        this.sshClient.disconnect()
+        return
+      } else if (event.kind === SshEscapeEventKind.HELP) {
+        this.writeTerminal('\r\nSupported SSH escapes (after a newline):\r\n' +
+          '  ~.  Disconnect\r\n' +
+          '  ~?  Show this help\r\n' +
+          '  ~I  Show connection information\r\n' +
+          '  ~~  Send a literal ~\r\n')
+        this.logger.info('SSH escape action=help')
+      } else if (event.kind === SshEscapeEventKind.CONNECTION_INFO) {
+        this.writeTerminal('\r\n' + this.sshConnectionInfo() + '\r\n')
+        this.logger.info('SSH escape action=connection-info')
+      }
+    }
+  }
+
+  private sshConnectionInfo(): string {
+    let targetHost: string = this.session.getDisplayHost().length > 0 ?
+      this.session.getDisplayHost() : this.session.getHostname()
+    let jumpHost: string = this.session.getJumpDisplayHost().length > 0 ?
+      this.session.getJumpDisplayHost() : this.session.getJumpHostname()
+    return SessionViewModel.formatSshConnectionInfo(
+      this.session.getUsername(), targetHost, this.session.getPort(),
+      this.session.getJumpUsername(), jumpHost, this.session.getJumpPort())
+  }
+
+  static formatSshConnectionInfo(targetUser: string, targetHost: string, targetPort: number,
+    jumpUser: string = '', jumpHost: string = '', jumpPort: number = 22): string {
+    let text: string = 'Target: ' + SessionViewModel.formatSshDisplayEndpoint(
+      targetUser, targetHost, targetPort)
+    if (jumpHost.length > 0) {
+      text += '\r\nJump: ' + SessionViewModel.formatSshDisplayEndpoint(jumpUser, jumpHost, jumpPort)
+    }
+    return text + '\r\nState: connected'
+  }
+
+  private static formatSshDisplayEndpoint(user: string, host: string, port: number): string {
+    let endpoint: string = host.indexOf(':') >= 0 ? '[' + host + ']:' + port.toString() :
+      host + ':' + port.toString()
+    return SessionViewModel.terminalSafeText(user + '@' + endpoint)
   }
 
   private handleIdleInput(data: string): void {
@@ -942,6 +1110,18 @@ export class SessionViewModel {
     }
   }
 
+  private handleKeyCommentChangeInput(data: string): void {
+    if (this.keyCommentChangeStage === KeyCommentChangeStage.PASSPHRASE) {
+      this.handleBufferedInput(data, this.keyCommentPassphrase, (value: string) => {
+        this.keyCommentPassphrase = value
+      }, () => { this.submitKeyCommentPassphrase() }, null)
+    } else if (this.keyCommentChangeStage === KeyCommentChangeStage.COMMENT) {
+      this.handleBufferedInput(data, this.newKeyComment, (value: string) => {
+        this.newKeyComment = value
+      }, () => { this.submitKeyCommentChange() }, '', (code: number): boolean => code >= 32 && code !== 127)
+    }
+  }
+
   private handleBufferedInput(
     data: string,
     buffer: string,
@@ -966,7 +1146,16 @@ export class SessionViewModel {
           }
         }
       } else if (action.kind === TerminalInputActionKind.TEXT) {
-        if (textFilter !== undefined && !textFilter(action.text.charCodeAt(0))) { continue }
+        let accepted: boolean = true
+        if (textFilter !== undefined) {
+          for (let textIndex: number = 0; textIndex < action.text.length; textIndex++) {
+            if (!textFilter(action.text.charCodeAt(textIndex))) {
+              accepted = false
+              break
+            }
+          }
+        }
+        if (!accepted) { continue }
         currentBuffer += action.text
         setBuffer(currentBuffer)
         if (echo !== null) {
@@ -1069,7 +1258,7 @@ export class SessionViewModel {
         await this.ensureSshEnvironment()
       } catch (e) {
         this.sshEnvironmentCommandPending = false
-        this.logger.warn('SSH environment preparation failed: ' + e)
+        this.logger.warn('SSH environment preparation failed')
         this.writeError('The SSH environment is unavailable.',
           'Try the command again. If the problem continues, restart LeanTTY.')
         return
@@ -1126,7 +1315,7 @@ export class SessionViewModel {
 
   private beginSshEnvironmentPreparation(): void {
     this.ensureSshEnvironment().catch((e: Error) => {
-      this.logger.warn('Background SSH environment preparation failed: ' + e)
+      this.logger.warn('Background SSH environment preparation failed')
     })
   }
 
@@ -1205,6 +1394,9 @@ export class SessionViewModel {
       options.port = command.port
       options.username = command.username
       options.knownHostsPath = this.knownHostsPath
+      options.connectTimeoutMs = command.connectTimeoutMs
+      options.serverAliveIntervalSeconds = command.serverAliveIntervalSeconds
+      options.serverAliveCountMax = command.serverAliveCountMax
       options.paneId = this.paneId
       options.remotePath = command.remotePath
       if (key !== null) {
@@ -1296,7 +1488,7 @@ export class SessionViewModel {
         break
       case SshClientEvent.ERROR:
         this.transferControlFailureCode = 'HOST_KEY_ERROR'
-        this.logger.warn('Transfer authentication control error: ' + data)
+        this.logger.warn('Transfer authentication control error')
         break
       default:
         break
@@ -1813,6 +2005,9 @@ export class SessionViewModel {
       writeError: (msg: string) => { this.writeError(msg) },
       writeOutput: (text: string) => { this.writeTerminal(text) },
       beginKeyPassphraseChange: (keyName: string) => { this.beginKeyPassphraseChange(keyName) },
+      beginKeyCommentChange: (keyName: string, hasPassphrase: boolean) => {
+        this.beginKeyCommentChange(keyName, hasPassphrase)
+      },
       showTopLevelHelp: (helpText: string) => { this.showTopLevelHelp(helpText) },
       confirmKeyDelete: (name: string, fingerprint: string, onConfirm: () => void, onCancel: () => void) => {
         if (this.onConfirmKeyDelete === null) {
@@ -1939,6 +2134,125 @@ export class SessionViewModel {
     this.clearKeyPassphraseChangeSecrets()
     this.keyPassphraseChangeKeyName = ''
     this.keyPassphraseChangeStage = KeyPassphraseChangeStage.NONE
+  }
+
+  private beginKeyCommentChange(keyName: string, hasPassphrase: boolean): void {
+    this.clearKeyCommentChangeState()
+    this.keyCommentChangeKeyName = keyName
+    if (hasPassphrase) {
+      this.keyCommentChangeStage = KeyCommentChangeStage.PASSPHRASE
+      this.setMode(TerminalMode.KEY_COMMENT_PASSPHRASE_INPUT)
+      this.logger.info('KEY_COMMENT_CHANGE stage=passphrase')
+      this.writeTerminal('\r\nEnter passphrase: ')
+      return
+    }
+    if (!this.loadCurrentKeyComment('')) {
+      this.clearKeyCommentChangeState()
+      this.setMode(TerminalMode.IDLE)
+      this.logger.warn('KEY_COMMENT_CHANGE result=failure reason=read')
+      this.writeError('The key comment could not be read.',
+        'Check the key pair and try again.')
+      return
+    }
+    this.beginKeyCommentTextInput()
+  }
+
+  private submitKeyCommentPassphrase(): void {
+    if (this.mode !== TerminalMode.KEY_COMMENT_PASSPHRASE_INPUT ||
+      this.keyCommentChangeStage !== KeyCommentChangeStage.PASSPHRASE) {
+      return
+    }
+    if (!this.loadCurrentKeyComment(this.keyCommentPassphrase)) {
+      if (this.mode !== TerminalMode.KEY_COMMENT_PASSPHRASE_INPUT) {
+        return
+      }
+      this.keyCommentPassphrase = ''
+      this.logger.info('KEY_COMMENT_CHANGE result=passphrase-rejected stage=passphrase')
+      this.writeTerminal('\r\n' + LocalCommandOutput.warning(
+        'The passphrase is incorrect. No changes were made.') + '\r\nEnter passphrase: ')
+      return
+    }
+    this.beginKeyCommentTextInput()
+  }
+
+  private loadCurrentKeyComment(passphrase: string): boolean {
+    if (this.context === null) {
+      this.clearKeyCommentChangeState()
+      this.setMode(TerminalMode.IDLE)
+      this.logger.warn('KEY_COMMENT_CHANGE result=failure reason=context')
+      this.writeError('The key comment could not be updated.',
+        'Close and reopen the Pane, then try again.')
+      return false
+    }
+    try {
+      this.currentKeyComment = SshKeyManager.readKeyComment(
+        this.context, this.keyCommentChangeKeyName, passphrase)
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+
+  private beginKeyCommentTextInput(): void {
+    this.keyCommentChangeStage = KeyCommentChangeStage.COMMENT
+    this.newKeyComment = ''
+    this.setMode(TerminalMode.KEY_COMMENT_INPUT)
+    this.logger.info('KEY_COMMENT_CHANGE stage=comment')
+    let displayed: string = this.currentKeyComment.length > 0 ?
+      SessionViewModel.terminalSafeText(this.currentKeyComment) : '<none>'
+    this.writeTerminal('\r\nCurrent comment: ' + displayed +
+      '\r\nNew comment (leave empty to remove): ')
+  }
+
+  private submitKeyCommentChange(): void {
+    if (this.mode !== TerminalMode.KEY_COMMENT_INPUT ||
+      this.keyCommentChangeStage !== KeyCommentChangeStage.COMMENT) {
+      return
+    }
+    if (this.context === null) {
+      this.clearKeyCommentChangeState()
+      this.setMode(TerminalMode.IDLE)
+      this.logger.warn('KEY_COMMENT_CHANGE result=failure reason=context')
+      this.writeError('The key comment could not be updated.',
+        'Close and reopen the Pane, then try again.')
+      return
+    }
+    let context: common.Context = this.context
+    let keyName: string = this.keyCommentChangeKeyName
+    let passphrase: string = this.keyCommentPassphrase
+    let newComment: string = this.newKeyComment
+    this.clearKeyCommentChangeState()
+    try {
+      SshKeyManager.changeKeyComment(context, keyName, passphrase, newComment)
+      this.setMode(TerminalMode.IDLE)
+      this.logger.info('KEY_COMMENT_CHANGE result=success')
+      this.writeTerminal('\r\n' + LocalCommandOutput.success('Comment updated for ' +
+        SessionViewModel.terminalSafeText(keyName) + '.') + '\r\n' + LocalCommandOutput.prompt())
+    } catch (e) {
+      this.setMode(TerminalMode.IDLE)
+      this.logger.warn('KEY_COMMENT_CHANGE result=failure reason=commit')
+      this.logger.warn('Key comment change detail: ' + e)
+      this.writeError('The key comment could not be updated.',
+        'Use at most 1023 UTF-8 bytes, without control characters, then try again.')
+    }
+    passphrase = ''
+    newComment = ''
+  }
+
+  private cancelKeyCommentChange(): void {
+    this.clearKeyCommentChangeState()
+    this.setMode(TerminalMode.IDLE)
+    this.logger.info('KEY_COMMENT_CHANGE result=cancelled')
+    this.writeTerminal('^C')
+    this.writePrompt()
+  }
+
+  private clearKeyCommentChangeState(): void {
+    this.keyCommentPassphrase = ''
+    this.currentKeyComment = ''
+    this.newKeyComment = ''
+    this.keyCommentChangeKeyName = ''
+    this.keyCommentChangeStage = KeyCommentChangeStage.NONE
   }
 
   static buildKeypushMarker(): string {

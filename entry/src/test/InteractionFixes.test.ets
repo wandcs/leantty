@@ -9,6 +9,12 @@ import {
 } from '../main/ets/model/command/CommandParser'
 import { SshConfig } from '../main/ets/model/ssh/SshConfig'
 import { SshClient } from '../main/ets/model/ssh/SshClient'
+import {
+  SshEscapeEvent,
+  SshEscapeEventKind,
+  SshEscapeParser,
+  SshEscapeResult
+} from '../main/ets/model/ssh/SshEscapeParser'
 import { BridgeMessage, BridgeProtocol } from '../main/ets/model/bridge/BridgeProtocol'
 import { InteractionPolicy, WorkspaceNavigationAction } from '../main/ets/model/ui/InteractionPolicy'
 import { KeyCodeMap } from '../main/ets/common/constants/KeyCodeMap'
@@ -62,6 +68,45 @@ export default function interactionFixesTest() {
       expect(SshClient.isCurrentAuthEvent('41', 7, '42', 7)).assertEqual(false)
       expect(SshClient.isCurrentAuthEvent('41', 7, '41', 8)).assertEqual(false)
       expect(SshClient.isCurrentAuthEvent('', 7, '', 7)).assertEqual(false)
+    })
+
+    it('parsesOneShotSafeSshVerboseWithoutChangingTheSavedHost', 0, () => {
+      let config: SshConfig = new SshConfig()
+      let verbose: CommandParseResult = CommandParser.parseCommand('ssh -v root@example.com', config)
+      let normal: CommandParseResult = CommandParser.parseCommand('ssh root@example.com', config)
+      let duplicate: CommandParseResult = CommandParser.parseCommand('ssh -v -v root@example.com', config)
+      let unsupported: CommandParseResult = CommandParser.parseCommand('ssh -vv root@example.com', config)
+      expect(verbose.isValid).assertEqual(true)
+      expect(verbose.verbose).assertEqual(true)
+      expect(normal.verbose).assertEqual(false)
+      expect(duplicate.errorMessage).assertEqual('Duplicate SSH option: -v')
+      expect(unsupported.errorMessage).assertEqual('Unsupported SSH option: -vv')
+    })
+
+    it('keepsVerboseDiagnosticsOnAClosedFieldWhitelist', 0, () => {
+      let label: string = SshClient.safeRustEventLogLabel(
+        'HOST_KEY_PROMPT:target\tssh-ed25519 SHA256:secret\t[private.example]:2222 ssh-ed25519 secret')
+      expect(label).assertEqual('rust event: HOST_KEY_PROMPT:target\tredacted')
+      expect(label.includes('secret')).assertEqual(false)
+      expect(SshClient.safeRustEventLogLabel('AUTH:target:authentication was rejected'))
+        .assertEqual('rust event: AUTH:target:authentication was rejected')
+      expect(SshClient.safeRustEventLogLabel('AUTH:target:server says private.example'))
+        .assertEqual('rust event: AUTH:target')
+      expect(SessionViewModel.safeSshErrorLogLabel('target:connection timed out after 1000 ms'))
+        .assertEqual('SSH error: target:connection timed out after 1000 ms')
+      expect(SessionViewModel.safeSshErrorLogLabel('target:private.example refused the key'))
+        .assertEqual('SSH error')
+      let line: string = SessionViewModel.formatSshDiagnostic(
+        '{"layer":"target","stage":"connect","status":"started","host":"private.example"}')
+      expect(line.includes('Target transport: started.')).assertEqual(true)
+      expect(line.includes('private.example')).assertEqual(false)
+      let rejected: string = SessionViewModel.formatSshDiagnostic(
+        '{"layer":"target","stage":"raw_packet","status":"started"}')
+      expect(rejected.includes('Diagnostic event rejected.')).assertEqual(true)
+      let refused: string = SessionViewModel.formatSshDiagnostic(
+        '{"layer":"target","stage":"connect","status":"failed","reason":"tcp_refused","error":"private.example"}')
+      expect(refused.includes('Target TCP connection: refused.')).assertEqual(true)
+      expect(refused.includes('private.example')).assertEqual(false)
     })
 
     it('parsesKeySubcommandsFromTheCorrectArgument', 0, () => {
@@ -361,7 +406,7 @@ export default function interactionFixesTest() {
     it('keepsSshAndTransferConnectionResolutionConsistent', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName files.example.com\n  User deploy\n' +
-        '  Port 2200\n  IdentityFile default-key\n')
+        '  Port 2200\n  IdentityFile default-key\n  ConnectTimeout 9\n')
       let ssh = CommandParser.parseInput('ssh prod', config)
       let put = CommandParser.parseInput('put report.txt prod:/report.txt', config)
       let get = CommandParser.parseInput('get prod:/report.txt', config)
@@ -375,6 +420,7 @@ export default function interactionFixesTest() {
           expect(connection.port).assertEqual(ssh.port)
           expect(connection.username).assertEqual(ssh.username)
           expect(connection.identityFile).assertEqual(ssh.identityFile)
+          expect(connection.connectTimeoutMs).assertEqual(ssh.connectTimeoutMs)
         }
       }
     })
@@ -565,6 +611,10 @@ export default function interactionFixesTest() {
         .assertEqual(FileTransferFailureKind.SFTP_UNAVAILABLE)
       expect(FileTransferFailurePresenter.describe('NETWORK_TIMEOUT', '', 'get').kind)
         .assertEqual(FileTransferFailureKind.NETWORK)
+      let keepaliveTimeout: FileTransferFailureInfo =
+        FileTransferFailurePresenter.describe('KEEPALIVE_TIMEOUT', '', 'get')
+      expect(keepaliveTimeout.kind).assertEqual(FileTransferFailureKind.NETWORK)
+      expect(keepaliveTimeout.message.includes('SSH keepalive timed out')).assertEqual(true)
       expect(FileTransferFailurePresenter.describe('HOST_KEY_REJECTED', '', 'get').kind)
         .assertEqual(FileTransferFailureKind.HOST_VERIFICATION)
       expect(FileTransferFailurePresenter.describe('LOCAL_COMMIT', '', 'get').kind)
@@ -614,6 +664,24 @@ export default function interactionFixesTest() {
       expect(CommandParser.parseSshKeygen('ssh-keygen -p -f deploy extra').errorMessage.length > 0)
         .assertEqual(true)
       expect(CommandParser.parseSshKeygen('ssh-keygen -p -f deploy -y').errorMessage.length > 0)
+        .assertEqual(true)
+    })
+
+    it('parsesOnlyTheInteractiveKeyCommentChangeForm', 0, () => {
+      let standard: KeyCommandResult = CommandParser.parseSshKeygen('ssh-keygen -c -f deploy')
+      let reordered: KeyCommandResult = CommandParser.parseSshKeygen('ssh-keygen -f ~/.ssh/deploy -c')
+      expect(standard.kind).assertEqual(KeyCommandKind.KEY_COMMENT_CHANGE)
+      expect(standard.keyName).assertEqual('deploy')
+      expect(reordered.kind).assertEqual(KeyCommandKind.KEY_COMMENT_CHANGE)
+      expect(reordered.keyName).assertEqual('~/.ssh/deploy')
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c').errorMessage.length > 0).assertEqual(true)
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c -f one -f two').errorMessage.length > 0)
+        .assertEqual(true)
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c -f deploy -C inline').errorMessage.length > 0)
+        .assertEqual(true)
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c -f deploy -p').errorMessage.length > 0)
+        .assertEqual(true)
+      expect(CommandParser.parseSshKeygen('ssh-keygen -c -f deploy extra').errorMessage.length > 0)
         .assertEqual(true)
     })
 
@@ -746,12 +814,77 @@ export default function interactionFixesTest() {
         CommandParser.parseInput('alias add prod root@example.com', new SshConfig())
       let jumped: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('host add private deploy@target.example.com -J jump', new SshConfig())
+      let configured: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput(
+          'host set private deploy@target.example.com --connect-timeout 9 -J jump', new SshConfig())
       expect(host instanceof KeyCommandResult).assertEqual(true)
       expect(alias instanceof KeyCommandResult).assertEqual(true)
       if (host instanceof KeyCommandResult) { expect(host.legacySyntax).assertEqual(false) }
       if (alias instanceof KeyCommandResult) { expect(alias.legacySyntax).assertEqual(true) }
       expect(jumped instanceof KeyCommandResult).assertEqual(true)
       if (jumped instanceof KeyCommandResult) { expect(jumped.sshJump).assertEqual('jump') }
+      expect(configured instanceof KeyCommandResult).assertEqual(true)
+      if (configured instanceof KeyCommandResult) {
+        expect(configured.sshJump).assertEqual('jump')
+        expect(configured.sshConnectTimeoutMs).assertEqual(9000)
+      }
+    })
+
+    it('validatesAndPersistsManagedHostConnectTimeout', 0, () => {
+      let configured: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --connect-timeout 25')
+      let reset: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host set prod deploy@example.com --connect-timeout default')
+      let invalid: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --connect-timeout 301')
+      let duplicate: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --connect-timeout 5 --connect-timeout 6')
+      expect(configured.errorMessage).assertEqual('')
+      expect(configured.sshConnectTimeoutMs).assertEqual(25000)
+      expect(reset.sshConnectTimeoutMs).assertEqual(15000)
+      expect(invalid.errorMessage.includes('whole seconds 1-300')).assertEqual(true)
+      expect(duplicate.errorMessage).assertEqual('Duplicate host option: --connect-timeout')
+
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('')
+      config.addAlias('prod', configured.sshHost, configured.sshPort, configured.sshUser,
+        null, configured.sshConnectTimeoutMs)
+      expect(config.previewConfigText().includes('  ConnectTimeout 25\n')).assertEqual(true)
+      config.addAlias('prod', reset.sshHost, reset.sshPort, reset.sshUser,
+        null, reset.sshConnectTimeoutMs)
+      expect(config.previewConfigText().includes('  ConnectTimeout ')).assertEqual(false)
+    })
+
+    it('validatesAndPersistsManagedHostServerAliveSettings', 0, () => {
+      let configured: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --server-alive-interval 0 --server-alive-count-max 7')
+      let reset: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host set prod deploy@example.com --server-alive-interval default --server-alive-count-max default')
+      let invalidInterval: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --server-alive-interval 3601')
+      let invalidCount: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --server-alive-count-max 0')
+      let duplicate: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add prod deploy@example.com --server-alive-count-max 2 --server-alive-count-max 3')
+      expect(configured.errorMessage).assertEqual('')
+      expect(configured.sshServerAliveIntervalSeconds).assertEqual(0)
+      expect(configured.sshServerAliveCountMax).assertEqual(7)
+      expect(reset.sshServerAliveIntervalSeconds).assertEqual(30)
+      expect(reset.sshServerAliveCountMax).assertEqual(3)
+      expect(invalidInterval.errorMessage.includes('whole seconds 0-3600')).assertEqual(true)
+      expect(invalidCount.errorMessage.includes('must be 1-100')).assertEqual(true)
+      expect(duplicate.errorMessage).assertEqual('Duplicate host option: --server-alive-count-max')
+
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('')
+      config.addAlias('prod', configured.sshHost, configured.sshPort, configured.sshUser,
+        null, null, configured.sshServerAliveIntervalSeconds, configured.sshServerAliveCountMax)
+      expect(config.previewConfigText().includes('  ServerAliveInterval 0\n')).assertEqual(true)
+      expect(config.previewConfigText().includes('  ServerAliveCountMax 7\n')).assertEqual(true)
+      config.addAlias('prod', reset.sshHost, reset.sshPort, reset.sshUser,
+        null, null, reset.sshServerAliveIntervalSeconds, reset.sshServerAliveCountMax)
+      expect(config.previewConfigText().includes('  ServerAliveInterval ')).assertEqual(false)
+      expect(config.previewConfigText().includes('  ServerAliveCountMax ')).assertEqual(false)
     })
 
     it('persistsProxyJumpInTheSingleManagedHostConfig', 0, () => {
@@ -1040,12 +1173,100 @@ export default function interactionFixesTest() {
       }
     })
 
+    it('resolvesControlledConnectTimeoutWithOpenSshFirstValueSemantics', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName prod.example.com\n  User deploy\n' +
+        '  ConnectTimeout 9\n\nHost *\n  ConnectTimeout 30\n')
+      let configured = CommandParser.parseInput('ssh prod', config)
+      let transfer = CommandParser.parseInput('get prod:/report.txt', config)
+      let direct = CommandParser.parseInput('ssh deploy@example.com', config)
+      expect(configured instanceof CommandParseResult).assertEqual(true)
+      expect(transfer instanceof TransferCommandResult).assertEqual(true)
+      expect(direct instanceof CommandParseResult).assertEqual(true)
+      if (configured instanceof CommandParseResult) {
+        expect(configured.isValid).assertEqual(true)
+        expect(configured.connectTimeoutMs).assertEqual(9000)
+      }
+      if (transfer instanceof TransferCommandResult) {
+        expect(transfer.isValid).assertEqual(true)
+        expect(transfer.connectTimeoutMs).assertEqual(9000)
+      }
+      if (direct instanceof CommandParseResult) {
+        expect(direct.isValid).assertEqual(true)
+        expect(direct.connectTimeoutMs).assertEqual(15000)
+      }
+    })
+
+    it('acceptsConnectTimeoutBoundsAndRejectsInvalidValuesBeforeConnection', 0, () => {
+      for (let value of ['1', '300']) {
+        let valid: SshConfig = new SshConfig()
+        valid.loadFromText('Host prod\n  User deploy\n  ConnectTimeout ' + value + '\n')
+        let result = CommandParser.parseInput('ssh prod', valid)
+        expect(result instanceof CommandParseResult).assertEqual(true)
+        if (result instanceof CommandParseResult) {
+          expect(result.isValid).assertEqual(true)
+          expect(result.connectTimeoutMs).assertEqual(parseInt(value, 10) * 1000)
+        }
+      }
+      for (let value of ['0', '301', '-1', '1.5', 'forever']) {
+        let invalid: SshConfig = new SshConfig()
+        invalid.loadFromText('Host prod\n  User deploy\n  ConnectTimeout ' + value + '\n')
+        let result = CommandParser.parseInput('ssh prod', invalid)
+        expect(result instanceof CommandParseResult).assertEqual(true)
+        if (result instanceof CommandParseResult) {
+          expect(result.isValid).assertEqual(false)
+          expect(result.errorMessage.includes('ConnectTimeout')).assertEqual(true)
+          expect(result.errorMessage.includes('expected whole seconds 1-300')).assertEqual(true)
+        }
+      }
+    })
+
+    it('resolvesServerAliveBoundsWithOpenSshFirstValueSemantics', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName prod.example.com\n  User deploy\n' +
+        '  ServerAliveInterval 0\n  ServerAliveCountMax 100\n\nHost *\n' +
+        '  ServerAliveInterval 60\n  ServerAliveCountMax 5\n')
+      let connection = CommandParser.parseInput('ssh prod', config)
+      let transfer = CommandParser.parseInput('get prod:/report.txt', config)
+      expect(connection instanceof CommandParseResult).assertEqual(true)
+      expect(transfer instanceof TransferCommandResult).assertEqual(true)
+      if (connection instanceof CommandParseResult) {
+        expect(connection.isValid).assertEqual(true)
+        expect(connection.serverAliveIntervalSeconds).assertEqual(0)
+        expect(connection.serverAliveCountMax).assertEqual(100)
+      }
+      if (transfer instanceof TransferCommandResult) {
+        expect(transfer.serverAliveIntervalSeconds).assertEqual(0)
+        expect(transfer.serverAliveCountMax).assertEqual(100)
+      }
+      for (let value of ['3601', '-1', '1.5', 'forever']) {
+        let invalid: SshConfig = new SshConfig()
+        invalid.loadFromText('Host prod\n  User deploy\n  ServerAliveInterval ' + value + '\n')
+        let result = CommandParser.parseInput('ssh prod', invalid)
+        if (result instanceof CommandParseResult) {
+          expect(result.isValid).assertEqual(false)
+          expect(result.errorMessage.includes('expected whole seconds 0-3600')).assertEqual(true)
+        }
+      }
+      for (let value of ['0', '101', '-1', '1.5', 'forever']) {
+        let invalid: SshConfig = new SshConfig()
+        invalid.loadFromText('Host prod\n  User deploy\n  ServerAliveCountMax ' + value + '\n')
+        let result = CommandParser.parseInput('ssh prod', invalid)
+        if (result instanceof CommandParseResult) {
+          expect(result.isValid).assertEqual(false)
+          expect(result.errorMessage.includes('expected count 1-100')).assertEqual(true)
+        }
+      }
+    })
+
     it('resolvesSingleProxyJumpWithSeparateHostIdentityAndOverrides', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName target.example.com\n  User target-user\n' +
-        '  IdentityFile target-key\n  ProxyJump jump-user@bastion:2200\n\n' +
+        '  IdentityFile target-key\n  ConnectTimeout 9\n  ServerAliveInterval 11\n' +
+        '  ServerAliveCountMax 2\n  ProxyJump jump-user@bastion:2200\n\n' +
         'Host bastion\n  HostName jump.example.com\n  User config-jump-user\n' +
-        '  Port 2222\n  IdentityFile jump-key\n')
+        '  Port 2222\n  IdentityFile jump-key\n  ConnectTimeout 4\n' +
+        '  ServerAliveInterval 17\n  ServerAliveCountMax 6\n')
       let parsed = CommandParser.parseInput('ssh prod', config)
       expect(parsed instanceof CommandParseResult).assertEqual(true)
       if (parsed instanceof CommandParseResult) {
@@ -1058,6 +1279,12 @@ export default function interactionFixesTest() {
         expect(parsed.jumpPort).assertEqual(2200)
         expect(parsed.jumpUsername).assertEqual('jump-user')
         expect(parsed.jumpIdentityFile).assertEqual('jump-key')
+        expect(parsed.connectTimeoutMs).assertEqual(9000)
+        expect(parsed.jumpConnectTimeoutMs).assertEqual(4000)
+        expect(parsed.serverAliveIntervalSeconds).assertEqual(11)
+        expect(parsed.serverAliveCountMax).assertEqual(2)
+        expect(parsed.jumpServerAliveIntervalSeconds).assertEqual(17)
+        expect(parsed.jumpServerAliveCountMax).assertEqual(6)
       }
     })
 
@@ -1131,6 +1358,17 @@ export default function interactionFixesTest() {
       let text: string = config.previewConfigText()
       expect(text.includes('Host prod\n  HostName new.example.com\n  User new-user\n' +
         '  Port 2200\n  ProxyJump jump')).assertEqual(true)
+    })
+
+    it('managedHostUpdatesPreserveConnectTimeout', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('# >>> LeanTTY managed hosts >>>\nHost prod\n' +
+        '  HostName old.example.com\n  User old-user\n  ConnectTimeout 25\n' +
+        '# <<< LeanTTY managed hosts <<<\n')
+      config.addAlias('prod', 'new.example.com', 2200, 'new-user')
+      let text: string = config.previewConfigText()
+      expect(text.includes('Host prod\n  HostName new.example.com\n  User new-user\n' +
+        '  Port 2200\n  ConnectTimeout 25')).assertEqual(true)
     })
 
     it('resolvesOpenSshFirstValueAndIdentityFile', 0, () => {
@@ -1361,6 +1599,70 @@ export default function interactionFixesTest() {
       expect(reverseActions[0].kind).assertEqual(TerminalInputActionKind.REVERSE_TAB)
       expect(escapeActions.length).assertEqual(1)
       expect(escapeActions[0].kind).assertEqual(TerminalInputActionKind.ESCAPE)
+    })
+
+    it('recognizesOnlySupportedSshEscapesAtLineStartAcrossChunks', 0, () => {
+      let parser: SshEscapeParser = new SshEscapeParser()
+      let pending: SshEscapeResult = parser.consume('~')
+      expect(pending.events.length).assertEqual(0)
+      let info: SshEscapeResult = parser.consume('I')
+      expect(info.events.length).assertEqual(1)
+      expect(info.events[0].kind).assertEqual(SshEscapeEventKind.CONNECTION_INFO)
+
+      let ordinary: SshEscapeResult = parser.consume('echo ~.\r')
+      expect(ordinary.events.length).assertEqual(1)
+      expect(ordinary.events[0].kind).assertEqual(SshEscapeEventKind.REMOTE_DATA)
+      expect(ordinary.events[0].data).assertEqual('echo ~.\r')
+      let help: SshEscapeResult = parser.consume('~?')
+      expect(help.events.length).assertEqual(1)
+      expect(help.events[0].kind).assertEqual(SshEscapeEventKind.HELP)
+    })
+
+    it('preservesLiteralAndUnknownSshEscapesAndStopsAfterDisconnect', 0, () => {
+      let parser: SshEscapeParser = new SshEscapeParser()
+      let literal: SshEscapeResult = parser.consume('~~value\r~x\n')
+      expect(literal.events.length).assertEqual(1)
+      expect(literal.events[0].kind).assertEqual(SshEscapeEventKind.REMOTE_DATA)
+      expect(literal.events[0].data).assertEqual('~value\r~x\n')
+      let disconnect: SshEscapeResult = parser.consume('~.ignored')
+      expect(disconnect.events.length).assertEqual(1)
+      expect(disconnect.events[0].kind).assertEqual(SshEscapeEventKind.DISCONNECT)
+
+      parser.reset()
+      let crlf: SshEscapeResult = parser.consume('command\r\n~?')
+      expect(crlf.events.length).assertEqual(2)
+      expect(crlf.events[0].data).assertEqual('command\r\n')
+      expect(crlf.events[1].kind).assertEqual(SshEscapeEventKind.HELP)
+    })
+
+    it('preservesSshEscapeAndRemoteDataOrderWithinOneInputChunk', 0, () => {
+      let parser: SshEscapeParser = new SshEscapeParser()
+      let result: SshEscapeResult = parser.consume('~?echo ok\r~I~~x\r~.ignored')
+      expect(result.events.length).assertEqual(5)
+      let help: SshEscapeEvent = result.events[0]
+      let firstRemote: SshEscapeEvent = result.events[1]
+      let info: SshEscapeEvent = result.events[2]
+      let secondRemote: SshEscapeEvent = result.events[3]
+      let disconnect: SshEscapeEvent = result.events[4]
+      expect(help.kind).assertEqual(SshEscapeEventKind.HELP)
+      expect(firstRemote.kind).assertEqual(SshEscapeEventKind.REMOTE_DATA)
+      expect(firstRemote.data).assertEqual('echo ok\r')
+      expect(info.kind).assertEqual(SshEscapeEventKind.CONNECTION_INFO)
+      expect(secondRemote.kind).assertEqual(SshEscapeEventKind.REMOTE_DATA)
+      expect(secondRemote.data).assertEqual('~x\r')
+      expect(disconnect.kind).assertEqual(SshEscapeEventKind.DISCONNECT)
+    })
+
+    it('formatsSshConnectionInfoFromDisplayRouteWithoutSecretFields', 0, () => {
+      let text: string = SessionViewModel.formatSshConnectionInfo(
+        'deploy', 'production', 2222, 'gateway', '2001:db8::1', 22)
+      expect(text).assertEqual(
+        'Target: deploy@production:2222\r\nJump: gateway@[2001:db8::1]:22\r\nState: connected')
+      expect(text.includes('Identity')).assertEqual(false)
+      expect(text.includes('password')).assertEqual(false)
+
+      let escaped: string = SessionViewModel.formatSshConnectionInfo('user', 'bad\u001B[31mhost', 22)
+      expect(escaped.includes('\u001B')).assertEqual(false)
     })
 
     it('routesExactCtrlCBeforeArkWebConsumesSelectionCopy', 0, () => {

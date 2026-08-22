@@ -52,7 +52,8 @@ for (const phrase of [
 for (const command of [
   'ssh user@example.com', 'host add work user@example.com:2222', 'ssh-keygen -F example.com',
   'ssh-keygen -t ed25519 -f id_work -C work', 'ssh-copy-id -i id_work user@example.com',
-  'put report.pdf user@example.com:/incoming/', 'get work:/reports/latest.csv reports/'
+  'put report.pdf user@example.com:/incoming/', 'get work:/reports/latest.csv reports/',
+  'config import workstation.conf', 'config export workstation-backup.conf'
 ]) {
   assert.ok(html.includes(command), `missing command example: ${command}`);
 }

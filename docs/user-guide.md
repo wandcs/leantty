@@ -2,11 +2,11 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-19
+> Last updated: 2026-08-22
 >
-> Applies to: the current repository 1.4.0 release-candidate behavior. AppGallery
-> currently distributes 1.3.0; check the matching GitHub Release and
-> `CHANGELOG.md` before relying on behavior that has not yet shipped.
+> Applies to: the current repository 1.5.0 development behavior. AppGallery
+> currently distributes 1.4.0; check the matching GitHub Release and
+> `CHANGELOG.md` before relying on later behavior that has not yet shipped.
 
 LeanTTY is a keyboard-first SSH terminal for a physical ARM64 HarmonyOS PC. It
 provides the TTY entry point; the shell, tmux, editor and Agent TUI continue to
@@ -59,7 +59,7 @@ Create a short Host name with:
 host add work user@example.com
 host add lab user@example.com:2222
 host add private deploy@target.example.com -J jump
-host set work user@new.example.com:2222
+host set work user@new.example.com:2222 --connect-timeout 9
 host list
 host rm work
 ```
@@ -83,6 +83,9 @@ The current documented `ssh_config` subset is:
 | `Port` | Defaults to 22 |
 | `IdentityFile` | Selects a verified LeanTTY key by supported reference |
 | `ProxyJump` | Uses one saved Host or one `[user@]host[:port]` jump |
+| `ConnectTimeout` | Uses 1–300 whole seconds; defaults to 15 seconds |
+| `ServerAliveInterval` | Uses 0–3600 whole seconds; `0` disables probes |
+| `ServerAliveCountMax` | Uses 1–100 unanswered probes |
 
 OpenSSH first-value behavior is preserved for these fields. An unknown or
 unsupported directive in a matching Host block causes `ssh` and `ssh -G` to
@@ -91,6 +94,42 @@ LeanTTY does not yet evaluate `Match` conditions, any `Match` block is rejected
 instead of being silently ignored. Unsupported directives in unrelated Host
 blocks do not block the selected Host, and LeanTTY preserves their source text
 when it edits its own managed Host section.
+
+To migrate one existing config file, first place it in Downloads, then run:
+
+```text
+config import workstation.conf
+```
+
+Import is available only while the current config has no existing non-LeanTTY
+text. If such text already exists, export it first and explicitly run
+`config import workstation.conf --replace`; LeanTTY replaces that unmanaged
+body instead of inventing merge precedence. Existing LeanTTY-managed Hosts
+remain first. `Include`, `Match`, token or
+environment expansion and quoted supported values are rejected because LeanTTY
+cannot reproduce their effective authority safely. Comments, whitespace,
+line endings, repeated Host patterns, wildcards and unknown directives are
+retained exactly. An unknown directive in a matching block still stops that
+connection explicitly; it is not silently treated as supported.
+
+Export the active config without overwriting an existing Downloads file:
+
+```text
+config export
+config export workstation-backup.conf
+```
+
+The default file name is `leantty-ssh-config`. Import/export accepts one
+Downloads basename, not a path, directory, profile, background watcher or
+alternate `ssh -F` config.
+
+`ConnectTimeout` limits TCP setup and the initial SSH handshake/key exchange. It
+uses the target Host value for direct SSH, the target layer, reconnect and
+`put/get`; a named jump Host uses its own value. It does not count time spent waiting for you to
+confirm a host key or enter a password, key passphrase or OTP. A timeout reports
+whether the jump or target layer failed so you can correct the Host or retry.
+Use `--connect-timeout default` with `host set` to remove the explicit line and
+restore LeanTTY's 15-second default.
 
 Inspect the effective supported fields without connecting:
 
@@ -114,6 +153,24 @@ terminal opens only after the target PTY is ready. `-J none` bypasses a saved
 version supports one jump only; `ProxyCommand` and comma-separated chains fail
 explicitly.
 
+## Connected SSH escapes
+
+At the start of a connected Session or immediately after Enter, use these
+OpenSSH-style escapes:
+
+| Escape | Result |
+| --- | --- |
+| `~.` | Disconnect only the current Pane's SSH Session |
+| `~?` | Show the escapes LeanTTY currently supports |
+| `~I` | Show the sanitized target, optional jump route and connected state |
+| `~~` | Send one literal `~` to the remote PTY |
+
+The escape must begin at line start. A tilde elsewhere in a shell command,
+editor, tmux or Agent TUI is sent normally, and an unknown line-start sequence
+such as `~x` is also sent unchanged. Connection information never includes a
+password, authentication response or private-key path. Each Pane recognizes
+escapes independently; only `~.` ends the Session.
+
 ## Key management
 
 Generate a key pair:
@@ -125,8 +182,9 @@ ssh-keygen -t rsa -f id_rsa_work -C work
 
 The generation command creates Ed25519 or RSA-4096 keys and refuses to overwrite
 an existing private or public file. It does not currently ask for a new key
-passphrase. An encrypted OpenSSH private key can be imported and will request
-its passphrase when used.
+passphrase. Existing OpenSSH Ed25519, RSA and ECDSA P-256/P-384/P-521 private
+keys can be imported; an encrypted key requests its passphrase when used. ECDSA
+generation is not provided.
 
 Change, add or remove the passphrase of a verified private key:
 
@@ -139,6 +197,20 @@ non-echoing terminal input. Leave the old passphrase empty for an unencrypted
 key, or leave the new passphrase empty to remove encryption. `Ctrl+C`, a wrong
 old passphrase, a confirmation mismatch or a commit failure leaves the existing
 key active. Passphrases are not accepted through command options.
+
+Change or remove the comment on an existing verified key pair:
+
+```text
+ssh-keygen -c -f id_work
+```
+
+For an encrypted key, LeanTTY first asks for the current passphrase through
+non-echoing input. It then shows the current comment and accepts one visible
+replacement; leave the replacement empty to remove the comment. Spaces and
+UTF-8 text are retained. Control characters and comments over 1023 UTF-8 bytes
+are rejected. Success keeps the same fingerprint, key algorithm, encryption
+state and passphrase, and updates both the private key and `.pub` line. `Ctrl+C`,
+an incorrect passphrase or a commit failure leaves the previous pair active.
 
 Inspect and manage verified keys:
 
@@ -155,8 +227,9 @@ key rm id_work
 Important behavior:
 
 - Import accepts a private-key file path available to the application, derives
-  and verifies the matching public key, and rejects an incomplete or invalid
-  pair.
+  and verifies the matching public key, and rejects an incomplete, invalid or
+  unsupported key. Supported imported identities are OpenSSH Ed25519, RSA and
+  ECDSA P-256/P-384/P-521 keys.
 - Export requests access to the HarmonyOS Downloads directory and writes both
   the private key and `<name>.pub`.
 - Export never overwrites either destination. Choose another basename when one
@@ -264,11 +337,12 @@ the file.
 | `ssh [-p port] [-i identity] user@host` | Connect directly |
 | `ssh [-p port] [-i identity] host-name` | Connect through saved configuration |
 | `ssh -G host-name` | Show the supported effective configuration |
-| `ssh-keygen -t ...`, `-y`, `-l`, `-p`, `-F`, `-R` | Generate, inspect or maintain SSH assets |
+| `ssh-keygen -t ...`, `-y`, `-l`, `-p`, `-c`, `-F`, `-R` | Generate, inspect or maintain SSH assets |
 | `ssh-copy-id -i ...` | Install one public key |
 | `put [-p port] [-i identity] local-file host:remote-path` | Upload one Downloads file through SFTP |
 | `get [-p port] [-i identity] host:remote-file [local-path]` | Download one SFTP file into Downloads |
 | `key list/import/export/rm` | Manage LeanTTY key pairs |
+| `config import/export` | Migrate or back up the single OpenSSH config through Downloads |
 | `host add/set/list/rm` | Manage LeanTTY Host entries |
 | `exit` | Close the current idle pane or tab path |
 

@@ -22,6 +22,11 @@ param(
     [ValidateSet('Target', 'Jump', 'Both')][string]$HostKeyRotationLayer = 'Both',
     [switch]$ParallelPanes,
     [switch]$SuspendAfterConnect,
+    [switch]$SshDiagnostics,
+    [ValidateSet('None', 'Target', 'Jump', 'Both')]
+    [string]$ServerAliveBlackhole = 'None',
+    [ValidateRange(0, 3600)][int]$ServerAliveIntervalSeconds = 30,
+    [ValidateRange(1, 100)][int]$ServerAliveCountMax = 3,
     [ValidateSet(
         'None', 'JumpAuthentication', 'TargetAuthentication',
         'DirectTcpipRejected', 'TargetUnreachable', 'DirectTcpipTimeout',
@@ -64,6 +69,16 @@ if ($SuspendAfterConnect -and
     ($ParallelPanes -or $IncludeHostKeyRotation -or $FailureScenario -ne 'None')) {
     throw 'Suspend/resume verification must run as an independent successful connection scenario'
 }
+if ($ServerAliveBlackhole -ne 'None' -and
+    ($ParallelPanes -or $SuspendAfterConnect -or $IncludeHostKeyRotation -or
+        $FailureScenario -ne 'None')) {
+    throw 'Server-alive blackhole verification must run as an independent successful connection scenario'
+}
+if ($SshDiagnostics -and
+    ($ParallelPanes -or $SuspendAfterConnect -or $IncludeHostKeyRotation -or
+        $ServerAliveBlackhole -ne 'None' -or $FailureScenario -ne 'None')) {
+    throw 'Safe SSH diagnostics must run as an independent successful ProxyJump scenario'
+}
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/') + `
     [IO.Path]::DirectorySeparatorChar
 $fixtureRoot = Join-Path $temporaryRoot ('leantty-proxy-jump-' + [guid]::NewGuid().ToString('N'))
@@ -73,6 +88,8 @@ if (-not $fixtureRoot.StartsWith($temporaryRoot, [StringComparison]::OrdinalIgno
 }
 $targetControl = Join-Path $fixtureRoot 'target-control'
 $jumpControl = Join-Path $fixtureRoot 'jump-control'
+$targetServerOutputDrop = Join-Path $targetControl 'drop-server-output'
+$jumpServerOutputDrop = Join-Path $jumpControl 'drop-server-output'
 $targetStdout = Join-Path $fixtureRoot 'target-stdout.log'
 $targetStderr = Join-Path $fixtureRoot 'target-stderr.log'
 $jumpStdout = Join-Path $fixtureRoot 'jump-stdout.log'
@@ -98,6 +115,9 @@ $appPid = ''
 $result = 'failed'
 $failure = ''
 $commandObservations = [Collections.Generic.List[object]]::new()
+$serverAliveEvidence = [Collections.Generic.List[object]]::new()
+$serverAliveTargetAlias = "ltty-alive-target-$TargetPort"
+$serverAliveJumpAlias = "ltty-alive-jump-$JumpPort"
 
 function Start-ProxyFixture {
     param(
@@ -105,16 +125,21 @@ function Start-ProxyFixture {
         [Parameter(Mandatory = $true)][string]$StdoutPath,
         [Parameter(Mandatory = $true)][string]$StderrPath,
         [Parameter(Mandatory = $true)][int]$Port,
-        [Parameter(Mandatory = $true)][string]$DirectTarget
+        [Parameter(Mandatory = $true)][string]$DirectTarget,
+        [switch]$EnableServerOutputDrop
     )
     $arguments = @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         (Join-Path $PSScriptRoot 'start-ssh-auth-fixture.ps1'),
         '-ListenAddress', "0.0.0.0:$Port",
-        '-RunSeconds', (($IncludeHostKeyRotation -or $ParallelPanes) ? '600' : '240'),
+        '-RunSeconds', (($IncludeHostKeyRotation -or $ParallelPanes -or
+                $ServerAliveBlackhole -ne 'None') ? '600' : '240'),
         '-ControlDirectory', $ControlDirectory,
         '-DirectTcpipTarget', $DirectTarget
     )
+    if ($EnableServerOutputDrop) {
+        $arguments += '-EnableServerOutputDrop'
+    }
     if (-not [string]::IsNullOrWhiteSpace($Distribution)) {
         $arguments += @('-Distribution', $Distribution)
     }
@@ -540,6 +565,13 @@ function Write-ProxySummary {
         targetShellOpened = $TargetShellOpened
         targetShellClosedCleanly = $TargetShellClosedCleanly
         lifecycle = $Lifecycle
+        serverAliveBlackholes = @($serverAliveEvidence)
+        serverAliveConfiguration = if ($ServerAliveBlackhole -ne 'None') {
+            [ordered]@{
+                intervalSeconds = $ServerAliveIntervalSeconds
+                countMax = $ServerAliveCountMax
+            }
+        } else { $null }
         hapSha256 = (Get-FileHash -LiteralPath $script:proxyHapPath -Algorithm SHA256).Hash.ToLowerInvariant()
         automation = Get-LeanTTYDeviceCommandAutomationSummary `
             -Observations $commandObservations `
@@ -574,7 +606,8 @@ try {
         -StdoutPath $targetStdout `
         -StderrPath $targetStderr `
         -Port $TargetPort `
-        -DirectTarget 'none'
+        -DirectTarget 'none' `
+        -EnableServerOutputDrop:($ServerAliveBlackhole -in @('Target', 'Both'))
     $targetFixture = Wait-ProxyFixture -Process $targetProcess -ControlDirectory $targetControl
     $targetLinuxPid = $targetFixture.linuxPid
 
@@ -589,7 +622,8 @@ try {
         -StdoutPath $jumpStdout `
         -StderrPath $jumpStderr `
         -Port $JumpPort `
-        -DirectTarget $jumpDirectTarget
+        -DirectTarget $jumpDirectTarget `
+        -EnableServerOutputDrop:($ServerAliveBlackhole -in @('Jump', 'Both'))
     $jumpFixture = Wait-ProxyFixture -Process $jumpProcess -ControlDirectory $jumpControl
     $jumpLinuxPid = $jumpFixture.linuxPid
 
@@ -678,7 +712,26 @@ try {
         Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$SecondJumpPort"
         Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$SecondTargetPort"
     }
-    $proxyCommand = "ssh -p $TargetPort -J password@127.0.0.1:$JumpPort password@127.0.0.1"
+    $diagnosticOption = if ($SshDiagnostics) { ' -v' } else { '' }
+    $proxyCommand = "ssh$diagnosticOption -p $TargetPort -J password@127.0.0.1:$JumpPort password@127.0.0.1"
+    if ($ServerAliveBlackhole -ne 'None') {
+        Submit-ProxyCommand -Command "host rm $serverAliveTargetAlias"
+        Submit-ProxyCommand -Command "host rm $serverAliveJumpAlias"
+        Submit-ProxyCommand -Command (
+            "host add $serverAliveJumpAlias password@127.0.0.1:$JumpPort " +
+                "--server-alive-interval $ServerAliveIntervalSeconds " +
+                "--server-alive-count-max $ServerAliveCountMax"
+        )
+        Wait-ProxyLog -Pattern "Host added: $serverAliveJumpAlias"
+        Submit-ProxyCommand -Command (
+            "host add $serverAliveTargetAlias password@127.0.0.1:$TargetPort " +
+                "-J $serverAliveJumpAlias " +
+                "--server-alive-interval $ServerAliveIntervalSeconds " +
+                "--server-alive-count-max $ServerAliveCountMax"
+        )
+        Wait-ProxyLog -Pattern "Host added: $serverAliveTargetAlias"
+        $proxyCommand = "ssh $serverAliveTargetAlias"
+    }
     if ($ParallelPanes) {
         $secondProxyCommand = (
             "ssh -p $SecondTargetPort " +
@@ -816,6 +869,10 @@ try {
         return
     }
     Submit-ProxyCommand -Command $proxyCommand
+    if ($SshDiagnostics) {
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=jump, stage=connect, status=started, reason=none'
+    }
 
     Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
     Submit-HostKeyDecisionUntilResult `
@@ -939,6 +996,16 @@ try {
         -JumpPassword $jumpFixture.password `
         -ExpectedPattern 'rust event: HOST_KEY_PROMPT:target\t' `
         -CurrentPrompt
+    if ($SshDiagnostics) {
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=jump, stage=authentication, status=succeeded, reason=none'
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=jump, stage=tunnel, status=succeeded, reason=none'
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=target, stage=connect, status=started, reason=none'
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=target, stage=host_key, status=waiting, reason=none'
+    }
     Submit-HostKeyDecisionUntilResult `
         -ExpectedPattern 'native auth event kind=password, layer=target'
     if ($FailureScenario -eq 'CancelAtTargetAuthentication') {
@@ -1011,6 +1078,32 @@ try {
         -Command $proxyCommand `
         -JumpPassword $jumpFixture.password `
         -TargetPassword $targetFixture.password
+    if ($SshDiagnostics) {
+        Wait-ProxyLog `
+            -Pattern 'SSH diagnostic layer=target, stage=session, status=succeeded, reason=none'
+        Submit-ConnectedProxyInputUntilFixture `
+            -Text 'ltty-input-check diagnosticsproxy' `
+            -FixtureLog $targetStderr `
+            -ExpectedPattern 'input case=diagnosticsproxy result=matched'
+        $diagnosticLogs = Get-LeanTTYAppLogs `
+            -Hdc $hdc `
+            -Target $targetId `
+            -ProcessId $appPid
+        $safeDiagnosticLines = @($diagnosticLogs -split "`n" | Where-Object {
+            $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+        }) -join "`n"
+        if ($safeDiagnosticLines.Contains('127.0.0.1') -or
+            $safeDiagnosticLines.Contains('SHA256:') -or
+            $safeDiagnosticLines.Contains($jumpFixture.password) -or
+            $safeDiagnosticLines.Contains($targetFixture.password)) {
+            throw 'Safe ProxyJump diagnostics exposed host, fingerprint or temporary credentials'
+        }
+        [IO.File]::WriteAllText(
+            (Join-Path $EvidenceDirectory 'ssh-diagnostics-hilog.txt'),
+            $safeDiagnosticLines,
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
 
     Save-LeanTTYDeviceScreenshot `
         -Hdc $hdc `
@@ -1124,6 +1217,165 @@ try {
                 $appPid + '; clean exit reset terminal state')
         return
     }
+    if ($ServerAliveBlackhole -ne 'None') {
+        $blackholeLayers = switch ($ServerAliveBlackhole) {
+            'Target' { @('target') }
+            'Jump' { @('jump') }
+            'Both' { @('target', 'jump') }
+        }
+        foreach ($blackholeLayer in $blackholeLayers) {
+            Submit-ConnectedProxyInputUntilFixture `
+                -Text "ltty-input-check ${blackholeLayer}alivebefore" `
+                -FixtureLog $targetStderr `
+                -ExpectedPattern "input case=${blackholeLayer}alivebefore result=matched"
+            $dropPath = if ($blackholeLayer -eq 'target') {
+                $targetServerOutputDrop
+            } else {
+                $jumpServerOutputDrop
+            }
+            $dropFixtureLog = if ($blackholeLayer -eq 'target') {
+                $targetStderr
+            } else {
+                $jumpStderr
+            }
+
+            Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+            $blackholeWatch = [Diagnostics.Stopwatch]::StartNew()
+            New-Item -ItemType File -Path $dropPath -Force | Out-Null
+            if ($ServerAliveIntervalSeconds -eq 0) {
+                Submit-ConnectedProxyInputUntilFixture `
+                    -Text "ltty-input-check ${blackholeLayer}alivedropstart" `
+                    -FixtureLog $targetStderr `
+                    -ExpectedPattern "input case=${blackholeLayer}alivedropstart result=matched"
+            }
+            Wait-ProxyFixtureLog `
+                -Path $dropFixtureLog `
+                -Pattern 'transport proxy client=.* mode=drop-server-output' `
+                -TimeoutSeconds 60
+            if ($ServerAliveIntervalSeconds -eq 0) {
+                Start-Sleep -Seconds 8
+                $disabledIntervalLogs = Get-LeanTTYAppLogs `
+                    -Hdc $hdc -Target $targetId -ProcessId $appPid
+                if ($disabledIntervalLogs -match 'SSH error: SSH keepalive timed out') {
+                    throw "Disabled server-alive $blackholeLayer connection reported a timeout"
+                }
+                Submit-ConnectedProxyInputUntilFixture `
+                    -Text "ltty-input-check ${blackholeLayer}alivedisabled" `
+                    -FixtureLog $targetStderr `
+                    -ExpectedPattern "input case=${blackholeLayer}alivedisabled result=matched"
+                $blackholeWatch.Stop()
+                $serverAliveEvidence.Add([ordered]@{
+                    layer = $blackholeLayer
+                    elapsedMs = [int]$blackholeWatch.ElapsedMilliseconds
+                    configuredIntervalSeconds = 0
+                    configuredCountMax = $ServerAliveCountMax
+                    fixtureDropObserved = $true
+                    deviceTimeoutObserved = $false
+                    sameConnectionInputObserved = $true
+                })
+                Save-LeanTTYDeviceScreenshot `
+                    -Hdc $hdc `
+                    -Target $targetId `
+                    -LocalPath (Join-Path $EvidenceDirectory "$blackholeLayer-alive-disabled.png")
+                Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+                Submit-ConnectedProxyInput -Text '~.'
+                Wait-ProxyLog -Pattern 'SSH escape action=disconnect' -TimeoutSeconds 15
+                Wait-ProxyLog -Pattern 'SSH closed' -TimeoutSeconds 15
+                Remove-Item -LiteralPath $dropPath -Force
+                Complete-KnownHostProxyConnection `
+                    -Command $proxyCommand `
+                    -JumpPassword $jumpFixture.password `
+                    -TargetPassword $targetFixture.password
+                continue
+            }
+            $keepaliveTimeoutObserved = $false
+            $expectedTimeoutSeconds = $ServerAliveIntervalSeconds * ($ServerAliveCountMax + 1)
+            $timeoutWaitSeconds = [Math]::Max(20, $expectedTimeoutSeconds + 25)
+            for ($waitSegment = 1; $waitSegment -le 3; $waitSegment++) {
+                try {
+                    Wait-ProxyLog `
+                        -Pattern 'SSH error: SSH keepalive timed out' `
+                        -TimeoutSeconds $timeoutWaitSeconds
+                    $keepaliveTimeoutObserved = $true
+                    break
+                } catch {
+                    if ($waitSegment -ge 3) { throw }
+                }
+            }
+            if (-not $keepaliveTimeoutObserved) {
+                throw "Server-alive $blackholeLayer blackhole did not report a timeout"
+            }
+            $blackholeWatch.Stop()
+            $minimumTimeoutSeconds = [Math]::Max(1, $expectedTimeoutSeconds - 3)
+            $maximumTimeoutSeconds = $expectedTimeoutSeconds + 25
+            if ($blackholeWatch.Elapsed.TotalSeconds -lt $minimumTimeoutSeconds -or
+                $blackholeWatch.Elapsed.TotalSeconds -gt $maximumTimeoutSeconds) {
+                throw ("Server-alive $blackholeLayer blackhole timed out outside the " +
+                    'russh max-plus-one window: ' +
+                    "$([Math]::Round($blackholeWatch.Elapsed.TotalSeconds, 3)) seconds")
+            }
+            $serverAliveEvidence.Add([ordered]@{
+                layer = $blackholeLayer
+                elapsedMs = [int]$blackholeWatch.ElapsedMilliseconds
+                configuredIntervalSeconds = $ServerAliveIntervalSeconds
+                configuredCountMax = $ServerAliveCountMax
+                fixtureDropObserved = $true
+                deviceTimeoutObserved = $true
+            })
+            Save-LeanTTYDeviceScreenshot `
+                -Hdc $hdc `
+                -Target $targetId `
+                -LocalPath (Join-Path $EvidenceDirectory "$blackholeLayer-alive-timeout.png")
+
+            Remove-Item -LiteralPath $dropPath -Force
+            Complete-KnownHostProxyConnection `
+                -Command $proxyCommand `
+                -JumpPassword $jumpFixture.password `
+                -TargetPassword $targetFixture.password
+        }
+        Submit-ConnectedProxyInputUntilFixture `
+            -Text 'ltty-input-check serveraliverecovery' `
+            -FixtureLog $targetStderr `
+            -ExpectedPattern 'input case=serveraliverecovery result=matched'
+        Submit-ConnectedProxyInput -Text 'ltty-exit'
+        Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
+        Submit-ProxyCommand -Command "host rm $serverAliveTargetAlias"
+        Submit-ProxyCommand -Command "host rm $serverAliveJumpAlias"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
+        Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
+        Write-ProxySummary `
+            -Scenario $(if ($ServerAliveIntervalSeconds -eq 0) {
+                'server-alive-disabled-blackhole-' + $ServerAliveBlackhole.ToLowerInvariant()
+            } else {
+                'server-alive-blackhole-' + $ServerAliveBlackhole.ToLowerInvariant()
+            }) `
+            -Authentication $(if ($ServerAliveIntervalSeconds -eq 0) {
+                'both-layer-passwords-accepted-before-blackholes'
+            } else {
+                'both-layer-passwords-accepted-before-each-blackhole'
+            }) `
+            -HostKeyVerification $(if ($ServerAliveIntervalSeconds -eq 0) {
+                'both-first-use-host-keys-confirmed-before-blackholes'
+            } else {
+                'both-known-host-keys-reused-after-each-timeout'
+            }) `
+            -KnownHostReconnect ($ServerAliveIntervalSeconds -ne 0) `
+            -TargetHostKeyRotationRecovered $false `
+            -JumpHostKeyRotationRecovered $false `
+            -ExpectedFailureLayer $(if ($ServerAliveIntervalSeconds -eq 0) {
+                ''
+            } else {
+                $blackholeLayers -join ','
+            }) `
+            -TargetShellOpened $true `
+            -TargetShellClosedCleanly $true `
+            -Lifecycle $(if ($ServerAliveIntervalSeconds -eq 0) {
+                'each encrypted transport blackholed independently; no timeout and same-connection input observed'
+            } else {
+                'each encrypted transport blackholed independently; timeout and immediate reconnect observed'
+            })
+        return
+    }
     Submit-SecretOrDecision -Text 'ltty-exit'
     Wait-ProxyLog -Pattern 'SSH closed, exitCode=0'
 
@@ -1227,8 +1479,8 @@ try {
     Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort"
 
     Write-ProxySummary `
-        -Scenario ($IncludeHostKeyRotation ?
-            ('host-key-rotation-' + $HostKeyRotationLayer.ToLowerInvariant()) : 'success') `
+        -Scenario ($SshDiagnostics ? 'safe-ssh-diagnostics' : ($IncludeHostKeyRotation ?
+            ('host-key-rotation-' + $HostKeyRotationLayer.ToLowerInvariant()) : 'success')) `
         -Authentication 'password-per-layer-with-distinct-temporary-secrets' `
         -HostKeyVerification $(if ($IncludeHostKeyRotation) {
             'first-use-confirmed-and-' + $HostKeyRotationLayer.ToLowerInvariant() +
@@ -1248,6 +1500,12 @@ try {
     $failure = $_.Exception.Message
     throw
 } finally {
+    if ($ServerAliveBlackhole -ne 'None' -and -not [string]::IsNullOrWhiteSpace($appPid)) {
+        try { Submit-ProxyCommand -Command "host rm $serverAliveTargetAlias" } catch {}
+        try { Submit-ProxyCommand -Command "host rm $serverAliveJumpAlias" } catch {}
+        try { Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort" } catch {}
+        try { Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$TargetPort" } catch {}
+    }
     if ($secondMappingActive) {
         & $script:proxyHdc -t $script:proxyTarget fport rm `
             "tcp:$SecondJumpPort" "tcp:$SecondJumpPort" 2>$null | Out-Null

@@ -1,9 +1,12 @@
 import { abilityAccessCtrl, common, PermissionRequestResult, Permissions } from '@kit.AbilityKit'
 import { Environment } from '@kit.CoreFileKit'
-import { KeyAlgorithm, KeyPairInfo, KeyGenerationResult, algorithmToString } from '../../common/types/SshKeyTypes'
+import {
+  KeyAlgorithm, KeyPairInfo, KeyGenerationResult, algorithmFromSshName, algorithmToSshName, algorithmToString
+} from '../../common/types/SshKeyTypes'
 import { FileUtils } from '../../common/utils/FileUtils'
 import { Logger } from '../../common/logger/Logger'
 import { DurableStateManager } from '../persistence/DurableStateManager'
+import { KeyCommentCommitPolicy } from '../persistence/KeyCommentCommitPolicy'
 import sshNative from 'libleantty_ssh.so'
 
 const logger: Logger = new Logger('SshKeyManager')
@@ -58,6 +61,9 @@ export class SshKeyManager {
   static async generateKeyPair(
     context: common.Context, algo: KeyAlgorithm, passphrase: string, requestedName: string = '', comment: string = ''
   ): Promise<KeyGenerationResult> {
+    if (algo !== KeyAlgorithm.ED25519 && algo !== KeyAlgorithm.RSA4096) {
+      throw new Error('ECDSA key generation is not supported; import an existing OpenSSH identity instead')
+    }
     let sshDir: string = FileUtils.getSshDir(context)
     FileUtils.ensureDir(sshDir)
     let algoStr: string = algorithmToString(algo)
@@ -199,6 +205,31 @@ export class SshKeyManager {
     }
   }
 
+  static readKeyComment(context: common.Context, keyName: string, passphrase: string): string {
+    let key: KeyPairInfo | null = SshKeyManager.findKeyByName(context, keyName)
+    if (key === null) {
+      throw new Error('Key not found or invalid: ' + keyName)
+    }
+    return sshNative.sshReadKeyComment(key.filePath, passphrase)
+  }
+
+  static changeKeyComment(
+    context: common.Context, keyName: string, passphrase: string, newComment: string
+  ): string {
+    let key: KeyPairInfo | null = SshKeyManager.findKeyByName(context, keyName)
+    if (key === null) {
+      throw new Error('Key not found or invalid: ' + keyName)
+    }
+    let keyPath: string = key.filePath
+    return KeyCommentCommitPolicy.commit(
+      (): string => { return sshNative.sshChangeKeyComment(keyPath, passphrase, newComment) },
+      (): void => { DurableStateManager.captureKeyPair(context, keyName) },
+      (oldComment: string): void => {
+        sshNative.sshChangeKeyComment(keyPath, passphrase, oldComment)
+      }
+    )
+  }
+
   private static validateExportFileName(name: string): string | null {
     if (name.length === 0 || name === '.' || name === '..') {
       return 'Export file name must not be empty, "." or ".."'
@@ -309,13 +340,11 @@ export class SshKeyManager {
     } catch (e) {
       return null
     }
-    if (pubText.startsWith('ssh-ed25519 ')) {
-      key.algorithm = KeyAlgorithm.ED25519
-    } else if (pubText.startsWith('ssh-rsa ')) {
-      key.algorithm = KeyAlgorithm.RSA4096
-    } else {
+    let publicAlgorithmName: string = pubText.split(/\s+/)[0]
+    if (publicAlgorithmName !== algorithmToSshName(inspected.algorithm)) {
       return null
     }
+    key.algorithm = inspected.algorithm
     key.fingerprint = SshKeyManager.readFingerprint(pubPath)
     if (key.fingerprint.length === 0 || key.fingerprint !== inspected.fingerprint) {
       return null
@@ -327,12 +356,16 @@ export class SshKeyManager {
   private static inspectPrivateKey(privatePath: string): PrivateKeyInspection {
     let raw: string = sshNative.sshInspectPrivateKey(privatePath)
     let lines: string[] = raw.split('\n')
-    if (lines.length < 4 || (lines[1] !== 'ssh-ed25519' && lines[1] !== 'ssh-rsa')) {
+    if (lines.length < 4) {
       throw new Error('Invalid private key inspection result')
+    }
+    let algorithm: KeyAlgorithm | null = algorithmFromSshName(lines[1])
+    if (algorithm === null) {
+      throw new Error('Unsupported private key algorithm')
     }
     let inspected: PrivateKeyInspection = new PrivateKeyInspection()
     inspected.encrypted = lines[0] === 'true'
-    inspected.algorithm = lines[1] === 'ssh-rsa' ? KeyAlgorithm.RSA4096 : KeyAlgorithm.ED25519
+    inspected.algorithm = algorithm
     inspected.fingerprint = lines[2]
     inspected.publicKeyText = lines.slice(3).join('\n').trim()
     if (inspected.fingerprint.length === 0 || inspected.publicKeyText.length === 0) {

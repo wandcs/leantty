@@ -11,7 +11,8 @@ use russh::server::{self, Auth, Handler, Msg, Response, Server as _, Session};
 use russh::{Channel, ChannelMsg, ChannelOpenFailure, Disconnect};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 const JUMP_USER: &str = "jump-user";
@@ -168,6 +169,53 @@ fn server_config() -> TestResult<Arc<server::Config>> {
         keys: vec![PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)?],
         ..Default::default()
     }))
+}
+
+fn keepalive_config() -> Arc<client::Config> {
+    Arc::new(client::Config {
+        keepalive_interval: Some(Duration::from_millis(100)),
+        keepalive_max: 3,
+        ..Default::default()
+    })
+}
+
+fn spawn_server_output_drop_proxy(
+    listener: TcpListener,
+    target: SocketAddr,
+    drop_rx: watch::Receiver<bool>,
+) -> JoinHandle<io::Result<()>> {
+    tokio::spawn(async move {
+        loop {
+            let (client, _) = listener.accept().await?;
+            let server = TcpStream::connect(target).await?;
+            let connection_drop_rx = drop_rx.clone();
+            tokio::spawn(async move {
+                let (mut client_read, mut client_write) = client.into_split();
+                let (mut server_read, mut server_write) = server.into_split();
+                let client_to_server = tokio::io::copy(&mut client_read, &mut server_write);
+                let server_to_client = async {
+                    let mut buffer = [0_u8; 16 * 1024];
+                    loop {
+                        let read = server_read.read(&mut buffer).await?;
+                        if read == 0 {
+                            client_write.shutdown().await?;
+                            return Ok::<(), io::Error>(());
+                        }
+                        if *connection_drop_rx.borrow() {
+                            continue;
+                        }
+                        client_write.write_all(&buffer[..read]).await?;
+                    }
+                };
+                tokio::pin!(client_to_server);
+                tokio::pin!(server_to_client);
+                tokio::select! {
+                    _ = &mut client_to_server => {}
+                    _ = &mut server_to_client => {}
+                }
+            });
+        }
+    })
 }
 
 #[derive(Clone)]
@@ -695,6 +743,94 @@ async fn nested_ssh_crosses_direct_tcpip_and_tears_down_with_jump() -> TestResul
     };
     let (target_result, jump_result, client_result) =
         tokio::join!(target_running, jump_running, managed_client);
+    target_result?;
+    jump_result?;
+    client_result
+}
+
+#[tokio::test]
+async fn jump_output_blackhole_reaches_the_target_keepalive_driver() -> TestResult {
+    let target_socket = TcpListener::bind("127.0.0.1:0").await?;
+    let target_address = target_socket.local_addr()?;
+    let jump_socket = TcpListener::bind("127.0.0.1:0").await?;
+    let jump_address = jump_socket.local_addr()?;
+
+    let mut target_server = TargetServer;
+    let target_running = target_server.run_on_socket(server_config()?, &target_socket);
+    let target_handle = target_running.handle();
+
+    let (tunnel_event_tx, mut tunnel_event_rx) = mpsc::unbounded_channel();
+    let mut jump_server = JumpServer {
+        allowed_target: target_address,
+        tunnel_event_tx,
+    };
+    let jump_running = jump_server.run_on_socket(server_config()?, &jump_socket);
+    let jump_handle = jump_running.handle();
+
+    let proxy_socket = TcpListener::bind("127.0.0.1:0").await?;
+    let proxy_address = proxy_socket.local_addr()?;
+    let (drop_tx, drop_rx) = watch::channel(false);
+    let proxy = spawn_server_output_drop_proxy(proxy_socket, jump_address, drop_rx);
+
+    let client = async move {
+        let (host_key_tx, _host_key_rx) = mpsc::unbounded_channel();
+        let mut jump = client::connect(
+            keepalive_config(),
+            proxy_address,
+            AcceptHostKey {
+                layer: "jump",
+                event_tx: host_key_tx.clone(),
+            },
+        )
+        .await?;
+        authenticate_password(&mut jump, JUMP_USER, TARGET_PASSWORD, JUMP_PASSWORD).await?;
+        let tunnel = jump
+            .channel_open_direct_tcpip(
+                target_address.ip().to_string(),
+                target_address.port().into(),
+                "127.0.0.1",
+                0,
+            )
+            .await?;
+        if timeout(TEST_TIMEOUT, tunnel_event_rx.recv()).await? != Some(TunnelEvent::Started) {
+            return Err(io::Error::other("jump blackhole tunnel did not start").into());
+        }
+
+        let mut target = client::connect_stream(
+            keepalive_config(),
+            tunnel.into_stream(),
+            AcceptHostKey {
+                layer: "target",
+                event_tx: host_key_tx,
+            },
+        )
+        .await?;
+        authenticate_password(&mut target, TARGET_USER, JUMP_PASSWORD, TARGET_PASSWORD).await?;
+        let _channel = target.channel_open_session().await?;
+        drop_tx.send(true)?;
+
+        let target_result = timeout(Duration::from_secs(2), &mut target).await?;
+        if !matches!(target_result, Err(russh::Error::KeepaliveTimeout)) {
+            return Err(io::Error::other(format!(
+                "jump blackhole did not reach target keepalive timeout: {target_result:?}"
+            ))
+            .into());
+        }
+        Ok::<(), Box<dyn Error + Send + Sync>>(())
+    };
+
+    let managed_client = async move {
+        let result = timeout(Duration::from_secs(3), client).await;
+        jump_handle.shutdown("test complete".to_string());
+        target_handle.shutdown("test complete".to_string());
+        match result {
+            Ok(result) => result,
+            Err(error) => Err(error.into()),
+        }
+    };
+    let (target_result, jump_result, client_result) =
+        tokio::join!(target_running, jump_running, managed_client);
+    proxy.abort();
     target_result?;
     jump_result?;
     client_result

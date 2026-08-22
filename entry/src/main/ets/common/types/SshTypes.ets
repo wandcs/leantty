@@ -8,6 +8,13 @@ export enum SshErrorCode {
   SessionClosed = 7
 }
 
+export const DEFAULT_SSH_CONNECT_TIMEOUT_MS: number = 15000
+export const MAX_SSH_CONNECT_TIMEOUT_SECONDS: number = 300
+export const DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS: number = 30
+export const DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX: number = 3
+export const MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS: number = 3600
+export const MAX_SSH_SERVER_ALIVE_COUNT_MAX: number = 100
+
 export class SshError extends Error {
   code: SshErrorCode
   detail: string
@@ -32,8 +39,14 @@ export class SshConnectOptions {
   jumpUsername: string
   jumpPrivateKeyPath: string
   jumpPrivateKeyRequiresPassphrase: boolean
+  jumpConnectTimeoutMs: number
+  jumpServerAliveIntervalSeconds: number
+  jumpServerAliveCountMax: number
   knownHostsPath: string
   connectTimeoutMs: number
+  serverAliveIntervalSeconds: number
+  serverAliveCountMax: number
+  verbose: boolean
 
   constructor() {
     this.host = ''
@@ -46,7 +59,13 @@ export class SshConnectOptions {
     this.jumpUsername = ''
     this.jumpPrivateKeyPath = ''
     this.jumpPrivateKeyRequiresPassphrase = false
+    this.jumpConnectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.jumpServerAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.jumpServerAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
     this.knownHostsPath = ''
-    this.connectTimeoutMs = 15000
+    this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+    this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+    this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+    this.verbose = false
   }
 }

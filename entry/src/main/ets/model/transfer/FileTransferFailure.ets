@@ -77,6 +77,11 @@ export class FileTransferFailurePresenter {
         'File transfer timed out while connecting.\r\n' +
         'Check the network and Host, then run the command again.')
     }
+    if (normalizedCode === 'KEEPALIVE_TIMEOUT') {
+      return FileTransferFailurePresenter.info(FileTransferFailureKind.NETWORK,
+        'File transfer stopped because SSH keepalive timed out.\r\n' +
+        'Check the network and Host, then run the command again.')
+    }
     if (normalizedCode === 'NETWORK') {
       return FileTransferFailurePresenter.info(FileTransferFailureKind.NETWORK,
         'File transfer lost the SSH connection.\r\n' +

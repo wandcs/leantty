@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [1.5.0] - In development
+
+### Added
+
+- Added import and use of existing OpenSSH ECDSA P-256, P-384 and P-521
+  identities, including encrypted private keys. Imported ECDSA identities reuse
+  the existing fingerprint, passphrase, comment, export, durable restart,
+  direct/ProxyJump authentication, file-transfer and deletion paths. New-key
+  generation remains limited to Ed25519 and RSA-4096.
+- Added OpenSSH-compatible `ssh-keygen -c -f <identity>` comment maintenance.
+  Encrypted keys request the existing passphrase through masked input before a
+  visible new-comment prompt. LeanTTY preserves the fingerprint, public wire
+  key, encryption state, passphrase, 0600 private permissions and durable key
+  identity while committing one matching private/public comment; empty input
+  removes it, and failed projection or durable commits restore the old pair.
+- Added controlled `config import <Downloads-file-name>` and `config export
+  [<Downloads-file-name>]` commands for one canonical OpenSSH config. Import
+  validates before commit, preserves comments, whitespace, line endings,
+  repeated Host patterns and unknown source text across later managed Host
+  edits, rejects `Include`, `Match`, token expansion and a second unmanaged
+  import unless `--replace` is explicit, and rolls the runtime projection back
+  if durable commit fails.
+  Export uses the existing Downloads authorization and never overwrites an
+  existing file.
+- Added one-shot `ssh -v` diagnostics for the current Pane and connection
+  attempt. LeanTTY shows fixed, redacted jump/target stages and safely
+  classifies name resolution, TCP, SSH version and key-exchange failures
+  without enabling raw russh logs, persisting diagnostic state or exposing
+  hosts, identities, paths, fingerprints, prompts, credentials or terminal
+  content. Normal `ssh` and reconnect remain non-verbose by default.
+- Added line-start SSH escapes for an active terminal: `~.` disconnects the
+  current Pane's Session, `~?` lists only LeanTTY-supported escapes, `~I` shows
+  a sanitized target and optional jump route, and `~~` sends one literal
+  tilde. Recognition remains local to the current Pane, preserves ordered
+  pasted input and leaves ordinary, mid-line and unknown escape text for the
+  remote PTY.
+- Added `host add|set ... --connect-timeout <1-300|default>` to manage a
+  controlled OpenSSH `ConnectTimeout` directive for direct SSH,
+  one-hop ProxyJump, reconnect and Host-based `put/get`. LeanTTY applies the
+  configured whole-second value to TCP setup and the initial SSH handshake/key
+  exchange, reports jump and target timeouts separately, keeps user-driven host
+  verification and authentication waits outside the deadline, and retains the
+  existing 15-second default when the directive is absent.
+- Added controlled `ServerAliveInterval` and `ServerAliveCountMax` Host
+  settings for direct SSH, one-hop ProxyJump, reconnect and Host-based
+  `put/get`. LeanTTY keeps its existing `30s/3` reliability default, accepts
+  intervals `0-3600` seconds (`0` disables probes) and counts `1-100`, applies
+  target and named-jump values independently, and reports an encrypted-channel
+  keepalive timeout through the existing Session close and reconnect path.
+
+### Fixed
+
+- Made an active Host-based file transfer observe the same SSH connection
+  driver as an interactive Session. A configured server-alive timeout now
+  stops the transfer promptly with a clear network error, removes an owned
+  download temporary file and allows an immediate retry instead of waiting for
+  the separate SFTP operation timeout.
+
 ## [1.4.0] - 2026-08-19
 
 ### Added

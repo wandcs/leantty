@@ -220,6 +220,8 @@ Formal release software gate, candidate build and deployment use one command:
 ```powershell
 .\tools\verify-pc.ps1
 .\tools\verify-key-passphrase-pc.ps1
+.\tools\verify-ssh-auth-pc.ps1 -DiagnosticHap -HapPath <signed-test-hap> -Only key-comment-change-and-restart
+.\tools\verify-ssh-auth-pc.ps1 -DiagnosticHap -HapPath <signed-test-hap> -Only ecdsa-import-encrypted-and-restart
 .\tools\verify-ssh-matrix-pc.ps1
 ```
 
@@ -239,6 +241,22 @@ volatile build tree with its SHA-256, Git identity and software evidence.
 installs an already retained clean candidate, drives real application state,
 records JSON evidence and never rebuilds the HAP.
 
+`verify-ssh-auth-pc.ps1 -Only key-comment-change-and-restart` is the bounded
+1.5 comment-maintenance scenario. It generates and encrypts one disposable key,
+rejects a wrong passphrase, changes the visible comment, compares the exact
+OpenSSH fingerprint and 0600 mode before/after/restart, then authenticates to
+the controlled fixture with the unchanged passphrase and deletes the key.
+
+`verify-ssh-auth-pc.ps1 -Only ecdsa-import-encrypted-and-restart` is the
+bounded 1.5 imported-ECDSA scenario. It creates one runtime encrypted OpenSSH
+P-256 fixture outside product storage, sends it into the application sandbox,
+imports it through `key import`, rejects a wrong passphrase, authenticates to
+the controlled server before and after app restart, compares the fingerprint
+and 0600 mode, then deletes both the product Identity and source fixture with
+independent absence audits. P-384/P-521 and unencrypted formats remain covered
+by deterministic software fixtures; the physical scenario selects one curve
+because it validates the shared platform and interaction chain.
+
 `verify-ssh-matrix-pc.ps1` is the formal SSH physical entry. It runs four
 isolated groups in the fixed order below against one retained candidate, stops
 at the first failed group, and validates each group's acceptance mode,
@@ -247,8 +265,8 @@ It does not silently retry or skip a failed group.
 
 | SSH group | Owned public stages | Run-scoped state and primary oracle |
 | --- | --- | --- |
-| `transport-performance` | terminal key bytes, transport main path, five-mode performance matrix | Fresh fixture/reverse mapping and saved transparency baseline; controlled-server bytes plus device-clock render/performance records |
-| `authentication-methods` | password, keyboard-interactive variants, unencrypted/encrypted public key and fallback methods | Fresh credentials and disposable keys; controlled-server authentication result plus recovered session |
+| `transport-performance` | terminal key bytes, transport main path, SSH escape and five-mode performance matrix | Fresh fixture/reverse mapping and saved transparency baseline; controlled-server bytes, local escape actions plus device-clock render/performance records |
+| `authentication-methods` | password, keyboard-interactive variants, unencrypted/encrypted Ed25519 and imported ECDSA public key plus fallback methods | Fresh credentials and disposable keys; controlled-server authentication result plus recovered session |
 | `lifecycle-recovery` | Ctrl+C, Pane close, minimize/restore and process-stop cancellation | Fresh process/window/session boundary; prompt lifecycle state plus a subsequent controlled-server session |
 | `pane-focus-attention` | BEL attention and parallel Pane authentication | Fresh single-Pane layout; layout-owned focus/attention state plus independent server authentication |
 

@@ -2,11 +2,11 @@
 
 > 状态：唯一有效的项目 TODO
 >
-> 更新日期：2026-08-21
+> 更新日期：2026-08-22
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：先收敛 1.5 的首个产品切片；不从路线图候选直接推断实现范围
+> 当前工程阶段：1.5 产品开发范围已闭合；等待单独授权 release preparation
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -20,24 +20,31 @@
 
 `v1.3.0` 已于 2026-08-17 通过 AppGallery 审核并正式上架。`v1.4.0` 已由不可变签名
 标签、精确发布源和 GitHub Release 冻结，production APP、review-test HAP、manifest、
-哈希和发布材料已经完成；维护者已于 2026-08-21 在 AppGallery 提交审核，当前等待审核
-结果。项目只有在维护者报告结果后才记录新的商店状态。当前工作不修改 `v1.4.0` 的发布
-身份，也不补做新的 1.4 产品范围。
+哈希和发布材料已经完成；维护者于 2026-08-22 确认匹配的 production APP 已通过
+AppGallery 审核并正式上架。当前工作不修改 `v1.4.0` 的发布身份，也不补做新的 1.4
+产品范围。
 
 1.4 发布复盘形成的验收与发布工具链优化是 1.5 的第一项工程基础：稳定规则写入
 `quality-strategy.md`，研究、红绿证据和量化结果写入 `test-release-efficiency.md`。它不改变
 用户可见产品源，也不能替代 1.5 产品范围确认。
 
-## 1.5 当前活动工作
+## 1.5 当前状态
 
-1. [ ] 从 `roadmap.md` 的 1.5 候选中选择一个最小、独立、可验证的首个产品切片；重新核对
-   用户阻断、OpenSSH 标准、HarmonyOS PC 真实环境和现有 Host/Identity/`known_hosts`/config
-   权威来源，明确用户结果、非目标、安全边界、专项方案与真机门禁，再把该切片的可执行顺序
-   写入本文件。完成条件是维护者确认一个有证据的具体切片；在此之前不修改产品实现。
+`ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v`、
+受控 config import/export、`ssh-keygen -c` 和现有 OpenSSH ECDSA P-256/P-384/P-521 Identity
+导入/使用已分别完成专项实现、映射软件门、签名 ARM64 debug HAP 与所需的物理 HarmonyOS PC
+闭环。ECDSA 复用既有 Identity、口令、comment、durable asset、direct/ProxyJump、`put/get` 和
+删除路径，不新增生成入口或第二套状态。
 
-路线图中 IPv4/IPv6、连接超时、半开恢复、主机密钥轮换、诊断、config 导入导出和 ECDSA
-互操作仍是候选集合，不因 1.5 milestone 已启动而整体获得实现授权。推广手册也只提供稳定
-工作方法；没有单独写入本文件的 Pxx 不属于当前活动任务。
+`AddressFamily` / `ssh -4/-6` 因当前设备没有可重复的全局 IPv6 fixture 路径而暂缓；
+UpdateHostKeys 因 russh 缺少完整 proof request/reply、session binding 和验签公开 API 而按安全
+停止条件裁剪。专项完成事实和重新进入条件保留在 roadmap 与对应设计文档，不在本文件复制历史
+checklist。
+
+当前没有继续授权的 1.5 产品开发项。ECDSA 生成、certificate、FIDO/PKCS#11 和通用算法覆盖仍
+不进入范围。1.5 正式候选、版本元数据、完整验证、production 签名、GitHub Release 和 AppGallery
+交付必须由维护者单独启动 release preparation；开发期签名 HAP 和局部真机诊断证据不能自动
+推导为正式候选或商店能力。推广手册只提供稳定工作方法；未单独写入本文件的 Pxx 不属于活动任务。
 
 ## 维护规则
 

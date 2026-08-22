@@ -405,6 +405,13 @@ try {
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_SUBMIT')) (
             'Debug acceptance source injection omitted input telemetry'
         )
+        Assert-True (($injectedText -join "`n").Contains(
+                "logAcceptanceInputSubmit('key-comment-passphrase')"
+            ) -and ($injectedText -join "`n").Contains(
+                "logAcceptanceInputSubmit('key-comment')"
+            )) (
+            'Debug acceptance source injection omitted key-comment input telemetry'
+        )
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_LOCAL_CLEANUP_FAILURE')) (
             'Debug acceptance source injection omitted local cleanup failure control'
         )
@@ -515,6 +522,22 @@ try {
         Assert-True (
             (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $nativeAcceptanceHashes[$path]
         ) "Native acceptance source injection did not restore $path byte-for-byte"
+    }
+
+    $sshAuthHarnessText = [IO.File]::ReadAllText(
+        (Join-Path $repoRoot 'tools\verify-ssh-auth-pc.ps1')
+    )
+    foreach ($requiredEcdsaHarnessContract in @(
+        "'ecdsa-import-encrypted-and-restart'",
+        'KEY_IMPORT result=success,algorithm=ecdsa-p256',
+        'Install-LeanTTYEcdsaImportSource',
+        'fingerprintAfterRestart',
+        'independentEcdsaKeyAbsenceAudit',
+        'independentEcdsaSourceAbsenceAudit'
+    )) {
+        Assert-True ($sshAuthHarnessText.Contains($requiredEcdsaHarnessContract)) (
+            "SSH authentication harness omitted ECDSA contract: $requiredEcdsaHarnessContract"
+        )
     }
 
     Assert-LeanTTYHarnessOnlyPaths `
