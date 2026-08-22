@@ -1,6 +1,6 @@
 # 工作区键盘导航技术方案
 
-> 状态：Implemented；已通过针对性自动化与物理机主路径验证
+> 状态：Verified；`v1.1.1` 已通过 GitHub、AppGallery 发布
 >
 > 目标 milestone：1.1.0
 >
@@ -8,7 +8,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：仅以 [`next-work.md`](../next-work.md) 中对应活动工作为准
+> 完成记录：实现与验证已闭合；后续变更须重新进入 [`next-work.md`](../next-work.md)
 
 ## 用户问题与目标
 

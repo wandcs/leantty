@@ -1,6 +1,6 @@
 # LeanTTY 文档入口
 
-> 更新日期：2026-08-21
+> 更新日期：2026-08-22
 
 `docs/` 根目录保留当前规则、用户契约、版本路线、跨版本验收、唯一工作清单和稳定
 工程手册；`design/` 为每个大的功能点保存一份专项技术方案。私有证据和机器记录不
@@ -15,7 +15,7 @@
 | 3 | [`vision-acceptance.md`](vision-acceptance.md) | 跨 milestone 核心质量门禁和愿景结果验收 |
 | 4 | [`next-work.md`](next-work.md) | 唯一有效的 TODO、依赖顺序和当前完成定义 |
 | 5 | [`design/README.md`](design/README.md) | 单功能技术方案、WIP 状态和方案模板 |
-| 6 | [`coding-guide.md`](coding-guide.md) | 所有权纪律、编码边界和日常验证约束 |
+| 6 | [`coding-guide.md`](coding-guide.md) | 所有权、编码边界、Agent 可维护性和日常验证约束 |
 
 ## 用户与工程基线
 
@@ -50,14 +50,19 @@
 1. [`project-principles.md`](project-principles.md) 是最高规则；[`roadmap.md`](roadmap.md)
    只维护 milestone；[`vision-acceptance.md`](vision-acceptance.md) 维护跨版本质量与愿景
    验收；[`next-work.md`](next-work.md) 是唯一活动 TODO。
-2. 每个大的功能点在 [`design/`](design/README.md) 中最多保留一份当前技术方案；WIP
+2. 功能范围和 milestone 状态以 [`roadmap.md`](roadmap.md) 为准，版本变更与公开交付
+   事实以根 [`CHANGELOG.md`](../CHANGELOG.md) 为准，实施与验证完成事实以已经合并的
+   Pull Request 为准。三者出现冲突时，检查当前代码和测试来裁决技术实现状态；代码、
+   测试包或本地构建不能单独证明 GitHub Release 或 AppGallery 已发布。其他方案、手册
+   和历史记录不得反向覆盖这三类权威来源。
+3. 每个大的功能点在 [`design/`](design/README.md) 中最多保留一份当前技术方案；WIP
    方案可以记录待讨论和待验证内容，但不授权实现，也不得复制任务勾选。
-3. 当前源码手册默认描述 `main` 中 `Unreleased` 或已选择版本的 `In development` 行为，
+4. 当前源码手册默认描述 `main` 中 `Unreleased` 或已选择版本的 `In development` 行为，
    正式版行为以对应 GitHub Release、Changelog 和明确标注的适用版本为准；WIP、Roadmap
    和 Next Work 不得写成已交付。
-4. 当前手册只描述稳定事实和执行方法，不混入活动 checkbox 或单次验证状态。
-5. 首次公开前的私有归档不进入公开仓库；完成或被取代的公开方案通常从当前树
+5. 当前手册只描述稳定事实和执行方法，不混入活动 checkbox 或单次验证状态。
+6. 首次公开前的私有归档不进入公开仓库；完成或被取代的公开方案通常从当前树
    删除，通过 Git 历史追溯。
-5. [`archive/`](archive/README.md) 只保留归档政策和确有长期证据价值的例外材料；
+7. [`archive/`](archive/README.md) 只保留归档政策和确有长期证据价值的例外材料；
    归档内容不自动恢复为当前任务。
-6. 删除或移动文档时同步修正当前文档引用。
+8. 删除或移动文档时同步修正当前文档引用。

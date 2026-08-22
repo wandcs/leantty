@@ -6,7 +6,8 @@ milestone：1.3
 
 上位规则：[`project-principles.md`](../project-principles.md)
 
-活动工作：[`next-work.md`](../next-work.md)
+完成记录：`v1.3.0` 已通过 GitHub、AppGallery 发布；后续变更须重新进入
+[`next-work.md`](../next-work.md)
 
 ## 当前决定
 
@@ -15,7 +16,7 @@ milestone：1.3
 青色进行中/说明的固定语义。真机使用后，用户于同日否决双色两格提示符并固定改为整体绿色的
 小写 `ltty>`；其余输出语义不变。
 
-本文负责长期输出规则，`next-work.md` 仍是唯一实施清单；修改这些 token 或含义属于产品设计变更，
+本文负责长期输出规则，`next-work.md` 仍是唯一活动清单；修改这些 token 或含义属于产品设计变更，
 不能在单条命令中自行形成例外。
 
 ## 用户问题

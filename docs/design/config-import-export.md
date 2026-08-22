@@ -1,6 +1,6 @@
 # Controlled OpenSSH config import/export
 
-> Status: completed on 2026-08-21
+> Status: Verified; LeanTTY 1.5 config migration slice closed on 2026-08-21
 >
 > Scope: LeanTTY 1.5 controlled migration into the single `~/.ssh/config`
 

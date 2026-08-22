@@ -1,12 +1,12 @@
 # UpdateHostKeys
 
-> 状态：Deferred；russh 0.62.5 公开 API 不提供完整证明链
+> 状态：Closed；russh 0.62.5 公开 API 不提供完整证明链，产品实现已裁剪
 >
 > 更新日期：2026-08-21
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 活动工作：[`next-work.md`](../next-work.md)
+> 重新进入：只有本文记录的完整证明链能力成立后，才可重新进入 [`next-work.md`](../next-work.md)
 
 ## 用户结果
 

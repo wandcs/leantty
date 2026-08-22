@@ -6,7 +6,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 活动工作：[`next-work.md`](../next-work.md)
+> 完成记录：实现与命名验证已闭合；1.5 正式发布准备尚未启动
 
 ## 用户结果
 

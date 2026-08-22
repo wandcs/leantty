@@ -1,7 +1,11 @@
 # LeanTTY coding guide
 
 This guide describes the stable implementation boundaries and verification
-rules for the current ARM64 HarmonyOS PC product.
+rules for the current ARM64 HarmonyOS PC product. It also defines the coding
+discipline for a repository maintained primarily by coding agents. The goal is
+not code optimized for a particular model or prompt, but code whose behavior can
+be reconstructed, changed and verified from repository evidence without hidden
+project knowledge.
 
 Read [`architecture.md`](architecture.md) for the current event chains and
 persistence model, [`security-model.md`](security-model.md) for trust
@@ -46,6 +50,113 @@ hint, not a reason to obscure state ownership.
 Add a type or layer only when it owns a real lifecycle, encapsulates a testable
 policy, isolates a platform/protocol boundary, or materially simplifies the
 core state machine.
+
+## Agent-maintainable code
+
+Treat every change as if it will next be maintained by a capable contributor
+who starts with no conversational context. The repository must let that
+contributor determine the owner, entry point, invariant, failure path and
+verification method without guessing.
+
+### Keep behavior decidable
+
+- Every mutable state has one authoritative owner. A cache or derived view must
+  make its source, synchronization rule and invalidation condition explicit.
+- Every business behavior has one implementation entry. Platform, UI, WebView
+  and transport layers must not contain independent versions of the same rule.
+- Make the complete event chain traceable: input, parsing or UI intent, state
+  transition, boundary message, side effect, observable result, failure,
+  cancellation and recovery.
+- Represent protocols, lifecycle and business state with structured types and
+  events. Do not infer them from UI text, log fragments, array position,
+  call timing or combinations of unrelated booleans.
+- Give domain concepts stable, searchable names across code, tests and logs.
+  Generic names such as `Manager`, `Utils`, `handle` and `process` require a
+  narrower domain qualifier when they would otherwise hide the affected rule.
+
+### Size code by responsibility, not line count
+
+There is no mechanical function or file length limit. A cohesive state
+transition may be easier to understand in one local implementation than through
+many one-use helpers. Split code when it mixes owners or boundaries, combines
+business policy with transport or rendering, contains an independently testable
+strategy, or makes one branch require understanding unrelated branches.
+
+Do not add an interface, service, manager, factory or extension point merely to
+shorten a file, wrap a single implementation or anticipate an unapproved future
+need. Extraction must name a durable concept rather than move incidental code
+to another file.
+
+### Reuse rules, not incidental code shape
+
+Centralize rules that must remain identical: security decisions, state
+transitions, validation, protocol encoding and decoding, error classification
+and other business invariants. Two small code sequences that only happen to
+look alike may remain local when they have different owners or reasons to
+change. Eliminating a few duplicated statements does not justify a generic
+framework, parameter matrix or callback layer.
+
+When one rule is found in multiple layers, first select its authoritative owner
+and remove the competing implementations. Do not create another shared helper
+that leaves the duplicate state or decision paths intact.
+
+### Make contracts and failures explicit
+
+At each real boundary, make inputs, outputs, validation, ownership transfer,
+lifecycle, idempotency, cancellation and error behavior visible in types or in
+a concise contract beside the boundary. Reject malformed or out-of-state
+messages explicitly.
+
+Failures must be observable and distinguishable. Do not swallow errors or map
+timeout, cancellation, disconnect and ordinary failure to one ambiguous result.
+Use stable event names and the minimum non-secret identifiers needed to trace a
+Session or Pane. Logs, diagnostics and fixtures must not expose credentials,
+private terminal content or unredacted host material.
+
+### Write durable comments
+
+Comments explain why a constraint exists, which platform or protocol behavior
+requires it, what invariant would be broken by a tempting simplification, or
+why a rejected alternative was unsafe. Do not restate the next line of code.
+Update or remove a comment when its contract no longer holds; stale comments
+must not become a second source of truth.
+
+### Make verification part of the implementation
+
+- Name tests after observable behavior and relevant conditions, not only the
+  implementation unit or a sequence number.
+- Test authoritative rules and meaningful negative, cancellation and recovery
+  paths. Avoid tests that freeze private call order or accidental code shape.
+- Keep the smallest applicable verification command discoverable through
+  `quality-strategy.md` and the regression registry.
+- A mock proves only the modeled contract. It cannot replace compiled-boundary
+  evidence or a named physical scenario when the changed claim depends on the
+  HarmonyOS PC.
+- A task or design must state observable completion conditions and important
+  non-goals. Code written, tests passing, build success, package installation
+  and a visible window are evidence of different scopes, not interchangeable
+  definitions of completion.
+
+### Keep changes locally reviewable
+
+Make the smallest coherent change that fixes the authoritative rule. Do not mix
+unrelated cleanup, speculative compatibility, opportunistic abstraction or
+format churn into the same patch. Remove superseded branches and abstractions
+instead of preserving them without a current contract. Preserve unrelated
+worktree changes and do not turn a test or a historical design into a new
+product requirement.
+
+Before considering an implementation reviewable, answer all five questions:
+
+1. Who owns the affected state?
+2. Where is the single entry for the behavior?
+3. Is the rule implemented anywhere else?
+4. How do failure, cancellation and recovery propagate?
+5. Which evidence proves the changed claim at the required level?
+
+If an answer requires guessing across unrelated files, improve the ownership,
+naming, contract or verification path before adding explanatory process around
+the ambiguity.
 
 ## Repository map
 

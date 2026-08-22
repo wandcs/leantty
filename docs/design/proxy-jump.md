@@ -8,7 +8,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已进入 [`next-work.md`](../next-work.md)；只按其中的依赖顺序和停止条件执行
+> 完成记录：1.4 实现、验证与发布已闭合；后续变更须重新进入 [`next-work.md`](../next-work.md)
 
 > 命令面治理：[`command-system.md`](command-system.md)
 

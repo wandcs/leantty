@@ -1,6 +1,6 @@
 # SSH key comment change
 
-> Status: implemented; routine physical validation passed on 2026-08-21
+> Status: Verified; LeanTTY 1.5 key-comment slice closed on 2026-08-21
 >
 > Scope: LeanTTY 1.5 `ssh-keygen -c -f <identity>`
 

@@ -16,6 +16,9 @@
 
 `project-principles.md` 始终是最高规则，`roadmap.md` 负责 milestone，`next-work.md`
 是唯一活动 TODO。方案正文不得维护第二套任务勾选或用 WIP 内容授权实现。
+方案中的范围和版本状态服从 `roadmap.md`，版本变更与公开交付服从 `CHANGELOG.md`，
+实施与验证完成事实服从已合并 Pull Request；出现冲突时再检查当前代码和测试裁决
+技术实现状态。
 
 ## 当前方案
 

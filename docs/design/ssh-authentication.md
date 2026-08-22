@@ -1,6 +1,6 @@
 # SSH keyboard-interactive 与多方法认证技术方案
 
-> 状态：Implemented；受控物理机与 Preferences 边界已闭合，待正式候选门禁
+> 状态：Verified；`v1.1.1` 已通过 GitHub、AppGallery 发布
 >
 > 目标 milestone：1.1.0
 >
@@ -8,7 +8,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：仅以 [`next-work.md`](../next-work.md) 中对应活动工作为准
+> 完成记录：实现与验证已闭合；后续变更须重新进入 [`next-work.md`](../next-work.md)
 
 > 命令面治理：[`command-system.md`](command-system.md)
 
