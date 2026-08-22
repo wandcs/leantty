@@ -2,11 +2,11 @@
 
 > 状态：唯一有效的项目 TODO
 >
-> 更新日期：2026-08-22
+> 更新日期：2026-08-23
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：1.5 产品开发范围及已授权的 Agent 可维护性重构均已闭合；release preparation 仍需单独授权
+> 当前工程阶段：1.5 产品开发范围及已授权的终端透明语义修复均已闭合；release preparation 仍需单独授权
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -41,7 +41,7 @@ UpdateHostKeys 因 russh 缺少完整 proof request/reply、session binding 和�
 停止条件裁剪。专项完成事实和重新进入条件保留在 roadmap 与对应设计文档，不在本文件复制历史
 checklist。
 
-当前没有继续授权的 1.5 产品开发项或工程重构项。ECDSA 生成、certificate、FIDO/PKCS#11 和
+当前没有继续授权的 1.5 SSH 产品开发项或工程重构项。ECDSA 生成、certificate、FIDO/PKCS#11 和
 通用算法覆盖仍不进入范围。Agent 可维护性重构的完成规则已经进入 `coding-guide.md`、
 `architecture.md`、`quality-strategy.md` 和 Git 历史，不在这里保留完成 checklist。1.5 正式候选、
 版本元数据、完整验证、production 签名、GitHub Release 和 AppGallery 交付必须由维护者单独启动

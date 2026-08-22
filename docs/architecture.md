@@ -186,6 +186,34 @@ input. xterm handles terminal emulation, while ArkTS validates the limited
 system effects that can leave the terminal surface, such as clipboard writes
 and URL opens.
 
+Terminal transparency has one composition owner per region. The ArkUI Chrome
+and content surfaces own their selected alpha; ArkWeb and xterm's default
+background use zero render alpha so that surface is visible. The xterm default
+still carries LeanTTY's one fixed logical background RGB `#1E1E2E`; terminal
+queries such as OSC 11 therefore receive the palette color independently of
+window transparency. Explicit ANSI or TrueColor cell backgrounds, foreground
+glyphs, the cursor and selection retain upstream xterm rendering semantics and
+are not assigned a second LeanTTY alpha. The Bridge does not inspect or rewrite
+terminal output to infer visual intent.
+
+xterm's render model packs background colors and non-color flags into one
+integer. LeanTTY's version-locked WebGL asset patch normalizes the value to its
+color-mode and RGB bits at `RectangleRenderer.updateBackgrounds`; therefore
+dim, italic, underline, overline, OSC 8 hyperlink and protected attributes do
+not turn a logical default background into a rectangle. Real ANSI, 256-color
+and TrueColor backgrounds, inverse, selection and decorations remain on their
+existing upstream paths. `tools/web-terminal/build.mjs` is the single patch
+entry; its module records the upstream source identity, input hash, exact render
+site and removal rule so an xterm update fails instead of carrying the patch
+forward silently.
+
+The terminal requests WebGL on every normal surface. Its reported renderer
+state distinguishes requested and actual renderer plus the fallback reason.
+DOM is used only after WebGL initialization failure or context loss; it is not
+selected by device or application heuristics. This keeps the accelerated path
+as the product default while preserving an observable recovery path when a
+WebGL context cannot render reliably.
+
 ## Lifecycle and terminal recovery
 
 `TerminalSurfaceController` owns an in-memory framebuffer snapshot and output

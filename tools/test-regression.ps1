@@ -233,6 +233,11 @@ if ((Test-RegressionGroupSelected -Groups @('arkts')) -and
     }
 }
 
+Invoke-RegressionCheck -Name 'xterm-webgl-default-background-patch' -Groups @('web') -Action {
+    & $nodeExe (Join-Path $repoRoot 'tools\web-terminal\test-xterm-webgl-patch.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'xterm WebGL default-background patch tests failed' }
+}
+
 Invoke-RegressionCheck -Name 'web-terminal-policy' -Groups @('web') -Action {
     & $nodeExe (Join-Path $repoRoot 'tools\web-terminal\test-terminal-policy.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'Web terminal policy tests failed' }
