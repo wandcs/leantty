@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：1.5 产品开发范围已闭合；执行已授权的 Agent 可维护性重构，release preparation 仍需单独授权
+> 当前工程阶段：1.5 产品开发范围及已授权的 Agent 可维护性重构均已闭合；release preparation 仍需单独授权
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -41,30 +41,12 @@ UpdateHostKeys 因 russh 缺少完整 proof request/reply、session binding 和�
 停止条件裁剪。专项完成事实和重新进入条件保留在 roadmap 与对应设计文档，不在本文件复制历史
 checklist。
 
-当前没有继续授权的 1.5 产品开发项。ECDSA 生成、certificate、FIDO/PKCS#11 和通用算法覆盖仍
-不进入范围。下面授权的是不改变产品范围的 Agent 可维护性重构。1.5 正式候选、版本元数据、完整
-验证、production 签名、GitHub Release 和 AppGallery 交付必须由维护者单独启动 release
-preparation；开发期签名 HAP 和局部真机诊断证据不能自动推导为正式候选或商店能力。推广手册
-只提供稳定工作方法；未单独写入本文件的 Pxx 不属于活动任务。
-
-## Agent 可维护性重构
-
-按以下依赖顺序逐项执行；只有最前面的未完成分组是当前工作。每组先用现有行为建立回归基线，
-再移动职责，完成后同步权威文档和验证证据并从本文件删除该分组。重构不得借机增加产品能力、
-通用框架、第二套状态或无真实调用方的抽象。
-
-### M4 测试职责与行为契约
-
-- [ ] 按 SSH lifecycle、workspace、terminal interaction、transfer、key management 和 formatting
-  等真实所有者拆分 `InteractionFixes.test.ets`，同步 `List.test.ets`，保留问题来源但取消“历史修复
-  大杂烩”作为测试边界。
-- [ ] 盘点 PowerShell/ArkTS 中读取源码文本、私有名称或调用形状的断言；能由公开输出、状态转换、
-  构建或真机行为证明的，改为行为测试。只保留安全策略、依赖边界和生成物契约所必需的静态扫描。
-- [ ] 将保留的静态规则登记到聚焦测试组并写明它保护的稳定契约；删除重复测试和仅冻结偶然实现
-  细节的断言，确保失败信息直接指出受损责任。
-
-可观察完成条件：没有跨多个所有者的超大 catch-all 测试文件；行为重构不再因私有命名或调用顺序
-变化误报；必要的安全/架构静态门仍可独立运行，且原有可观察覆盖不下降。
+当前没有继续授权的 1.5 产品开发项或工程重构项。ECDSA 生成、certificate、FIDO/PKCS#11 和
+通用算法覆盖仍不进入范围。Agent 可维护性重构的完成规则已经进入 `coding-guide.md`、
+`architecture.md`、`quality-strategy.md` 和 Git 历史，不在这里保留完成 checklist。1.5 正式候选、
+版本元数据、完整验证、production 签名、GitHub Release 和 AppGallery 交付必须由维护者单独启动
+release preparation；开发期签名 HAP 和局部真机诊断证据不能自动推导为正式候选或商店能力。
+推广手册只提供稳定工作方法；未单独写入本文件的 Pxx 不属于活动任务。
 
 ## 维护规则
 

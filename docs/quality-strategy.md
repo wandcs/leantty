@@ -2,7 +2,7 @@
 
 > Status: mandatory cross-version engineering standard
 >
-> Last updated: 2026-08-20
+> Last updated: 2026-08-22
 >
 > Product acceptance: [`vision-acceptance.md`](vision-acceptance.md)
 
@@ -201,6 +201,30 @@ marked `software-focused`, `mode=focused` and `releaseEligible=false`.
 File paths may suggest groups, but the event chain is authoritative. A change
 crossing multiple owners selects multiple groups; an automatic diff heuristic
 must never silently omit a boundary.
+
+### Retained static contract checks
+
+Static source inspection is limited to contracts that cannot be proved reliably
+through a public behavior test alone. A retained check MAY protect a generated
+interface, a cross-language or platform registration point, a forbidden security
+pattern, an artifact boundary, or the test/release harness itself. It MUST NOT
+freeze a product-private field or method name, local variable, helper call order,
+or another implementation shape when an ArkTS, Rust, Web, build or physical test
+can observe the result. Each failure must name the damaged responsibility.
+
+| Check | Focused group | Stable contract protected |
+| --- | --- | --- |
+| `check-public-source.ps1` | `policy` | Public-tree secret, generated-file and prohibited-artifact policy |
+| `check-ssh-transport-flow.ps1` | `ssh-flow` | One generated N-API transport/control event schema across Rust typings and ArkTS, including removal of the retired split callbacks |
+| `check-keygen-async-flow.ps1` | `ssh-flow` | Cross-language asynchronous key-generation contract: blocking Rust work is isolated and the generated ArkTS API remains a Promise that callers await |
+| `test-build-workflows.ps1` | `tooling` | Build/release locking, candidate identity, acceptance-source restoration, workflow failure and evidence contracts; product-private control flow is outside this check |
+| `test-device-regression.ps1` | `tooling` | Physical-harness input, evidence, cleanup and secret-safety contracts, plus unavoidable public ArkUI/lifecycle registration and filesystem security flags |
+| Package-policy checks registered by `test-regression.ps1` | `tooling` and build stages | ABI, production/test-source isolation and release-package artifact boundaries |
+
+Tests under `entry/src/test/` are organized by the owner or behavior they prove,
+such as SSH, workspace, terminal interaction, transfer, key management and
+formatting. A historical incident may explain why a test exists, but it does not
+define a permanent catch-all test suite.
 
 `dev-pc.ps1` is the normal build/install/launch loop when the affected behavior
 needs a device build; it is not an acceptance result. Before a named physical

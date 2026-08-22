@@ -187,78 +187,14 @@ try {
         "Startup warm source helper is missing: $startupWarmSourceScript"
     )
     . $startupWarmSourceScript
-    $durableStateProductionPath = Join-Path $repoRoot `
-        'entry\src\main\ets\model\persistence\DurableStateManager.ets'
-    $durableStateProductionText = Get-Content -LiteralPath $durableStateProductionPath -Raw
-    $durableInitializeBlock = [regex]::Match(
-        $durableStateProductionText,
-        '(?s)  static initialize\(context: common\.UIAbilityContext\): void \{.*?\r?\n  \}'
-    ).Value
-    Assert-True (-not [string]::IsNullOrWhiteSpace($durableInitializeBlock)) (
-        'Durable state initialize block is missing'
-    )
-    Assert-True (
-        -not $durableInitializeBlock.Contains('.garbageCollect()') -and
-        -not $durableInitializeBlock.Contains('restoreSshProjection') -and
-        $durableStateProductionText.Contains('private static garbageCollectionCompleted: boolean = false') -and
-        $durableStateProductionText.Contains('static collectGarbageOnce(): void') -and
-        $durableStateProductionText.Contains('static async prepareSshProjection(') -and
-        $durableStateProductionText.Contains('await DurableStateManager.requireStore().listPathsAsync()')
-    ) 'Durable SSH projection or garbage collection still blocks startup'
-    $durableAssetStoreText = Get-Content -LiteralPath (
-        Join-Path $repoRoot 'entry\src\main\ets\model\persistence\DurableAssetStore.ets'
-    ) -Raw
-    Assert-True (
-        $durableAssetStoreText.Contains('async readAsync(path: string): Promise<string | null>') -and
-        $durableAssetStoreText.Contains('async listPathsAsync(): Promise<string[]>') -and
-        $durableAssetStoreText.Contains('await asset.query(query)')
-    ) 'SSH projection does not use the non-blocking Asset Store query path'
     $entryAbilityProductionText = Get-Content -LiteralPath (
         Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
     ) -Raw
     Assert-True (
         $entryAbilityProductionText.Contains('windowStage.setWindowRectAutoSave(true)') -and
         -not $entryAbilityProductionText.Contains('restoreOrCaptureWindowRect') -and
-        -not $entryAbilityProductionText.Contains("mainWindow.on('windowRectChange'") -and
-        -not $durableStateProductionText.Contains('DurableWindowRect') -and
-        -not $durableStateProductionText.Contains('WINDOW_RECT_PATH')
+        -not $entryAbilityProductionText.Contains("mainWindow.on('windowRectChange'")
     ) 'System window auto-save is not the sole owner of restart window geometry'
-    $onBackgroundBlock = [regex]::Match(
-        $entryAbilityProductionText,
-        '(?s)  onBackground\(\): void \{.*?\r?\n  \}'
-    ).Value
-    Assert-True (
-        $onBackgroundBlock.Contains('DurableStateManager.collectGarbageOnce()') -and
-        $onBackgroundBlock.Contains("logger.warn('Deferred durable garbage collection failed: '")
-    ) 'Ability background lifecycle does not own recoverable deferred durable cleanup'
-    $onCreateBlock = [regex]::Match(
-        $entryAbilityProductionText,
-        '(?s)  onCreate\(want: Want, launchParam: AbilityConstant\.LaunchParam\): void \{.*?\r?\n  \}'
-    ).Value
-    Assert-True (
-        -not $onCreateBlock.Contains('SshKeyManager.listKeys') -and
-        -not $onCreateBlock.Contains('finishLegacyMigration') -and
-        -not $onCreateBlock.Contains('reconcileVerifiedKeys')
-    ) 'SSH key projection maintenance still blocks Ability startup'
-    $sshEnvironmentPath = Join-Path $repoRoot `
-        'entry\src\main\ets\model\ssh\SshEnvironment.ets'
-    Assert-True (Test-Path -LiteralPath $sshEnvironmentPath -PathType Leaf) (
-        'Single-flight SSH environment owner is missing'
-    )
-    $sshEnvironmentText = Get-Content -LiteralPath $sshEnvironmentPath -Raw
-    Assert-True (
-        $sshEnvironmentText.Contains('SshEnvironmentReadiness') -and
-        $sshEnvironmentText.Contains('DurableStateManager.prepareSshProjection') -and
-        $sshEnvironmentText.Contains('DurableStateManager.reconcileVerifiedKeys')
-    ) 'SSH environment owner does not contain the complete post-render preparation chain'
-    $sessionViewModelText = Get-Content -LiteralPath (
-        Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
-    ) -Raw
-    Assert-True (
-        $sessionViewModelText.Contains('this.beginSshEnvironmentPreparation()') -and
-        $sessionViewModelText.Contains('await this.ensureSshEnvironment()') -and
-        $sessionViewModelText.Contains('CommandParser.requiresSshEnvironment(cmd)')
-    ) 'Terminal readiness and command execution do not share the SSH environment gate'
     $bridgeProtocolText = Get-Content -LiteralPath (
         Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
     ) -Raw

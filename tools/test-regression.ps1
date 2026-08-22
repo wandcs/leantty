@@ -166,9 +166,9 @@ Invoke-RegressionCheck -Name 'device-regression-helpers' -Groups @('tooling') -A
     if ($LASTEXITCODE -ne 0) { throw 'Device regression helper tests failed' }
 }
 
-Invoke-RegressionCheck -Name 'ssh-transport-order' -Groups @('ssh-flow') -Action {
+Invoke-RegressionCheck -Name 'ssh-transport-contract' -Groups @('ssh-flow') -Action {
     & (Join-Path $PSScriptRoot 'check-ssh-transport-flow.ps1')
-    if ($LASTEXITCODE -ne 0) { throw 'SSH transport ordering check failed' }
+    if ($LASTEXITCODE -ne 0) { throw 'SSH generated transport contract check failed' }
 }
 
 Invoke-RegressionCheck -Name 'ssh-keygen-async-flow' -Groups @('ssh-flow') -Action {

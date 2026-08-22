@@ -11,14 +11,6 @@ $typing = Get-Content -Raw -LiteralPath $typingPath
 $client = Get-Content -Raw -LiteralPath $clientPath
 $transfer = Get-Content -Raw -LiteralPath $transferPath
 
-$finalData = 'final_output.clone()'
-$close = 'let _ = send_transport_close('
-$finalDataIndex = $rust.IndexOf($finalData, [StringComparison]::Ordinal)
-$closeIndex = $rust.IndexOf($close, [StringComparison]::Ordinal)
-
-if ($finalDataIndex -lt 0 -or $closeIndex -lt 0 -or $finalDataIndex -ge $closeIndex) {
-    throw 'Final SSH data and close must be delivered in order through one transport callback'
-}
 if (-not $rust.Contains('type JsTransportCallback =') -or
     $rust.Contains('type JsDataCallback =') -or
     $rust.Contains('close_callback: JsCallback')) {
@@ -49,4 +41,4 @@ if (-not $rust.Contains('pub struct ControlEvent') -or
     throw 'Interactive SSH and file transfer must share one structured control callback'
 }
 
-Write-Host 'SSH transport flow check passed.' -ForegroundColor Green
+Write-Host 'SSH transport contract check passed.' -ForegroundColor Green
