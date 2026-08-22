@@ -1,6 +1,6 @@
 # LeanTTY Tab 补全设计
 
-> 状态：Implemented；待最终候选人工视觉 smoke
+> 状态：Verified；`v1.3.0` 已通过 GitHub、AppGallery 发布
 >
 > milestone：1.3
 >
@@ -8,7 +8,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已进入 [`next-work.md`](../next-work.md)；按其中顺序实现和验证
+> 完成记录：1.3 实现、真机验证与发布已闭合；后续变更须重新进入 [`next-work.md`](../next-work.md)
 
 ## 用户问题与目标
 

@@ -7,7 +7,8 @@ requests, but keeps a deliberately narrow product scope.
 
 Read [the project principles](docs/project-principles.md). Reliability comes
 first, simplicity is the default, and usability work stays focused on the core
-remote-terminal path.
+remote-terminal path. Code changes must also follow the ownership, boundary and
+agent-maintainability rules in [the coding guide](docs/coding-guide.md).
 
 - For a bug or documentation problem, open an issue with reproducible evidence.
 - For a feature or architectural change, open an issue before implementation.

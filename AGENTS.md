@@ -4,6 +4,8 @@
 
 - Read and follow `docs/project-principles.md` before product, architecture,
   feature or refactoring work.
+- Follow `docs/coding-guide.md` for ownership, responsibility boundaries and
+  agent-maintainable implementation discipline.
 - Use `docs/next-work.md` as the only source of outstanding project work.
 - Follow `docs/versioning.md` and `docs/release-process.md` for branch scope,
   changelog entries, version preparation, AppGallery review, tags and releases.

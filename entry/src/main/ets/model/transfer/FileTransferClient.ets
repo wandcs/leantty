@@ -2,6 +2,7 @@ import sshNative from 'libleantty_ssh.so'
 import type {
   AuthEvent as NativeAuthEvent,
   AuthPromptEvent as NativeAuthPromptEvent,
+  ControlEvent as NativeControlEvent,
   FileTransferEvent as NativeFileTransferEvent
 } from 'libleantty_ssh.so'
 import { Logger } from '../../common/logger/Logger'
@@ -10,8 +11,10 @@ import {
   AuthPromptInfo,
   HostKeyChangedInfo,
   SshClient,
-  SshClientEvent
+  SshClientEvent,
+  SshClientMessage
 } from '../ssh/SshClient'
+import { SshControlEventPolicy } from '../ssh/SshControlEventPolicy'
 
 export class FileTransferOptions {
   direction: string = ''
@@ -51,7 +54,7 @@ export class FileTransferClient {
   private privateKeyPath: string = ''
   private pendingKnownHostLine: string = ''
   private pendingAuthChallenge: AuthChallengeInfo | null = null
-  private eventCallback: ((event: SshClientEvent, data: string) => void) | null = null
+  private eventCallback: ((message: SshClientMessage) => void) | null = null
   private progressCallback: ((event: FileTransferProgress) => void) | null = null
   private logger: Logger = new Logger('FileTransferClient')
 
@@ -82,14 +85,14 @@ export class FileTransferClient {
       options.remotePath,
       options.localPath,
       options.localDescriptor,
-      (event: string) => { this.handleRustEvent(event) },
+      (event: NativeControlEvent) => { this.handleNativeControlEvent(event) },
       (event: NativeAuthEvent) => { this.handleNativeAuthEvent(event) },
       (event: NativeFileTransferEvent) => { this.handleNativeTransferEvent(event) }
     )
     this.logger.info('File transfer initiated, transferId=' + this.transferId)
   }
 
-  onEvent(callback: (event: SshClientEvent, data: string) => void): void {
+  onEvent(callback: (message: SshClientMessage) => void): void {
     this.eventCallback = callback
   }
 
@@ -187,22 +190,40 @@ export class FileTransferClient {
     }
   }
 
-  private handleRustEvent(event: string): void {
-    if (event.startsWith('HOST_KEY_PROMPT:')) {
-      let payload: string = event.substring(16)
-      let fields: string[] = payload.split('\t')
-      if (fields.length !== 3 || fields[0] !== 'target' || fields[1].length === 0 ||
-        fields[2].length === 0) { return }
-      this.pendingLayer = fields[0]
-      this.pendingKnownHostLine = fields[2]
-      this.emitEvent(SshClientEvent.HOST_KEY_PROMPT, fields[1])
-    } else if (event.startsWith('HOST_KEY_CHANGED:')) {
-      let info: HostKeyChangedInfo | null = SshClient.parseHostKeyChangedInfo(event.substring(17))
-      if (info !== null) {
-        this.emitEvent(SshClientEvent.HOST_KEY_CHANGED, JSON.stringify(info))
+  private handleNativeControlEvent(event: NativeControlEvent): void {
+    if (!SshControlEventPolicy.isCurrent(this.transferId, this.generation, event)) {
+      this.logger.warn('Rejected stale transfer control event, kind=' + event.kind)
+      return
+    }
+    this.logger.info(SshControlEventPolicy.safeLogLabel(event))
+    if (event.layer !== 'target') {
+      this.logger.warn('Rejected transfer control event for layer=' + event.layer)
+      return
+    }
+    if (event.kind === 'host_key_prompt') {
+      if (!SshControlEventPolicy.isHostKeyPrompt(event)) {
+        this.logger.warn('Rejected invalid transfer host-key prompt')
+        return
       }
-    } else if (event.startsWith('HOST_KEY_ERROR:')) {
-      this.emitEvent(SshClientEvent.ERROR, event.substring(15))
+      this.pendingLayer = event.layer
+      this.pendingKnownHostLine = event.knownHostLine
+      this.emitEvent(SshClientMessage.withText(SshClientEvent.HOST_KEY_PROMPT, event.fingerprint))
+    } else if (event.kind === 'host_key_changed') {
+      let info: HostKeyChangedInfo | null = SshControlEventPolicy.hostKeyChanged(event)
+      if (info === null) {
+        this.logger.warn('Rejected invalid changed transfer host key')
+        return
+      }
+      this.emitEvent(SshClientMessage.withHostKeyChanged(info))
+    } else if (event.kind === 'error') {
+      let error = SshControlEventPolicy.error(event)
+      if (error === null) {
+        this.logger.warn('Rejected invalid transfer control error')
+        return
+      }
+      this.emitEvent(SshClientMessage.withError(error))
+    } else {
+      this.logger.warn('Rejected unsupported transfer control event, kind=' + event.kind)
     }
   }
 
@@ -218,15 +239,16 @@ export class FileTransferClient {
       return
     }
     if (event.kind === 'banner') {
-      this.emitEvent(SshClientEvent.AUTH_BANNER, event.text)
+      this.emitEvent(SshClientMessage.withText(SshClientEvent.AUTH_BANNER, event.text))
     } else if (event.kind === 'password') {
       this.pendingLayer = event.layer
       this.waitingAuth = true
-      this.emitEvent(SshClientEvent.PASSWORD_PROMPT, '')
+      this.emitEvent(SshClientMessage.simple(SshClientEvent.PASSWORD_PROMPT))
     } else if (event.kind === 'private_key_passphrase') {
       this.pendingLayer = event.layer
       this.waitingAuth = true
-      this.emitEvent(SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT, this.privateKeyPath)
+      this.emitEvent(SshClientMessage.withText(
+        SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT, this.privateKeyPath))
     } else if (event.kind === 'challenge') {
       let challenge: AuthChallengeInfo = new AuthChallengeInfo()
       challenge.roundId = event.roundId
@@ -242,7 +264,7 @@ export class FileTransferClient {
       this.pendingAuthChallenge = challenge
       this.pendingLayer = event.layer
       this.waitingAuth = true
-      this.emitEvent(SshClientEvent.AUTH_CHALLENGE, '')
+      this.emitEvent(SshClientMessage.simple(SshClientEvent.AUTH_CHALLENGE))
     }
   }
 
@@ -272,9 +294,9 @@ export class FileTransferClient {
     }
   }
 
-  private emitEvent(event: SshClientEvent, data: string): void {
+  private emitEvent(message: SshClientMessage): void {
     if (this.eventCallback !== null) {
-      this.eventCallback(event, data)
+      this.eventCallback(message)
     }
   }
 }

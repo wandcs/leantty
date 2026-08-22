@@ -10,7 +10,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已进入 [`next-work.md`](../next-work.md)；可以按其中依赖顺序切片实现
+> 完成记录：1.2 实现、验证与发布已闭合；后续变更须重新进入 [`next-work.md`](../next-work.md)
 
 ## 用户问题与目标
 

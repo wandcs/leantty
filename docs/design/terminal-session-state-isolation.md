@@ -8,7 +8,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已按原 [`next-work.md`](../next-work.md) 门禁闭合；完成事实保留在本文
+> 完成记录：已按原 [`next-work.md`](../next-work.md) 门禁闭合；后续变更须重新授权
 
 ## 用户问题
 

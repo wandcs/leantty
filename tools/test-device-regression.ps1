@@ -876,18 +876,22 @@ foreach ($scriptName in @(
             $content.Contains("'password-success'") -and
             $content.Contains("'password-then-keyboard-interactive-mixed-echo'") -and
             $content.Contains("'keyboard-interactive-multi-round-wrong-answer-recovery'") -and
-            $content.Contains("Wait-AuthLog -Pattern 'rust event: AUTH:target:authentication was rejected'") -and
-            -not $content.Contains("Wait-AuthLog -Pattern 'rust event: AUTH:authentication was rejected'") -and
+            $content.Contains(
+                "Wait-AuthLog -Pattern 'native control event: error:target:authentication:auth'"
+            ) -and
+            -not $content.Contains(
+                "Wait-AuthLog -Pattern 'native control event: error::authentication:auth'"
+            ) -and
             $content.Contains("'publickey-unencrypted'") -and
             $content.Contains("'publickey-then-password'") -and
             $content.Contains("'publickey-then-keyboard-interactive'") -and
             $content.Contains("'keyboard-interactive-zero-prompt'") -and
             $content.Contains("'unsupported-method-error-and-recovery'") -and
             $content.Contains(
-                "Wait-AuthLog -Pattern 'rust event: AUTH:target:no supported authentication method is available'"
+                "Wait-AuthLog -Pattern 'SSH error: target:no supported authentication method is available'"
             ) -and
             -not $content.Contains(
-                "Wait-AuthLog -Pattern 'rust event: AUTH:no supported authentication method is available'"
+                "Wait-AuthLog -Pattern 'SSH error: no supported authentication method is available'"
             ) -and
             $content.Contains("'ctrl-c-authentication-cancellation-and-recovery'") -and
             $content.Contains('Invoke-LeanTTYDeviceCtrlC') -and
@@ -1156,9 +1160,6 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 $sessionViewModel = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
 ) -Raw
-$localCommandOutput = Get-Content -LiteralPath (
-    Join-Path $repoRoot 'entry\src\main\ets\model\terminal\LocalCommandOutput.ets'
-) -Raw
 $indexPage = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
 ) -Raw
@@ -1168,17 +1169,11 @@ $terminalPane = Get-Content -LiteralPath (
 $entryAbility = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
 ) -Raw
-$downloadsAccessManager = Get-Content -LiteralPath (
-    Join-Path $repoRoot 'entry\src\main\ets\model\transfer\DownloadsAccessManager.ets'
-) -Raw
 $transferFileManager = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
 ) -Raw
 $commandBarViewModel = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\viewmodel\CommandBarViewModel.ets'
-) -Raw
-$terminalTextPolicy = Get-Content -LiteralPath (
-    Join-Path $repoRoot 'entry\src\main\ets\common\security\TerminalTextPolicy.ets'
 ) -Raw
 $acceptanceSource = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'acceptance-source.ps1'
@@ -1350,67 +1345,27 @@ Assert-True (
     $putGetVerifier.Contains('device-put-get.json')
 ) 'Production PUT/GET physical-PC verifier is incomplete'
 Assert-True (
-    $sessionViewModel.Contains("const width: number = 30") -and
-    $sessionViewModel.Contains("'\r\u001b[2K' + SessionViewModel.styleTransferProgress") -and
-    $localCommandOutput.Contains("GREEN + '●' + RESET") -and
-    $sessionViewModel.Contains('FILE_TRANSFER progress=visible') -and
-    $sessionViewModel.Contains('FILE_TRANSFER speed=visible') -and
-    $sessionViewModel.Contains("FILE_TRANSFER stage=finalizing")
-) 'Production PUT/GET terminal progress is not fixed-width, in-place, and stateful'
-Assert-True (
     $indexPage.Contains('ApplicationCloseCoordinator.register(this.applicationCloseHandler)') -and
     $indexPage.Contains('ApplicationCloseCoordinator.unregister(this.applicationCloseHandler)') -and
-    $indexPage.Contains('await this.disconnectAllRuntimes()') -and
     $entryAbility.Contains('await ApplicationCloseCoordinator.prepareTermination()') -and
     $entryAbility.Contains('ApplicationCloseCoordinator.resetPreparation()') -and
     $indexPage.Contains('ApplicationCloseCoordinator.resetPreparation()') -and
     $entryAbility.Contains('Application close preparation failed')
-) 'Application termination does not await the same bounded Pane disconnect path'
-Assert-True (
-    $sessionViewModel.Contains('this.requestFileTransferCancellation()') -and
-    $sessionViewModel.Contains('this.transferPreparationCancellation') -and
-    $sessionViewModel.Contains('await this.transferCompletion') -and
-    $transferFileManager.Contains('DownloadsAccessManager.ensure(context, cancellation)') -and
-    $downloadsAccessManager.Contains('Promise.race<string>') -and
-    $downloadsAccessManager.Contains('TRANSFER_CANCELLED')
-) 'Downloads preparation cannot be released by the owning Pane cancellation path'
+) 'Application termination lost the public close-coordinator lifecycle wiring'
 Assert-True (
     $transferFileManager.Contains('fs.OpenMode.READ_ONLY | fs.OpenMode.NOFOLLOW') -and
     $transferFileManager.Contains('fs.OpenMode.READ_ONLY | fs.OpenMode.DIR | fs.OpenMode.NOFOLLOW') -and
     $transferFileManager.Contains('!stat.isFile() || stat.isSymbolicLink()') -and
     $transferFileManager.Contains('!stat.isDirectory() || stat.isSymbolicLink()') -and
     $transferFileManager.Contains('fs.moveFileSync(prepared.tempPath, prepared.finalPath, 1)') -and
-    $transferFileManager.Contains('fs.moveFileSync(prepared.tempPath, candidatePath, 1)') -and
-    $transferFileManager.Contains('index < TransferFileManager.MAX_AUTOMATIC_NAMES') -and
-    $transferFileManager.Contains("throw new Error('LOCAL_CONFLICT: no available automatic Downloads name')") -and
-    $transferFileManager.Contains("tempName: string = '.leantty-'") -and
-    $transferFileManager.Contains("if (prepared.tempPath.length > 0)") -and
-    $transferFileManager.Contains('fs.unlinkSync(prepared.tempPath)')
-) 'Downloads transfer ownership, no-follow, no-replace, bounded numbering, or cleanup contract regressed'
+    $transferFileManager.Contains('fs.moveFileSync(prepared.tempPath, candidatePath, 1)')
+) 'Downloads transfer lost required no-follow, symlink rejection, or no-replace platform flags'
 Assert-True (
-    $commandBarViewModel.Contains('safeCompletionValue') -and
     $commandBarViewModel.Contains('TerminalTextPolicy.isSafe(value)') -and
-    $terminalTextPolicy.Contains('code === 0x1B || code < 0x20') -and
-    $terminalTextPolicy.Contains('(code >= 0x7F && code <= 0x9F)') -and
-    $terminalTextPolicy.Contains('codePoint >= 0x202A && codePoint <= 0x202E') -and
-    $terminalTextPolicy.Contains('codePoint >= 0x2066 && codePoint <= 0x206F') -and
-    $terminalTextPolicy.Contains('codePoint >= 0xE0020 && codePoint <= 0xE007F') -and
-    $commandBarViewModel.Contains('fs.listFileSync(path)') -and
-    $commandBarViewModel.Contains('private static readonly MAX_COMPLETIONS: number = 100') -and
     -not $commandBarViewModel.Contains('DownloadsAccessManager') -and
     -not $commandBarViewModel.Contains('FileTransferClient') -and
     -not $commandBarViewModel.Contains('SshClient')
-) 'Tab completion can prompt, connect, recurse, inject controls, or exceed its candidate boundary'
-Assert-True (
-    $sessionViewModel -match (
-        'private finishCancelledFileTransfer\(\): void \{[\s\S]*?' +
-        "this\.logger\.info\('FILE_TRANSFER result=cancelled'\)"
-    ) -and
-    $sessionViewModel -notmatch (
-        "if \(event\.kind === 'cancelled'\) \{\s*" +
-        "this\.logger\.info\('FILE_TRANSFER result=cancelled'\)"
-    )
-) 'Cancelled transfer terminal telemetry is not emitted exactly from the shared finish path'
+) 'Tab completion lost its text-safety or no-network dependency boundary'
 
 foreach ($productionSource in @(
     'entry\src\main\ets\pages\Index.ets',

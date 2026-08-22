@@ -237,7 +237,9 @@ Important behavior:
 - Exported private keys are sensitive user-owned files. Move or delete them as
   soon as the intended transfer is complete.
 - Deleting a key requires confirmation and removes both its persistent record
-  and application-private projection.
+  and application-private projection. LeanTTY reports success only after both
+  are absent. If deletion fails, restart LeanTTY, check `key list` and try again;
+  do not assume the private key was removed.
 
 Install a public key on a server through the existing SSH path:
 

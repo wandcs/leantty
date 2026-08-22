@@ -139,6 +139,13 @@ The Asset Store contains integrity-checked generations. The application-private
 known-host and key deletion update the durable record and runtime projection so
 an explicitly deleted asset does not reappear on a later reinstall.
 
+`key rm` removes and confirms the private/public projection before deleting the
+durable key-pair authority. If projection or Asset Store deletion fails, LeanTTY
+does not report success: it restores the retained pair where possible, reapplies
+private-key protection and tells the user to restart, inspect `key list` and try
+again. A rollback failure remains an explicit recovery condition; the user must
+not assume the private key was erased.
+
 There is currently no one-step complete erasure command for every persistent
 asset. This is a documented lifecycle limitation in the privacy policy and
 must not be hidden behind ordinary uninstall wording.

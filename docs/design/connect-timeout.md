@@ -1,12 +1,12 @@
 # ConnectTimeout
 
-> 状态：Implemented；1.5.0 首个产品切片已闭合
+> 状态：Verified；1.5.0 首个产品切片已闭合
 >
 > 更新日期：2026-08-21
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 活动工作：[`next-work.md`](../next-work.md)
+> 完成记录：实现与命名验证已闭合；1.5 正式发布准备尚未启动
 
 ## 用户结果
 

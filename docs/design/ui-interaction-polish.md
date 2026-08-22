@@ -6,7 +6,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：[`next-work.md`](../next-work.md)
+> 完成记录：1.2–1.3 对应实现与发布已闭合；后续变更须重新进入 [`next-work.md`](../next-work.md)
 >
 > 最近更新：2026-08-15
 

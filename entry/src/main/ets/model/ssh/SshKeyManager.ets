@@ -154,7 +154,17 @@ export class SshKeyManager {
     if (key === null) {
       throw new Error('Key not found or invalid: ' + name)
     }
-    DurableStateManager.deleteKeyPair(context, name)
+    let keyName: string = FileUtils.fileNameFromPath(key.filePath)
+    try {
+      DurableStateManager.deleteKeyPair(context, keyName)
+    } catch (e) {
+      try {
+        SshKeyManager.protectKeyFile(context, keyName)
+      } catch (protectError) {
+        throw new Error('Key deletion failed and private-key protection recovery failed: ' + protectError)
+      }
+      throw new Error('Key deletion failed: ' + e)
+    }
   }
 
   static async exportKeyPair(context: common.Context, keyName: string, exportFileName: string): Promise<void> {

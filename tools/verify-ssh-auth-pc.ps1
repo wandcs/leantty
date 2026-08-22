@@ -1895,7 +1895,7 @@ try {
     }
     if (-not (Test-AuthStageSelected -Name 'password-success')) {
         Start-AuthCommand -User 'password'
-        Wait-AuthLog -Pattern 'rust event: HOST_KEY_PROMPT:'
+        Wait-AuthLog -Pattern 'native control event: host_key_prompt:'
         Invoke-AuthUiText -Text 'yes'
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         Wait-AuthLog -Pattern 'native auth event kind=password'
@@ -1911,7 +1911,7 @@ try {
     if (Test-AuthStageSelected -Name 'password-success') {
     Start-AuthStage -Name 'password-success'
     Start-AuthCommand -User 'password'
-    Wait-AuthLog -Pattern 'rust event: HOST_KEY_PROMPT:'
+    Wait-AuthLog -Pattern 'native control event: host_key_prompt:'
     Invoke-AuthUiText -Text 'yes'
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     Wait-AuthLog -Pattern 'native auth event kind=password'
@@ -1931,7 +1931,7 @@ try {
     Start-AuthCommand -User 'password' -SshVerbose
     Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=connect, status=started, reason=none'
     Wait-AuthLog -Pattern 'SSH diagnostic layer=target, stage=host_key, status=waiting, reason=none'
-    Wait-AuthLog -Pattern 'rust event: HOST_KEY_PROMPT:target\tredacted'
+    Wait-AuthLog -Pattern 'native control event: host_key_prompt:target'
     Invoke-AuthUiText -Text 'yes'
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     Wait-AuthLog -Pattern 'native auth event kind=password, layer=target'
@@ -1954,7 +1954,7 @@ try {
         $lastDiagnosticIndex = $diagnosticIndex
     }
     $preAuthDiagnosticLogs = @($preAuthLogs -split "`n" | Where-Object {
-        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+        $_ -match '/SshClient: (SSH diagnostic|native control event:)'
     }) -join "`n"
     if ($preAuthDiagnosticLogs.Contains('127.0.0.1') -or
         $preAuthDiagnosticLogs.Contains('SHA256:')) {
@@ -1987,7 +1987,7 @@ try {
         $lastDiagnosticIndex = $diagnosticIndex
     }
     $verboseDiagnosticLogs = @($verboseLogs -split "`n" | Where-Object {
-        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+        $_ -match '/SshClient: (SSH diagnostic|native control event:)'
     }) -join "`n"
     if ($verboseDiagnosticLogs.Contains('127.0.0.1') -or
         $verboseDiagnosticLogs.Contains('SHA256:')) {
@@ -2019,7 +2019,7 @@ try {
     Wait-AuthLog -Pattern 'SSH error'
     $refusedLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
     $refusedDiagnosticLogs = @($refusedLogs -split "`n" | Where-Object {
-        $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+        $_ -match '/SshClient: (SSH diagnostic|native control event:)'
     }) -join "`n"
     if ($refusedDiagnosticLogs.Contains('127.0.0.1') -or
         $refusedDiagnosticLogs.Contains('SHA256:')) {
@@ -2470,7 +2470,8 @@ try {
     $wrongAnswer = New-LeanTTYRegressionSecret
     $secrets += $wrongAnswer
     Submit-AuthValue -Value $wrongAnswer -LayoutName 'layout-multiround-wrong.json'
-    Wait-AuthLog -Pattern 'rust event: AUTH:target:authentication was rejected'
+    Wait-AuthLog -Pattern 'native control event: error:target:authentication:auth'
+    Wait-AuthLog -Pattern 'SSH error: target:authentication was rejected'
     Assert-NoSecretExposure -LayoutName 'layout-multiround-rejected.json'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Start-AuthCommand -User 'kbdint-multiround'
@@ -2537,7 +2538,8 @@ try {
     if (Test-AuthStageSelected -Name 'unsupported-method-error-and-recovery') {
     Start-AuthStage -Name 'unsupported-method-error-and-recovery'
     Start-AuthCommand -User 'unsupported'
-    Wait-AuthLog -Pattern 'rust event: AUTH:target:no supported authentication method is available'
+    Wait-AuthLog -Pattern 'native control event: error:target:authentication:auth'
+    Wait-AuthLog -Pattern 'SSH error: target:no supported authentication method is available'
     Assert-NoSecretExposure -LayoutName 'layout-unsupported-method.json'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Start-AuthCommand -User 'password'

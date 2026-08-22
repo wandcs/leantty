@@ -2,7 +2,7 @@
 
 > Status: current implementation baseline
 >
-> Last updated: 2026-08-03
+> Last updated: 2026-08-22
 >
 > Governing rules: [`project-principles.md`](project-principles.md)
 
@@ -20,8 +20,8 @@ HarmonyOS UIAbility / App Shell
           └─ one or two Pane objects
               └─ PaneRuntime
                   ├─ SessionViewModel
-                  │   ├─ SshSession state
-                  │   ├─ local ltty command line
+                  │   ├─ local ltty command line and interaction mode
+                  │   ├─ SshSession lifecycle
                   │   └─ SshClient
                   │       └─ N-API → Rust/russh → SSH server
                   └─ TerminalSurfaceController
@@ -45,11 +45,12 @@ Session.
 | Component | Source | Owns | Must not own |
 | --- | --- | --- | --- |
 | UIAbility and page | `entryability/EntryAbility.ets`, `pages/Index.ets` | Application/window lifecycle, rendering the workspace, active focus and system integration | SSH protocol rules or terminal byte interpretation |
-| AppViewModel | `viewmodel/AppViewModel.ets` | Stable Tab/Pane identifiers, active Tab/Pane and pane-visible state | Network connections or WebView instances |
-| PaneRuntime | `pages/Index.ets` | The pairing of one Pane identity with one SessionViewModel and TerminalSurfaceController | Cross-pane state |
-| SessionViewModel | `viewmodel/SessionViewModel.ets` | Local prompt modes, connection/authentication flow, error recovery and routing between SSH and the terminal surface | Global Tab ordering or Web rendering internals |
-| SshClient | `model/ssh/SshClient.ets` | One N-API session handle and structured client events | UI text, Tab/Pane ownership or persistent asset policy |
-| Rust SSH layer | `leantty_ssh/src/lib.rs` | russh connection, host-key callback, authentication transport, PTY, SSH channel, byte stream, cancellation and keepalive | ArkUI state and user-facing decisions |
+| AppViewModel | `viewmodel/AppViewModel.ets` | Stable Tab/Pane identifiers, active Tab/Pane, the Pane/runtime registry and ordered runtime disposal | SSH protocol state, terminal rendering policy or system focus adaptation |
+| PaneRuntime | `viewmodel/PaneRuntime.ets` | The pairing and lifecycle of one Pane identity, SessionViewModel and TerminalSurfaceController | Cross-pane state or workspace ordering |
+| SessionViewModel | `viewmodel/SessionViewModel.ets` | Local command/prompt interaction, terminal presentation and routing user actions to the owning Session | SSH lifecycle transitions, global Tab ordering or Web rendering internals |
+| SshSession | `model/ssh/SshSession.ets` | The allowed connection, authentication, host-verification, connected, failure, close, reconnect and transfer-handoff transitions for one Pane | Prompt text, terminal rendering or native transport decoding |
+| SshClient | `model/ssh/SshClient.ets` | One N-API session handle, native event decoding and request/response correlation | UI text, Tab/Pane ownership or persistent asset policy |
+| Rust SSH layer | `leantty_ssh/src/lib.rs` | Ordered jump/target connection phases, host-key callback, authentication transport, PTY, SSH channel, byte stream, cancellation, keepalive and route cleanup | ArkUI state and user-facing decisions |
 | TerminalSurfaceController | `model/terminal/TerminalSurfaceController.ets` | One terminal surface lifecycle, in-process snapshot and detached output buffer | SSH authentication or persistent terminal history |
 | TerminalBridge | `model/bridge/TerminalBridge.ets` | Validated ArkTS/ArkWeb message transport, output acknowledgements and backpressure | Session business state or terminal-content repair |
 | ArkWeb/xterm.js | `resources/rawfile/terminal.html` | Terminal emulation, rendering, local selection, input encoding and size measurement | SSH state, credentials or application persistence |
@@ -64,32 +65,46 @@ Session.
 - at most two Panes are allowed in a Tab;
 - each runtime owns its own `SessionViewModel`, SSH client, output buffer and
   Web terminal controller; and
-- closing or switching one Pane cannot reuse another Pane's SSH or terminal
+- removing a Pane or Tab unlinks and disposes its runtime through the same
+  owner, so switching or closing cannot reuse another Pane's SSH or terminal
   state.
 
-`Index.ets` renders by stable Pane identity, routes focus and interaction to the
-active Pane, and retains only the surfaces required by the current tab, a short
-warm-tab policy or an active connected session. The workspace model does not
-persist across application termination.
+`Index.ets` keeps `tabs` and `activeTabIndex` only as ArkUI rendering
+projections. Existence, active identity, runtime lookup and destruction always
+delegate back to `AppViewModel`. The `@State appVm` annotation is required to
+preserve ArkUI callback and focus-routing identity; it does not create a second
+workspace model. The page routes focus and system events and retains only the
+surfaces required by the current tab, a short warm-tab policy or an active
+connected session. The workspace model and all runtimes are disposed together
+when the page is destroyed and do not persist across application termination.
 
 ## Connection event chain
 
 ```text
 keyboard input at ltty>
-  → CommandParser / SshConfig resolution
+  → CommandParser / SshConfig and optional ProxyJump resolution
   → SessionViewModel.connect
   → SshClient.connect
   → N-API sshConnect
-  → Rust/russh TCP + SSH handshake
-  → host-key decision
-  → password or verified private-key authentication
+  → Rust/run_session sequences jump route, target route and interactive shell phases
+  → Rust/russh jump/target TCP + SSH handshake
+  → independently scoped host-key decision for each layer
+  → server-directed private-key, keyboard-interactive and password authentication
   → PTY request + remote shell
+  → structured lifecycle event consumed by SshSession
+  → SessionViewModel presents the accepted event
   → raw output callback
-  → SessionViewModel
   → TerminalSurfaceController
   → binary TerminalBridge packet
   → xterm.js
 ```
+
+`run_session` is only the phase orchestrator. Each connection phase returns one
+structured stop reason, `SessionRoute` owns the target/jump transport pair and
+performs failure cleanup once, and the connected phase produces the single
+final transport-close event. This keeps direct and ProxyJump routes on the same
+error and cleanup contract without hiding protocol behavior behind another
+transport abstraction.
 
 Terminal input follows the reverse path. xterm sends terminal data through the
 versioned Bridge, `SessionViewModel` decides whether the current mode consumes
@@ -124,7 +139,10 @@ the authorized Downloads root and use no-follow descriptor ownership. A
 transfer never reuses the interactive PTY Session, and transfer, Pane and
 generation identifiers reject late events after cancellation or teardown.
 Temporary files are exclusive and task-owned; only an observed task may clean
-its own partial object.
+its own partial object. The Pane's `SshSession` also consumes transfer
+authentication and host-verification events so prompt handoff uses the same
+allowed lifecycle transitions; byte progress and finalization remain owned by
+`FileTransferLifecycle`.
 
 ## Host-key and authentication boundaries
 
@@ -133,11 +151,21 @@ Session owns the user interaction. An unknown key is not committed until the
 user accepts it and `DurableStateManager.commitKnownHostLine` completes. A
 changed key stops the connection; it is never replaced automatically.
 
-The current Rust session accepts password or private-key authentication input.
-Passwords and passphrases cross ArkTS/N-API only for the active Session. Rust
-zeroizes its password/passphrase value after use where supported. The current
-string-event authentication path does not yet model keyboard-interactive or
-multi-method authentication; that work remains governed by its 1.1 design.
+The current Rust session supports password, verified private-key and
+keyboard-interactive authentication, including banners, multiple prompts,
+multiple rounds, `remaining_methods` and `partial_success`. Jump and target
+layers keep independent host-key and authentication state. Passwords,
+passphrases and non-echoing responses cross ArkTS/N-API only for the active
+Session and are cleared after submission or cancellation; Rust zeroizes secret
+values where supported.
+
+Native authentication prompts use structured `AuthEvent` records carrying the
+Session generation, layer and round. Interactive Sessions and file transfers
+share a structured `ControlEvent` for connection state, host-key decisions,
+layered failures and bounded output metrics. PTY bytes, close state and safe
+diagnostics use `TransportEvent`. `SshClient` validates those native records and
+emits one `SshClientMessage` to its Session owner; business state is never
+reconstructed from string prefixes, embedded layer labels or JSON payloads.
 
 ## Terminal Bridge and output flow
 
@@ -185,32 +213,35 @@ The HarmonyOS Asset Store is the long-term authority for:
 - OpenSSH `config`;
 - OpenSSH `known_hosts`;
 - every verified private/public key pair;
-- terminal font size; and
-- main-window position and size.
+- terminal font size.
 
 `DurableAssetStore` writes encrypted persistent records in 768-byte chunks. A
 versioned manifest contains path, generation, chunk count, byte count and
 SHA-256. All chunks are written and validated before the pointer is switched;
 old/incomplete generations are then collected.
 
-Application-private `.ssh` files and the Preferences value are runtime
+Application-private `.ssh` files and the font-size Preferences value are runtime
 projections. At startup, `DurableStateManager` materializes the durable SSH
 assets before normal use. Writes to Host configuration, host trust, keys, font
-size and window geometry go through the durable authority. The first run after
-the storage change migrates verified legacy files and Preferences; later runs
-remove projections that no longer have a durable authority.
+size go through the durable authority. The first run after the storage change
+migrates verified legacy files and Preferences; later runs remove projections
+that no longer have a durable authority.
 
 Persistent assets are configured to survive an ordinary uninstall for the same
 application identity; exact asset/signature/lifecycle behavior remains a
 physical-device release gate. Passwords, passphrases, command history,
-Tab/Pane/Session state and terminal contents are excluded.
+Tab/Pane/Session state, terminal contents and transparency mode are excluded.
+HarmonyOS owns main-window geometry through `setWindowRectAutoSave`; LeanTTY no
+longer maintains a second durable rectangle, and geometry is not retained
+across uninstall/reinstall.
 
 ## System-service boundaries
 
 - Clipboard writes use the HarmonyOS local-device pasteboard. Clipboard reads
   occur for paste; accepted OSC 52 can write but never read the clipboard.
-- Key export writes only to Downloads after the platform permission flow and
-  refuses overwrite.
+- Key/config export and file-transfer local I/O use the authorized Downloads
+  boundary and refuse explicit overwrite; file transfer additionally uses
+  no-follow descriptors and task-owned temporary files.
 - The embedded ArkWeb terminal has file access, online image access, DOM
   storage, mixed content and zoom disabled. Its packaged CSP still requires
   `unsafe-inline` and `unsafe-eval` for the current xterm bundle.
