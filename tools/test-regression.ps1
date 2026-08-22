@@ -130,6 +130,7 @@ function Invoke-RegressionCheck {
     $script:regressionDetail = ''
     Write-Host "[regression] $Name" -ForegroundColor Cyan
     try {
+        $global:LASTEXITCODE = 0
         & $Action
         $script:regressionResults.Add([pscustomobject]@{
             name = $Name
