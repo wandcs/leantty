@@ -11,7 +11,7 @@ $typing = Get-Content -Raw -LiteralPath $typingPath
 $client = Get-Content -Raw -LiteralPath $clientPath
 $transfer = Get-Content -Raw -LiteralPath $transferPath
 
-$finalData = 'try_send_transport_data(&transport_callback, final_output.clone())'
+$finalData = 'final_output.clone()'
 $close = 'let _ = send_transport_close('
 $finalDataIndex = $rust.IndexOf($finalData, [StringComparison]::Ordinal)
 $closeIndex = $rust.IndexOf($close, [StringComparison]::Ordinal)

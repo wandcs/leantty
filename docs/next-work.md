@@ -53,18 +53,6 @@ preparation；开发期签名 HAP 和局部真机诊断证据不能自动推导�
 再移动职责，完成后同步权威文档和验证证据并从本文件删除该分组。重构不得借机增加产品能力、
 通用框架、第二套状态或无真实调用方的抽象。
 
-### M2 Rust SSH Session 执行边界
-
-- [ ] 在 M1 的上层生命周期契约稳定后，为 `leantty_ssh::run_session` 的握手、认证、channel 建立、
-  steady-state I/O、控制请求、关闭和错误映射补齐阶段化行为测试。
-- [ ] 按协议阶段拆分 `run_session`，让每个函数只有一个失败/清理责任，并保持结构化控制事件、
-  backpressure、超时、ProxyJump 与 SFTP 交接契约不变；不引入新的传输抽象层。
-- [ ] 通过 `rust-core`、`rust-native`、`ssh-flow`、ARM64 构建以及受影响 direct/ProxyJump 真机
-  主路径，确认事件顺序、错误层级和资源关闭行为没有漂移。
-
-可观察完成条件：顶层 `run_session` 只表达阶段顺序和统一收尾；阶段函数可以独立测试；任一错误
-都能从唯一出口映射到既有事件契约，不靠复制清理分支维持行为。
-
 ### M3 Workspace 与 Pane 运行时所有权
 
 - [ ] 为 tab/pane 创建、切换、分割、关闭、恢复、前后台和 Session 销毁建立 workspace 事件链测试，

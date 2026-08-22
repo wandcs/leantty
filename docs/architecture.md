@@ -50,7 +50,7 @@ Session.
 | SessionViewModel | `viewmodel/SessionViewModel.ets` | Local command/prompt interaction, terminal presentation and routing user actions to the owning Session | SSH lifecycle transitions, global Tab ordering or Web rendering internals |
 | SshSession | `model/ssh/SshSession.ets` | The allowed connection, authentication, host-verification, connected, failure, close, reconnect and transfer-handoff transitions for one Pane | Prompt text, terminal rendering or native transport decoding |
 | SshClient | `model/ssh/SshClient.ets` | One N-API session handle, native event decoding and request/response correlation | UI text, Tab/Pane ownership or persistent asset policy |
-| Rust SSH layer | `leantty_ssh/src/lib.rs` | russh connection, host-key callback, authentication transport, PTY, SSH channel, byte stream, cancellation and keepalive | ArkUI state and user-facing decisions |
+| Rust SSH layer | `leantty_ssh/src/lib.rs` | Ordered jump/target connection phases, host-key callback, authentication transport, PTY, SSH channel, byte stream, cancellation, keepalive and route cleanup | ArkUI state and user-facing decisions |
 | TerminalSurfaceController | `model/terminal/TerminalSurfaceController.ets` | One terminal surface lifecycle, in-process snapshot and detached output buffer | SSH authentication or persistent terminal history |
 | TerminalBridge | `model/bridge/TerminalBridge.ets` | Validated ArkTS/ArkWeb message transport, output acknowledgements and backpressure | Session business state or terminal-content repair |
 | ArkWeb/xterm.js | `resources/rawfile/terminal.html` | Terminal emulation, rendering, local selection, input encoding and size measurement | SSH state, credentials or application persistence |
@@ -81,6 +81,7 @@ keyboard input at ltty>
   → SessionViewModel.connect
   → SshClient.connect
   → N-API sshConnect
+  → Rust/run_session sequences jump route, target route and interactive shell phases
   → Rust/russh jump/target TCP + SSH handshake
   → independently scoped host-key decision for each layer
   → server-directed private-key, keyboard-interactive and password authentication
@@ -92,6 +93,13 @@ keyboard input at ltty>
   → binary TerminalBridge packet
   → xterm.js
 ```
+
+`run_session` is only the phase orchestrator. Each connection phase returns one
+structured stop reason, `SessionRoute` owns the target/jump transport pair and
+performs failure cleanup once, and the connected phase produces the single
+final transport-close event. This keeps direct and ProxyJump routes on the same
+error and cleanup contract without hiding protocol behavior behind another
+transport abstraction.
 
 Terminal input follows the reverse path. xterm sends terminal data through the
 versioned Bridge, `SessionViewModel` decides whether the current mode consumes
