@@ -72,16 +72,8 @@ export class TransparencyPolicy {
     return 0.86
   }
 
-  static cellBackgroundOpacity(mode: TransparencyMode): number {
-    if (mode === TransparencyMode.OFF) return 0.24
-    if (mode === TransparencyMode.HIGH) return 0.12
-    if (mode === TransparencyMode.LOW) return 0.20
-    if (mode === TransparencyMode.EXTREME) return 0.08
-    return 0.16
-  }
-
   static terminalBackground(mode: TransparencyMode, isLight: boolean): string {
-    return 'rgba(0, 0, 0, 0)'
+    return 'rgba(30, 30, 46, 0)'
   }
 
   static surfaceBackground(mode: TransparencyMode, isLight: boolean): string {
@@ -169,8 +161,7 @@ export class AppTheme {
       this.terminalColors.background = TransparencyPolicy.terminalBackground(transparencyMode, true)
       this.terminalColors.surfaceBackground = TransparencyPolicy.surfaceBackground(transparencyMode, true)
       this.terminal = new TerminalThemeState(new XtermTheme(
-        this.terminalColors, this.ansiColors,
-        TransparencyPolicy.cellBackgroundOpacity(transparencyMode)))
+        this.terminalColors, this.ansiColors))
     } else {
       this.terminalColors = new TerminalColors()
       this.ansiColors = new AnsiColors()
@@ -178,8 +169,7 @@ export class AppTheme {
       this.terminalColors.background = TransparencyPolicy.terminalBackground(transparencyMode, false)
       this.terminalColors.surfaceBackground = TransparencyPolicy.surfaceBackground(transparencyMode, false)
       this.terminal = new TerminalThemeState(new XtermTheme(
-        this.terminalColors, this.ansiColors,
-        TransparencyPolicy.cellBackgroundOpacity(transparencyMode)))
+        this.terminalColors, this.ansiColors))
     }
     this.chrome.tabBackground = TransparencyPolicy.chromeTabBackground(
       transparencyMode, mode === ColorMode.LIGHT)

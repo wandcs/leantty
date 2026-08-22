@@ -37,7 +37,7 @@ export class AnsiColorsLatte extends AnsiColors {
 }
 
 export class TerminalColors {
-  background: string = 'rgba(0, 0, 0, 0)'
+  background: string = 'rgba(30, 30, 46, 0)'
   surfaceBackground: string = '#D11E1E2E'
   foreground: string = '#CDD6F4'
   cursor: string = '#F5E0DC'
@@ -48,7 +48,7 @@ export class TerminalColors {
 }
 
 export class TerminalColorsLatte extends TerminalColors {
-  background: string = 'rgba(0, 0, 0, 0)'
+  background: string = 'rgba(30, 30, 46, 0)'
   surfaceBackground: string = '#D1EFF1F5'
   foreground: string = '#4C4F69'
   cursor: string = '#DC8A78'

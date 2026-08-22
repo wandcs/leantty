@@ -54,6 +54,16 @@
 
 ### Fixed
 
+- Restored standard terminal color semantics under window transparency. LeanTTY
+  now applies opacity only to its Chrome and content surfaces while keeping
+  application-defined ANSI/TrueColor cell backgrounds opaque, removing the
+  renderer alpha override that could separate block glyphs from their matching
+  cell background. Its transparent xterm background also retains the fixed
+  `#1E1E2E` logical RGB, so OSC 11-aware TUIs no longer derive near-black
+  surfaces from transparent black. Default-background dim, italic, underline,
+  overline, hyperlink and protected text no longer becomes an opaque theme-color
+  block in the WebGL renderer, while real ANSI/256/TrueColor backgrounds remain
+  opaque.
 - Replaced native SSH control strings and tagged close results with structured
   events shared by interactive Sessions and file transfers. Session/generation,
   jump/target layer, stage, error code, host-key fields and diagnostics now stay

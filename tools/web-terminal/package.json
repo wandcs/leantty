@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test-terminal-policy.mjs && node test-user-guide.mjs"
+    "test": "node test-xterm-webgl-patch.mjs && node test-terminal-policy.mjs && node test-user-guide.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

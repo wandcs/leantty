@@ -8,6 +8,7 @@ import {
   runTerminalSessionResetTests,
   SESSION_BOUNDARY_RESET_SEQUENCE
 } from './test-terminal-session-reset.mjs';
+import { XTERM_WEBGL_DEFAULT_BACKGROUND_PATCH } from './patches/xterm-webgl-default-background.mjs';
 import '../../entry/src/main/resources/rawfile/terminal-policy.js';
 
 const policy = globalThis.LeanTTYTerminalPolicy;
@@ -239,20 +240,25 @@ assert.match(terminalHtml,
   'terminal padding and leftover cell space must expose the single ArkUI surface background');
 assert.match(terminalHtml, /document\.documentElement\.style\.setProperty\('--terminal-background', themeObj\.background\)/,
   'theme changes must propagate their background to the Web terminal chrome');
-assert.match(terminalHtml,
-  /LeanTTYCellBackgroundOpacity = Number\.isFinite\(requestedCellBackgroundOpacity\)[\s\S]*Math\.max\(0, Math\.min\(1, requestedCellBackgroundOpacity\)\)/,
-  'theme changes must clamp the renderer-only cell-background opacity');
-assert.match(terminalHtml, /delete themeObj\.cellBackgroundOpacity/,
-  'LeanTTY renderer metadata must not leak into the upstream xterm theme');
+assert.doesNotMatch(terminalHtml,
+  /LeanTTYCellBackgroundOpacity|requestedCellBackgroundOpacity|cellBackgroundOpacity/,
+  'terminal themes must not carry renderer-private opacity for explicit cell backgrounds');
 const packagedWebglAddon = readFileSync(
   new URL('../../entry/src/main/resources/rawfile/addon-webgl.js', import.meta.url), 'utf8'
 );
-assert.match(packagedWebglAddon,
-  /globalThis\.LeanTTYCellBackgroundOpacity\?\?1/,
-  'the packaged WebGL renderer must use LeanTTY cell-background opacity');
 assert.doesNotMatch(packagedWebglAddon,
+  /LeanTTYCellBackgroundOpacity/,
+  'the packaged WebGL renderer must not contain a LeanTTY cell-background opacity hook');
+assert.equal(
+  packagedWebglAddon.split(XTERM_WEBGL_DEFAULT_BACKGROUND_PATCH.replacement).length - 1,
+  1,
+  'the packaged WebGL renderer must normalize exactly one background read to color bits'
+);
+assert.equal(packagedWebglAddon.includes(XTERM_WEBGL_DEFAULT_BACKGROUND_PATCH.target), false,
+  'the packaged WebGL renderer must not retain the audited unmasked background read');
+assert.match(packagedWebglAddon,
   /f=\(h>>8&255\)\/255,g=1,this\._addRectangle/,
-  'the pinned WebGL renderer must not force explicit cell backgrounds opaque');
+  'the pinned WebGL renderer must preserve upstream opaque explicit cell backgrounds');
 assert.match(terminalHtml, /themeObj\.overviewRulerBorder = themeObj\.background/,
   'the width-only overview ruler must not draw a contrasting edge line');
 assert.match(terminalHtml,
@@ -473,6 +479,24 @@ assert.match(addonSerialize, /SerializeAddon/,
 globalThis.self = globalThis;
 vm.runInThisContext(xtermJs);
 vm.runInThisContext(addonSerialize);
+const logicalBackgroundTerminal = new globalThis.Terminal({
+  cols: 20,
+  rows: 4,
+  theme: { background: 'rgba(30, 30, 46, 0)' }
+});
+const logicalBackgroundReplies = [];
+logicalBackgroundTerminal.onData(data => logicalBackgroundReplies.push(data));
+logicalBackgroundTerminal._core._themeService = {
+  colors: {
+    background: { css: 'rgba(30, 30, 46, 0)', rgba: 0x1E1E2E00 }
+  }
+};
+await new Promise(resolve => {
+  logicalBackgroundTerminal.write('\u001b]11;?\u0007', resolve);
+});
+assert.equal(logicalBackgroundReplies.join(''), '\u001b]11;rgb:1e1e/1e1e/2e2e\u001b\\',
+  'xterm OSC 11 must report the fixed palette RGB independently of its zero render alpha');
+logicalBackgroundTerminal.dispose();
 const sourceTerminal = new globalThis.Terminal({ cols: 20, rows: 4, scrollback: 20 });
 const sourceSerializer = new globalThis.SerializeAddon.SerializeAddon();
 sourceTerminal.loadAddon(sourceSerializer);
@@ -757,6 +781,8 @@ const themeConstants = readFileSync(
   new URL('../../entry/src/main/ets/view/theme/ThemeConstants.ets', import.meta.url), 'utf8');
 const themeManager = readFileSync(
   new URL('../../entry/src/main/ets/view/theme/ThemeManager.ets', import.meta.url), 'utf8');
+const terminalTheme = readFileSync(
+  new URL('../../entry/src/main/ets/view/theme/TerminalTheme.ets', import.meta.url), 'utf8');
 const userPreferences = readFileSync(
   new URL('../../entry/src/main/ets/model/settings/UserPreferences.ets', import.meta.url), 'utf8');
 const chromeBar = readFileSync(
@@ -786,11 +812,14 @@ assert.doesNotMatch(indexPage,
   /BACKGROUND_THIN|BACKGROUND_THICK|BACKGROUND_ULTRA_THICK|\.backdropBlur\(|\.backgroundEffect\(|filter:\s*blur|Gaussian/,
   'alternative material selectors and raw, CSS, WebGL, or custom Gaussian blur paths must stay out');
 assert.match(themeConstants,
-  /background: string = 'rgba\(0, 0, 0, 0\)'[\s\S]*surfaceBackground: string = '#D11E1E2E'/,
-  'the dark xterm renderer must stay transparent behind the content surface owner');
+  /background: string = 'rgba\(30, 30, 46, 0\)'[\s\S]*surfaceBackground: string = '#D11E1E2E'/,
+  'the xterm renderer must combine the fixed logical palette background with zero render alpha');
 assert.match(themeConstants,
-  /background: string = 'rgba\(0, 0, 0, 0\)'[\s\S]*surfaceBackground: string = '#D1EFF1F5'/,
-  'the light xterm renderer must stay transparent behind the content surface owner');
+  /class TerminalColorsLatte extends TerminalColors \{[\s\S]*background: string = 'rgba\(30, 30, 46, 0\)'[\s\S]*surfaceBackground: string = '#D1EFF1F5'/,
+  'legacy palette branches must not change the one product background reported through OSC 11');
+assert.match(themeManager,
+  /terminalBackground\(mode: TransparencyMode, isLight: boolean\): string \{\s*return 'rgba\(30, 30, 46, 0\)'\s*\}/,
+  'transparency presets and legacy mode arguments must not change the fixed logical terminal background');
 assert.match(themeConstants,
   /tabBackground: string = '#F02D2E40'[\s\S]*tabHoverBackground: string = '#F0343547'[\s\S]*tabActiveBackground: string = '#F0393A4D'/,
   'default dark tabs must keep the Low/Medium rail separation without returning to surface1');
@@ -809,9 +838,10 @@ assert.match(themeManager,
 assert.match(themeManager,
   /contentOpacity[\s\S]*1\.00[\s\S]*0\.60[\s\S]*0\.82[\s\S]*0\.45[\s\S]*0\.72/,
   'theme authority must own all five approved content opacity values');
-assert.match(themeManager,
-  /cellBackgroundOpacity[\s\S]*OFF\) return 0\.24[\s\S]*HIGH\) return 0\.12[\s\S]*LOW\) return 0\.20[\s\S]*EXTREME\) return 0\.08[\s\S]*return 0\.16/,
-  'explicit cell backgrounds must keep a bounded monotonic renderer alpha even when window transparency is Off');
+assert.doesNotMatch(themeManager, /cellBackgroundOpacity/,
+  'surface transparency policy must not own explicit terminal cell background alpha');
+assert.doesNotMatch(terminalTheme, /cellBackgroundOpacity/,
+  'xterm theme serialization must contain only upstream terminal theme fields');
 assert.match(themeManager,
   /chromeOpacity[\s\S]*OFF\) return 1\.00[\s\S]*LOW \|\| mode === TransparencyMode\.MEDIUM\) return 0\.94[\s\S]*return 0\.86/,
   'theme authority must map the five transparency presets onto the approved three Chrome modes');
@@ -1072,8 +1102,11 @@ assert.match(terminalHtml,
   /new Terminal\(\{[\s\S]*?allowProposedApi:\s*true,[\s\S]*?allowTransparency:\s*true,/,
   'xterm transparency must be enabled before the terminal opens');
 assert.match(terminalHtml,
-  /--terminal-background:\s*rgba\(0, 0, 0, 0\);[\s\S]*--terminal-overlay-background:\s*#1E1E2E;/,
-  'the terminal canvas must be transparent while short-lived controls retain an opaque surface');
+  /--terminal-background:\s*rgba\(30, 30, 46, 0\);[\s\S]*--terminal-overlay-background:\s*#1E1E2E;/,
+  'the terminal canvas must keep fixed logical RGB with zero alpha while short-lived controls remain opaque');
+assert.match(terminalHtml,
+  /var defaultTheme = \{\s*background: 'rgba\(30, 30, 46, 0\)',/,
+  'the startup theme must report the fixed LeanTTY background before native theme delivery');
 assert.doesNotMatch(terminalHtml,
   /html, body,[\s\S]*?#terminal-container,[\s\S]*?background-color:\s*var\(--terminal-background\)/,
   'DOM ancestors must not compound the workspace alpha before the WebGL canvas');

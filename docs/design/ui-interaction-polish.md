@@ -94,8 +94,10 @@ Terminal Surface 独占。透明效果不得暴露新的终端内容副本，也
 - xterm 已使用 WebGL；WebGL 只负责终端渲染，不自动实现 HarmonyOS 窗口透明。透明需要
   窗口合成、ArkUI、ArkWeb 页面背景和 xterm 配置整条链同时成立。
 - xterm 的 `allowTransparency` 必须在 `open` 前确定，并明确可能增加性能成本。当前实现
-  让活动态 PC 容器和原生内容窗口透明，仅由 ArkUI 根 Surface 持有选定 alpha；ArkWeb、
-  HTML/body 和 xterm/WebGL 保持全透明，避免多层 alpha 叠加。物理 PC 已证明五档
+  让活动态 PC 容器和原生内容窗口透明，仅由不重叠的 ArkUI 区域 Surface 持有选定 alpha；
+  ArkWeb、HTML/body 和 xterm 默认背景透明透传，显式终端内容保持上游语义，避免多层 alpha
+  叠加。
+  物理 PC 已证明五档
   Chrome/Content 分层合成链成立；正式候选同机性能和生命周期已完成，真实用户服务器
   TUI 与主观可读性也已由用户完成。
 - 现有深浅主题已统一 Chrome、Terminal、divider、text、accent、attention、focus 与
@@ -317,7 +319,7 @@ Window compositor (active transparent; inactive opaque)
   语义档位。Chrome alpha、内容 alpha 与固定 Regular 材质都不是独立用户状态。
 - 现有“整个 ArkUI 根 Surface 是唯一 alpha 所有者”需要改为“Chrome 与内容两个不重叠的
   兄弟 Surface 各自拥有区域 alpha”。共同祖先不得再持有相同 alpha，否则会产生复合透明；
-  Pane、ArkWeb、HTML/body 与 xterm/WebGL 仍然全透明透传。
+  Pane、ArkWeb、HTML/body 与 xterm 默认背景仍然透明透传，显式终端内容不叠加区域 alpha。
 - 系统背景材质固定为一次根级 Regular。不得给 Chrome、每个 Pane 和 ArkWeb 分别做模糊，也
   不得让模糊进入终端 glyph、selection、search decoration 或显式 TUI cell background。
 - 搜索条、弹出菜单和链接菜单是短期浮层，保持现有近不透明表面，不随 Extreme 降低；
@@ -444,7 +446,7 @@ BEL 是本轮唯一允许具有明显运动的元素。
   自动使用完全不透明的主题背景，启动与终端功能不受影响。
 - Chrome 与 Content 两个不重叠兄弟 Surface 是区域 alpha 的唯一所有者；共同祖先、
   Pane/Web 组件、HTML/body 与 xterm 默认背景全部透明透传。xterm WebGL 只对显式单元格
-  背景使用独立低 alpha，不得把该值应用到字形或再叠加完整区域 alpha。
+  背景、字形、光标和 selection 保留上游颜色与不透明语义，不再拥有独立 alpha。
 - Shell、tmux、vim、less 和主流 Agent TUI 显式设置的 cell/background 必须保持正确；
   不得出现块状漏底、文字对比不足、selection/search decoration 异常或残影。
 - 大持续输出、滚动、窗口缩放、主题切换、最小化/恢复、renderer 退出与重建不能出现
@@ -544,8 +546,9 @@ AttentionService 或 SurfaceEffect 抽象。无引用旧组件的删除必须独
 - 已实现 Off/Low/Medium/High/Extreme 五档非循环步进器，内容背景不透明度为
   `1.00/0.82/0.72/0.60/0.45`，Chrome 为 `1.00/0.88/0.80/0.70/0.55`，默认 Medium。
   页面加载后把活动态 PC 容器和原生内容窗口设为透明，非活动态容器保持主题不透明色；
-  Chrome 与 Content 两个不重叠 ArkUI Surface 分别独占区域 alpha，ArkWeb/HTML/xterm WebGL
-  全透明透传，`allowTransparency` 在 `term.open` 前启用。切换复用既有主题桥且不重建
+  Chrome 与 Content 两个不重叠 ArkUI Surface 分别独占区域 alpha，ArkWeb/HTML/xterm 默认
+  背景透明透传，显式终端内容保持上游语义；`allowTransparency` 在 `term.open` 前启用。
+  切换复用既有主题桥且不重建
   WebView；平台能力失败时两区都回退不透明。语义档位写入本地 Preferences，未采用连续
   滑杆或外观设置页。非 Off 档在窗口根固定一次 `BACKGROUND_REGULAR` 并跟随窗口活动态，
   不存在材质设置、持久化材质状态或逐 Pane 模糊。
@@ -610,6 +613,70 @@ Off 出现实黑矩形，切到 Medium 立即消失，恢复 Off 后再次出现
 同一会话的 ANSI 41/42/44 红绿蓝背景仍清楚可辨。失败、Medium 对照、修复后 Codex 和 ANSI
 截图位于 `build/verification/off-black-block-investigation/`。测试 HAP SHA-256 为
 `2f341ae228ae78afbe35d4460b1eb5c4509f3f0fd7b9d8cb7a079ced3ed68d02`。
+
+2026-08-22 对 OpenCode 输入区下方横条的跨终端对照推翻了上述 renderer alpha 方案作为长期
+规则。OpenCode 用同色显式背景和 `▀` 前景字形组合一行边界；LeanTTY 只降低显式背景矩形
+alpha、保持前景字形不透明，破坏了两种图元原本应当融合的颜色关系。更广泛的官方终端对照
+也表明，Ghostty、WezTerm 和 Alacritty 默认把“窗口/默认背景透明”与“显式单元格背景透明”
+分开，后者是默认关闭的独立策略；Kitty 默认只透明与终端默认背景匹配的颜色。
+
+维护者在明确接受全屏 TUI 主动画出的背景区域可能保持不透明这一代价后，选择标准优先的
+方案 A，并将其提升到 `project-principles.md`：透明只作用于 LeanTTY 拥有的 Chrome 与内容
+承载 Surface；xterm 默认背景透明透传；显式 ANSI/TrueColor 单元格背景、前景字形、光标和
+selection 恢复上游语义。`cellBackgroundOpacity`、主题私有元数据和对固定 WebGL 压缩代码的
+alpha 替换随之删除。上述 2026-08-14/15 截图与 HAP 仍是历史调查证据，但不再定义当前产品
+契约，也不能授权重新加入按字形或应用内容猜测的兼容补丁。
+
+方案 A 部署后的 Codex 复测暴露了另一层语义错误：xterm 的 OSC 11 查询会读取默认背景的
+RGB，而 `rgba(0, 0, 0, 0)` 虽然完全透明，仍会被上报为黑色。Codex 根据该值把白色以 12%
+混入默认背景并绘制输入区、消息框等显式表面，于是标准的不透明显式背景把错误的近黑色
+完整显示出来。Windows Terminal 与 Ghostty 的共同模型是把逻辑默认背景色和窗口合成透明度
+分开，而不是把逻辑颜色改成黑色或降低全部显式单元格 alpha。
+
+维护者确认 A+ 后，LeanTTY 以唯一配色的 `#1E1E2E` 作为逻辑默认背景，并以
+`rgba(30, 30, 46, 0)` 交给 xterm：视觉仍由 ArkUI Surface 透出，OSC 11 则报告正确的配色
+背景。透明度档位不参与该 RGB，显式 ANSI/TrueColor 背景继续不透明；不为此增加主题、模式、
+应用识别或 OSC 拦截。潜伏的亮色代码不构成产品主题契约，也不在本修复中顺带清理。
+
+A+ 的 `web,arkts,policy` 聚焦软件门通过，并直接约束 xterm 对该零 alpha 颜色的 OSC 11 回复为
+`rgb:1e1e/1e1e/2e2e`。测试签名 ARM64 HAP SHA-256 为
+`5EE1C3964B4A3F74432EE3AD5B63CCA799D36C57B92B0EAB02373EAB82457E44`。在同一 HAD-W32、
+同一 WSL 与 Codex 0.149.0 页面中，修复前终端窗口裁剪区含 161143 个纯黑像素和 161338 个
+近黑像素；修复后两项均为 0。修复后输入框仍显示 Codex 自己绘制的灰色显式表面，这是方案 A
+保留的终端内容语义，不是背景泄漏。修复前后截图与布局分别保存在忽略目录
+`build/verification/codex-black-blocks-20260822T144155658Z/` 和
+`build/verification/a-plus-codex-device/`；设备屏幕超时覆盖已恢复，Codex 保持打开供维护者复核。
+
+继续对 Codex 欢迎区中的版本、模型和目录黑块做属性级追踪后，确认 A+ 只修正了逻辑默认颜色，
+仍有独立的 xterm WebGL 缺陷：render model 的 `bg` 整数同时承载背景颜色和 dim、italic、
+`HAS_EXTENDED`、protected、overline 等非颜色位，`RectangleRenderer.updateBackgrounds` 却以完整
+整数是否为零判断是否绘制背景矩形。因此默认背景上的 dim、各 underline 样式、OSC 8 hyperlink
+等会被误画成不透明 `#1E1E2E`；Windows Terminal、Ghostty 没有把这些文字属性提升为背景身份。
+
+维护者决定不升级 xterm master、不提交本轮上游 PR，也不主动降级到 DOM。采用的局部补丁只在
+vendored addon 生成时把该读取归一化为 `CM_MASK | RGB_MASK`，不改显式 ANSI/256/TrueColor、
+inverse、selection、decoration 和清屏路径。补丁模块锁定 `@xterm/addon-webgl@0.19.0`、xterm
+6.0.0 提交、完整 npm 输入哈希和唯一压缩代码命中，并记录可读 TypeScript 等价改动与删除条件；
+未来升级必须先检查上游是否已修复，不能静默迁移压缩替换。普通路径继续请求并验证 WebGL，DOM
+仅保留给初始化失败、context loss 或目标真机已证明无法可靠绘制的可观察故障恢复。
+
+实现后的 `web,policy,tooling` 聚焦软件门通过，记录为
+`build/verification/software-focused-20260822T155316934Z.json`。自动化覆盖 plain、dim、italic、
+单/双/curly/dotted/dashed underline、overline、OSC 8 hyperlink、DECSCA protected、inverse 与
+默认/显式背景清屏，并把每种属性分别与 ANSI、256 色、TrueColor 背景组合；输入版本、完整哈希、
+唯一命中、生成资产哈希和许可证也在同一生成链失败关闭。
+
+测试签名 ARM64 HAP SHA-256 为
+`EBFE7CD9B93DCF20004591A9ED29BD8B5E401CAAECFE942B3012C9B9A07F5D98`。同一物理 PC、同一
+WSL 和同一应用进程报告 `requested=webgl, actual=webgl, fallbackReason=none`。真机属性矩阵中，
+默认背景的 DIM/ITALIC/UNDERLINE/OVERLINE/HYPERLINK 不再出现背景块，三类显式背景仍完整；
+Codex 0.149.0 的版本、模型和目录欢迎框不再带不透明黑底，OpenCode 1.18.21 输入区下方不再有
+额外异色横条。Codex 在 Off/Medium/Extreme 的内容 Surface 分别为 `#FF1E1E2E`、`#B81E1E2E`、
+`#731E1E2E` 且结果一致，结束后恢复用户原有 Extreme。既有 `window-renderer-lifecycle` 场景也
+通过 renderer 销毁、Bridge 重建、焦点恢复和清理，诊断记录分别位于
+`build/verification/webgl-background-20260822T155449808Z/` 与
+`build/verification/webgl-renderer-lifecycle-20260822T160350154Z/`；这些是当前脏工作树测试 HAP
+的开发证据，不是正式候选或发布验收。
 
 同轮按用户决定把透明参数整体前移一档，并新设更激进 Extreme。之后对单 Tab、多 Tab、双
 Pane、活动/非活动窗口与 Off/Medium/Extreme 做走查。结论是不增加装饰或新状态：非活动 Tab

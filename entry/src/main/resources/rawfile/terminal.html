@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="xterm.css">
   <style>
     :root {
-      --terminal-background: rgba(0, 0, 0, 0);
+      --terminal-background: rgba(30, 30, 46, 0);
       --terminal-foreground: #CDD6F4;
       --terminal-overlay-background: #1E1E2E;
       --search-border: #585B70;
@@ -771,7 +771,7 @@
     }
 
     var defaultTheme = {
-      background: 'rgba(0, 0, 0, 0)',
+      background: 'rgba(30, 30, 46, 0)',
       foreground: '#CDD6F4',
       cursor: '#F5E0DC',
       cursorAccent: '#1E1E2E',
@@ -793,17 +793,12 @@
       brightBlue: '#89B4FA',
       brightMagenta: '#F5C2E7',
       brightCyan: '#94E2D5',
-      brightWhite: '#A6ADC8',
-      cellBackgroundOpacity: 0.16
+      brightWhite: '#A6ADC8'
     };
 
     function applyTerminalTheme(themeObj) {
       if (!themeObj || typeof themeObj.background !== 'string' || themeObj.background.length === 0) return;
       if (isSearchOpen()) closeSearch(true);
-      var requestedCellBackgroundOpacity = Number(themeObj.cellBackgroundOpacity);
-      globalThis.LeanTTYCellBackgroundOpacity = Number.isFinite(requestedCellBackgroundOpacity) ?
-        Math.max(0, Math.min(1, requestedCellBackgroundOpacity)) : 1;
-      delete themeObj.cellBackgroundOpacity;
       themeObj.overviewRulerBorder = themeObj.background;
       document.documentElement.style.setProperty('--terminal-background', themeObj.background);
       document.documentElement.style.setProperty('--terminal-foreground', themeObj.foreground || '#CDD6F4');
