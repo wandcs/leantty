@@ -28,6 +28,48 @@ export class SshError extends Error {
   }
 }
 
+export class SshConnectionSpec {
+  host: string = ''
+  displayHost: string = ''
+  port: number = 22
+  username: string = ''
+  identityFile: string = ''
+  jumpHost: string = ''
+  jumpDisplayHost: string = ''
+  jumpPort: number = 22
+  jumpUsername: string = ''
+  jumpIdentityFile: string = ''
+  jumpConnectTimeoutMs: number = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+  jumpServerAliveIntervalSeconds: number = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+  jumpServerAliveCountMax: number = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+  connectTimeoutMs: number = DEFAULT_SSH_CONNECT_TIMEOUT_MS
+  serverAliveIntervalSeconds: number = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
+  serverAliveCountMax: number = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
+  verbose: boolean = false
+
+  copy(): SshConnectionSpec {
+    let copied: SshConnectionSpec = new SshConnectionSpec()
+    copied.host = this.host
+    copied.displayHost = this.displayHost
+    copied.port = this.port
+    copied.username = this.username
+    copied.identityFile = this.identityFile
+    copied.jumpHost = this.jumpHost
+    copied.jumpDisplayHost = this.jumpDisplayHost
+    copied.jumpPort = this.jumpPort
+    copied.jumpUsername = this.jumpUsername
+    copied.jumpIdentityFile = this.jumpIdentityFile
+    copied.jumpConnectTimeoutMs = this.jumpConnectTimeoutMs
+    copied.jumpServerAliveIntervalSeconds = this.jumpServerAliveIntervalSeconds
+    copied.jumpServerAliveCountMax = this.jumpServerAliveCountMax
+    copied.connectTimeoutMs = this.connectTimeoutMs
+    copied.serverAliveIntervalSeconds = this.serverAliveIntervalSeconds
+    copied.serverAliveCountMax = this.serverAliveCountMax
+    copied.verbose = this.verbose
+    return copied
+  }
+}
+
 export class SshConnectOptions {
   host: string
   port: number
@@ -67,5 +109,24 @@ export class SshConnectOptions {
     this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
     this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
     this.verbose = false
+  }
+
+  static fromConnectionSpec(spec: SshConnectionSpec, knownHostsPath: string): SshConnectOptions {
+    let options: SshConnectOptions = new SshConnectOptions()
+    options.host = spec.host
+    options.port = spec.port
+    options.username = spec.username
+    options.jumpHost = spec.jumpHost
+    options.jumpPort = spec.jumpPort
+    options.jumpUsername = spec.jumpUsername
+    options.jumpConnectTimeoutMs = spec.jumpConnectTimeoutMs
+    options.jumpServerAliveIntervalSeconds = spec.jumpServerAliveIntervalSeconds
+    options.jumpServerAliveCountMax = spec.jumpServerAliveCountMax
+    options.knownHostsPath = knownHostsPath
+    options.connectTimeoutMs = spec.connectTimeoutMs
+    options.serverAliveIntervalSeconds = spec.serverAliveIntervalSeconds
+    options.serverAliveCountMax = spec.serverAliveCountMax
+    options.verbose = spec.verbose
+    return options
   }
 }

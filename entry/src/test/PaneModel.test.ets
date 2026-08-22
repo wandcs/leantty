@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { PaneInfo, TabInfo, TerminalMode } from '../main/ets/common/types/TerminalTypes'
+import { SshConnectionSpec, SshConnectOptions } from '../main/ets/common/types/SshTypes'
 import { SshSession } from '../main/ets/model/ssh/SshSession'
 import { AppViewModel } from '../main/ets/viewmodel/AppViewModel'
 
@@ -129,34 +130,77 @@ export default function paneModelTest() {
 
     it('usesTheChosenSshHostLabelForTheStableConnectionTitle', 0, () => {
       let session: SshSession = new SshSession()
-      session.setHostname('172.16.100.2')
-      session.setUsername('user')
-      session.setDisplayHost('hsl')
+      let spec: SshConnectionSpec = new SshConnectionSpec()
+      spec.host = '172.16.100.2'
+      spec.username = 'user'
+      spec.displayHost = 'hsl'
+      session.setConnectionSpec(spec)
       expect(session.getConnectionTitle()).assertEqual('user@hsl')
 
-      session.setDisplayHost('')
+      spec.displayHost = ''
+      session.setConnectionSpec(spec)
       expect(session.getConnectionTitle()).assertEqual('user@172.16.100.2')
     })
 
-    it('retainsTheResolvedConnectTimeoutForReconnect', 0, () => {
+    it('ownsTheCompleteResolvedConnectionSpecForReconnect', 0, () => {
       let session: SshSession = new SshSession()
-      expect(session.getConnectTimeoutMs()).assertEqual(15000)
-      session.setConnectTimeoutMs(9000)
-      expect(session.getConnectTimeoutMs()).assertEqual(9000)
-    })
+      let spec: SshConnectionSpec = new SshConnectionSpec()
+      spec.host = 'target.example.com'
+      spec.displayHost = 'prod'
+      spec.port = 2200
+      spec.username = 'deploy'
+      spec.identityFile = 'target-key'
+      spec.jumpHost = 'jump.example.com'
+      spec.jumpDisplayHost = 'bastion'
+      spec.jumpPort = 2222
+      spec.jumpUsername = 'relay'
+      spec.jumpIdentityFile = 'jump-key'
+      spec.jumpConnectTimeoutMs = 8000
+      spec.jumpServerAliveIntervalSeconds = 15
+      spec.jumpServerAliveCountMax = 4
+      spec.connectTimeoutMs = 9000
+      spec.serverAliveIntervalSeconds = 0
+      spec.serverAliveCountMax = 7
+      spec.verbose = true
+      session.setConnectionSpec(spec)
 
-    it('retainsBothResolvedServerAliveLayersForReconnect', 0, () => {
-      let session: SshSession = new SshSession()
-      expect(session.getServerAliveIntervalSeconds()).assertEqual(30)
-      expect(session.getServerAliveCountMax()).assertEqual(3)
-      session.setServerAliveIntervalSeconds(0)
-      session.setServerAliveCountMax(7)
-      session.setJumpServerAliveIntervalSeconds(15)
-      session.setJumpServerAliveCountMax(4)
-      expect(session.getServerAliveIntervalSeconds()).assertEqual(0)
-      expect(session.getServerAliveCountMax()).assertEqual(7)
-      expect(session.getJumpServerAliveIntervalSeconds()).assertEqual(15)
-      expect(session.getJumpServerAliveCountMax()).assertEqual(4)
+      spec.host = 'mutated.example.com'
+      let retained: SshConnectionSpec = session.getConnectionSpec()
+      retained.username = 'mutated'
+      let reread: SshConnectionSpec = session.getConnectionSpec()
+      expect(reread.host).assertEqual('target.example.com')
+      expect(reread.displayHost).assertEqual('prod')
+      expect(reread.port).assertEqual(2200)
+      expect(reread.username).assertEqual('deploy')
+      expect(reread.identityFile).assertEqual('target-key')
+      expect(reread.jumpHost).assertEqual('jump.example.com')
+      expect(reread.jumpDisplayHost).assertEqual('bastion')
+      expect(reread.jumpPort).assertEqual(2222)
+      expect(reread.jumpUsername).assertEqual('relay')
+      expect(reread.jumpIdentityFile).assertEqual('jump-key')
+      expect(reread.jumpConnectTimeoutMs).assertEqual(8000)
+      expect(reread.jumpServerAliveIntervalSeconds).assertEqual(15)
+      expect(reread.jumpServerAliveCountMax).assertEqual(4)
+      expect(reread.connectTimeoutMs).assertEqual(9000)
+      expect(reread.serverAliveIntervalSeconds).assertEqual(0)
+      expect(reread.serverAliveCountMax).assertEqual(7)
+      expect(reread.verbose).assertEqual(true)
+
+      let options: SshConnectOptions = SshConnectOptions.fromConnectionSpec(reread, '/data/known_hosts')
+      expect(options.host).assertEqual('target.example.com')
+      expect(options.port).assertEqual(2200)
+      expect(options.username).assertEqual('deploy')
+      expect(options.jumpHost).assertEqual('jump.example.com')
+      expect(options.jumpPort).assertEqual(2222)
+      expect(options.jumpUsername).assertEqual('relay')
+      expect(options.jumpConnectTimeoutMs).assertEqual(8000)
+      expect(options.jumpServerAliveIntervalSeconds).assertEqual(15)
+      expect(options.jumpServerAliveCountMax).assertEqual(4)
+      expect(options.knownHostsPath).assertEqual('/data/known_hosts')
+      expect(options.connectTimeoutMs).assertEqual(9000)
+      expect(options.serverAliveIntervalSeconds).assertEqual(0)
+      expect(options.serverAliveCountMax).assertEqual(7)
+      expect(options.verbose).assertEqual(true)
     })
 
     it('activePaneSelectionNeverCrossesTheActiveTab', 0, () => {

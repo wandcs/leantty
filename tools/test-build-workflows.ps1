@@ -293,7 +293,8 @@ try {
         ) -and
         $startupPerformanceVerifierText.Contains('STARTUP_PERF phase=T4') -and
         $startupPerformanceVerifierText.Contains('uinput -K -d 2017 -u 2017') -and
-        -not $startupPerformanceVerifierText.Contains('dumpLayout -p $remotePath -a') -and
+        $startupPerformanceVerifierText.Contains('Get-HdcUiLayout') -and
+        -not $startupPerformanceVerifierText.Contains('file recv') -and
         $startupPerformanceVerifierText.Contains('t5RequiresMatchingAsciiEchoAndPaint = $true') -and
         $startupPerformanceVerifierText.Contains('maxT4ToInputInjectionMs = 250')
     ) 'Startup performance PC verifier no longer measures cold App Center click through painted input'
@@ -323,7 +324,8 @@ try {
         $startupWarmVerifierText.Contains("'AppCenterAppGrid_AppBubble_com.leantty.app'") -and
         $startupWarmVerifierText.Contains('STARTUP_WARM phase=T4') -and
         $startupWarmVerifierText.Contains('uinput -K -d 2017 -u 2017') -and
-        -not $startupWarmVerifierText.Contains('dumpLayout -p $remotePath -a') -and
+        $startupWarmVerifierText.Contains('Get-HdcUiLayout') -and
+        -not $startupWarmVerifierText.Contains('file recv') -and
         $startupWarmVerifierText.Contains('processRetainedForAllSamples = $true')
     ) 'Warm startup PC verifier no longer measures retained-process foreground input readiness'
     foreach ($startupVerifierName in @(
@@ -641,6 +643,25 @@ try {
         (Get-FileHash -LiteralPath $latestCandidate.hapPath -Algorithm SHA256).Hash -eq
         (Get-FileHash -LiteralPath $latestSource -Algorithm SHA256).Hash
     ) 'Latest candidate does not match the newest verified package'
+    $resolvedLatestCandidate = Resolve-LeanTTYRetainedCandidate `
+        -RepoRoot $repoRoot `
+        -CandidateBasePath $candidateBase
+    $resolvedExplicitCandidate = Resolve-LeanTTYRetainedCandidate `
+        -RepoRoot $repoRoot `
+        -HapPath $latestSource `
+        -CandidateBasePath $candidateBase
+    Assert-True (
+        $resolvedLatestCandidate.sha256 -eq $latestCandidate.sha256 -and
+        $resolvedExplicitCandidate.sha256 -eq $latestCandidate.sha256
+    ) 'Retained candidate resolution does not share one latest/explicit hash proof'
+    $unretainedHap = Join-Path $testRoot 'unretained.hap'
+    [IO.File]::WriteAllText($unretainedHap, 'unretained', [Text.UTF8Encoding]::new($false))
+    Assert-Throws -Action {
+        Resolve-LeanTTYRetainedCandidate `
+            -RepoRoot $repoRoot `
+            -HapPath $unretainedHap `
+            -CandidateBasePath $candidateBase
+    } -Message 'An explicit unretained HAP bypassed retained candidate proof'
 
     $behaviorEvidence = Join-Path $testRoot 'device-key-passphrase.json'
     [IO.File]::WriteAllText(

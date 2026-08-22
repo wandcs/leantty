@@ -6,7 +6,7 @@
 >
 > 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
 >
-> 当前工程阶段：1.5 产品开发范围及已授权的终端透明语义修复均已闭合；release preparation 仍需单独授权
+> 当前工程阶段：1.5 产品开发范围、终端透明语义修复及已授权代码清理均已闭合；当前没有活动开发项，release preparation 仍需单独授权
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -41,12 +41,12 @@ UpdateHostKeys 因 russh 缺少完整 proof request/reply、session binding 和�
 停止条件裁剪。专项完成事实和重新进入条件保留在 roadmap 与对应设计文档，不在本文件复制历史
 checklist。
 
-当前没有继续授权的 1.5 SSH 产品开发项或工程重构项。ECDSA 生成、certificate、FIDO/PKCS#11 和
-通用算法覆盖仍不进入范围。Agent 可维护性重构的完成规则已经进入 `coding-guide.md`、
-`architecture.md`、`quality-strategy.md` 和 Git 历史，不在这里保留完成 checklist。1.5 正式候选、
-版本元数据、完整验证、production 签名、GitHub Release 和 AppGallery 交付必须由维护者单独启动
-release preparation；开发期签名 HAP 和局部真机诊断证据不能自动推导为正式候选或商店能力。
-推广手册只提供稳定工作方法；未单独写入本文件的 Pxx 不属于活动任务。
+当前没有继续授权的 1.5 SSH 产品功能或维护工作。ECDSA 生成、certificate、FIDO/PKCS#11 和通用算法
+覆盖仍不进入范围。已授权的代码清理只删除了经调用图和验证证明的无效分支、重复状态与重复工具规则，
+没有借重构引入新产品能力。
+1.5 正式候选、版本元数据、完整验证、production 签名、GitHub Release 和 AppGallery 交付必须由
+维护者单独启动 release preparation；开发期签名 HAP 和局部真机诊断证据不能自动推导为正式候选
+或商店能力。推广手册只提供稳定工作方法；未单独写入本文件的 Pxx 不属于活动任务。
 
 ## 维护规则
 

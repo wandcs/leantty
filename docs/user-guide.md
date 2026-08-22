@@ -348,9 +348,6 @@ the file.
 | `host add/set/list/rm` | Manage LeanTTY Host entries |
 | `exit` | Close the current idle pane or tab path |
 
-Legacy `alias` and `keys` spellings remain temporarily accepted but are not the
-recommended command surface.
-
 ## Keyboard and mouse interaction
 
 | Action | Current interaction |

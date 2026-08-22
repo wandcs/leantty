@@ -355,11 +355,6 @@ struct Index {
     return pane === null ? TerminalMode.IDLE : pane.mode
   }
 
-  private activeSessionState(): SshSessionState {
-    let pane: PaneInfo | null = this.appVm.getActivePane()
-    return pane === null ? SshSessionState.IDLE : pane.state
-  }
-
   private applyTheme(): void {
     let theme: AppTheme = ThemeManager.getInstance().getTheme()
     this.chromeColors = theme.chrome

@@ -162,20 +162,15 @@ export default function keyManagementBehaviorTest() {
       expect(extraName.errorMessage).assertEqual('Usage: key export <key-name> [<file-name>]')
     })
 
-    it('parsesHostCommandsAndMarksLegacyAliasSyntax', 0, () => {
+    it('parsesCanonicalHostCommands', 0, () => {
       let host: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('host add prod root@example.com', new SshConfig())
-      let alias: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
-        CommandParser.parseInput('alias add prod root@example.com', new SshConfig())
       let jumped: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('host add private deploy@target.example.com -J jump', new SshConfig())
       let configured: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput(
           'host set private deploy@target.example.com --connect-timeout 9 -J jump', new SshConfig())
       expect(host instanceof KeyCommandResult).assertEqual(true)
-      expect(alias instanceof KeyCommandResult).assertEqual(true)
-      if (host instanceof KeyCommandResult) { expect(host.legacySyntax).assertEqual(false) }
-      if (alias instanceof KeyCommandResult) { expect(alias.legacySyntax).assertEqual(true) }
       expect(jumped instanceof KeyCommandResult).assertEqual(true)
       if (jumped instanceof KeyCommandResult) { expect(jumped.sshJump).assertEqual('jump') }
       expect(configured instanceof KeyCommandResult).assertEqual(true)

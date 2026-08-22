@@ -1,11 +1,27 @@
 import { describe, expect, it } from '@ohos/hypium'
+import type { ControlEvent as NativeControlEvent } from 'libleantty_ssh.so'
 import { SshErrorCode } from '../main/ets/common/types/SshTypes'
-import {
-  SshControlEventPolicy,
-  SshControlEventRecord
-} from '../main/ets/model/ssh/SshControlEventPolicy'
+import { SshControlEventPolicy } from '../main/ets/model/ssh/SshControlEventPolicy'
 import { SshDiagnosticInfo } from '../main/ets/model/ssh/SshClient'
 import { SessionViewModel } from '../main/ets/viewmodel/SessionViewModel'
+
+class SshControlEventRecord implements NativeControlEvent {
+  kind: string = ''
+  sessionId: string = ''
+  generation: number = 0
+  layer: string = ''
+  stage: string = ''
+  code: string = ''
+  detail: string = ''
+  fingerprint: string = ''
+  knownHostLine: string = ''
+  algorithm: string = ''
+  oldFingerprint: string = ''
+  newFingerprint: string = ''
+  host: string = ''
+  port: number = 0
+  metrics: string = ''
+}
 
 export default function sshControlEventTest(): void {
   describe('SshControlEvent', () => {

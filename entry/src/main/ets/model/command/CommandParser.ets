@@ -7,51 +7,19 @@ import {
   DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
   DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX,
   MAX_SSH_SERVER_ALIVE_INTERVAL_SECONDS,
-  MAX_SSH_SERVER_ALIVE_COUNT_MAX
+  MAX_SSH_SERVER_ALIVE_COUNT_MAX,
+  SshConnectionSpec
 } from '../../common/types/SshTypes'
 
-export class CommandParseResult {
+export class CommandParseResult extends SshConnectionSpec {
   isValid: boolean
-  host: string
-  displayHost: string
-  port: number
-  username: string
   isAlias: boolean
-  identityFile: string
-  jumpHost: string
-  jumpDisplayHost: string
-  jumpPort: number
-  jumpUsername: string
-  jumpIdentityFile: string
-  jumpConnectTimeoutMs: number
-  jumpServerAliveIntervalSeconds: number
-  jumpServerAliveCountMax: number
-  connectTimeoutMs: number
-  serverAliveIntervalSeconds: number
-  serverAliveCountMax: number
-  verbose: boolean
   errorMessage: string
 
   constructor() {
+    super()
     this.isValid = false
-    this.host = ''
-    this.displayHost = ''
-    this.port = 22
-    this.username = ''
     this.isAlias = false
-    this.identityFile = ''
-    this.jumpHost = ''
-    this.jumpDisplayHost = ''
-    this.jumpPort = 22
-    this.jumpUsername = ''
-    this.jumpIdentityFile = ''
-    this.jumpConnectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
-    this.jumpServerAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
-    this.jumpServerAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
-    this.connectTimeoutMs = DEFAULT_SSH_CONNECT_TIMEOUT_MS
-    this.serverAliveIntervalSeconds = DEFAULT_SSH_SERVER_ALIVE_INTERVAL_SECONDS
-    this.serverAliveCountMax = DEFAULT_SSH_SERVER_ALIVE_COUNT_MAX
-    this.verbose = false
     this.errorMessage = ''
   }
 }
@@ -94,7 +62,6 @@ export class KeyCommandResult {
   sshServerAliveIntervalSeconds: number
   sshServerAliveCountMax: number
   errorMessage: string
-  legacySyntax: boolean
   replaceExisting: boolean
 
   constructor() {
@@ -111,7 +78,6 @@ export class KeyCommandResult {
     this.sshServerAliveIntervalSeconds = -1
     this.sshServerAliveCountMax = -1
     this.errorMessage = ''
-    this.legacySyntax = false
     this.replaceExisting = false
   }
 }
@@ -229,13 +195,10 @@ export class CommandParser {
       return CommandParser.parseCommand(trimmed, sshConfig)
     }
 
-    if (trimmed === 'key list' || trimmed === 'keys') {
+    if (trimmed === 'key list') {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.KEYS
       return result
-    }
-    if (words[0] === 'key' && words[1] === 'show') {
-      return CommandParser.parseKeyShow(trimmed)
     }
     if (words[0] === 'key' && words[1] === 'rm') {
       return CommandParser.parseKeyRm(trimmed)
@@ -246,7 +209,7 @@ export class CommandParser {
     if (words[0] === 'key' && words[1] === 'export') {
       return CommandParser.parseKeyExport(trimmed)
     }
-    if (words[0] === 'key' || words[0] === 'keys') {
+    if (words[0] === 'key') {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.KEYS
       result.errorMessage = 'Usage: key list | key import <path> [<key-name>] | ' +
@@ -283,27 +246,22 @@ export class CommandParser {
       return result
     }
 
-    if ((words[0] === 'host' || words[0] === 'alias') && (words[1] === 'add' || words[1] === 'set')) {
+    if (words[0] === 'host' && (words[1] === 'add' || words[1] === 'set')) {
       let result: KeyCommandResult = CommandParser.parseAliasAdd(trimmed)
-      if (words[0] === 'host' && words[1] === 'set') { result.kind = KeyCommandKind.HOST_SET }
-      result.legacySyntax = words[0] === 'alias'
+      if (words[1] === 'set') { result.kind = KeyCommandKind.HOST_SET }
       return result
     }
-    if ((words[0] === 'host' || words[0] === 'alias') && words[1] === 'rm') {
-      let result: KeyCommandResult = CommandParser.parseAliasRm(trimmed)
-      result.legacySyntax = words[0] === 'alias'
-      return result
+    if (words[0] === 'host' && words[1] === 'rm') {
+      return CommandParser.parseAliasRm(trimmed)
     }
-    if (trimmed === 'host list' || trimmed === 'host' || trimmed === 'alias list' || trimmed === 'alias') {
+    if (trimmed === 'host list' || trimmed === 'host') {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.ALIAS_LIST
-      result.legacySyntax = words[0] === 'alias'
       return result
     }
-    if (words[0] === 'host' || words[0] === 'alias') {
+    if (words[0] === 'host') {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.ALIAS_LIST
-      result.legacySyntax = words[0] === 'alias'
       result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] ' +
         '[--connect-timeout <1-300|default>] [--server-alive-interval <0-3600|default>] ' +
         '[--server-alive-count-max <1-100|default>] | ' +
@@ -940,16 +898,6 @@ export class CommandParser {
     }
     if (result.keyName.length === 0) { result.errorMessage = 'ssh-copy-id: -i <key-name> is required' }
     if (result.sshHost.length === 0) { result.errorMessage = 'ssh-copy-id: target <user>@<host> is required' }
-    return result
-  }
-
-  static parseKeyShow(input: string): KeyCommandResult {
-    let result: KeyCommandResult = new KeyCommandResult()
-    result.kind = KeyCommandKind.KEYPUB
-    result.sourcePath = 'legacy-key-show'
-    let parts: string[] = input.split(/\s+/)
-    if (parts.length !== 3) { result.errorMessage = 'Usage: key show <key-name>'; return result }
-    result.keyName = parts[2]
     return result
   }
 

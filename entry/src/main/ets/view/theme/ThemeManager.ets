@@ -1,11 +1,5 @@
-import { AnsiColors, AnsiColorsLatte, ChromeColors, ChromeColorsLatte, TerminalColors, TerminalColorsLatte, Sizing, Spacing, Typography, GhosttyDefault } from './ThemeConstants'
+import { AnsiColors, ChromeColors, TerminalColors } from './ThemeConstants'
 import { XtermTheme, TerminalThemeState } from './TerminalTheme'
-
-export enum ColorMode {
-  DARK = 0,
-  LIGHT = 1,
-  SYSTEM = 2
-}
 
 export enum TransparencyMode {
   HIGH = 0,
@@ -72,50 +66,48 @@ export class TransparencyPolicy {
     return 0.86
   }
 
-  static terminalBackground(mode: TransparencyMode, isLight: boolean): string {
+  static terminalBackground(): string {
     return 'rgba(30, 30, 46, 0)'
   }
 
-  static surfaceBackground(mode: TransparencyMode, isLight: boolean): string {
-    let rgb: string = isLight ? 'EFF1F5' : '1E1E2E'
-    if (mode === TransparencyMode.OFF) return '#FF' + rgb
-    if (mode === TransparencyMode.HIGH) return '#99' + rgb
-    if (mode === TransparencyMode.LOW) return '#D1' + rgb
-    if (mode === TransparencyMode.EXTREME) return '#73' + rgb
-    return '#B8' + rgb
+  static surfaceBackground(mode: TransparencyMode): string {
+    if (mode === TransparencyMode.OFF) return '#FF1E1E2E'
+    if (mode === TransparencyMode.HIGH) return '#991E1E2E'
+    if (mode === TransparencyMode.LOW) return '#D11E1E2E'
+    if (mode === TransparencyMode.EXTREME) return '#731E1E2E'
+    return '#B81E1E2E'
   }
 
-  static chromeSurfaceBackground(mode: TransparencyMode, isLight: boolean): string {
-    let rgb: string = isLight ? 'EFF1F5' : '1E1E2E'
-    return '#' + TransparencyPolicy.chromeAlpha(mode) + rgb
+  static chromeSurfaceBackground(mode: TransparencyMode): string {
+    return '#' + TransparencyPolicy.chromeAlpha(mode) + '1E1E2E'
   }
 
-  static chromeTabBackground(mode: TransparencyMode, isLight: boolean): string {
-    let rgb: string = isLight ? 'D3D7DF' : '2D2E40'
+  static chromeTabBackground(mode: TransparencyMode): string {
+    let rgb: string = '2D2E40'
     if (mode === TransparencyMode.OFF) {
-      rgb = isLight ? 'DEE1E8' : '282839'
+      rgb = '282839'
     } else if (mode === TransparencyMode.HIGH || mode === TransparencyMode.EXTREME) {
-      rgb = isLight ? 'CCD0DA' : '313244'
+      rgb = '313244'
     }
     return '#' + TransparencyPolicy.chromeAlpha(mode) + rgb
   }
 
-  static chromeTabHoverBackground(mode: TransparencyMode, isLight: boolean): string {
-    let rgb: string = isLight ? 'CACED8' : '343547'
+  static chromeTabHoverBackground(mode: TransparencyMode): string {
+    let rgb: string = '343547'
     if (mode === TransparencyMode.OFF) {
-      rgb = isLight ? 'D5D8E1' : '2C2D3F'
+      rgb = '2C2D3F'
     } else if (mode === TransparencyMode.HIGH || mode === TransparencyMode.EXTREME) {
-      rgb = isLight ? 'C4C8D3' : '3B3D4F'
+      rgb = '3B3D4F'
     }
     return '#' + TransparencyPolicy.chromeAlpha(mode) + rgb
   }
 
-  static chromeTabActiveBackground(mode: TransparencyMode, isLight: boolean): string {
-    let rgb: string = isLight ? 'C6CAD4' : '393A4D'
+  static chromeTabActiveBackground(mode: TransparencyMode): string {
+    let rgb: string = '393A4D'
     if (mode === TransparencyMode.OFF) {
-      rgb = isLight ? 'CCD0DA' : '313244'
+      rgb = '313244'
     } else if (mode === TransparencyMode.HIGH || mode === TransparencyMode.EXTREME) {
-      rgb = isLight ? 'C0C4D0' : '404255'
+      rgb = '404255'
     }
     return '#' + TransparencyPolicy.chromeAlpha(mode) + rgb
   }
@@ -126,76 +118,46 @@ export class TransparencyPolicy {
     return 'DB'
   }
 
-  static opaqueSurfaceBackground(isLight: boolean): string {
-    return isLight ? '#FFEFF1F5' : '#FF1E1E2E'
+  static opaqueSurfaceBackground(): string {
+    return '#FF1E1E2E'
   }
 
-  static opaqueChromeSurfaceBackground(isLight: boolean): string {
-    return isLight ? '#FFEFF1F5' : '#FF1E1E2E'
+  static opaqueChromeSurfaceBackground(): string {
+    return '#FF1E1E2E'
   }
 }
 
 export class AppTheme {
-  colorMode: ColorMode
   terminal: TerminalThemeState
-  terminalColors: TerminalColors | TerminalColorsLatte
-  ansiColors: AnsiColors | AnsiColorsLatte
-  chrome: ChromeColors | ChromeColorsLatte
-  sizing: Sizing
-  spacing: Spacing
-  typography: Typography
-  ghosttyDefault: GhosttyDefault
+  terminalColors: TerminalColors
+  chrome: ChromeColors
   transparencyMode: TransparencyMode
 
-  constructor(mode: ColorMode, transparencyMode: TransparencyMode = TransparencyMode.MEDIUM) {
-    this.colorMode = mode
+  constructor(transparencyMode: TransparencyMode = TransparencyMode.MEDIUM) {
     this.transparencyMode = transparencyMode
-    this.sizing = new Sizing()
-    this.spacing = new Spacing()
-    this.typography = new Typography()
-    this.ghosttyDefault = new GhosttyDefault()
-    if (mode === ColorMode.LIGHT) {
-      this.terminalColors = new TerminalColorsLatte()
-      this.ansiColors = new AnsiColorsLatte()
-      this.chrome = new ChromeColorsLatte()
-      this.terminalColors.background = TransparencyPolicy.terminalBackground(transparencyMode, true)
-      this.terminalColors.surfaceBackground = TransparencyPolicy.surfaceBackground(transparencyMode, true)
-      this.terminal = new TerminalThemeState(new XtermTheme(
-        this.terminalColors, this.ansiColors))
-    } else {
-      this.terminalColors = new TerminalColors()
-      this.ansiColors = new AnsiColors()
-      this.chrome = new ChromeColors()
-      this.terminalColors.background = TransparencyPolicy.terminalBackground(transparencyMode, false)
-      this.terminalColors.surfaceBackground = TransparencyPolicy.surfaceBackground(transparencyMode, false)
-      this.terminal = new TerminalThemeState(new XtermTheme(
-        this.terminalColors, this.ansiColors))
-    }
-    this.chrome.tabBackground = TransparencyPolicy.chromeTabBackground(
-      transparencyMode, mode === ColorMode.LIGHT)
-    this.chrome.tabHoverBackground = TransparencyPolicy.chromeTabHoverBackground(
-      transparencyMode, mode === ColorMode.LIGHT)
-    this.chrome.tabActiveBackground = TransparencyPolicy.chromeTabActiveBackground(
-      transparencyMode, mode === ColorMode.LIGHT)
-  }
-
-  isDark(): boolean {
-    return this.colorMode === ColorMode.DARK
+    this.terminalColors = new TerminalColors()
+    this.terminalColors.background = TransparencyPolicy.terminalBackground()
+    this.terminalColors.surfaceBackground = TransparencyPolicy.surfaceBackground(transparencyMode)
+    this.chrome = new ChromeColors()
+    this.chrome.tabBackground = TransparencyPolicy.chromeTabBackground(transparencyMode)
+    this.chrome.tabHoverBackground = TransparencyPolicy.chromeTabHoverBackground(transparencyMode)
+    this.chrome.tabActiveBackground = TransparencyPolicy.chromeTabActiveBackground(transparencyMode)
+    this.terminal = new TerminalThemeState(new XtermTheme(
+      this.terminalColors, new AnsiColors()))
   }
 
   background(windowTransparencyAvailable: boolean = true): string {
     if (!windowTransparencyAvailable) {
-      return TransparencyPolicy.opaqueSurfaceBackground(this.colorMode === ColorMode.LIGHT)
+      return TransparencyPolicy.opaqueSurfaceBackground()
     }
     return this.terminalColors.surfaceBackground
   }
 
   chromeBackground(windowTransparencyAvailable: boolean = true): string {
     if (!windowTransparencyAvailable) {
-      return TransparencyPolicy.opaqueChromeSurfaceBackground(this.colorMode === ColorMode.LIGHT)
+      return TransparencyPolicy.opaqueChromeSurfaceBackground()
     }
-    return TransparencyPolicy.chromeSurfaceBackground(
-      this.transparencyMode, this.colorMode === ColorMode.LIGHT)
+    return TransparencyPolicy.chromeSurfaceBackground(this.transparencyMode)
   }
 }
 
@@ -203,15 +165,11 @@ export class ThemeManager {
   private static instance: ThemeManager | null = null
   private currentTheme: AppTheme
   private listeners: (() => void)[]
-  private preferredMode: ColorMode
-  private systemIsDark: boolean
   private transparencyMode: TransparencyMode
 
   private constructor() {
-    this.preferredMode = ColorMode.DARK
-    this.systemIsDark = true
     this.transparencyMode = TransparencyPolicy.defaultMode()
-    this.currentTheme = new AppTheme(ColorMode.DARK, this.transparencyMode)
+    this.currentTheme = new AppTheme(this.transparencyMode)
     this.listeners = []
   }
 
@@ -224,18 +182,6 @@ export class ThemeManager {
 
   getTheme(): AppTheme {
     return this.currentTheme
-  }
-
-  setMode(mode: ColorMode): void {
-    this.preferredMode = mode
-    this.refreshTheme()
-  }
-
-  setSystemIsDark(isDark: boolean): void {
-    this.systemIsDark = isDark
-    if (this.preferredMode === ColorMode.SYSTEM) {
-      this.refreshTheme()
-    }
   }
 
   getTransparencyMode(): TransparencyMode {
@@ -260,11 +206,7 @@ export class ThemeManager {
   }
 
   private refreshTheme(): void {
-    let effectiveMode: ColorMode = this.preferredMode
-    if (this.preferredMode === ColorMode.SYSTEM) {
-      effectiveMode = this.systemIsDark ? ColorMode.DARK : ColorMode.LIGHT
-    }
-    this.currentTheme = new AppTheme(effectiveMode, this.transparencyMode)
+    this.currentTheme = new AppTheme(this.transparencyMode)
     this.notifyListeners()
   }
 

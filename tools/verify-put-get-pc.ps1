@@ -162,13 +162,10 @@ function Wait-FixtureReady {
         if ($null -ne $fixtureProcess -and $fixtureProcess.HasExited) {
             throw "SFTP fixture exited before readiness (exit=$($fixtureProcess.ExitCode))"
         }
-        if ((Test-Path -LiteralPath $fixtureReady -PathType Leaf) -and
-            (Test-Path -LiteralPath $fixtureCredentials -PathType Leaf) -and
-            (Test-Path -LiteralPath $fixtureSftpRoot -PathType Container)) {
-            $readyText = [IO.File]::ReadAllText($fixtureReady)
-            $pidMatch = [regex]::Match($readyText, '(?m)^pid=(?<pid>\d+)$')
-            if ($pidMatch.Success) {
-                $script:fixtureLinuxPid = [int]$pidMatch.Groups['pid'].Value
+        if (Test-Path -LiteralPath $fixtureSftpRoot -PathType Container) {
+            $readiness = Read-LeanTTYFixtureReadiness -ControlDirectory $fixtureRoot
+            if ($null -ne $readiness) {
+                $script:fixtureLinuxPid = $readiness.linuxPid
                 return
             }
         }
@@ -178,36 +175,7 @@ function Wait-FixtureReady {
 }
 
 function Read-SftpFixtureLogText {
-    $stream = [IO.File]::Open(
-        $fixtureStderr,
-        [IO.FileMode]::Open,
-        [IO.FileAccess]::Read,
-        [IO.FileShare]::ReadWrite
-    )
-    try {
-        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true)
-        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
-    } finally {
-        $stream.Dispose()
-    }
-}
-
-function Read-SharedTextFile {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
-    $stream = [IO.File]::Open(
-        $Path,
-        [IO.FileMode]::Open,
-        [IO.FileAccess]::Read,
-        [IO.FileShare]::ReadWrite
-    )
-    try {
-        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true)
-        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
-    } finally {
-        $stream.Dispose()
-    }
+    return Read-LeanTTYSharedTextFile -Path $fixtureStderr
 }
 
 function Stop-FileTransferAuthenticationObserver {
@@ -263,7 +231,7 @@ function Ensure-FileTransferAuthenticationObserver {
 
 function Set-FileTransferAuthenticationObservationCursor {
     Ensure-FileTransferAuthenticationObserver
-    $script:authObservationOffset = (Read-SharedTextFile -Path $script:authObservationStdout).Length
+    $script:authObservationOffset = (Read-LeanTTYSharedTextFile -Path $script:authObservationStdout).Length
 }
 
 function Wait-FileTransferAuthenticationState {
@@ -285,7 +253,7 @@ function Wait-FileTransferAuthenticationState {
         } catch {
             $lastSnapshotError = $_.Exception.Message
         }
-        $liveAll = Read-SharedTextFile -Path $script:authObservationStdout
+        $liveAll = Read-LeanTTYSharedTextFile -Path $script:authObservationStdout
         $liveCurrent = if ($script:authObservationOffset -le $liveAll.Length) {
             $liveAll.Substring($script:authObservationOffset)
         } else {
@@ -3495,7 +3463,7 @@ try {
     Stop-FileTransferAuthenticationObserver
     $authenticationLogLeakedSecret = $false
     foreach ($path in $authObservationFiles) {
-        $observationText = Read-SharedTextFile -Path $path
+        $observationText = Read-LeanTTYSharedTextFile -Path $path
         foreach ($value in $authenticationSecrets) {
             if (-not [string]::IsNullOrWhiteSpace($value) -and
                 $observationText.Contains($value, [StringComparison]::Ordinal)) {

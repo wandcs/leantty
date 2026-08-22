@@ -1,4 +1,4 @@
-import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { ThemeManager, TransparencyPolicy } from '../view/theme/ThemeManager';
 import { Logger } from '../common/logger/Logger';
@@ -46,7 +46,6 @@ export default class EntryAbility extends UIAbility {
     }
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
-      ThemeManager.getInstance().setSystemIsDark(true);
     } catch (err) {
       logger.error('Failed to set colorMode: ' + err)
     }
@@ -55,9 +54,6 @@ export default class EntryAbility extends UIAbility {
 
   onDestroy(): void {
     logger.info('Ability onDestroy');
-  }
-
-  onConfigurationUpdate(newConfig: Configuration): void {
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {

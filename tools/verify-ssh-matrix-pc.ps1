@@ -34,23 +34,10 @@ if (-not (Test-Path -LiteralPath $authScript -PathType Leaf)) {
     throw "SSH authentication verifier is missing: $authScript"
 }
 
-$candidateRoot = Get-LeanTTYCandidateRoot `
+$candidate = Resolve-LeanTTYRetainedCandidate `
     -RepoRoot $repoRoot `
+    -HapPath $HapPath `
     -CandidateBasePath $CandidateBasePath
-$candidateRecords = @(Get-LeanTTYCandidateRecords -CandidateRoot $candidateRoot)
-if ([string]::IsNullOrWhiteSpace($HapPath)) {
-    $candidate = $candidateRecords | Select-Object -First 1
-} else {
-    $resolvedRequestedHap = [IO.Path]::GetFullPath($HapPath)
-    if (-not (Test-Path -LiteralPath $resolvedRequestedHap -PathType Leaf)) {
-        throw "Candidate HAP is missing: $resolvedRequestedHap"
-    }
-    $requestedHash = (Get-FileHash -LiteralPath $resolvedRequestedHap -Algorithm SHA256).Hash.ToLowerInvariant()
-    $candidate = $candidateRecords | Where-Object { $_.sha256 -eq $requestedHash } | Select-Object -First 1
-}
-if ($null -eq $candidate) {
-    throw 'No matching retained candidate exists; run tools/verify-pc.ps1 first'
-}
 if ($candidate.gitDirty) { throw 'Formal SSH matrix requires a clean committed candidate' }
 $selectedHapPath = [IO.Path]::GetFullPath([string]$candidate.hapPath)
 if (-not (Test-Path -LiteralPath $selectedHapPath -PathType Leaf)) {

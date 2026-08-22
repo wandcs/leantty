@@ -76,8 +76,8 @@ LeanTTY 断线态本地命令目前由 Session、Host/key 命令和文件传输�
 | 普通数据 | 无标签 | 默认前景色 | 帮助、表格、公钥、指纹、路径和统计保持安静 |
 
 固定使用现有 ANSI 16 色：青 `36`、绿 `32`、黄 `33`、红 `31`，每个 token 后立即用 `0` reset；
-不叠加 bold、dim、underline 或 true color。由 xterm 深浅主题决定最终色值，这比新增 RGB token
-更简单，也与远端 TUI 的通用终端语义一致。
+不叠加 bold、dim、underline 或 true color。最终色值由产品唯一的固定调色板决定，这比新增 RGB
+token 或主题分支更简单，也与远端 TUI 的通用终端语义一致。
 
 ## 提示符
 
@@ -89,9 +89,8 @@ ESC[32mltty>ESC[0mSPACE
 ```
 
 `ltty>` 在固定字体中占五格，直接标明这是 LeanTTY 断线态，不依赖两个相近颜色在小字号下形成
-区别。绿色复用主题 ANSI `32`：深色 Catppuccin Mocha 为 `#A6E3A1`，浅色 Latte 为 `#40A02B`；
-这与主流 Shell prompt 用绿色表达可输入/成功状态的惯例一致，也随现有深浅主题切换。提示符不加
-bold，不新建固定品牌色，也不显示目录、Host、用户名或状态。
+区别。绿色复用固定调色板的 ANSI `32`（`#A6E3A1`）；这与主流 Shell prompt 用绿色表达可输入/
+成功状态的惯例一致。提示符不加 bold，不新建固定品牌色，也不显示目录、Host、用户名或状态。
 
 青色 `L` + 绿色 `>` 已被真机否决：两个浅色小字符视觉上无法有效区分。单独 `>` 仍不采用，
 因为它不能可靠区分 LeanTTY 本地态与远端 shell。

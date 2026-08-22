@@ -83,8 +83,7 @@ const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<p
   '-J saves one ProxyJump in the same OpenSSH Host entry; -J none disables it.\r\n' +
   '--connect-timeout saves whole seconds in that Host; default restores 15 seconds.\r\n' +
   '--server-alive-interval uses whole seconds; 0 disables probes and default restores 30.\r\n' +
-  '--server-alive-count-max controls unanswered probes; default restores 3.\r\n' +
-  'Legacy alias commands remain temporarily supported.\r\n'
+  '--server-alive-count-max controls unanswered probes; default restores 3.\r\n'
 const CONFIG_HELP: string =
   '\r\nUsage: config import <Downloads-file-name> [--replace]\r\n' +
   '       config export [<Downloads-file-name>]\r\n\r\n' +
@@ -121,11 +120,6 @@ export class KeyCommandService {
       return
     }
     if (result.kind === KeyCommandKind.HELP) { KeyCommandService.executeHelp(result, ctx); return }
-    if (result.legacySyntax) {
-      ctx.writeOutput('\r\n' + LocalCommandOutput.note(
-        '"alias" is deprecated; use "host" instead.') + '\r\n')
-    }
-
     if (result.kind === KeyCommandKind.KEYS) { KeyCommandService.executeKeys(ctx); return }
     if (result.kind === KeyCommandKind.KEYGEN) { KeyCommandService.executeKeygen(result, ctx); return }
     if (result.kind === KeyCommandKind.KEYIMPORT) { KeyCommandService.executeKeyimport(result, ctx); return }
@@ -171,8 +165,8 @@ export class KeyCommandService {
     if (topic === 'ssh') { ctx.writeOutput(SSH_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'ssh-keygen') { ctx.writeOutput(KEYGEN_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'ssh-copy-id') { ctx.writeOutput(COPY_ID_HELP + LocalCommandOutput.prompt()); return }
-    if (topic === 'key' || topic === 'keys') { ctx.writeOutput(KEY_HELP + LocalCommandOutput.prompt()); return }
-    if (topic === 'host' || topic === 'alias') { ctx.writeOutput(HOST_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'key') { ctx.writeOutput(KEY_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'host') { ctx.writeOutput(HOST_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'config') { ctx.writeOutput(CONFIG_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'put' || topic === 'get' || topic === 'scp') {
       ctx.writeOutput(TRANSFER_HELP + LocalCommandOutput.prompt()); return
@@ -231,10 +225,6 @@ export class KeyCommandService {
   }
 
   private static executeKeypub(result: KeyCommandResult, ctx: KeyCommandContext): void {
-    if (result.sourcePath === 'legacy-key-show') {
-      ctx.writeOutput('\r\n' + LocalCommandOutput.note(
-        '"key show" is deprecated; use ssh-keygen -y -f <identity>.') + '\r\n')
-    }
     let key: KeyPairInfo | null = SshKeyManager.findKeyByName(ctx.context, result.keyName)
     if (key === null) {
       ctx.writeError('Key not found: ' + KeyCommandService.safeText(result.keyName) +
@@ -389,7 +379,7 @@ export class KeyCommandService {
 
   private static executeAliasAdd(result: KeyCommandResult, ctx: KeyCommandContext): void {
     let config: SshConfig = ctx.sshConfig
-    if (!result.legacySyntax && config.findHost(result.keyName) !== null) {
+    if (config.findHost(result.keyName) !== null) {
       ctx.writeError('Host already exists: ' + KeyCommandService.safeText(result.keyName) +
         '.\r\nTry: host set ' + KeyCommandService.safeText(result.keyName) + ' ...')
       return

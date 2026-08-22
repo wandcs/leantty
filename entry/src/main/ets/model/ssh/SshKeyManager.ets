@@ -1,4 +1,4 @@
-import { abilityAccessCtrl, common, PermissionRequestResult, Permissions } from '@kit.AbilityKit'
+import { common } from '@kit.AbilityKit'
 import { Environment } from '@kit.CoreFileKit'
 import {
   KeyAlgorithm, KeyPairInfo, KeyGenerationResult, algorithmFromSshName, algorithmToSshName, algorithmToString
@@ -7,13 +7,13 @@ import { FileUtils } from '../../common/utils/FileUtils'
 import { Logger } from '../../common/logger/Logger'
 import { DurableStateManager } from '../persistence/DurableStateManager'
 import { KeyCommentCommitPolicy } from '../persistence/KeyCommentCommitPolicy'
+import { DownloadsAccessManager } from '../transfer/DownloadsAccessManager'
 import sshNative from 'libleantty_ssh.so'
 
 const logger: Logger = new Logger('SshKeyManager')
 const DEFAULT_ALGOS: string[] = ['id_ed25519', 'id_ed25519_sk', 'id_rsa']
 const VALID_KEY_NAME: RegExp = /^[A-Za-z0-9._-]+$/
 const RESERVED_SSH_FILES: string[] = ['config', 'known_hosts', 'authorized_keys', 'rc', 'environment', 'moduli']
-const DOWNLOAD_PERMISSION: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
 
 class PrivateKeyInspection {
   encrypted: boolean = false
@@ -176,7 +176,15 @@ export class SshKeyManager {
     if (fileNameError !== null) {
       throw new Error(fileNameError)
     }
-    await SshKeyManager.ensureDownloadsAccess(context)
+    try {
+      await DownloadsAccessManager.ensure(context)
+    } catch (e) {
+      let detail: string = '' + e
+      if (detail.includes('Downloads access was denied')) {
+        throw new Error('Downloads access was not granted; no files were exported')
+      }
+      throw new Error('Cannot request Downloads access: ' + detail)
+    }
     let downloadDir: string = ''
     try {
       downloadDir = Environment.getUserDownloadDir()
@@ -251,36 +259,6 @@ export class SshKeyManager {
       return 'Export file name must not end with .pub'
     }
     return null
-  }
-
-  private static async ensureDownloadsAccess(context: common.Context): Promise<void> {
-    let accessManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager()
-    let result: PermissionRequestResult
-    try {
-      result = await accessManager.requestPermissionsFromUser(context, [DOWNLOAD_PERMISSION])
-    } catch (e) {
-      throw new Error('Cannot request Downloads access: ' + e)
-    }
-    if (result.authResults.length === 1 &&
-      result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
-      return
-    }
-
-    let dialogWasShown: boolean = result.dialogShownResults !== undefined &&
-      result.dialogShownResults.length === 1 && result.dialogShownResults[0]
-    if (!dialogWasShown) {
-      try {
-        let settingResults: abilityAccessCtrl.GrantStatus[] =
-          await accessManager.requestPermissionOnSetting(context, [DOWNLOAD_PERMISSION])
-        if (settingResults.length === 1 &&
-          settingResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
-          return
-        }
-      } catch (e) {
-        logger.warn('Downloads settings request failed: ' + e)
-      }
-    }
-    throw new Error('Downloads access was not granted; no files were exported')
   }
 
   static protectKeyFile(context: common.Context, name: string): void {

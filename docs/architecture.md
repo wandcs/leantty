@@ -83,7 +83,9 @@ when the page is destroyed and do not persist across application termination.
 ```text
 keyboard input at ltty>
   → CommandParser / SshConfig and optional ProxyJump resolution
-  → SessionViewModel.connect
+  → one resolved SshConnectionSpec snapshot owned by SshSession
+  → SessionViewModel.connect; reconnect reuses the same snapshot
+  → SshConnectOptions mapping at the SshClient boundary
   → SshClient.connect
   → N-API sshConnect
   → Rust/run_session sequences jump route, target route and interactive shell phases
@@ -105,6 +107,13 @@ performs failure cleanup once, and the connected phase produces the single
 final transport-close event. This keeps direct and ProxyJump routes on the same
 error and cleanup contract without hiding protocol behavior behind another
 transport abstraction.
+
+`SshConnectionSpec` is the single ArkTS value object for a resolved connection:
+target and jump endpoint labels, ports, users, named identities, connect
+timeouts, keepalive policy and verbose mode. `CommandParseResult` adds only
+parser status to that value, `SshSession` owns a defensive copy for reconnect,
+and concrete private-key paths are resolved while mapping the value to
+`SshConnectOptions`. No second field-by-field reconnect request is maintained.
 
 Terminal input follows the reverse path. xterm sends terminal data through the
 versioned Bridge, `SessionViewModel` decides whether the current mode consumes

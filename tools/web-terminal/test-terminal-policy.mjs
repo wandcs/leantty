@@ -814,18 +814,20 @@ assert.doesNotMatch(indexPage,
 assert.match(themeConstants,
   /background: string = 'rgba\(30, 30, 46, 0\)'[\s\S]*surfaceBackground: string = '#D11E1E2E'/,
   'the xterm renderer must combine the fixed logical palette background with zero render alpha');
-assert.match(themeConstants,
-  /class TerminalColorsLatte extends TerminalColors \{[\s\S]*background: string = 'rgba\(30, 30, 46, 0\)'[\s\S]*surfaceBackground: string = '#D1EFF1F5'/,
-  'legacy palette branches must not change the one product background reported through OSC 11');
 assert.match(themeManager,
-  /terminalBackground\(mode: TransparencyMode, isLight: boolean\): string \{\s*return 'rgba\(30, 30, 46, 0\)'\s*\}/,
-  'transparency presets and legacy mode arguments must not change the fixed logical terminal background');
+  /terminalBackground\(\): string \{\s*return 'rgba\(30, 30, 46, 0\)'\s*\}/,
+  'transparency presets must not change the fixed logical terminal background');
+assert.doesNotMatch(themeConstants,
+  /Latte|Sizing|Spacing|Typography|GhosttyDefault|GHOSTTY_DEFAULT|SIZING|SPACING|TYPOGRAPHY/,
+  'the fixed product palette must not retain unused theme families or configuration constants');
+assert.doesNotMatch(themeManager, /ColorMode|isLight|setSystemIsDark|setMode\(/,
+  'theme authority must expose only the fixed palette plus transparency semantics');
+assert.doesNotMatch(terminalTheme,
+  /CATPPUCCIN|Osc4ColorOverride|applyOsc4|resetOsc4|toOsc4ResetCommands|indexToColorName|colorAtBaseIndex/,
+  'terminal theme serialization must not retain an unused second OSC color state machine');
 assert.match(themeConstants,
   /tabBackground: string = '#F02D2E40'[\s\S]*tabHoverBackground: string = '#F0343547'[\s\S]*tabActiveBackground: string = '#F0393A4D'/,
-  'default dark tabs must keep the Low/Medium rail separation without returning to surface1');
-assert.match(themeConstants,
-  /tabBackground: string = '#F0D3D7DF'[\s\S]*tabHoverBackground: string = '#F0CACED8'[\s\S]*tabActiveBackground: string = '#F0C6CAD4'/,
-  'default light tabs must reverse luminance while preserving the Low/Medium rail separation');
+  'the fixed tabs must keep the Low/Medium rail separation without returning to surface1');
 assert.match(chromeBar,
   /ChromeButton[\s\S]*fontColor\(this\.chromeColors\.statusText\)[\s\S]*opacity\(this\.hovered \|\| this\.focused \? 1 : 0\.72\)/,
   'Chrome controls must remain visible at rest without competing with the active tab');

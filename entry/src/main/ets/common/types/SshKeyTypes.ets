@@ -89,19 +89,3 @@ export function algorithmDisplayName(algo: KeyAlgorithm): string {
   }
   return 'ed25519'
 }
-
-export function algorithmFromString(s: string): KeyAlgorithm {
-  if (s === 'rsa-4096' || s === 'rsa' || s === 'rsa4096') {
-    return KeyAlgorithm.RSA4096
-  }
-  if (s === 'ecdsa-p256' || s === 'ecdsa-sha2-nistp256') {
-    return KeyAlgorithm.ECDSA_P256
-  }
-  if (s === 'ecdsa-p384' || s === 'ecdsa-sha2-nistp384') {
-    return KeyAlgorithm.ECDSA_P384
-  }
-  if (s === 'ecdsa-p521' || s === 'ecdsa-sha2-nistp521') {
-    return KeyAlgorithm.ECDSA_P521
-  }
-  return KeyAlgorithm.ED25519
-}

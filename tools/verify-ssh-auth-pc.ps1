@@ -92,10 +92,6 @@ Assert-LeanTTYCredentialPathOutsideRepository `
     -CredentialPath $UnlockPasswordPath `
     -RepositoryRoot $repoRoot
 
-$candidateRoot = Get-LeanTTYCandidateRoot `
-    -RepoRoot $repoRoot `
-    -CandidateBasePath $CandidateBasePath
-$candidateRecords = @(Get-LeanTTYCandidateRecords -CandidateRoot $candidateRoot)
 $harnessDifferencePaths = @()
 if ($DiagnosticHap) {
     if ([string]::IsNullOrWhiteSpace($HapPath)) {
@@ -114,17 +110,11 @@ if ($DiagnosticHap) {
         retained = $false
         provenance = 'explicit-unretained-diagnostic-hap'
     }
-} elseif ([string]::IsNullOrWhiteSpace($HapPath)) {
-    $candidate = $candidateRecords | Select-Object -First 1
-    if ($null -eq $candidate) { throw 'No retained candidate exists; run tools/verify-pc.ps1 first' }
 } else {
-    $resolvedHap = [IO.Path]::GetFullPath($HapPath)
-    if (-not (Test-Path -LiteralPath $resolvedHap -PathType Leaf)) {
-        throw "Candidate HAP is missing: $resolvedHap"
-    }
-    $requestedHash = (Get-FileHash -LiteralPath $resolvedHap -Algorithm SHA256).Hash.ToLowerInvariant()
-    $candidate = $candidateRecords | Where-Object { $_.sha256 -eq $requestedHash } | Select-Object -First 1
-    if ($null -eq $candidate) { throw 'The selected HAP is not a retained verified candidate' }
+    $candidate = Resolve-LeanTTYRetainedCandidate `
+        -RepoRoot $repoRoot `
+        -HapPath $HapPath `
+        -CandidateBasePath $CandidateBasePath
 }
 if (-not $DiagnosticHap) {
     if ($candidate.gitDirty) {
@@ -594,18 +584,7 @@ function Wait-FixtureLog {
 }
 
 function Read-FixtureLogText {
-    $stream = [IO.File]::Open(
-        $fixtureStderr,
-        [IO.FileMode]::Open,
-        [IO.FileAccess]::Read,
-        [IO.FileShare]::ReadWrite
-    )
-    try {
-        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true)
-        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
-    } finally {
-        $stream.Dispose()
-    }
+    return Read-LeanTTYSharedTextFile -Path $fixtureStderr
 }
 
 function Get-FixtureLogMatchCount {
@@ -643,26 +622,9 @@ function Read-FixtureConnectedInputSnapshot {
         return [pscustomobject]@{ observed = $false; value = '' }
     }
     try {
-        $stream = [IO.File]::Open(
-            $fixtureConnectedInputSnapshot,
-            [IO.FileMode]::Open,
-            [IO.FileAccess]::Read,
-            [IO.FileShare]::ReadWrite
-        )
-        try {
-            $reader = [IO.StreamReader]::new(
-                $stream,
-                [Text.UTF8Encoding]::new($false),
-                $true
-            )
-            try {
-                return [pscustomobject]@{
-                    observed = $true
-                    value = $reader.ReadToEnd()
-                }
-            } finally { $reader.Dispose() }
-        } finally {
-            $stream.Dispose()
+        return [pscustomobject]@{
+            observed = $true
+            value = Read-LeanTTYSharedTextFile -Path $fixtureConnectedInputSnapshot
         }
     } catch [IO.IOException] {
         return [pscustomobject]@{ observed = $false; value = '' }
@@ -1557,34 +1519,19 @@ function Remove-LeanTTYEcdsaImportSource {
 }
 
 function Read-FixtureCredentials {
-    $path = Join-Path $fixtureControl 'server-credentials'
-    $readyPath = Join-Path $fixtureControl 'fixture-ready'
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt 90) {
         if ($null -ne $fixtureProcess -and $fixtureProcess.HasExited) {
             throw "SSH fixture exited before readiness (exit=$($fixtureProcess.ExitCode))"
         }
-        if ((Test-Path -LiteralPath $path -PathType Leaf) -and
-            (Test-Path -LiteralPath $readyPath -PathType Leaf)) {
-            $readyText = [IO.File]::ReadAllText($readyPath)
-            $readyMatch = [regex]::Match(
-                $readyText,
-                "(?m)^address=(?:0\.0\.0\.0|127\.0\.0\.1):$FixturePort`$[\r\n]+^pid=(?<pid>\d+)`$"
-            )
-            if ($readyMatch.Success) {
-                $script:fixtureLinuxPid = [int]$readyMatch.Groups['pid'].Value
-                $result = @{}
-                foreach ($line in [IO.File]::ReadAllLines($path)) {
-                    $parts = $line.Split('=', 2)
-                    if ($parts.Count -ne 2) { throw 'SSH fixture credential file is malformed' }
-                    $result[$parts[0]] = $parts[1]
-                }
-                foreach ($name in @('password', 'account', 'token', 'second_token')) {
-                    if (-not $result.ContainsKey($name) -or [string]::IsNullOrEmpty($result[$name])) {
-                        throw "SSH fixture credential is missing: $name"
-                    }
-                }
-                return $result
+        $readiness = Read-LeanTTYFixtureReadiness `
+            -ControlDirectory $fixtureControl `
+            -RequiredCredentialNames @('password', 'account', 'token', 'second_token')
+        if ($null -ne $readiness) {
+            $readyText = [IO.File]::ReadAllText((Join-Path $fixtureControl 'fixture-ready'))
+            if ($readyText -match "(?m)^address=(?:0\.0\.0\.0|127\.0\.0\.1):$FixturePort`$") {
+                $script:fixtureLinuxPid = $readiness.linuxPid
+                return $readiness.credentials
             }
         }
         Start-Sleep -Milliseconds 200
@@ -2268,7 +2215,7 @@ try {
     $keepaliveTimeoutObserved = $false
     for ($waitSegment = 1; $waitSegment -le 3; $waitSegment++) {
         try {
-            Wait-AuthLog -Pattern 'SSH error: SSH keepalive timed out' `
+            Wait-AuthLog -Pattern 'SSH error: target:SSH keepalive timed out' `
                 -TimeoutSeconds 50 | Out-Null
             $keepaliveTimeoutObserved = $true
             break

@@ -157,43 +157,22 @@ function Wait-ProxyFixture {
         [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
         [Parameter(Mandatory = $true)][string]$ControlDirectory
     )
-    $readyPath = Join-Path $ControlDirectory 'fixture-ready'
-    $credentialsPath = Join-Path $ControlDirectory 'server-credentials'
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt 45) {
         $Process.Refresh()
         if ($Process.HasExited) {
             throw "SSH fixture launcher exited before readiness (exit=$($Process.ExitCode))"
         }
-        if ((Test-Path -LiteralPath $readyPath -PathType Leaf) -and
-            (Test-Path -LiteralPath $credentialsPath -PathType Leaf)) {
-            $ready = [IO.File]::ReadAllText($readyPath)
-            $pidMatch = [regex]::Match($ready, '(?m)^pid=(?<pid>\d+)$')
-            $passwordLine = [IO.File]::ReadLines($credentialsPath) |
-                Where-Object { $_.StartsWith('password=', [StringComparison]::Ordinal) } |
-                Select-Object -First 1
-            if ($pidMatch.Success -and -not [string]::IsNullOrWhiteSpace($passwordLine)) {
-                return [pscustomobject]@{
-                    linuxPid = [int]$pidMatch.Groups['pid'].Value
-                    password = $passwordLine.Substring('password='.Length)
-                }
+        $readiness = Read-LeanTTYFixtureReadiness -ControlDirectory $ControlDirectory
+        if ($null -ne $readiness) {
+            return [pscustomobject]@{
+                linuxPid = $readiness.linuxPid
+                password = [string]$readiness.credentials.password
             }
         }
         Start-Sleep -Milliseconds 200
     }
     throw 'Timed out waiting for an SSH fixture'
-}
-
-function Read-ProxyFixtureLog {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
-    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-    try {
-        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true)
-        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
-    } finally {
-        $stream.Dispose()
-    }
 }
 
 function Wait-ProxyFixtureLog {
@@ -204,7 +183,7 @@ function Wait-ProxyFixtureLog {
     )
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
-        if ((Read-ProxyFixtureLog -Path $Path) -match $Pattern) { return }
+        if ((Read-LeanTTYSharedTextFile -Path $Path) -match $Pattern) { return }
         Start-Sleep -Milliseconds 200
     }
     throw "Timed out waiting for SSH fixture evidence: $Pattern"
@@ -790,8 +769,8 @@ try {
             -FixtureLog $targetStderr `
             -ExpectedPattern 'input case=leftproxy result=matched'
 
-        $leftTargetLogs = Read-ProxyFixtureLog -Path $targetStderr
-        $rightTargetLogs = Read-ProxyFixtureLog -Path $secondTargetStderr
+        $leftTargetLogs = Read-LeanTTYSharedTextFile -Path $targetStderr
+        $rightTargetLogs = Read-LeanTTYSharedTextFile -Path $secondTargetStderr
         if ($leftTargetLogs -match 'input case=rightproxy' -or
             $rightTargetLogs -match 'input case=leftproxy') {
             throw 'Parallel ProxyJump target output crossed Pane ownership'
