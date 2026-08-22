@@ -1,12 +1,12 @@
 # 安全 SSH 诊断
 
-> 状态：Completed
+> 状态：Verified；1.5.0 产品切片已闭合
 >
 > 更新日期：2026-08-21
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 活动工作：[`next-work.md`](../next-work.md)
+> 完成记录：实现与命名验证已闭合；1.5 正式发布准备尚未启动
 
 ## 用户结果与进入结论
 
@@ -60,6 +60,51 @@ fingerprint 和 public-key material。原有必须驱动交互的 control event 
 或 server prompt，但系统日志只记录经过白名单压缩的类别、layer 和固定失败类别。超时日志只
 保留十进制毫秒数。自动化使用 fixture 侧的真实连接结果证明目标，不再把 host 写入系统日志
 作为同步信号。
+
+交互 Session 与文件传输共用结构化 `ControlEvent`；session/generation、kind、layer、stage、
+code、host-key 载荷和有界性能字段分别传递。关闭原因由 `TransportEvent` 的 `exitCode/code/detail`
+表达，ArkTS 只消费校验后的对象，不从 `CONNECT:`、`AUTH:`、`HOST_KEY_*:`、`ERROR:` 等文本前缀
+或 JSON 恢复业务状态。`SshClient` 再向 Pane 所有者发送单一 `SshClientMessage`，其中错误、
+changed-host-key 与诊断继续保持各自的结构化类型。
+
+### 2026-08-22 结构化事件测试契约复核
+
+- 问题：物理脚本是否应继续把含业务载荷的旧字符串日志当作 oracle，还是只观察结构化事件
+  经过白名单压缩后的固定元数据。
+- 适用环境：HarmonyOS PC ARM64；工程 `targetSdkVersion 6.1.1(24)`、
+  `compatibleSdkVersion 6.0.2(22)`；Rust N-API 回调仍由现有绑定生成，不改变线程或队列策略。
+- 官方依据：[HarmonyOS N-API thread-safe function 指南](https://developer.huawei.com/consumer/en/doc/harmonyos-guides-V5/use-napi-thread-safety-V5)
+  将 thread-safe function 定义为 native 非 JS 线程回调 JS 的受支持通道；
+  [OpenHarmony HiLog API](https://gitee.com/openharmony/docs/blob/44e8e413bdf0cc5d71ab18f6a97ce5351509d8b3/en/application-dev/reference/apis/js-apis-hilog.md)
+  要求格式参数明确 public/private，未标记内容默认按 private 处理；ArkUI N-API 上游曾修复
+  [thread-safe callback 生命周期与非阻塞队列问题](https://gitee.com/openharmony/arkui_napi/pulls/669)，
+  因此回调队列行为仍由现有 Rust 测试和真机结果约束，不能从文档推断为无限可靠。
+- 结论：产品状态通过结构化对象传递；设备脚本只等待固定的 kind/layer/stage/code 标签及独立的
+  受控 server oracle，不再依赖 host、fingerprint、server 文本或前缀打包载荷。官方资料与该
+  方向一致，未发现需要保留旧字符串协议的证据；绑定生成代码和目标系统的具体序列化结果仍须
+  由 ARM64 构建与本轮真机直连/ProxyJump 验证闭合。
+
+### 2026-08-22 结构化控制事件维护结果
+
+受影响事件链为 `native russh/transfer owner → N-API → SshClient/FileTransferClient →
+SessionViewModel → 当前 Pane`，信任边界仍是当前 session/transfer id、generation 和 layer；秘密与
+server 载荷不得成为日志 oracle。Rust 构造测试与 ArkTS 策略测试覆盖 identity、错误 code/layer、
+changed-host-key 字段、diagnostic 对象、关闭原因和日志白名单；`ssh-flow` 静态门禁同时固定交互
+Session 与文件传输共用 `ControlEvent`。
+
+本轮按 L0-L3 执行 `policy`、`tooling`、`ssh-flow`、`arkts`、`rust-core`、`rust-native`，强制重编
+ARM64 native 并生成签名 debug HAP。SHA-256 为
+`32ac2effb9fdb7a90f4073a527ae4b7b7a4ca33a376966b98510cbb048cfde54`。同一 HAP 的 direct
+`password-success` 结果为 `passed`，证据位于
+`build/verification/device-ssh-auth-20260822T024140438Z/device-ssh-auth.json`，其 fixture、反向映射、
+known-host 和一次性 key 清理审计均通过；最小 ProxyJump 成功场景证明 jump/target 首次信任、
+分层密码认证、known-host reconnect、真实 target shell 与 clean close，证据位于
+`build/verification/proxy-jump-20260822-104241/summary.json`，脚本在 `finally` 中移除映射、fixture
+进程与系统临时目录。
+
+这是 dirty-tree diagnostic HAP 的变更范围证据，不是 retained candidate 或 L4 正式发布验收。
+本轮未运行完整 SSH authentication、文件传输、生命周期、性能和 release matrix；这些场景与本次
+跨层事件表示变更没有新增用户行为，仅在未来相关链路修改或正式候选门禁时按测试权威选择。
 
 ## 生命周期
 

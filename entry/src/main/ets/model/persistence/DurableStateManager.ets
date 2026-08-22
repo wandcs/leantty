@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit'
 import { FileUtils } from '../../common/utils/FileUtils'
 import { DurableAssetStore } from './DurableAssetStore'
 import { SshConfigCommitPolicy } from './SshConfigCommitPolicy'
+import { KeyPairDeletionPolicy } from './KeyPairDeletionPolicy'
 
 const INITIALIZED_PATH: string = '_meta/initialized'
 const FONT_SIZE_PATH: string = 'settings/terminal-font-size'
@@ -57,8 +58,8 @@ export class DurableStateManager {
     for (let i = 0; i < verifiedKeyNames.length; i++) {
       let name: string = verifiedKeyNames[i]
       if (await DurableStateManager.requireStore().readAsync(SSH_KEYPAIR_PREFIX + name) === null) {
-        FileUtils.removeFile(FileUtils.getSshDir(context) + '/' + name)
-        FileUtils.removeFile(FileUtils.getSshDir(context) + '/' + name + '.pub')
+        FileUtils.removeFileRequired(FileUtils.getSshDir(context) + '/' + name)
+        FileUtils.removeFileRequired(FileUtils.getSshDir(context) + '/' + name + '.pub')
       }
     }
   }
@@ -123,9 +124,24 @@ export class DurableStateManager {
   }
 
   static deleteKeyPair(context: common.Context, name: string): void {
-    DurableStateManager.requireStore().remove(SSH_KEYPAIR_PREFIX + name)
-    FileUtils.removeFile(FileUtils.getSshDir(context) + '/' + name)
-    FileUtils.removeFile(FileUtils.getSshDir(context) + '/' + name + '.pub')
+    let store: DurableAssetStore = DurableStateManager.requireStore()
+    let durablePath: string = SSH_KEYPAIR_PREFIX + name
+    let payload: string | null = store.read(durablePath)
+    let privatePath: string = FileUtils.getSshDir(context) + '/' + name
+    let removeProjection = (): void => {
+      FileUtils.removeFileRequired(privatePath)
+      FileUtils.removeFileRequired(privatePath + '.pub')
+    }
+    if (payload === null) {
+      removeProjection()
+      return
+    }
+    let retainedPayload: string = payload
+    KeyPairDeletionPolicy.commit(
+      removeProjection,
+      (): void => store.remove(durablePath),
+      (): void => DurableStateManager.writeKeyPairPayload(context, name, retainedPayload),
+      (): void => store.write(durablePath, retainedPayload))
   }
 
   private static async restoreSshProjection(context: common.Context): Promise<void> {
@@ -167,6 +183,10 @@ export class DurableStateManager {
     if (payload === null) {
       return
     }
+    DurableStateManager.writeKeyPairPayload(context, name, payload)
+  }
+
+  private static writeKeyPairPayload(context: common.Context, name: string, payload: string): void {
     let separator: number = payload.indexOf('\n')
     if (separator < 1) {
       throw new Error('Invalid durable SSH key pair: ' + name)

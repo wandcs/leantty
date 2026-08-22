@@ -876,18 +876,22 @@ foreach ($scriptName in @(
             $content.Contains("'password-success'") -and
             $content.Contains("'password-then-keyboard-interactive-mixed-echo'") -and
             $content.Contains("'keyboard-interactive-multi-round-wrong-answer-recovery'") -and
-            $content.Contains("Wait-AuthLog -Pattern 'rust event: AUTH:target:authentication was rejected'") -and
-            -not $content.Contains("Wait-AuthLog -Pattern 'rust event: AUTH:authentication was rejected'") -and
+            $content.Contains(
+                "Wait-AuthLog -Pattern 'native control event: error:target:authentication:auth'"
+            ) -and
+            -not $content.Contains(
+                "Wait-AuthLog -Pattern 'native control event: error::authentication:auth'"
+            ) -and
             $content.Contains("'publickey-unencrypted'") -and
             $content.Contains("'publickey-then-password'") -and
             $content.Contains("'publickey-then-keyboard-interactive'") -and
             $content.Contains("'keyboard-interactive-zero-prompt'") -and
             $content.Contains("'unsupported-method-error-and-recovery'") -and
             $content.Contains(
-                "Wait-AuthLog -Pattern 'rust event: AUTH:target:no supported authentication method is available'"
+                "Wait-AuthLog -Pattern 'SSH error: target:no supported authentication method is available'"
             ) -and
             -not $content.Contains(
-                "Wait-AuthLog -Pattern 'rust event: AUTH:no supported authentication method is available'"
+                "Wait-AuthLog -Pattern 'SSH error: no supported authentication method is available'"
             ) -and
             $content.Contains("'ctrl-c-authentication-cancellation-and-recovery'") -and
             $content.Contains('Invoke-LeanTTYDeviceCtrlC') -and

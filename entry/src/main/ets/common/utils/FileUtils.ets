@@ -78,6 +78,20 @@ export class FileUtils {
     FileUtils.removeIfExists(filePath)
   }
 
+  static removeFileRequired(filePath: string): void {
+    try {
+      if (!fs.accessSync(filePath)) {
+        return
+      }
+      fs.unlinkSync(filePath)
+      if (fs.accessSync(filePath)) {
+        throw new Error('file remains after unlink')
+      }
+    } catch (e) {
+      throw new Error('Failed to remove file: ' + filePath + ', detail=' + e)
+    }
+  }
+
   static fileNameFromPath(filePath: string): string {
     let lastSlash: number = filePath.lastIndexOf('/')
     if (lastSlash >= 0) { return filePath.substring(lastSlash + 1) }

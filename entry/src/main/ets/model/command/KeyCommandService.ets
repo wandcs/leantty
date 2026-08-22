@@ -291,10 +291,16 @@ export class KeyCommandService {
     }
     let keyName: string = result.keyName
     ctx.confirmKeyDelete(keyName, key.fingerprint, () => {
-      SshKeyManager.deleteKey(ctx.context, keyName)
-      logger.info('KEY_DELETE result=success')
-      ctx.writeOutput('\r\n' + LocalCommandOutput.success('Deleted key ' +
-        KeyCommandService.safeText(keyName) + '.') + '\r\n' + LocalCommandOutput.prompt())
+      try {
+        SshKeyManager.deleteKey(ctx.context, keyName)
+        logger.info('KEY_DELETE result=success')
+        ctx.writeOutput('\r\n' + LocalCommandOutput.success('Deleted key ' +
+          KeyCommandService.safeText(keyName) + '.') + '\r\n' + LocalCommandOutput.prompt())
+      } catch (e) {
+        logger.warn('KEY_DELETE result=failure')
+        ctx.writeError('The key could not be deleted.\r\nRestart LeanTTY, run key list, and try again. ' +
+          'Do not assume the private key was removed.')
+      }
     }, () => { ctx.writeOutput(LocalCommandOutput.prompt()) })
   }
 

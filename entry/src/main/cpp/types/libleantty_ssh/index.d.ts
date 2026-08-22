@@ -13,10 +13,30 @@ export interface AuthEvent {
   instructions: string
   prompts: AuthPromptEvent[]
 }
+export interface ControlEvent {
+  kind: string
+  sessionId: string
+  generation: number
+  layer: string
+  stage: string
+  code: string
+  detail: string
+  fingerprint: string
+  knownHostLine: string
+  algorithm: string
+  oldFingerprint: string
+  newFingerprint: string
+  host: string
+  port: number
+  metrics: string
+}
 export interface TransportEvent {
   kind: string
   data: Uint8Array
   result: string
+  exitCode: number
+  code: string
+  detail: string
   layer: string
   stage: string
   status: string
@@ -43,7 +63,7 @@ export declare function sshConnect(
   serverAliveIntervalSeconds: number, serverAliveCountMax: number,
   verbose: boolean, generation: number,
   onTransport: (event: TransportEvent) => void,
-  onControl: (event: string) => void,
+  onControl: (event: ControlEvent) => void,
   onAuth: (event: AuthEvent) => void
 ): string
 export declare function sshAuthPassword(
@@ -71,7 +91,7 @@ export declare function sshStartFileTransfer(
   knownHostsPath: string, connectTimeoutMs: number,
   serverAliveIntervalSeconds: number, serverAliveCountMax: number, generation: number,
   paneId: string, remotePath: string, localPath: string, localDescriptor: number,
-  onControl: (event: string) => void,
+  onControl: (event: ControlEvent) => void,
   onAuth: (event: AuthEvent) => void,
   onTransfer: (event: FileTransferEvent) => void
 ): string

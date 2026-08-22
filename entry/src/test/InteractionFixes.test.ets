@@ -8,7 +8,8 @@ import {
   TransferDirection
 } from '../main/ets/model/command/CommandParser'
 import { SshConfig } from '../main/ets/model/ssh/SshConfig'
-import { SshClient } from '../main/ets/model/ssh/SshClient'
+import { SshClient, SshDiagnosticInfo } from '../main/ets/model/ssh/SshClient'
+import { SshError, SshErrorCode } from '../main/ets/common/types/SshTypes'
 import {
   SshEscapeEvent,
   SshEscapeEventKind,
@@ -84,27 +85,33 @@ export default function interactionFixesTest() {
     })
 
     it('keepsVerboseDiagnosticsOnAClosedFieldWhitelist', 0, () => {
-      let label: string = SshClient.safeRustEventLogLabel(
-        'HOST_KEY_PROMPT:target\tssh-ed25519 SHA256:secret\t[private.example]:2222 ssh-ed25519 secret')
-      expect(label).assertEqual('rust event: HOST_KEY_PROMPT:target\tredacted')
-      expect(label.includes('secret')).assertEqual(false)
-      expect(SshClient.safeRustEventLogLabel('AUTH:target:authentication was rejected'))
-        .assertEqual('rust event: AUTH:target:authentication was rejected')
-      expect(SshClient.safeRustEventLogLabel('AUTH:target:server says private.example'))
-        .assertEqual('rust event: AUTH:target')
-      expect(SessionViewModel.safeSshErrorLogLabel('target:connection timed out after 1000 ms'))
+      expect(SessionViewModel.safeSshErrorLogLabel(new SshError(
+        SshErrorCode.Network, 'connection timed out after 1000 ms',
+        'connection timed out after 1000 ms', 'target')))
         .assertEqual('SSH error: target:connection timed out after 1000 ms')
-      expect(SessionViewModel.safeSshErrorLogLabel('target:private.example refused the key'))
+      expect(SessionViewModel.safeSshErrorLogLabel(new SshError(
+        SshErrorCode.Network, 'private.example refused the key',
+        'private.example refused the key', 'target')))
         .assertEqual('SSH error')
-      let line: string = SessionViewModel.formatSshDiagnostic(
-        '{"layer":"target","stage":"connect","status":"started","host":"private.example"}')
+      let started: SshDiagnosticInfo = new SshDiagnosticInfo()
+      started.layer = 'target'
+      started.stage = 'connect'
+      started.status = 'started'
+      let line: string = SessionViewModel.formatSshDiagnostic(started)
       expect(line.includes('Target transport: started.')).assertEqual(true)
       expect(line.includes('private.example')).assertEqual(false)
-      let rejected: string = SessionViewModel.formatSshDiagnostic(
-        '{"layer":"target","stage":"raw_packet","status":"started"}')
+      let invalid: SshDiagnosticInfo = new SshDiagnosticInfo()
+      invalid.layer = 'target'
+      invalid.stage = 'raw_packet'
+      invalid.status = 'started'
+      let rejected: string = SessionViewModel.formatSshDiagnostic(invalid)
       expect(rejected.includes('Diagnostic event rejected.')).assertEqual(true)
-      let refused: string = SessionViewModel.formatSshDiagnostic(
-        '{"layer":"target","stage":"connect","status":"failed","reason":"tcp_refused","error":"private.example"}')
+      let failed: SshDiagnosticInfo = new SshDiagnosticInfo()
+      failed.layer = 'target'
+      failed.stage = 'connect'
+      failed.status = 'failed'
+      failed.reason = 'tcp_refused'
+      let refused: string = SessionViewModel.formatSshDiagnostic(failed)
       expect(refused.includes('Target TCP connection: refused.')).assertEqual(true)
       expect(refused.includes('private.example')).assertEqual(false)
     })
@@ -747,31 +754,16 @@ export default function interactionFixesTest() {
     })
 
     it('keepsProxyJumpFailureAndChangedHostLayersVisibleWithoutExposingDetails', 0, () => {
-      expect(SessionViewModel.sshFailureTitle('jump:authentication rejected'))
+      expect(SessionViewModel.sshFailureTitle('jump'))
         .assertEqual('The jump host connection failed.')
-      expect(SessionViewModel.sshFailureTitle('target:connection refused'))
+      expect(SessionViewModel.sshFailureTitle('target'))
         .assertEqual('The target host connection failed.')
-      expect(SessionViewModel.sshFailureTitle('connection refused'))
+      expect(SessionViewModel.sshFailureTitle(''))
         .assertEqual('The SSH connection failed.')
       let warning: string = SessionViewModel.buildHostKeyChangedWarning(
         'jump.example.com', 2200, 'ssh-ed25519', 'SHA256:old', 'SHA256:new', 'jump')
       expect(warning.startsWith('Jump host identification has changed.')).assertEqual(true)
       expect(warning.includes('Host: [jump.example.com]:2200')).assertEqual(true)
-    })
-
-    it('parsesStructuredChangedHostKeyEvents', 0, () => {
-      let info = SshClient.parseHostKeyChangedInfo(
-        'target\tssh-ed25519\tSHA256:old\tSHA256:new\tserver.example.com\t2222')
-      expect(info !== null).assertEqual(true)
-      if (info !== null) {
-        expect(info.layer).assertEqual('target')
-        expect(info.algorithm).assertEqual('ssh-ed25519')
-        expect(info.oldFingerprint).assertEqual('SHA256:old')
-        expect(info.newFingerprint).assertEqual('SHA256:new')
-        expect(info.host).assertEqual('server.example.com')
-        expect(info.port).assertEqual(2222)
-      }
-      expect(SshClient.parseHostKeyChangedInfo('SHA256:new')).assertEqual(null)
     })
 
     it('formatsProxyJumpAuthenticationPromptsWithoutChangingDirectSshPrompts', 0, () => {
@@ -2082,12 +2074,5 @@ export default function interactionFixesTest() {
       expect(output.getSnapshot()).assertEqual('')
     })
 
-    it('mapsTaggedCloseResultsToAnActionableSshError', 0, () => {
-      expect(SshClient.parseCloseError('-1')).assertEqual(null)
-      expect(SshClient.parseCloseError('ERROR:SSH keepalive timed out. Check the network.'))
-        .assertEqual('SSH keepalive timed out. Check the network.')
-      expect(SshClient.parseCloseError('ERROR:'))
-        .assertEqual('SSH connection ended unexpectedly.')
-    })
   })
 }

@@ -29,7 +29,8 @@ type ResizeSender = tokio::sync::mpsc::Sender<(u32, u32)>;
 type AuthSender = tokio::sync::mpsc::Sender<LayeredAuthMethod>;
 type DisconnectSender = tokio::sync::mpsc::Sender<()>;
 type OutputPauseSender = tokio::sync::mpsc::Sender<bool>;
-type JsCallback = Arc<ThreadsafeFunction<String, (), String, Status, false, false, 64>>;
+type JsControlCallback =
+    Arc<ThreadsafeFunction<ControlEvent, (), ControlEvent, Status, false, false, 64>>;
 type JsTransportCallback =
     Arc<ThreadsafeFunction<TransportEvent, (), TransportEvent, Status, false, false, 64>>;
 type JsAuthCallback = Arc<ThreadsafeFunction<AuthEvent, (), AuthEvent, Status, false, false, 64>>;
@@ -41,10 +42,135 @@ pub struct TransportEvent {
     pub kind: String,
     pub data: Uint8Array,
     pub result: String,
+    pub exit_code: i32,
+    pub code: String,
+    pub detail: String,
     pub layer: String,
     pub stage: String,
     pub status: String,
     pub reason: String,
+}
+
+#[napi(object)]
+pub struct ControlEvent {
+    pub kind: String,
+    pub session_id: String,
+    pub generation: u32,
+    pub layer: String,
+    pub stage: String,
+    pub code: String,
+    pub detail: String,
+    pub fingerprint: String,
+    pub known_host_line: String,
+    pub algorithm: String,
+    pub old_fingerprint: String,
+    pub new_fingerprint: String,
+    pub host: String,
+    pub port: u32,
+    pub metrics: String,
+}
+
+struct ChangedHostKeyControl {
+    algorithm: String,
+    old_fingerprint: String,
+    new_fingerprint: String,
+    host: String,
+    port: u16,
+}
+
+impl ControlEvent {
+    fn base(kind: &str, session_id: u32, generation: u32) -> Self {
+        Self {
+            kind: kind.to_string(),
+            session_id: session_id.to_string(),
+            generation,
+            layer: String::new(),
+            stage: String::new(),
+            code: String::new(),
+            detail: String::new(),
+            fingerprint: String::new(),
+            known_host_line: String::new(),
+            algorithm: String::new(),
+            old_fingerprint: String::new(),
+            new_fingerprint: String::new(),
+            host: String::new(),
+            port: 0,
+            metrics: String::new(),
+        }
+    }
+
+    fn connected(session_id: u32, generation: u32) -> Self {
+        Self::base("connected", session_id, generation)
+    }
+
+    fn error(
+        session_id: u32,
+        generation: u32,
+        layer: ConnectionLayer,
+        stage: &str,
+        code: &str,
+        detail: &str,
+    ) -> Self {
+        let mut event = Self::base("error", session_id, generation);
+        event.layer = layer.as_str().to_string();
+        event.stage = stage.to_string();
+        event.code = code.to_string();
+        event.detail = detail.to_string();
+        event
+    }
+
+    fn warning(
+        session_id: u32,
+        generation: u32,
+        layer: ConnectionLayer,
+        stage: &str,
+        code: &str,
+        detail: &str,
+    ) -> Self {
+        let mut event = Self::error(session_id, generation, layer, stage, code, detail);
+        event.kind = "warning".to_string();
+        event
+    }
+
+    fn host_key_prompt(
+        session_id: u32,
+        generation: u32,
+        layer: ConnectionLayer,
+        fingerprint: String,
+        known_host_line: String,
+    ) -> Self {
+        let mut event = Self::base("host_key_prompt", session_id, generation);
+        event.layer = layer.as_str().to_string();
+        event.stage = "host_key".to_string();
+        event.fingerprint = fingerprint;
+        event.known_host_line = known_host_line;
+        event
+    }
+
+    fn host_key_changed(
+        session_id: u32,
+        generation: u32,
+        layer: ConnectionLayer,
+        changed: ChangedHostKeyControl,
+    ) -> Self {
+        let mut event = Self::base("host_key_changed", session_id, generation);
+        event.layer = layer.as_str().to_string();
+        event.stage = "host_key".to_string();
+        event.algorithm = changed.algorithm;
+        event.old_fingerprint = changed.old_fingerprint;
+        event.new_fingerprint = changed.new_fingerprint;
+        event.host = changed.host;
+        event.port = changed.port.into();
+        event
+    }
+
+    fn output_metrics(session_id: u32, generation: u32, metrics: String) -> Self {
+        let mut event = Self::base("output_metrics", session_id, generation);
+        event.layer = ConnectionLayer::Target.as_str().to_string();
+        event.stage = "output".to_string();
+        event.metrics = metrics;
+        event
+    }
 }
 
 impl TransportEvent {
@@ -53,6 +179,9 @@ impl TransportEvent {
             kind: "data".to_string(),
             data: data.into(),
             result: String::new(),
+            exit_code: -1,
+            code: String::new(),
+            detail: String::new(),
             layer: String::new(),
             stage: String::new(),
             status: String::new(),
@@ -60,12 +189,15 @@ impl TransportEvent {
         }
     }
 
-    fn close(result: String) -> Self {
+    fn close(exit_code: i32, layer: String, code: String, detail: String) -> Self {
         Self {
             kind: "close".to_string(),
             data: Vec::new().into(),
-            result,
-            layer: String::new(),
+            result: String::new(),
+            exit_code,
+            code,
+            detail,
+            layer,
             stage: String::new(),
             status: String::new(),
             reason: String::new(),
@@ -77,6 +209,9 @@ impl TransportEvent {
             kind: "diagnostic".to_string(),
             data: Vec::new().into(),
             result: String::new(),
+            exit_code: -1,
+            code: String::new(),
+            detail: String::new(),
             layer: layer.as_str().to_string(),
             stage: stage.to_string(),
             status: status.to_string(),
@@ -353,9 +488,9 @@ impl OutputDeliveryMetrics {
         self.final_delivery_failed_bytes += output_len;
     }
 
-    fn event(&self, output_paused: bool, final_snapshot: bool) -> String {
+    fn summary(&self, output_paused: bool, final_snapshot: bool) -> String {
         format!(
-            "OUTPUT_METRICS:received={},napiQueued={},callbackRetries={},\
+            "received={},napiQueued={},callbackRetries={},\
              finalDeliveryFailures={},finalDeliveryFailedBytes={},batches={},paused={},final={}",
             self.received_bytes,
             self.napi_queued_bytes,
@@ -447,13 +582,28 @@ impl Drop for LocalTempCleanup {
     }
 }
 
-fn try_send_callback(callback: &JsCallback, value: String, label: &str) -> bool {
-    let status = callback.call(value, ThreadsafeFunctionCallMode::NonBlocking);
+fn send_control(callback: &JsControlCallback, event: ControlEvent) -> bool {
+    let status = callback.call(event, ThreadsafeFunctionCallMode::Blocking);
     if status != Status::Ok {
-        eprintln!("[LTTY_SSH] callback={} status={}", label, status);
+        eprintln!("[LTTY_SSH] callback=control status={}", status);
         return false;
     }
     true
+}
+
+fn send_control_error(
+    callback: &JsControlCallback,
+    session_id: u32,
+    generation: u32,
+    layer: ConnectionLayer,
+    stage: &str,
+    code: &str,
+    detail: &str,
+) {
+    let _ = send_control(
+        callback,
+        ControlEvent::error(session_id, generation, layer, stage, code, detail),
+    );
 }
 
 fn try_send_transport_data(callback: &JsTransportCallback, value: Vec<u8>) -> Status {
@@ -467,9 +617,15 @@ fn try_send_transport_data(callback: &JsTransportCallback, value: Vec<u8>) -> St
     status
 }
 
-fn send_transport_close(callback: &JsTransportCallback, result: String) -> bool {
+fn send_transport_close(
+    callback: &JsTransportCallback,
+    exit_code: i32,
+    layer: String,
+    code: String,
+    detail: String,
+) -> bool {
     let status = callback.call(
-        TransportEvent::close(result),
+        TransportEvent::close(exit_code, layer, code, detail),
         ThreadsafeFunctionCallMode::Blocking,
     );
     if status != Status::Ok {
@@ -534,10 +690,6 @@ fn connect_failure_reason(error: &russh::Error, can_resolve_name: bool) -> &'sta
     }
 }
 
-fn send_control(callback: &JsCallback, event: &str) {
-    let _ = try_send_callback(callback, event.to_string(), "control");
-}
-
 fn send_auth_event(callback: &JsAuthCallback, event: AuthEvent) -> bool {
     let status = callback.call(event, ThreadsafeFunctionCallMode::Blocking);
     if status != Status::Ok {
@@ -580,7 +732,7 @@ struct ClientHandler {
     connect_progress_tx: tokio::sync::mpsc::Sender<ConnectProgress>,
     transport_callback: Option<JsTransportCallback>,
     verbose: bool,
-    control_callback: JsCallback,
+    control_callback: JsControlCallback,
     auth_callback: JsAuthCallback,
 }
 
@@ -640,20 +792,26 @@ impl russh::client::Handler for ClientHandler {
                     Err(error) => {
                         send_control(
                             &self.control_callback,
-                            &format!("HOST_KEY_ERROR:{}\t{}", self.layer.as_str(), error),
+                            ControlEvent::error(
+                                self.session_id,
+                                self.generation,
+                                self.layer,
+                                "host_key",
+                                "host_key",
+                                &error.to_string(),
+                            ),
                         );
                         return Ok(false);
                     }
                 };
                 send_control(
                     &self.control_callback,
-                    &format!(
-                        "HOST_KEY_PROMPT:{}\t{} {}\t{} {}",
-                        self.layer.as_str(),
-                        server_public_key.algorithm(),
-                        fingerprint,
-                        host,
-                        public_key
+                    ControlEvent::host_key_prompt(
+                        self.session_id,
+                        self.generation,
+                        self.layer,
+                        format!("{} {}", server_public_key.algorithm(), fingerprint),
+                        format!("{host} {public_key}"),
                     ),
                 );
                 if let Some(callback) = &self.transport_callback {
@@ -713,20 +871,30 @@ impl russh::client::Handler for ClientHandler {
                     .unwrap_or_else(|| "unavailable".to_string());
                     send_control(
                         &self.control_callback,
-                        &format!(
-                            "HOST_KEY_CHANGED:{}\t{}\t{}\t{}\t{}\t{}",
-                            self.layer.as_str(),
-                            server_public_key.algorithm(),
-                            old_fingerprint,
-                            new_fingerprint,
-                            self.host,
-                            self.port
+                        ControlEvent::host_key_changed(
+                            self.session_id,
+                            self.generation,
+                            self.layer,
+                            ChangedHostKeyControl {
+                                algorithm: server_public_key.algorithm().to_string(),
+                                old_fingerprint,
+                                new_fingerprint,
+                                host: self.host.clone(),
+                                port: self.port,
+                            },
                         ),
                     );
                 } else {
                     send_control(
                         &self.control_callback,
-                        &format!("HOST_KEY_ERROR:{}\t{}", self.layer.as_str(), error),
+                        ControlEvent::error(
+                            self.session_id,
+                            self.generation,
+                            self.layer,
+                            "host_key",
+                            "host_key",
+                            &error.to_string(),
+                        ),
                     );
                 }
                 Ok(false)
@@ -806,7 +974,7 @@ async fn run_channel_writer_core<R>(
     mut resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
     mut report: R,
 ) where
-    R: FnMut(String),
+    R: FnMut(&'static str, String),
 {
     loop {
         tokio::select! {
@@ -820,10 +988,10 @@ async fn run_channel_writer_core<R>(
                   |(cols, rows)| channel.window_change(cols, rows, 0, 0),
                 ).await;
                 for error in resize_errors {
-                  report(format!("RESIZE_ERROR:{}", error));
+                  report("resize", error.to_string());
                 }
                 if let Err(error) = write_result {
-                  report(format!("WRITE_ERROR:{}", error));
+                  report("write", error.to_string());
                 }
               }
               None => break,
@@ -833,7 +1001,7 @@ async fn run_channel_writer_core<R>(
             match size {
               Some((cols, rows)) => {
                 if let Err(error) = channel.window_change(cols, rows, 0, 0).await {
-                  report(format!("RESIZE_ERROR:{}", error));
+                  report("resize", error.to_string());
                 }
               }
               None => break,
@@ -847,10 +1015,31 @@ async fn run_channel_writer(
     channel: russh::ChannelWriteHalf<russh::client::Msg>,
     write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     resize_rx: tokio::sync::mpsc::Receiver<(u32, u32)>,
-    control_callback: JsCallback,
+    session_id: u32,
+    generation: u32,
+    control_callback: JsControlCallback,
 ) {
-    run_channel_writer_core(channel, write_rx, resize_rx, |event| {
-        send_control(&control_callback, &event);
+    run_channel_writer_core(channel, write_rx, resize_rx, |stage, detail| {
+        let event = if stage == "resize" {
+            ControlEvent::warning(
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                stage,
+                "internal",
+                &detail,
+            )
+        } else {
+            ControlEvent::error(
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                stage,
+                "internal",
+                &detail,
+            )
+        };
+        send_control(&control_callback, event);
     })
     .await;
 }
@@ -1409,7 +1598,7 @@ async fn run_session(
     server_alive_count_max: u32,
     verbose: bool,
     transport_callback: JsTransportCallback,
-    control_callback: JsCallback,
+    control_callback: JsControlCallback,
     auth_callback: JsAuthCallback,
     mut receivers: SessionReceivers,
 ) {
@@ -1473,7 +1662,15 @@ async fn run_session(
                     "connect",
                     connect_failure_reason(&error, true),
                 );
-                send_control(&control_callback, &format!("CONNECT:jump:{error}"));
+                send_control_error(
+                    &control_callback,
+                    session_id,
+                    generation,
+                    ConnectionLayer::Jump,
+                    "connect",
+                    "network",
+                    &error.to_string(),
+                );
                 return;
             }
             ConnectWaitResult::TimedOut => {
@@ -1484,10 +1681,15 @@ async fn run_session(
                     "connect",
                     "timed_out",
                 );
-                send_control(
+                send_control_error(
                     &control_callback,
+                    session_id,
+                    generation,
+                    ConnectionLayer::Jump,
+                    "connect",
+                    "network",
                     &format!(
-                        "CONNECT:jump:connection timed out after {} ms",
+                        "connection timed out after {} ms",
                         jump_connect_timeout.as_millis()
                     ),
                 );
@@ -1548,7 +1750,15 @@ async fn run_session(
                     "authentication",
                     "failed",
                 );
-                send_control(&control_callback, &format!("AUTH:jump:{error}"));
+                send_control_error(
+                    &control_callback,
+                    session_id,
+                    generation,
+                    ConnectionLayer::Jump,
+                    "authentication",
+                    "auth",
+                    &error,
+                );
                 disconnect_client(&mut jump).await;
                 return;
             }
@@ -1607,9 +1817,14 @@ async fn run_session(
                     "tunnel",
                     "failed",
                 );
-                send_control(
+                send_control_error(
                     &control_callback,
-                    &format!("CHANNEL:jump:direct-tcpip failed: {error}"),
+                    session_id,
+                    generation,
+                    ConnectionLayer::Jump,
+                    "tunnel",
+                    "channel",
+                    &format!("direct-tcpip failed: {error}"),
                 );
                 disconnect_client(jump).await;
                 return;
@@ -1622,10 +1837,15 @@ async fn run_session(
                     "tunnel",
                     "timed_out",
                 );
-                send_control(
+                send_control_error(
                     &control_callback,
+                    session_id,
+                    generation,
+                    ConnectionLayer::Jump,
+                    "tunnel",
+                    "channel",
                     &format!(
-                        "CHANNEL:jump:direct-tcpip timed out after {} ms",
+                        "direct-tcpip timed out after {} ms",
                         connect_timeout.as_millis()
                     ),
                 );
@@ -1670,7 +1890,15 @@ async fn run_session(
                 "connect",
                 connect_failure_reason(&error, !target_uses_jump),
             );
-            send_control(&control_callback, &format!("CONNECT:target:{error}"));
+            send_control_error(
+                &control_callback,
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "connect",
+                "network",
+                &error.to_string(),
+            );
             if let Some(jump) = jump_ssh.as_mut() {
                 disconnect_client(jump).await;
             }
@@ -1684,10 +1912,15 @@ async fn run_session(
                 "connect",
                 "timed_out",
             );
-            send_control(
+            send_control_error(
                 &control_callback,
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "connect",
+                "network",
                 &format!(
-                    "CONNECT:target:connection timed out after {} ms",
+                    "connection timed out after {} ms",
                     connect_timeout.as_millis()
                 ),
             );
@@ -1757,7 +1990,15 @@ async fn run_session(
                 "authentication",
                 "failed",
             );
-            send_control(&control_callback, &format!("AUTH:target:{error}"));
+            send_control_error(
+                &control_callback,
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "authentication",
+                "auth",
+                &error,
+            );
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
@@ -1786,7 +2027,15 @@ async fn run_session(
                 "channel",
                 "failed",
             );
-            send_control(&control_callback, &format!("CHANNEL:target:{error}"));
+            send_control_error(
+                &control_callback,
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "channel",
+                "channel",
+                &error.to_string(),
+            );
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
@@ -1798,10 +2047,15 @@ async fn run_session(
                 "channel",
                 "timed_out",
             );
-            send_control(
+            send_control_error(
                 &control_callback,
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "channel",
+                "channel",
                 &format!(
-                    "CHANNEL:target:session channel timed out after {} ms",
+                    "session channel timed out after {} ms",
                     connect_timeout.as_millis()
                 ),
             );
@@ -1852,7 +2106,15 @@ async fn run_session(
                 "pty",
                 "failed",
             );
-            send_control(&control_callback, &format!("PTY:target:{error}"));
+            send_control_error(
+                &control_callback,
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "pty",
+                "protocol",
+                &error.to_string(),
+            );
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
@@ -1864,12 +2126,14 @@ async fn run_session(
                 "pty",
                 "timed_out",
             );
-            send_control(
+            send_control_error(
                 &control_callback,
-                &format!(
-                    "PTY:target:request timed out after {} ms",
-                    connect_timeout.as_millis()
-                ),
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "pty",
+                "protocol",
+                &format!("request timed out after {} ms", connect_timeout.as_millis()),
             );
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
@@ -1911,7 +2175,15 @@ async fn run_session(
                 "shell",
                 "failed",
             );
-            send_control(&control_callback, &format!("SHELL:target:{error}"));
+            send_control_error(
+                &control_callback,
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "shell",
+                "protocol",
+                &error.to_string(),
+            );
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
         }
@@ -1923,12 +2195,14 @@ async fn run_session(
                 "shell",
                 "timed_out",
             );
-            send_control(
+            send_control_error(
                 &control_callback,
-                &format!(
-                    "SHELL:target:request timed out after {} ms",
-                    connect_timeout.as_millis()
-                ),
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "shell",
+                "protocol",
+                &format!("request timed out after {} ms", connect_timeout.as_millis()),
             );
             disconnect_session_route(&mut ssh, &mut jump_ssh).await;
             return;
@@ -1947,13 +2221,18 @@ async fn run_session(
         "session",
         "succeeded",
     );
-    send_control(&control_callback, "CONNECTED");
+    let _ = send_control(
+        &control_callback,
+        ControlEvent::connected(session_id, generation),
+    );
 
     let (mut channel_read, channel_write) = channel.split();
     let mut channel_writer = tokio::spawn(run_channel_writer(
         channel_write,
         receivers.write_rx,
         receivers.resize_rx,
+        session_id,
+        generation,
         control_callback.clone(),
     ));
     let mut channel_writer_active = true;
@@ -1987,7 +2266,14 @@ async fn run_session(
             }
           }
           _ = metrics_tick.tick(), if cfg!(debug_assertions) => {
-            send_control(&control_callback, &delivery_metrics.event(output_paused, false));
+            let _ = send_control(
+                &control_callback,
+                ControlEvent::output_metrics(
+                    session_id,
+                    generation,
+                    delivery_metrics.summary(output_paused, false),
+                ),
+            );
           }
           paused = receivers.output_pause_rx.recv() => {
             output_paused = paused.unwrap_or(false);
@@ -2040,9 +2326,14 @@ async fn run_session(
           }
           result = &mut channel_writer, if channel_writer_active => {
             channel_writer_active = false;
-            send_control(
-              &control_callback,
-              &format!("WRITE_ERROR:{}", channel_writer_exit_message(result)),
+            send_control_error(
+                &control_callback,
+                session_id,
+                generation,
+                ConnectionLayer::Target,
+                "write",
+                "internal",
+                &channel_writer_exit_message(result),
             );
             break;
           }
@@ -2101,7 +2392,7 @@ async fn run_session(
             disconnect_client(jump).await;
         }
     }
-    let keepalive_timed_out = match connection_result {
+    let keepalive_timeout_layer = match connection_result {
         Some((layer, result)) => match result {
             Err(russh::Error::KeepaliveTimeout) => {
                 let (interval_seconds, count_max) = match layer {
@@ -2127,7 +2418,7 @@ async fn run_session(
                     "keepalive",
                     "timed_out",
                 );
-                true
+                Some(layer)
             }
             Err(error) => {
                 eprintln!(
@@ -2136,22 +2427,20 @@ async fn run_session(
                 );
                 let _ = error;
                 send_transport_diagnostic(&transport_callback, verbose, layer, "session", "failed");
-                false
+                None
             }
-            Ok(()) => false,
+            Ok(()) => None,
         },
-        None => false,
+        None => None,
     };
-    send_control(
+    let _ = send_control(
         &control_callback,
-        &delivery_metrics.event(output_paused, true),
+        ControlEvent::output_metrics(
+            session_id,
+            generation,
+            delivery_metrics.summary(output_paused, true),
+        ),
     );
-    let close_result = if keepalive_timed_out {
-        "ERROR:SSH keepalive timed out. Check the network, then run the SSH command again."
-            .to_string()
-    } else {
-        exit_code.to_string()
-    };
     send_transport_diagnostic(
         &transport_callback,
         verbose,
@@ -2163,7 +2452,23 @@ async fn run_session(
             "closed"
         },
     );
-    let _ = send_transport_close(&transport_callback, close_result);
+    let (close_layer, close_code, close_detail) = if let Some(layer) = keepalive_timeout_layer {
+        (
+            layer.as_str().to_string(),
+            "keepalive_timeout".to_string(),
+            "SSH keepalive timed out. Check the network, then run the SSH command again."
+                .to_string(),
+        )
+    } else {
+        (String::new(), String::new(), String::new())
+    };
+    let _ = send_transport_close(
+        &transport_callback,
+        exit_code,
+        close_layer,
+        close_code,
+        close_detail,
+    );
 
     eprintln!("[LTTY_SSH] session={} stage=closed", session_id);
 }
@@ -2186,7 +2491,7 @@ async fn run_file_transfer(
     connect_timeout: Duration,
     server_alive_interval_seconds: u32,
     server_alive_count_max: u32,
-    control_callback: JsCallback,
+    control_callback: JsControlCallback,
     auth_callback: JsAuthCallback,
     transfer_callback: JsFileTransferCallback,
     mut disconnect_rx: tokio::sync::mpsc::Receiver<()>,
@@ -2524,7 +2829,7 @@ pub fn ssh_connect(
     verbose: bool,
     generation: u32,
     on_transport: Function<'_, TransportEvent, ()>,
-    on_control: Function<'_, String, ()>,
+    on_control: Function<'_, ControlEvent, ()>,
     on_auth: Function<'_, AuthEvent, ()>,
 ) -> Result<String> {
     if host.trim().is_empty() {
@@ -2578,7 +2883,7 @@ pub fn ssh_connect(
     );
     let control_callback = Arc::new(
         on_control
-            .build_threadsafe_function::<String>()
+            .build_threadsafe_function::<ControlEvent>()
             .max_queue_size::<64>()
             .build()?,
     );
@@ -2670,7 +2975,7 @@ pub fn ssh_start_file_transfer(
     remote_path: String,
     local_path: String,
     local_descriptor: i32,
-    on_control: Function<'_, String, ()>,
+    on_control: Function<'_, ControlEvent, ()>,
     on_auth: Function<'_, AuthEvent, ()>,
     on_transfer: Function<'_, FileTransferEvent, ()>,
 ) -> Result<String> {
@@ -2739,7 +3044,7 @@ pub fn ssh_start_file_transfer(
 
     let control_callback = Arc::new(
         on_control
-            .build_threadsafe_function::<String>()
+            .build_threadsafe_function::<ControlEvent>()
             .max_queue_size::<64>()
             .build()?,
     );
@@ -3131,9 +3436,10 @@ mod tests {
         run_channel_writer_core, send_scheduled_input, should_flush_immediately, transfer,
         validate_keepalive, wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
         wait_for_file_transfer, wait_for_host_key_decision, AuthExchangeResult, AuthMethod,
-        AuthWaitResult, ConnectProgress, ConnectWaitResult, ConnectionLayer, FileTransferEvent,
-        FileTransferWaitResult, HostKeyDecision, LayeredAuthMethod, OutputDeliveryMetrics,
-        TransportEvent, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
+        AuthWaitResult, ChangedHostKeyControl, ConnectProgress, ConnectWaitResult, ConnectionLayer,
+        ControlEvent, FileTransferEvent, FileTransferWaitResult, HostKeyDecision,
+        LayeredAuthMethod, OutputDeliveryMetrics, TransportEvent, AUTH_EXCHANGE_TIMEOUT,
+        AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
     };
     use napi_ohos::Status;
     use russh::client;
@@ -3159,6 +3465,63 @@ mod tests {
         assert_eq!(event.stage, "authentication");
         assert_eq!(event.status, "waiting");
         assert!(event.reason.is_empty());
+        assert!(event.result.is_empty());
+    }
+
+    #[test]
+    fn control_errors_keep_identity_and_classification_separate_from_detail() {
+        let event = ControlEvent::error(
+            41,
+            7,
+            ConnectionLayer::Jump,
+            "authentication",
+            "auth",
+            "target: opaque server detail",
+        );
+        assert_eq!(event.kind, "error");
+        assert_eq!(event.session_id, "41");
+        assert_eq!(event.generation, 7);
+        assert_eq!(event.layer, "jump");
+        assert_eq!(event.stage, "authentication");
+        assert_eq!(event.code, "auth");
+        assert_eq!(event.detail, "target: opaque server detail");
+    }
+
+    #[test]
+    fn changed_host_key_control_events_use_dedicated_fields() {
+        let event = ControlEvent::host_key_changed(
+            42,
+            8,
+            ConnectionLayer::Target,
+            ChangedHostKeyControl {
+                algorithm: "ssh-ed25519".to_string(),
+                old_fingerprint: "SHA256:old".to_string(),
+                new_fingerprint: "SHA256:new".to_string(),
+                host: "server.example.com".to_string(),
+                port: 2222,
+            },
+        );
+        assert_eq!(event.kind, "host_key_changed");
+        assert_eq!(event.layer, "target");
+        assert_eq!(event.algorithm, "ssh-ed25519");
+        assert_eq!(event.old_fingerprint, "SHA256:old");
+        assert_eq!(event.new_fingerprint, "SHA256:new");
+        assert_eq!(event.host, "server.example.com");
+        assert_eq!(event.port, 2222);
+    }
+
+    #[test]
+    fn close_transport_errors_do_not_use_tagged_result_strings() {
+        let event = TransportEvent::close(
+            -1,
+            "target".to_string(),
+            "keepalive_timeout".to_string(),
+            "SSH keepalive timed out. Check the network.".to_string(),
+        );
+        assert_eq!(event.kind, "close");
+        assert_eq!(event.exit_code, -1);
+        assert_eq!(event.layer, "target");
+        assert_eq!(event.code, "keepalive_timeout");
         assert!(event.result.is_empty());
     }
 
@@ -3337,7 +3700,7 @@ mod tests {
                 write_half,
                 write_rx,
                 resize_rx,
-                move |error| reported_errors.lock().unwrap().push(error),
+                move |_stage, error| reported_errors.lock().unwrap().push(error),
             ));
 
             let payload = (0..(1024 * 1024 + 17))
@@ -3528,8 +3891,8 @@ mod tests {
         assert_eq!(metrics.napi_queued_bytes, 4);
         assert_eq!(metrics.final_delivery_failures, 0);
         assert_eq!(metrics.final_delivery_failed_bytes, 0);
-        assert!(metrics.event(false, false).contains("callbackRetries=1"));
-        assert!(metrics.event(false, false).ends_with("final=false"));
+        assert!(metrics.summary(false, false).contains("callbackRetries=1"));
+        assert!(metrics.summary(false, false).ends_with("final=false"));
     }
 
     #[test]
@@ -3545,12 +3908,12 @@ mod tests {
         assert_eq!(metrics.final_delivery_failures, 1);
         assert_eq!(metrics.final_delivery_failed_bytes, 7);
         assert!(metrics
-            .event(false, true)
+            .summary(false, true)
             .contains("finalDeliveryFailures=1"));
         assert!(metrics
-            .event(false, true)
+            .summary(false, true)
             .contains("finalDeliveryFailedBytes=7"));
-        assert!(metrics.event(false, true).ends_with("final=true"));
+        assert!(metrics.summary(false, true).ends_with("final=true"));
     }
 
     #[test]

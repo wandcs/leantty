@@ -467,7 +467,7 @@ function Submit-JumpPasswordUntilResult {
         }
         Submit-SecretOrDecision -Text $JumpPassword
         $logs = Wait-ProxyLogText -Pattern (
-            $ExpectedPattern + '|rust event: AUTH:jump:authentication was rejected'
+            $ExpectedPattern + '|SSH error: jump:authentication was rejected'
         ) -TimeoutSeconds $TimeoutSeconds
         if ($logs -match $ExpectedPattern) { return }
     }
@@ -486,14 +486,14 @@ function Complete-KnownHostProxyConnection {
         Submit-SecretOrDecision -Text $JumpPassword
         $jumpLogs = Wait-ProxyLogText -Pattern (
             'native auth event kind=password, layer=target|' +
-                'rust event: AUTH:jump:authentication was rejected'
+                'SSH error: jump:authentication was rejected'
         )
         if ($jumpLogs -notmatch 'native auth event kind=password, layer=target') { continue }
         Submit-SecretOrDecision -Text $TargetPassword
         $targetLogs = Wait-ProxyLogText -Pattern (
-            'rust event: CONNECTED|rust event: AUTH:target:authentication was rejected'
+            'native control event: connected|SSH error: target:authentication was rejected'
         )
-        if ($targetLogs -match 'rust event: CONNECTED') { return }
+        if ($targetLogs -match 'native control event: connected') { return }
     }
     throw '[harness] ProxyJump password injection was rejected after three connection attempts'
 }
@@ -506,9 +506,9 @@ function Submit-CurrentTargetPasswordWithRetry {
     )
     Submit-SecretOrDecision -Text $TargetPassword
     $logs = Wait-ProxyLogText -Pattern (
-        'rust event: CONNECTED|rust event: AUTH:target:authentication was rejected'
+        'native control event: connected|SSH error: target:authentication was rejected'
     )
-    if ($logs -match 'rust event: CONNECTED') { return }
+    if ($logs -match 'native control event: connected') { return }
     Complete-KnownHostProxyConnection `
         -Command $Command `
         -JumpPassword $JumpPassword `
@@ -520,7 +520,7 @@ function Assert-ProxyCommandInputRecovered {
     $idleProbe = "ssh -G -J password@127.0.0.1:$JumpPort password@127.0.0.1"
     Submit-ProxyCommand -Command $idleProbe
     try {
-        Wait-ProxyLog -Pattern 'rust event: CONNECTED' -TimeoutSeconds 2
+        Wait-ProxyLog -Pattern 'native control event: connected' -TimeoutSeconds 2
         throw 'Finished ProxyJump work emitted a late CONNECTED event'
     } catch {
         if ($_.Exception.Message -eq 'Finished ProxyJump work emitted a late CONNECTED event') {
@@ -739,13 +739,13 @@ try {
         )
 
         Submit-ProxyCommand -Command $proxyCommand
-        Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
+        Wait-ProxyLog -Pattern 'native control event: host_key_prompt:jump'
         Submit-HostKeyDecisionUntilResult `
             -ExpectedPattern 'native auth event kind=password, layer=jump'
         Submit-JumpPasswordUntilResult `
             -Command $proxyCommand `
             -JumpPassword $jumpFixture.password `
-            -ExpectedPattern 'rust event: HOST_KEY_PROMPT:target\t' `
+            -ExpectedPattern 'native control event: host_key_prompt:target' `
             -CurrentPrompt
 
         Invoke-ProxySplitShortcut
@@ -756,13 +756,13 @@ try {
             -Side 'right' `
             -LayoutName 'parallel-right-focused.json'
         Submit-ProxyCommand -Command $secondProxyCommand
-        Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
+        Wait-ProxyLog -Pattern 'native control event: host_key_prompt:jump'
         Submit-HostKeyDecisionUntilResult `
             -ExpectedPattern 'native auth event kind=password, layer=jump'
         Submit-JumpPasswordUntilResult `
             -Command $secondProxyCommand `
             -JumpPassword $secondJumpFixture.password `
-            -ExpectedPattern 'rust event: HOST_KEY_PROMPT:target\t' `
+            -ExpectedPattern 'native control event: host_key_prompt:target' `
             -CurrentPrompt
         Submit-HostKeyDecisionUntilResult `
             -ExpectedPattern 'native auth event kind=password, layer=target'
@@ -874,7 +874,7 @@ try {
             -Pattern 'SSH diagnostic layer=jump, stage=connect, status=started, reason=none'
     }
 
-    Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
+    Wait-ProxyLog -Pattern 'native control event: host_key_prompt:jump'
     Submit-HostKeyDecisionUntilResult `
         -ExpectedPattern 'native auth event kind=password, layer=jump'
     if ($FailureScenario -eq 'JumpAuthentication') {
@@ -882,10 +882,10 @@ try {
             throw 'Temporary fixture passwords unexpectedly match across layers'
         }
         Submit-SecretOrDecision -Text $targetFixture.password
-        Wait-ProxyLog -Pattern 'rust event: AUTH:jump:authentication was rejected'
+        Wait-ProxyLog -Pattern 'native control event: error:jump:authentication:auth'
         Wait-ProxyLog -Pattern 'SSH error: jump:authentication was rejected'
         $failureLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
-        if ($failureLogs -match 'native auth event kind=\S+, layer=target|rust event: CONNECTED') {
+        if ($failureLogs -match 'native auth event kind=\S+, layer=target|native control event: connected') {
             throw 'Jump authentication failure continued into the target layer'
         }
         Save-LeanTTYDeviceScreenshot `
@@ -910,14 +910,14 @@ try {
         Submit-JumpPasswordUntilResult `
             -Command $proxyCommand `
             -JumpPassword $jumpFixture.password `
-            -ExpectedPattern 'rust event: CHANNEL:jump:direct-tcpip failed' `
+            -ExpectedPattern 'native control event: error:jump:tunnel:channel' `
             -CurrentPrompt
         Wait-ProxyLog -Pattern 'SSH error: jump:direct-tcpip failed'
         Wait-ProxyFixtureLog `
             -Path $jumpStderr `
             -Pattern 'direct-tcpip result=deny reason=disabled'
         $failureLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
-        if ($failureLogs -match 'native auth event kind=\S+, layer=target|rust event: CONNECTED') {
+        if ($failureLogs -match 'native auth event kind=\S+, layer=target|native control event: connected') {
             throw 'Rejected direct-tcpip channel continued into the target layer'
         }
         Save-LeanTTYDeviceScreenshot `
@@ -940,9 +940,9 @@ try {
     }
     if ($FailureScenario -in @('TargetUnreachable', 'DirectTcpipTimeout')) {
         $expectedEvent = if ($FailureScenario -eq 'TargetUnreachable') {
-            'rust event: CHANNEL:jump:direct-tcpip failed'
+            'native control event: error:jump:tunnel:channel'
         } else {
-            'rust event: CHANNEL:jump:direct-tcpip timed out after \d+ ms'
+            'native control event: error:jump:tunnel:channel'
         }
         Submit-JumpPasswordUntilResult `
             -Command $proxyCommand `
@@ -961,7 +961,7 @@ try {
             -Pattern $fixturePattern `
             -TimeoutSeconds 20
         $failureLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
-        if ($failureLogs -match 'native auth event kind=\S+, layer=target|rust event: CONNECTED') {
+        if ($failureLogs -match 'native auth event kind=\S+, layer=target|native control event: connected') {
             throw "$FailureScenario continued into the target layer"
         }
         $failureScreenshot = if ($FailureScenario -eq 'TargetUnreachable') {
@@ -994,7 +994,7 @@ try {
     Submit-JumpPasswordUntilResult `
         -Command $proxyCommand `
         -JumpPassword $jumpFixture.password `
-        -ExpectedPattern 'rust event: HOST_KEY_PROMPT:target\t' `
+        -ExpectedPattern 'native control event: host_key_prompt:target' `
         -CurrentPrompt
     if ($SshDiagnostics) {
         Wait-ProxyLog `
@@ -1020,7 +1020,7 @@ try {
         $idleProbe = "ssh -G -J password@127.0.0.1:$JumpPort password@127.0.0.1"
         Submit-ProxyCommand -Command $idleProbe
         try {
-            Wait-ProxyLog -Pattern 'rust event: CONNECTED' -TimeoutSeconds 2
+            Wait-ProxyLog -Pattern 'native control event: connected' -TimeoutSeconds 2
             throw 'Cancelled ProxyJump emitted a late CONNECTED event'
         } catch {
             if ($_.Exception.Message -eq 'Cancelled ProxyJump emitted a late CONNECTED event') {
@@ -1050,10 +1050,10 @@ try {
             throw 'Temporary fixture passwords unexpectedly match across layers'
         }
         Submit-SecretOrDecision -Text $jumpFixture.password
-        Wait-ProxyLog -Pattern 'rust event: AUTH:target:authentication was rejected'
+        Wait-ProxyLog -Pattern 'native control event: error:target:authentication:auth'
         Wait-ProxyLog -Pattern 'SSH error: target:authentication was rejected'
         $failureLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
-        if ($failureLogs -match 'rust event: CONNECTED') {
+        if ($failureLogs -match 'native control event: connected') {
             throw 'Target authentication failure opened a target shell'
         }
         Save-LeanTTYDeviceScreenshot `
@@ -1090,7 +1090,7 @@ try {
             -Target $targetId `
             -ProcessId $appPid
         $safeDiagnosticLines = @($diagnosticLogs -split "`n" | Where-Object {
-            $_ -match '/SshClient: (SSH diagnostic|rust event:)'
+            $_ -match '/SshClient: (SSH diagnostic|native control event:)'
         }) -join "`n"
         if ($safeDiagnosticLines.Contains('127.0.0.1') -or
             $safeDiagnosticLines.Contains('SHA256:') -or
@@ -1410,7 +1410,7 @@ try {
         Submit-JumpPasswordUntilResult `
             -Command $proxyCommand `
             -JumpPassword $jumpFixture.password `
-            -ExpectedPattern 'rust event: HOST_KEY_CHANGED:target\t' `
+            -ExpectedPattern 'native control event: host_key_changed:target' `
             -CurrentPrompt
         Save-LeanTTYDeviceScreenshot `
             -Hdc $hdc `
@@ -1422,7 +1422,7 @@ try {
         Submit-JumpPasswordUntilResult `
             -Command $proxyCommand `
             -JumpPassword $jumpFixture.password `
-            -ExpectedPattern 'rust event: HOST_KEY_PROMPT:target\t' `
+            -ExpectedPattern 'native control event: host_key_prompt:target' `
             -CurrentPrompt
         Submit-HostKeyDecisionUntilResult `
             -ExpectedPattern 'native auth event kind=password, layer=target'
@@ -1448,14 +1448,14 @@ try {
         $jumpLinuxPid = $jumpFixture.linuxPid
 
         Submit-ProxyCommand -Command $proxyCommand
-        Wait-ProxyLog -Pattern 'rust event: HOST_KEY_CHANGED:jump\t'
+        Wait-ProxyLog -Pattern 'native control event: host_key_changed:jump'
         Save-LeanTTYDeviceScreenshot `
             -Hdc $hdc `
             -Target $targetId `
             -LocalPath (Join-Path $EvidenceDirectory 'jump-host-key-changed.png')
         Submit-ProxyCommand -Command "ssh-keygen -R [127.0.0.1]:$JumpPort"
         Submit-ProxyCommand -Command $proxyCommand
-        Wait-ProxyLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t'
+        Wait-ProxyLog -Pattern 'native control event: host_key_prompt:jump'
         Submit-HostKeyDecisionUntilResult `
             -ExpectedPattern 'native auth event kind=password, layer=jump'
         Submit-JumpPasswordUntilResult `

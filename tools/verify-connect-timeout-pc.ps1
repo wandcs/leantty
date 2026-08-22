@@ -279,7 +279,7 @@ function Enter-IdleCommandState {
 function Assert-NoLateTimeout {
     param([int]$Seconds = 2)
     try {
-        Wait-AppLog -Pattern 'CONNECT:(jump|target):connection timed out|CHANNEL:jump:direct-tcpip timed out' `
+        Wait-AppLog -Pattern 'native control event: error:(jump|target):(connect:network|tunnel:channel)' `
             -TimeoutSeconds $Seconds | Out-Null
         throw 'Cancelled connection emitted a late timeout event'
     } catch {
@@ -369,12 +369,12 @@ try {
     Clear-AppLogs
     $directWatch = [Diagnostics.Stopwatch]::StartNew()
     Submit-Command -Command 'ssh __ltty_ct_direct' -Stage 'direct-target-timeout'
-    Wait-AppLog -Pattern 'rust event: CONNECT:target:connection timed out after 1000 ms' `
+    Wait-AppLog -Pattern 'native control event: error:target:connect:network' `
         -TimeoutSeconds 8 | Out-Null
     Wait-AppLog -Pattern 'SSH error: target:connection timed out after 1000 ms' | Out-Null
     $directWatch.Stop()
     Save-ScenarioEvidence -Name 'direct-target-timeout' -ExpectedLayer 'target' `
-        -ExpectedEvent 'CONNECT:target:connection timed out after 1000 ms' -Stopwatch $directWatch
+        -ExpectedEvent 'error:target:connect:network' -Stopwatch $directWatch
 
     Submit-Command -Command (
         "host set __ltty_ct_target_jump password@127.0.0.1:$TargetPort " +
@@ -383,12 +383,12 @@ try {
     Clear-AppLogs
     $jumpWatch = [Diagnostics.Stopwatch]::StartNew()
     Submit-Command -Command 'ssh __ltty_ct_target_jump' -Stage 'jump-handshake-timeout'
-    Wait-AppLog -Pattern 'rust event: CONNECT:jump:connection timed out after 1000 ms' `
+    Wait-AppLog -Pattern 'native control event: error:jump:connect:network' `
         -TimeoutSeconds 8 | Out-Null
     Wait-AppLog -Pattern 'SSH error: jump:connection timed out after 1000 ms' | Out-Null
     $jumpWatch.Stop()
     Save-ScenarioEvidence -Name 'jump-handshake-timeout' -ExpectedLayer 'jump' `
-        -ExpectedEvent 'CONNECT:jump:connection timed out after 1000 ms' -Stopwatch $jumpWatch
+        -ExpectedEvent 'error:jump:connect:network' -Stopwatch $jumpWatch
 
     Submit-Command -Command (
         "host set __ltty_ct_target_jump password@127.0.0.1:$TargetPort " +
@@ -397,16 +397,16 @@ try {
     Clear-AppLogs
     $proxyWatch = [Diagnostics.Stopwatch]::StartNew()
     Submit-Command -Command 'ssh __ltty_ct_target_jump' -Stage 'target-over-jump-timeout'
-    Wait-AppLog -Pattern 'rust event: HOST_KEY_PROMPT:jump\t' | Out-Null
+    Wait-AppLog -Pattern 'native control event: host_key_prompt:jump' | Out-Null
     Submit-InteractiveValue -Text 'yes'
     Wait-AppLog -Pattern 'native auth event kind=password, layer=jump' | Out-Null
     Submit-InteractiveValue -Text $jumpFixture.password
-    Wait-AppLog -Pattern 'rust event: CHANNEL:jump:direct-tcpip timed out after 1000 ms' `
+    Wait-AppLog -Pattern 'native control event: error:jump:tunnel:channel' `
         -TimeoutSeconds 8 | Out-Null
     Wait-AppLog -Pattern 'SSH error: jump:direct-tcpip timed out after 1000 ms' | Out-Null
     $proxyWatch.Stop()
     Save-ScenarioEvidence -Name 'target-over-jump-timeout' -ExpectedLayer 'target-over-jump' `
-        -ExpectedEvent 'CHANNEL:jump:direct-tcpip timed out after 1000 ms' -Stopwatch $proxyWatch
+        -ExpectedEvent 'error:jump:tunnel:channel' -Stopwatch $proxyWatch
 
     Submit-Command -Command (
         "host set __ltty_ct_direct password@127.0.0.1:$TargetStallPort --connect-timeout 5"
@@ -425,11 +425,11 @@ try {
     Clear-AppLogs
     $defaultWatch = [Diagnostics.Stopwatch]::StartNew()
     Submit-Command -Command 'ssh __ltty_ct_default' -Stage 'default-success-recovery'
-    Wait-AppLog -Pattern 'rust event: HOST_KEY_PROMPT:target\t' | Out-Null
+    Wait-AppLog -Pattern 'native control event: host_key_prompt:target' | Out-Null
     Submit-InteractiveValue -Text 'yes'
     Wait-AppLog -Pattern 'native auth event kind=password, layer=target' | Out-Null
     Submit-InteractiveValue -Text $targetFixture.password
-    Wait-AppLog -Pattern 'rust event: CONNECTED' | Out-Null
+    Wait-AppLog -Pattern 'native control event: connected' | Out-Null
     Submit-InteractiveValue -Text 'ltty-input-check connecttimeoutrecovery'
     $fixtureStopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($fixtureStopwatch.Elapsed.TotalSeconds -lt 10) {
@@ -480,7 +480,7 @@ try {
                 (Join-Path $EvidenceDirectory 'device-app-at-failure.log'),
                 $failureLogs + "`n"
             )
-            if ($failureLogs -match 'rust event: CONNECTED' -and
+            if ($failureLogs -match 'native control event: connected' -and
                 $failureLogs -notmatch 'SSH closed, exitCode=') {
                 Submit-InteractiveValue -Text 'ltty-exit'
                 Wait-AppLog -Pattern 'SSH closed, exitCode=0' -TimeoutSeconds 8 | Out-Null

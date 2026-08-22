@@ -54,6 +54,16 @@
 
 ### Fixed
 
+- Replaced native SSH control strings and tagged close results with structured
+  events shared by interactive Sessions and file transfers. Session/generation,
+  jump/target layer, stage, error code, host-key fields and diagnostics now stay
+  typed across Rust, N-API and ArkTS instead of being reconstructed from text
+  prefixes or JSON, while logs retain only whitelisted metadata.
+- Made `key rm` report success only after both the durable key-pair authority
+  and application-private projection are absent. Projection or Asset Store
+  failures now restore the retained pair where possible, reapply private-key
+  protection, show an actionable failure instead of a false deletion, and have
+  failure-injection coverage for projection, durable and rollback faults.
 - Made an active Host-based file transfer observe the same SSH connection
   driver as an interactive Session. A configured server-alive timeout now
   stops the transfer promptly with a clear network error, removes an owned
