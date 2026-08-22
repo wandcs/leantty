@@ -45,8 +45,8 @@ Session.
 | Component | Source | Owns | Must not own |
 | --- | --- | --- | --- |
 | UIAbility and page | `entryability/EntryAbility.ets`, `pages/Index.ets` | Application/window lifecycle, rendering the workspace, active focus and system integration | SSH protocol rules or terminal byte interpretation |
-| AppViewModel | `viewmodel/AppViewModel.ets` | Stable Tab/Pane identifiers, active Tab/Pane and pane-visible state | Network connections or WebView instances |
-| PaneRuntime | `pages/Index.ets` | The pairing of one Pane identity with one SessionViewModel and TerminalSurfaceController | Cross-pane state |
+| AppViewModel | `viewmodel/AppViewModel.ets` | Stable Tab/Pane identifiers, active Tab/Pane, the Pane/runtime registry and ordered runtime disposal | SSH protocol state, terminal rendering policy or system focus adaptation |
+| PaneRuntime | `viewmodel/PaneRuntime.ets` | The pairing and lifecycle of one Pane identity, SessionViewModel and TerminalSurfaceController | Cross-pane state or workspace ordering |
 | SessionViewModel | `viewmodel/SessionViewModel.ets` | Local command/prompt interaction, terminal presentation and routing user actions to the owning Session | SSH lifecycle transitions, global Tab ordering or Web rendering internals |
 | SshSession | `model/ssh/SshSession.ets` | The allowed connection, authentication, host-verification, connected, failure, close, reconnect and transfer-handoff transitions for one Pane | Prompt text, terminal rendering or native transport decoding |
 | SshClient | `model/ssh/SshClient.ets` | One N-API session handle, native event decoding and request/response correlation | UI text, Tab/Pane ownership or persistent asset policy |
@@ -65,13 +65,18 @@ Session.
 - at most two Panes are allowed in a Tab;
 - each runtime owns its own `SessionViewModel`, SSH client, output buffer and
   Web terminal controller; and
-- closing or switching one Pane cannot reuse another Pane's SSH or terminal
+- removing a Pane or Tab unlinks and disposes its runtime through the same
+  owner, so switching or closing cannot reuse another Pane's SSH or terminal
   state.
 
-`Index.ets` renders by stable Pane identity, routes focus and interaction to the
-active Pane, and retains only the surfaces required by the current tab, a short
-warm-tab policy or an active connected session. The workspace model does not
-persist across application termination.
+`Index.ets` keeps `tabs` and `activeTabIndex` only as ArkUI rendering
+projections. Existence, active identity, runtime lookup and destruction always
+delegate back to `AppViewModel`. The `@State appVm` annotation is required to
+preserve ArkUI callback and focus-routing identity; it does not create a second
+workspace model. The page routes focus and system events and retains only the
+surfaces required by the current tab, a short warm-tab policy or an active
+connected session. The workspace model and all runtimes are disposed together
+when the page is destroyed and do not persist across application termination.
 
 ## Connection event chain
 

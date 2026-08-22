@@ -1,6 +1,7 @@
 import { AppViewModel } from '../viewmodel/AppViewModel'
 import { PaneInfo, TabInfo } from '../common/types/TerminalTypes'
 import { SessionViewModel, TerminalMode } from '../viewmodel/SessionViewModel'
+import { PaneRuntime } from '../viewmodel/PaneRuntime'
 import { SshSessionState } from '../common/types/TerminalTypes'
 import { ThemeManager, AppTheme, TransparencyMode, TransparencyPolicy } from '../view/theme/ThemeManager'
 import { ChromeColors } from '../view/theme/ThemeConstants'
@@ -11,7 +12,6 @@ import webview from '@ohos.web.webview'
 import { common } from '@kit.AbilityKit'
 import { InteractionPolicy, WorkspaceNavigationAction } from '../model/ui/InteractionPolicy'
 import { UserPreferences } from '../model/settings/UserPreferences'
-import { TerminalSurfaceController } from '../model/terminal/TerminalSurfaceController'
 import { BrowserLauncher } from '../model/browser/BrowserLauncher'
 import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator'
 import { KeyCodeMap } from '../common/constants/KeyCodeMap'
@@ -20,37 +20,13 @@ const logger: Logger = new Logger('IndexPage')
 const WARM_TAB_RETENTION_MS: number = 30000
 const MENU_ACTION_COUNT: number = 6
 
-class PaneRuntime {
-  id: string
-  viewModel: SessionViewModel
-  surface: TerminalSurfaceController
-  generation: number = 0
-
-  constructor(id: string, viewModel: SessionViewModel) {
-    this.id = id
-    this.viewModel = viewModel
-    this.surface = new TerminalSurfaceController()
-    this.viewModel.bindTerminalSurface(this.surface)
-  }
-
-  attachSurface(ctrl: webview.WebviewController): void {
-    this.detachSurface()
-    this.surface.attach(ctrl)
-  }
-
-  detachSurface(): void {
-    this.surface.detach()
-    this.viewModel.onTerminalSurfaceDetached()
-  }
-}
-
 @Entry
 @Component
 struct Index {
   @State appVm: AppViewModel = new AppViewModel()
   @State tabs: TabInfo[] = []
-  @State paneRuntimes: PaneRuntime[] = []
   @State activeTabIndex: number = 0
+  @State paneRuntimeRevision: number = 0
   @State chromeColors: ChromeColors = new ChromeColors()
   @State contentBg: string = '#FF1E1E2E'
   @State chromeBg: string = '#FF181825'
@@ -82,13 +58,13 @@ struct Index {
   @StorageLink('pcTitleButtonReservedWidth') titleButtonReservedWidth: number = 140
   private themeChangeHandler: () => void = () => { this.applyTheme() }
   private applicationCloseHandler: () => Promise<void> = async (): Promise<void> => {
-    await this.disconnectAllRuntimes()
+    await this.appVm.disconnectAllPaneRuntimes()
   }
 
   aboutToAppear(): void {
     this.fontSize = InteractionPolicy.clampFontSize(this.fontSize)
-    let tab: TabInfo = this.appVm.addTab('ltty')
-    this.addPaneRuntime(tab.panes[0])
+    this.appVm.setPaneRuntimeFactory((pane: PaneInfo): PaneRuntime => this.createPaneRuntime(pane))
+    this.appVm.addTab('ltty')
     this.syncWorkspace()
     this.applyTheme()
     ThemeManager.getInstance().onThemeChange(this.themeChangeHandler)
@@ -101,10 +77,7 @@ struct Index {
     ThemeManager.getInstance().removeThemeChange(this.themeChangeHandler)
     this.clearWarmTabEvictionTimer()
     AppStorage.setOrCreate('hasActiveSshSession', false)
-    for (let i = 0; i < this.paneRuntimes.length; i++) {
-      this.paneRuntimes[i].viewModel.disconnect()
-      this.paneRuntimes[i].detachSurface()
-    }
+    this.appVm.disposeWorkspace()
   }
 
   build() {
@@ -176,7 +149,8 @@ struct Index {
                 { x: 0, y: 0 })
               .padding(this.isRightPane(runtime.id) ?
                 { left: 4 } : {})
-          }, (runtime: PaneRuntime) => runtime.id + '-' + runtime.generation.toString())
+          }, (runtime: PaneRuntime) => runtime.id + '-' + runtime.generation.toString() +
+            (this.paneRuntimeRevision < 0 ? '-invalid' : ''))
 
           if (this.activeTabIsSplit()) {
             Stack({ alignContent: Alignment.Center }) {
@@ -294,10 +268,7 @@ struct Index {
   }
 
   private activeTab(): TabInfo | null {
-    if (this.activeTabIndex < 0 || this.activeTabIndex >= this.tabs.length) {
-      return null
-    }
-    return this.tabs[this.activeTabIndex]
+    return this.appVm.getActiveTab()
   }
 
   private mountedPaneRuntimes(): PaneRuntime[] {
@@ -399,8 +370,9 @@ struct Index {
       BlurStyle.BACKGROUND_REGULAR : BlurStyle.NONE
     this.transparencyLabel = TransparencyPolicy.label(theme.transparencyMode)
     let themeJson: string = theme.terminal.toJsInitObject()
-    for (let i = 0; i < this.paneRuntimes.length; i++) {
-      this.paneRuntimes[i].viewModel.applyTerminalTheme(themeJson)
+    let runtimes: PaneRuntime[] = this.appVm.getPaneRuntimes()
+    for (let i = 0; i < runtimes.length; i++) {
+      runtimes[i].viewModel.applyTerminalTheme(themeJson)
     }
   }
 
@@ -412,13 +384,12 @@ struct Index {
     if (this.appVm.getTabs().length > 0) {
       this.deactivateActiveTab('')
     }
-    let tab: TabInfo = this.appVm.addTab('ltty')
-    this.addPaneRuntime(tab.panes[0])
+    this.appVm.addTab('ltty')
     this.syncWorkspace()
     this.restoreActivePaneFocus()
   }
 
-  private addPaneRuntime(pane: PaneInfo): void {
+  private createPaneRuntime(pane: PaneInfo): PaneRuntime {
     let vm: SessionViewModel = new SessionViewModel()
     vm.setPaneIdentity(pane.id)
     vm.setOnStateChange((state: SshSessionState) => {
@@ -456,7 +427,7 @@ struct Index {
     runtime.surface.setOnOpenUrl((url: string) => {
       this.openUrlForPane(pane.id, runtime.generation, url)
     })
-    this.paneRuntimes = this.paneRuntimes.concat([runtime])
+    return runtime
   }
 
   private recyclePaneWebView(paneId: string): void {
@@ -464,25 +435,26 @@ struct Index {
     if (runtime === null) {
       return
     }
-    runtime.detachSurface()
-    runtime.generation += 1
-    this.paneRuntimes = this.paneRuntimes.slice()
+    runtime.recycleSurface()
+    this.paneRuntimeRevision++
   }
 
   private selectTab(index: number): void {
-    if (index < 0 || index >= this.tabs.length) {
+    let tabs: TabInfo[] = this.appVm.getTabs()
+    let activeTabIndex: number = this.appVm.getActiveTabIndex()
+    if (index < 0 || index >= tabs.length) {
       return
     }
-    if (index === this.activeTabIndex) {
-      this.appVm.clearPaneAttention(this.tabs[index].activePaneId)
+    if (index === activeTabIndex) {
+      this.appVm.clearPaneAttention(tabs[index].activePaneId)
       this.syncWorkspace()
       this.restoreActivePaneFocus()
       return
     }
-    let targetTabId: string = this.tabs[index].id
+    let targetTabId: string = tabs[index].id
     this.deactivateActiveTab(targetTabId)
     this.appVm.setActiveTab(index)
-    this.appVm.clearPaneAttention(this.tabs[index].activePaneId)
+    this.appVm.clearPaneAttention(tabs[index].activePaneId)
     this.syncWorkspace()
     this.restoreActivePaneFocus()
   }
@@ -592,11 +564,12 @@ struct Index {
   }
 
   private async closeTab(index: number): Promise<void> {
-    if (index < 0 || index >= this.tabs.length) {
+    let tabs: TabInfo[] = this.appVm.getTabs()
+    if (index < 0 || index >= tabs.length) {
       return
     }
-    let tab: TabInfo = this.tabs[index]
-    if (this.tabs.length === 1) {
+    let tab: TabInfo = tabs[index]
+    if (tabs.length === 1) {
       await this.terminateApplication(tab.panes[0].id)
       return
     }
@@ -604,7 +577,6 @@ struct Index {
       this.clearWarmTabEvictionTimer()
       this.warmTabId = ''
     }
-    let removedRuntimes: PaneRuntime[] = this.removePaneRuntimes(tab.panes)
     this.appVm.removeTab(index)
     this.syncWorkspace()
     let activeAfterClose: TabInfo | null = this.activeTab()
@@ -613,16 +585,15 @@ struct Index {
       this.warmTabId = ''
     }
     this.restoreActivePaneFocus()
-    for (let i = 0; i < removedRuntimes.length; i++) {
-      await this.disposeRuntime(removedRuntimes[i])
-    }
+    await this.appVm.waitForPendingRuntimeDisposals()
   }
 
   private requestCloseTab(index: number): void {
-    if (index < 0 || index >= this.tabs.length) {
+    let tabs: TabInfo[] = this.appVm.getTabs()
+    if (index < 0 || index >= tabs.length) {
       return
     }
-    if (!this.tabHasActiveSession(this.tabs[index])) {
+    if (!this.tabHasActiveSession(tabs[index])) {
       this.closeTab(index)
       return
     }
@@ -725,9 +696,11 @@ struct Index {
     if (navigationAction === WorkspaceNavigationAction.NEXT_TAB ||
       navigationAction === WorkspaceNavigationAction.PREVIOUS_TAB) {
       let direction: number = navigationAction === WorkspaceNavigationAction.PREVIOUS_TAB ? -1 : 1
+      let activeTabIndex: number = this.appVm.getActiveTabIndex()
+      let tabCount: number = this.appVm.getTabs().length
       let targetIndex: number = InteractionPolicy.wrappedTabIndex(
-        this.activeTabIndex, this.tabs.length, direction)
-      if (targetIndex >= 0 && targetIndex !== this.activeTabIndex) {
+        activeTabIndex, tabCount, direction)
+      if (targetIndex >= 0 && targetIndex !== activeTabIndex) {
         this.selectTab(targetIndex)
       }
       return true
@@ -785,17 +758,11 @@ struct Index {
   }
 
   private findPaneRuntime(paneId: string): PaneRuntime | null {
-    for (let i = 0; i < this.paneRuntimes.length; i++) {
-      if (this.paneRuntimes[i].id === paneId) {
-        return this.paneRuntimes[i]
-      }
-    }
-    return null
+    return this.appVm.getPaneRuntime(paneId)
   }
 
   private activePaneRuntime(): PaneRuntime | null {
-    let pane: PaneInfo | null = this.appVm.getActivePane()
-    return pane === null ? null : this.findPaneRuntime(pane.id)
+    return this.appVm.getActivePaneRuntime()
   }
 
   private updatePaneState(paneId: string, state: SshSessionState): void {
@@ -902,8 +869,9 @@ struct Index {
 
   private applyFontSize(): void {
     UserPreferences.saveFontSize(this.fontSize)
-    for (let i = 0; i < this.paneRuntimes.length; i++) {
-      this.paneRuntimes[i].surface.setFontSize(this.fontSize)
+    let runtimes: PaneRuntime[] = this.appVm.getPaneRuntimes()
+    for (let i = 0; i < runtimes.length; i++) {
+      runtimes[i].surface.setFontSize(this.fontSize)
     }
   }
 
@@ -917,7 +885,6 @@ struct Index {
     }
     let pane: PaneInfo | null = this.appVm.splitPane(tab.id)
     if (pane !== null) {
-      this.addPaneRuntime(pane)
       this.syncWorkspace()
       this.restoreActivePaneFocus()
     }
@@ -964,12 +931,9 @@ struct Index {
     if (removedPane === null) {
       return
     }
-    let removedRuntimes: PaneRuntime[] = this.removePaneRuntimes([removedPane])
     this.syncWorkspace()
     this.restoreActivePaneFocus()
-    if (removedRuntimes.length > 0) {
-      await this.disposeRuntime(removedRuntimes[0])
-    }
+    await this.appVm.waitForPendingRuntimeDisposals()
   }
 
   private requestLocalExit(paneId: string): boolean {
@@ -977,7 +941,7 @@ struct Index {
     if (tabIndex < 0) {
       return false
     }
-    let tab: TabInfo = this.tabs[tabIndex]
+    let tab: TabInfo = this.appVm.getTabs()[tabIndex]
     let pane: PaneInfo | null = this.appVm.getPane(paneId)
     if (pane === null || pane.mode !== TerminalMode.IDLE) {
       return false
@@ -987,28 +951,15 @@ struct Index {
   }
 
   private findTabIndexForPane(paneId: string): number {
-    for (let tabIndex = 0; tabIndex < this.tabs.length; tabIndex++) {
-      for (let paneIndex = 0; paneIndex < this.tabs[tabIndex].panes.length; paneIndex++) {
-        if (this.tabs[tabIndex].panes[paneIndex].id === paneId) {
-          return tabIndex
-        }
-      }
-    }
-    return -1
+    return this.appVm.getTabIndexForPane(paneId)
   }
 
   private findTabById(tabId: string): TabInfo | null {
-    for (let i = 0; i < this.tabs.length; i++) {
-      if (this.tabs[i].id === tabId) {
-        return this.tabs[i]
-      }
-    }
-    return null
+    return this.appVm.getTab(tabId)
   }
 
   private findTabForPane(paneId: string): TabInfo | null {
-    let index: number = this.findTabIndexForPane(paneId)
-    return index < 0 ? null : this.tabs[index]
+    return this.appVm.getTabForPane(paneId)
   }
 
   private async terminateApplication(paneId: string): Promise<void> {
@@ -1029,51 +980,7 @@ struct Index {
   }
 
   private workspaceHasActiveSession(): boolean {
-    for (let i = 0; i < this.tabs.length; i++) {
-      if (this.tabHasActiveSession(this.tabs[i])) {
-        return true
-      }
-    }
-    return false
-  }
-
-  private removePaneRuntimes(panes: PaneInfo[]): PaneRuntime[] {
-    let removed: PaneRuntime[] = []
-    let kept: PaneRuntime[] = []
-    for (let i = 0; i < this.paneRuntimes.length; i++) {
-      let shouldRemove: boolean = false
-      for (let j = 0; j < panes.length; j++) {
-        if (this.paneRuntimes[i].id === panes[j].id) {
-          shouldRemove = true
-          break
-        }
-      }
-      if (shouldRemove) {
-        removed.push(this.paneRuntimes[i])
-      } else {
-        kept.push(this.paneRuntimes[i])
-      }
-    }
-    this.paneRuntimes = kept
-    return removed
-  }
-
-  private async disposeRuntime(runtime: PaneRuntime): Promise<void> {
-    try {
-      await runtime.viewModel.disconnect()
-    } catch (e) {
-      logger.warn('Pane disconnect failed: ' + e)
-    }
-    runtime.detachSurface()
-  }
-
-  private async disconnectAllRuntimes(): Promise<void> {
-    let runtimes: PaneRuntime[] = this.paneRuntimes.slice()
-    let pending: Promise<void>[] = []
-    for (let i: number = 0; i < runtimes.length; i++) {
-      pending.push(runtimes[i].viewModel.disconnect())
-    }
-    await Promise.all(pending)
+    return this.appVm.hasActiveSession()
   }
 
   private requestActiveTabFit(): void {

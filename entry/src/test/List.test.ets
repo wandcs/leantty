@@ -9,6 +9,7 @@ import keyCommentCommitTest from './KeyCommentCommit.test';
 import keyPairDeletionTest from './KeyPairDeletion.test';
 import sshControlEventTest from './SshControlEvent.test';
 import sshSessionLifecycleTest from './SshSessionLifecycle.test';
+import workspaceOwnershipTest from './WorkspaceOwnership.test';
 
 export default function testsuite() {
   paneModelTest();
@@ -22,4 +23,5 @@ export default function testsuite() {
   keyPairDeletionTest();
   sshControlEventTest();
   sshSessionLifecycleTest();
+  workspaceOwnershipTest();
 }

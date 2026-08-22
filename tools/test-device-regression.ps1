@@ -1364,7 +1364,7 @@ Assert-True (
 Assert-True (
     $indexPage.Contains('ApplicationCloseCoordinator.register(this.applicationCloseHandler)') -and
     $indexPage.Contains('ApplicationCloseCoordinator.unregister(this.applicationCloseHandler)') -and
-    $indexPage.Contains('await this.disconnectAllRuntimes()') -and
+    $indexPage.Contains('await this.appVm.disconnectAllPaneRuntimes()') -and
     $entryAbility.Contains('await ApplicationCloseCoordinator.prepareTermination()') -and
     $entryAbility.Contains('ApplicationCloseCoordinator.resetPreparation()') -and
     $indexPage.Contains('ApplicationCloseCoordinator.resetPreparation()') -and

@@ -53,18 +53,6 @@ preparation；开发期签名 HAP 和局部真机诊断证据不能自动推导�
 再移动职责，完成后同步权威文档和验证证据并从本文件删除该分组。重构不得借机增加产品能力、
 通用框架、第二套状态或无真实调用方的抽象。
 
-### M3 Workspace 与 Pane 运行时所有权
-
-- [ ] 为 tab/pane 创建、切换、分割、关闭、恢复、前后台和 Session 销毁建立 workspace 事件链测试，
-  明确 `AppViewModel`、`PaneRuntime` 与页面状态当前各自承担的契约。
-- [ ] 消除 `Index.ets` 与 `AppViewModel` 对活动 tab/pane、运行时集合和销毁顺序的重复所有权；保留
-  一个 workspace 权威模型，页面只负责渲染、焦点和系统事件适配，Session 仍由各 Pane 独占。
-- [ ] 通过 `arkts`、workspace/terminal 相关聚焦门，并对焦点、键盘、窗口、恢复和关闭场景运行
-  最小物理 PC 验证。
-
-可观察完成条件：给定任一 tab/pane ID 都只有一个位置决定其存在、活动状态和销毁；页面重建不会
-复制运行时状态；关闭或恢复不会留下孤立 Session、surface 或事件订阅。
-
 ### M4 测试职责与行为契约
 
 - [ ] 按 SSH lifecycle、workspace、terminal interaction、transfer、key management 和 formatting
