@@ -1,10 +1,10 @@
 # OpenSSH ProxyJump 技术方案
 
-> 状态：Verified（开发候选）；实现、自动化与聚焦物理机矩阵已闭合，正式 production 候选待发布流程复验
+> 状态：Verified；`v1.4.0` 已通过 GitHub、AppGallery 发布
 >
 > 当前 milestone：1.4.0
 >
-> 更新日期：2026-08-17
+> 更新日期：2026-08-22
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
@@ -166,8 +166,10 @@ jump Handle
   均回收两层资源并把同一 Pane 恢复到可输入的 `ltty>`。没有为此增加第二套认证 UI、共享跳板
   连接、远端 shell 拼接或产品专用服务器适配。
 
-这些证据把本方案提升为开发候选 `Verified`，但不等于 1.4 已形成 production 包、GitHub
-Release 或 AppGallery 交付。正式候选仍须在干净、已推送的精确提交上执行完整发布门禁。
+这些证据当时只把本方案提升为开发候选 `Verified`，不能单独证明 production 包、GitHub
+Release 或 AppGallery 交付。后续正式发布门禁已经完成；`v1.4.0` GitHub Release 于
+2026-08-19 发布，维护者于 2026-08-22 确认匹配的 production APP 已通过 AppGallery
+审核并正式上架。
 
 ## 裁剪与停止条件
 

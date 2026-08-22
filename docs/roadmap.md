@@ -251,8 +251,9 @@ release branch。
 1.4 包含两个核心结果：启动优化与 OpenSSH ProxyJump。前者缩短
 用户点击 LeanTTY 图标，到本地终端能够正确接收并显示第一个字母的时间；后者让用户通过一个
 标准 SSH 跳板机进入无法直接访问的目标执行环境。`v1.4.0` 已由不可变签名标签、
-精确发布源、GitHub Release 和归档发布产物冻结；AppGallery 上传、审核和商店可获取
-状态只在维护者报告结果后记录，不由本地源码或 GitHub 发布推断。
+精确发布源、GitHub Release 和归档发布产物冻结；维护者于 2026-08-22 确认匹配的
+production APP 已通过 AppGallery 审核并正式上架。该商店状态来自维护者确认，不由
+本地源码或 GitHub 发布推断。
 启动窗口出现、页面加载或 ArkWeb ready 只用于定位分段耗时；ProxyJump 仅解析成功、跳板已连
 或目标 TCP 可达也不等于目标 TTY 已可用。
 

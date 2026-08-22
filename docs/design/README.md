@@ -28,12 +28,12 @@
 | 桌面终端界面与交互收敛 | Verified / 1.2–1.3 | 1.2–1.3 | [`ui-interaction-polish.md`](ui-interaction-polish.md) |
 | 最小单文件传输 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`file-transfer.md`](file-transfer.md) |
 | 终端输入调度与大粘贴连续可用性 | Verified / GitHub、AppGallery 已发布 | 1.3；粘贴安全体验未排期 | [`terminal-input-scheduling.md`](terminal-input-scheduling.md) |
-| SSH Session 终端状态隔离 | Verified / GitHub 已发布；AppGallery 审核中 | 1.4 | [`terminal-session-state-isolation.md`](terminal-session-state-isolation.md) |
+| SSH Session 终端状态隔离 | Verified / GitHub、AppGallery 已发布 | 1.4 | [`terminal-session-state-isolation.md`](terminal-session-state-isolation.md) |
 | 本地命令提示符与输出规范 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`local-command-output.md`](local-command-output.md) |
 | 本地命令 Tab 补全 | Verified / GitHub、AppGallery 已发布 | 1.3 | [`tab-completion.md`](tab-completion.md) |
-| 启动到首次输入性能 | Verified / GitHub 已发布；AppGallery 审核中 | 1.4 | [`startup-performance.md`](startup-performance.md) |
+| 启动到首次输入性能 | Verified / GitHub、AppGallery 已发布 | 1.4 | [`startup-performance.md`](startup-performance.md) |
 | HSL 本地执行环境入口 | Closed / 进入门禁失败，专用入口已裁剪 | 1.4 决策 | [`hsl-execution-environment.md`](hsl-execution-environment.md) |
-| OpenSSH ProxyJump | Verified / GitHub 已发布；AppGallery 审核中 | 1.4 | [`proxy-jump.md`](proxy-jump.md) |
+| OpenSSH ProxyJump | Verified / GitHub、AppGallery 已发布 | 1.4 | [`proxy-jump.md`](proxy-jump.md) |
 | OpenSSH ConnectTimeout | Verified / 1.5 首个切片已闭合 | 1.5 | [`connect-timeout.md`](connect-timeout.md) |
 | Basic SSH escape | Verified / 1.5 第二个切片已闭合 | 1.5 | [`ssh-escape.md`](ssh-escape.md) |
 | OpenSSH ServerAlive | Verified / 1.5 第三个切片已闭合 | 1.5 | [`server-alive.md`](server-alive.md) |

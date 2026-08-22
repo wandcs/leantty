@@ -1,15 +1,14 @@
 # SSH Session 终端状态隔离方案
 
-> 状态：Verified（开发候选）；自动化与物理矩阵已闭合，正式 production 候选待发布流程复验
+> 状态：Verified；`v1.4.0` 已通过 GitHub、AppGallery 发布
 >
 > 当前 milestone：1.4.0
 >
-> 更新日期：2026-08-18
+> 更新日期：2026-08-22
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已按原 [`next-work.md`](../next-work.md) 门禁闭合；完成事实保留在本文，正式候选
-> 仍按当前活动清单与发布流程准备
+> 实现授权：已按原 [`next-work.md`](../next-work.md) 门禁闭合；完成事实保留在本文
 
 ## 用户问题
 
@@ -338,8 +337,9 @@ SSH Transport / PTY closes
   的标准 TUI 模式。复制选择沿用 1.3 已发布物理基线，相关实现未被本修复改写。
 
 至此第二服务器、错误/断线、键盘/粘贴/mouse/focus/颜色、连续连接、Pane/Tab、renderer 与
-挂起/锁屏矩阵均闭合，本方案提升为开发候选 `Verified`。这不替代正式 production 候选上的
-完整发布回归、签名包与最终人工确认。
+挂起/锁屏矩阵均闭合，本方案提升为开发候选 `Verified`。后续正式 production 候选又完成
+完整发布回归、签名与人工确认；`v1.4.0` GitHub Release 于 2026-08-19 发布，维护者于
+2026-08-22 确认匹配的 production APP 已通过 AppGallery 审核并正式上架。
 
 ## 1.4 发布门禁
 
