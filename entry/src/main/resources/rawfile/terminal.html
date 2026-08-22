@@ -35,7 +35,7 @@
       background: transparent !important;
     }
     .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
-      border: 2px solid transparent;
+      border: 3px solid transparent;
       border-radius: 4px;
       background-clip: content-box !important;
     }
@@ -238,6 +238,8 @@
     var TERMINAL_SCROLLBAR_WIDTH = 8;
     var TERMINAL_BASE_PADDING_TOP = 4;
     var TERMINAL_BASE_PADDING_BOTTOM = 4;
+    var TERMINAL_BASE_PADDING_LEFT = 10;
+    var TERMINAL_BASE_PADDING_RIGHT = 2;
     var MAX_SNAPSHOT_PAYLOAD_LENGTH = 4 * 1024 * 1024;
     var nativePort = null;
     var term = null;
@@ -824,21 +826,35 @@
       }
 
       terminalElement.style.paddingTop = TERMINAL_BASE_PADDING_TOP + 'px';
+      terminalElement.style.paddingLeft = TERMINAL_BASE_PADDING_LEFT + 'px';
       fitAddon.fit();
 
       var screenElement = terminalElement.querySelector('.xterm-screen');
       if (!screenElement) return;
+      var containerWidth = parseInt(
+        window.getComputedStyle(terminalElement.parentElement).width,
+        10
+      );
       var containerHeight = parseInt(
         window.getComputedStyle(terminalElement.parentElement).height,
         10
       );
-      var gridHeight = screenElement.getBoundingClientRect().height;
+      var gridRect = screenElement.getBoundingClientRect();
+      var gridWidth = gridRect.width;
+      var gridHeight = gridRect.height;
+      var centeredLeftPadding = LeanTTYTerminalPolicy.centerGridLeadingPadding(
+        TERMINAL_BASE_PADDING_LEFT,
+        TERMINAL_BASE_PADDING_RIGHT + TERMINAL_SCROLLBAR_WIDTH,
+        containerWidth,
+        gridWidth
+      );
       var centeredTopPadding = LeanTTYTerminalPolicy.centerGridLeadingPadding(
         TERMINAL_BASE_PADDING_TOP,
         TERMINAL_BASE_PADDING_BOTTOM,
         containerHeight,
         gridHeight
       );
+      terminalElement.style.paddingLeft = centeredLeftPadding + 'px';
       terminalElement.style.paddingTop = centeredTopPadding + 'px';
       fitAddon.fit();
     }
