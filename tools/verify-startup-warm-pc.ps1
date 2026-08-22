@@ -38,19 +38,12 @@ function Invoke-WarmHdcShell {
 
 function Get-WarmGlobalLayout {
     param([Parameter(Mandatory = $true)][string]$Name)
-    $remotePath = '/data/local/tmp/leantty-warm-' + [Guid]::NewGuid().ToString('N') + '.json'
     $localPath = Join-Path $script:evidenceDirectory ($Name + '.json')
-    try {
-        & $script:hdc -t $script:target shell "uitest dumpLayout -p $remotePath" | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'HarmonyOS global UI layout capture failed' }
-        & $script:hdc -t $script:target file recv $remotePath $localPath | Out-Null
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $localPath -PathType Leaf)) {
-            throw 'HarmonyOS global UI layout transfer failed'
-        }
-    } finally {
-        & $script:hdc -t $script:target shell "rm -f $remotePath" 2>$null | Out-Null
-    }
-    return Get-Content -LiteralPath $localPath -Raw | ConvertFrom-Json -Depth 100
+    return Get-HdcUiLayout `
+        -Hdc $script:hdc `
+        -Target $script:target `
+        -LocalPath $localPath `
+        -Operation 'HarmonyOS warm-start global UI layout capture'
 }
 
 function Get-WarmNodeCenter {

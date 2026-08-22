@@ -80,6 +80,13 @@
   download temporary file and allows an immediate retry instead of waiting for
   the separate SFTP operation timeout.
 
+### Removed
+
+- Removed the unused legacy local command spellings `alias`, `keys` and
+  `key show`. Use `host`, `key list` and `ssh-keygen -y -f <identity>`
+  respectively. OpenSSH Host aliases and their stored configuration remain
+  supported.
+
 ## [1.4.0] - 2026-08-19
 
 ### Added

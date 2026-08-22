@@ -487,6 +487,16 @@ summaries carry only the minimum redacted identity and result.
 
 ## Physical automation protocol
 
+Shared verification primitives have one narrow owner. `candidate-store.ps1`
+resolves retained HAP identity and SHA-256 provenance; `hdc-common.ps1` owns
+checked HDC execution, confirmed non-empty device-file receive and the raw
+UiTest layout capture/transfer; `device-regression.ps1` owns serialized UiTest,
+bounded layout retry, shared fixture-readiness parsing and concurrently written
+fixture-log reads. Scenario scripts retain their own entry points, budgets,
+oracles, failure wording, evidence schema and cleanup decisions. New shared
+helpers must extract an already repeated stable rule, not create a generic test
+framework or move scenario judgment away from its owner.
+
 The maintainer agent owns routine device acceptance whenever the connected PC
 and repository tools make it objectively possible. It MUST inspect device state,
 drive the scenario and read logs/layouts itself. User validation is requested

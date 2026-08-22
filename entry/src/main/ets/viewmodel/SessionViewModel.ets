@@ -8,7 +8,7 @@ import {
   SshDiagnosticInfo
 } from '../model/ssh/SshClient'
 import util from '@ohos.util'
-import { SshConnectOptions, SshError, SshErrorCode } from '../common/types/SshTypes'
+import { SshConnectionSpec, SshConnectOptions, SshError, SshErrorCode } from '../common/types/SshTypes'
 import { SshSession, SshSessionState } from '../model/ssh/SshSession'
 import { SshKeyManager } from '../model/ssh/SshKeyManager'
 import { SshEnvironment } from '../model/ssh/SshEnvironment'
@@ -260,38 +260,22 @@ export class SessionViewModel {
   }
 
   async connect(host: string, port: number, username: string, displayHost: string = ''): Promise<void> {
-    let request: CommandParseResult = new CommandParseResult()
-    request.isValid = true
-    request.host = host
-    request.port = port
-    request.username = username
-    request.displayHost = displayHost
-    await this.connectResolved(request)
+    let spec: SshConnectionSpec = new SshConnectionSpec()
+    spec.host = host
+    spec.port = port
+    spec.username = username
+    spec.displayHost = displayHost
+    await this.connectResolved(spec)
   }
 
-  private async connectResolved(request: CommandParseResult): Promise<void> {
+  private async connectResolved(spec: SshConnectionSpec): Promise<void> {
     this.terminalBoundaryGeneration++
     this.terminalResetPending = false
     this.acceptingSshOutput = true
     this.clearAuthChallenge()
     this.setMode(TerminalMode.CONNECTING)
     this.session.beginConnection()
-    this.session.setHostname(request.host)
-    this.session.setDisplayHost(request.displayHost)
-    this.session.setPort(request.port)
-    this.session.setUsername(request.username)
-    this.session.setIdentityFile(request.identityFile)
-    this.session.setJumpHostname(request.jumpHost)
-    this.session.setJumpDisplayHost(request.jumpDisplayHost)
-    this.session.setJumpPort(request.jumpPort)
-    this.session.setJumpUsername(request.jumpUsername)
-    this.session.setJumpIdentityFile(request.jumpIdentityFile)
-    this.session.setJumpConnectTimeoutMs(request.jumpConnectTimeoutMs)
-    this.session.setJumpServerAliveIntervalSeconds(request.jumpServerAliveIntervalSeconds)
-    this.session.setJumpServerAliveCountMax(request.jumpServerAliveCountMax)
-    this.session.setConnectTimeoutMs(request.connectTimeoutMs)
-    this.session.setServerAliveIntervalSeconds(request.serverAliveIntervalSeconds)
-    this.session.setServerAliveCountMax(request.serverAliveCountMax)
+    this.session.setConnectionSpec(spec)
     this.notifyStateChange()
 
     try {
@@ -302,29 +286,15 @@ export class SessionViewModel {
       this.sshClient.onData((data: Uint8Array) => {
         this.onSshData(data)
       })
-      let opts: SshConnectOptions = new SshConnectOptions()
-      opts.host = request.host
-      opts.port = request.port
-      opts.username = request.username
-      opts.jumpHost = request.jumpHost
-      opts.jumpPort = request.jumpPort
-      opts.jumpUsername = request.jumpUsername
-      opts.jumpConnectTimeoutMs = request.jumpConnectTimeoutMs
-      opts.jumpServerAliveIntervalSeconds = request.jumpServerAliveIntervalSeconds
-      opts.jumpServerAliveCountMax = request.jumpServerAliveCountMax
-      opts.knownHostsPath = this.knownHostsPath
-      opts.connectTimeoutMs = request.connectTimeoutMs
-      opts.serverAliveIntervalSeconds = request.serverAliveIntervalSeconds
-      opts.serverAliveCountMax = request.serverAliveCountMax
-      opts.verbose = request.verbose
+      let opts: SshConnectOptions = SshConnectOptions.fromConnectionSpec(spec, this.knownHostsPath)
       if (!this.pendingKeypush) {
-        let key: KeyPairInfo | null = this.resolvePrivateKey(request.identityFile)
+        let key: KeyPairInfo | null = this.resolvePrivateKey(spec.identityFile)
         if (key !== null) {
           opts.privateKeyPath = key.filePath
           opts.privateKeyRequiresPassphrase = key.hasPassphrase
         }
-        if (request.jumpHost.length > 0) {
-          let jumpKey: KeyPairInfo | null = this.resolvePrivateKey(request.jumpIdentityFile)
+        if (spec.jumpHost.length > 0) {
+          let jumpKey: KeyPairInfo | null = this.resolvePrivateKey(spec.jumpIdentityFile)
           if (jumpKey !== null) {
             opts.jumpPrivateKeyPath = jumpKey.filePath
             opts.jumpPrivateKeyRequiresPassphrase = jumpKey.hasPassphrase
@@ -377,24 +347,7 @@ export class SessionViewModel {
   }
 
   async reconnect(): Promise<void> {
-    let request: CommandParseResult = new CommandParseResult()
-    request.isValid = true
-    request.host = this.session.getHostname()
-    request.displayHost = this.session.getDisplayHost()
-    request.port = this.session.getPort()
-    request.username = this.session.getUsername()
-    request.identityFile = this.session.getIdentityFile()
-    request.jumpHost = this.session.getJumpHostname()
-    request.jumpDisplayHost = this.session.getJumpDisplayHost()
-    request.jumpPort = this.session.getJumpPort()
-    request.jumpUsername = this.session.getJumpUsername()
-    request.jumpIdentityFile = this.session.getJumpIdentityFile()
-    request.jumpConnectTimeoutMs = this.session.getJumpConnectTimeoutMs()
-    request.jumpServerAliveIntervalSeconds = this.session.getJumpServerAliveIntervalSeconds()
-    request.jumpServerAliveCountMax = this.session.getJumpServerAliveCountMax()
-    request.connectTimeoutMs = this.session.getConnectTimeoutMs()
-    request.serverAliveIntervalSeconds = this.session.getServerAliveIntervalSeconds()
-    request.serverAliveCountMax = this.session.getServerAliveCountMax()
+    let spec: SshConnectionSpec = this.session.getConnectionSpec()
     let previousClient: SshClient = this.sshClient
     previousClient.onEvent(() => {})
     previousClient.onData(() => {})
@@ -404,7 +357,7 @@ export class SessionViewModel {
     })
     this.sshClient = new SshClient()
     this.session.beginReconnect()
-    await this.connectResolved(request)
+    await this.connectResolved(spec)
   }
 
   private cancelPendingConnection(): void {
@@ -517,13 +470,13 @@ export class SessionViewModel {
         this.setMode(TerminalMode.PASSWORD_INPUT)
         this.passwordBuffer = ''
         this.writeTerminal(SessionViewModel.formatPasswordPrompt(
-          this.pendingAuthenticationLayer(), this.session.getJumpHostname().length > 0))
+          this.pendingAuthenticationLayer(), this.session.getConnectionSpec().jumpHost.length > 0))
         break
       case SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT:
         this.pendingKeyPassphrase = ''
         this.setMode(TerminalMode.KEY_PASSPHRASE_INPUT)
         this.writeTerminal(SessionViewModel.formatPrivateKeyPassphrasePrompt(
-          message.text, this.pendingAuthenticationLayer(), this.session.getJumpHostname().length > 0))
+          message.text, this.pendingAuthenticationLayer(), this.session.getConnectionSpec().jumpHost.length > 0))
         break
       case SshClientEvent.AUTH_BANNER:
         this.writeAuthenticationText(message.text)
@@ -535,7 +488,7 @@ export class SessionViewModel {
         this.hostKeyBuffer = ''
         this.setMode(TerminalMode.HOST_KEY_INPUT)
         this.writeTerminal(SessionViewModel.formatHostKeyPrompt(
-          message.text, this.pendingAuthenticationLayer(), this.session.getJumpHostname().length > 0))
+          message.text, this.pendingAuthenticationLayer(), this.session.getConnectionSpec().jumpHost.length > 0))
         break
       case SshClientEvent.HOST_KEY_CHANGED:
         if (message.hostKeyChanged !== null) {
@@ -728,7 +681,7 @@ export class SessionViewModel {
     this.finishSshTerminalOwnership(() => {
       this.writeError(SessionViewModel.buildHostKeyChangedWarning(
         info.host, info.port, info.algorithm, info.oldFingerprint, info.newFingerprint,
-        this.session.getJumpHostname().length > 0 ? info.layer : ''))
+        this.session.getConnectionSpec().jumpHost.length > 0 ? info.layer : ''))
     })
   }
 
@@ -928,13 +881,11 @@ export class SessionViewModel {
   }
 
   private sshConnectionInfo(): string {
-    let targetHost: string = this.session.getDisplayHost().length > 0 ?
-      this.session.getDisplayHost() : this.session.getHostname()
-    let jumpHost: string = this.session.getJumpDisplayHost().length > 0 ?
-      this.session.getJumpDisplayHost() : this.session.getJumpHostname()
+    let spec: SshConnectionSpec = this.session.getConnectionSpec()
+    let targetHost: string = spec.displayHost.length > 0 ? spec.displayHost : spec.host
+    let jumpHost: string = spec.jumpDisplayHost.length > 0 ? spec.jumpDisplayHost : spec.jumpHost
     return SessionViewModel.formatSshConnectionInfo(
-      this.session.getUsername(), targetHost, this.session.getPort(),
-      this.session.getJumpUsername(), jumpHost, this.session.getJumpPort())
+      spec.username, targetHost, spec.port, spec.jumpUsername, jumpHost, spec.jumpPort)
   }
 
   static formatSshConnectionInfo(targetUser: string, targetHost: string, targetPort: number,
@@ -2299,8 +2250,9 @@ export class SessionViewModel {
     if (!this.pendingKeypush) {
       return
     }
-    let username: string = this.session.getUsername()
-    let hostname: string = this.session.getHostname()
+    let spec: SshConnectionSpec = this.session.getConnectionSpec()
+    let username: string = spec.username
+    let hostname: string = spec.host
     let keyPath: string = this.keypushKeyName
     this.clearKeypushState()
     let client: SshClient = this.sshClient
@@ -2389,7 +2341,7 @@ export class SessionViewModel {
     this.clearAuthChallenge()
     this.authChallenge = challenge
     let heading: string = SessionViewModel.formatAuthenticationHeading(
-      this.pendingAuthenticationLayer(), this.session.getJumpHostname().length > 0)
+      this.pendingAuthenticationLayer(), this.session.getConnectionSpec().jumpHost.length > 0)
     if (heading.length > 0) {
       this.writeAuthenticationText(heading)
     }

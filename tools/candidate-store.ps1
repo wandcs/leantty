@@ -394,3 +394,34 @@ function Get-LeanTTYLatestVerifiedCandidate {
     }
     return $latest
 }
+
+function Resolve-LeanTTYRetainedCandidate {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [string]$HapPath = '',
+        [string]$CandidateBasePath = ''
+    )
+
+    $candidateRoot = Get-LeanTTYCandidateRoot `
+        -RepoRoot $RepoRoot `
+        -CandidateBasePath $CandidateBasePath
+    $records = @(Get-LeanTTYCandidateRecords -CandidateRoot $candidateRoot)
+    if ([string]::IsNullOrWhiteSpace($HapPath)) {
+        $candidate = $records | Select-Object -First 1
+    } else {
+        $resolvedHap = [IO.Path]::GetFullPath($HapPath)
+        if (-not (Test-Path -LiteralPath $resolvedHap -PathType Leaf)) {
+            throw "Candidate HAP is missing: $resolvedHap"
+        }
+        $requestedHash = (
+            Get-FileHash -LiteralPath $resolvedHap -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        $candidate = $records |
+            Where-Object { $_.sha256 -eq $requestedHash } |
+            Select-Object -First 1
+    }
+    if ($null -eq $candidate) {
+        throw 'No matching retained candidate exists; run tools/verify-pc.ps1 first'
+    }
+    return $candidate
+}

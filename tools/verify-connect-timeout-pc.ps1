@@ -125,7 +125,6 @@ function Wait-FixtureReady {
         [switch]$RequireCredentials
     )
     $readyPath = Join-Path $ControlDirectory 'fixture-ready'
-    $credentialsPath = Join-Path $ControlDirectory 'server-credentials'
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt 45) {
         $Process.Refresh()
@@ -134,40 +133,17 @@ function Wait-FixtureReady {
         }
         if (Test-Path -LiteralPath $readyPath -PathType Leaf) {
             if (-not $RequireCredentials) { return $null }
-            if (Test-Path -LiteralPath $credentialsPath -PathType Leaf) {
-                $ready = [IO.File]::ReadAllText($readyPath)
-                $pidMatch = [regex]::Match($ready, '(?m)^pid=(?<pid>\d+)$')
-                $passwordLine = [IO.File]::ReadLines($credentialsPath) |
-                    Where-Object { $_.StartsWith('password=', [StringComparison]::Ordinal) } |
-                    Select-Object -First 1
-                if ($pidMatch.Success -and -not [string]::IsNullOrWhiteSpace($passwordLine)) {
-                    return [pscustomobject]@{
-                        linuxPid = [int]$pidMatch.Groups['pid'].Value
-                        password = $passwordLine.Substring('password='.Length)
-                    }
+            $readiness = Read-LeanTTYFixtureReadiness -ControlDirectory $ControlDirectory
+            if ($null -ne $readiness) {
+                return [pscustomobject]@{
+                    linuxPid = $readiness.linuxPid
+                    password = [string]$readiness.credentials.password
                 }
             }
         }
         Start-Sleep -Milliseconds 200
     }
     throw 'Timed out waiting for a ConnectTimeout fixture'
-}
-
-function Read-SharedTextFile {
-    param([Parameter(Mandatory = $true)][string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
-    $stream = [IO.File]::Open(
-        $Path,
-        [IO.FileMode]::Open,
-        [IO.FileAccess]::Read,
-        [IO.FileShare]::ReadWrite
-    )
-    try {
-        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true)
-        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
-    } finally {
-        $stream.Dispose()
-    }
 }
 
 function Stop-SshFixture {
@@ -433,7 +409,7 @@ try {
     Submit-InteractiveValue -Text 'ltty-input-check connecttimeoutrecovery'
     $fixtureStopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($fixtureStopwatch.Elapsed.TotalSeconds -lt 10) {
-        if ((Read-SharedTextFile -Path $targetStderr) -match
+        if ((Read-LeanTTYSharedTextFile -Path $targetStderr) -match
             'input case=connecttimeoutrecovery result=matched') { break }
         Start-Sleep -Milliseconds 200
     }

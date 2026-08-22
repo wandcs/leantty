@@ -1,24 +1,6 @@
 import type { ControlEvent as NativeControlEvent } from 'libleantty_ssh.so'
 import { SshError, SshErrorCode } from '../../common/types/SshTypes'
 
-export class SshControlEventRecord implements NativeControlEvent {
-  kind: string = ''
-  sessionId: string = ''
-  generation: number = 0
-  layer: string = ''
-  stage: string = ''
-  code: string = ''
-  detail: string = ''
-  fingerprint: string = ''
-  knownHostLine: string = ''
-  algorithm: string = ''
-  oldFingerprint: string = ''
-  newFingerprint: string = ''
-  host: string = ''
-  port: number = 0
-  metrics: string = ''
-}
-
 export class HostKeyChangedInfo {
   layer: string = ''
   algorithm: string = ''

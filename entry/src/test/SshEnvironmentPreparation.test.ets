@@ -9,7 +9,7 @@ export default function sshEnvironmentPreparationTest() {
       for (let command of [
         'ssh prod', 'ssh -G prod', 'put file prod:/tmp/', 'get prod:/tmp/file',
         'ssh-keygen -l -f id_ed25519', 'ssh-copy-id -i id_ed25519 user@host',
-        'key list', 'host list', 'alias list', 'unknown'
+        'key list', 'host list', 'key rm deploy', 'unknown'
       ]) {
         expect(CommandParser.requiresSshEnvironment(command)).assertEqual(true)
       }

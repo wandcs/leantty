@@ -16,19 +16,15 @@ export default function localCommandBehaviorTest() {
   describe('LocalCommandBehavior', () => {
     it('parsesKeySubcommandsFromTheCorrectArgument', 0, () => {
       let config: SshConfig = new SshConfig()
-      let showResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
-        CommandParser.parseInput('key show deploy', config)
       let removeResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('key rm deploy', config)
       let importResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('key import C:\\keys\\source deploy', config)
       let exportResult: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
         CommandParser.parseInput('key export deploy', config)
-      expect(showResult instanceof KeyCommandResult).assertEqual(true)
       expect(removeResult instanceof KeyCommandResult).assertEqual(true)
       expect(importResult instanceof KeyCommandResult).assertEqual(true)
       expect(exportResult instanceof KeyCommandResult).assertEqual(true)
-      if (showResult instanceof KeyCommandResult) { expect(showResult.keyName).assertEqual('deploy') }
       if (removeResult instanceof KeyCommandResult) { expect(removeResult.keyName).assertEqual('deploy') }
       if (importResult instanceof KeyCommandResult) {
         expect(importResult.sourcePath).assertEqual('C:\\keys\\source')
@@ -38,6 +34,21 @@ export default function localCommandBehaviorTest() {
         expect(exportResult.kind).assertEqual(KeyCommandKind.KEYEXPORT)
         expect(exportResult.keyName).assertEqual('deploy')
         expect(exportResult.destinationName).assertEqual('deploy')
+      }
+    })
+
+    it('rejectsRemovedLegacyCommandSpellings', 0, () => {
+      let config: SshConfig = new SshConfig()
+      for (let command of ['alias add prod root@example.com', 'alias list', 'keys']) {
+        expect(CommandParser.parseInput(command, config)).assertNull()
+      }
+      let keyShow: CommandParseResult | KeyCommandResult | TransferCommandResult | null =
+        CommandParser.parseInput('key show deploy', config)
+      expect(keyShow instanceof KeyCommandResult).assertEqual(true)
+      if (keyShow instanceof KeyCommandResult) {
+        expect(keyShow.kind).assertEqual(KeyCommandKind.KEYS)
+        expect(keyShow.errorMessage).assertEqual('Usage: key list | key import <path> [<key-name>] | ' +
+          'key export <key-name> [<file-name>] | key rm <key-name>')
       }
     })
 

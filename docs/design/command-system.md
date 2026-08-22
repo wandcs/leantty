@@ -93,8 +93,9 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 | `host list/add/set/rm` | 管理 LeanTTY 负责的 Host block | 必须保留局部命令 |
 | `help`、`?`、`exit` | 可发现性与本地生命周期 | 必须保留并统一错误边界 |
 
-临时兼容的 `alias`、`keys` 和 `key show` 是历史语法，不作为新设计依据；退出版本须按
-已发布兼容性合同单独决定。
+历史本地拼写 `alias`、`keys` 和 `key show` 已在 1.5 开发期移除；它们没有实际用户，继续保留只会形成
+第二套命令面。对应入口统一为 `host`、`key list` 和 `ssh-keygen -y -f <identity>`；OpenSSH Host alias
+能力本身不受影响。
 
 当前 parser 主要按空白拆词，不能诚实支持带 quoting 的远端命令；当前 config 解析只
 实际应用 `HostName`、`Port`、`User` 和 `IdentityFile`。1.1 必须先让未知 option、未知

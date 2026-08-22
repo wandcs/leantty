@@ -404,47 +404,6 @@ export class SshConfig {
     return text + newline
   }
 
-  private removeAliasFromText(content: string, alias: string): string {
-    let newline: string = content.includes('\r\n') ? '\r\n' : '\n'
-    let lines: string[] = content.split(/\r?\n/)
-    let output: string[] = []
-    let index: number = 0
-    while (index < lines.length) {
-      let header: string = this.stripInlineComment(lines[index].trim())
-      if (!header.toLowerCase().startsWith('host ')) {
-        output.push(lines[index])
-        index++
-        continue
-      }
-      let aliases: string[] = header.substring(5).trim().split(/\s+/)
-      let aliasIndex: number = aliases.indexOf(alias)
-      if (aliasIndex < 0) {
-        output.push(lines[index])
-        index++
-        continue
-      }
-      let blockEnd: number = index + 1
-      while (blockEnd < lines.length) {
-        let candidate: string = this.stripInlineComment(lines[blockEnd].trim()).toLowerCase()
-        if (candidate.startsWith('host ') || candidate.startsWith('match ')) {
-          break
-        }
-        blockEnd++
-      }
-      if (aliases.length > 1) {
-        aliases.splice(aliasIndex, 1)
-        let commentIndex: number = lines[index].indexOf('#')
-        let comment: string = commentIndex >= 0 ? ' ' + lines[index].substring(commentIndex).trim() : ''
-        output.push('Host ' + aliases.join(' ') + comment)
-        for (let lineIndex = index + 1; lineIndex < blockEnd; lineIndex++) {
-          output.push(lines[lineIndex])
-        }
-      }
-      index = blockEnd
-    }
-    return output.join(newline)
-  }
-
   private readManagedAliases(content: string): string[] {
     let aliases: string[] = []
     let lines: string[] = content.split(/\r?\n/)

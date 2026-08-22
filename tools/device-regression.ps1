@@ -20,6 +20,63 @@ function Resolve-LeanTTYRegressionTarget {
     throw '[environment] Multiple HarmonyOS PCs are connected; pass -Target explicitly'
 }
 
+function Read-LeanTTYSharedTextFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $stream = [IO.File]::Open(
+        $Path,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Read,
+        [IO.FileShare]::ReadWrite
+    )
+    try {
+        $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true)
+        try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Read-LeanTTYFixtureReadiness {
+    param(
+        [Parameter(Mandatory = $true)][string]$ControlDirectory,
+        [string[]]$RequiredCredentialNames = @('password'),
+        [string]$ExpectedAddress = ''
+    )
+
+    $readyPath = Join-Path $ControlDirectory 'fixture-ready'
+    $credentialsPath = Join-Path $ControlDirectory 'server-credentials'
+    if (-not (Test-Path -LiteralPath $readyPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $credentialsPath -PathType Leaf)) {
+        return $null
+    }
+    $readyText = [IO.File]::ReadAllText($readyPath)
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedAddress)) {
+        $addressPattern = '(?m)^address=' + [regex]::Escape($ExpectedAddress) + '$'
+        if ($readyText -notmatch $addressPattern) { return $null }
+    }
+    $pidMatch = [regex]::Match($readyText, '(?m)^pid=(?<pid>\d+)$')
+    if (-not $pidMatch.Success) { return $null }
+
+    $credentials = @{}
+    foreach ($line in [IO.File]::ReadAllLines($credentialsPath)) {
+        $parts = $line.Split('=', 2)
+        if ($parts.Count -ne 2) { throw 'SSH fixture credential file is malformed' }
+        $credentials[$parts[0]] = $parts[1]
+    }
+    foreach ($name in $RequiredCredentialNames) {
+        if (-not $credentials.ContainsKey($name) -or
+            [string]::IsNullOrEmpty([string]$credentials[$name])) {
+            return $null
+        }
+    }
+    return [pscustomobject]@{
+        linuxPid = [int]$pidMatch.Groups['pid'].Value
+        credentials = $credentials
+    }
+}
+
 function Start-LeanTTYDeviceAwakeLease {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
@@ -187,8 +244,9 @@ function Invoke-LeanTTYSerializedUiTest {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
         [Parameter(Mandatory = $true)][string]$Target,
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [Parameter(Mandatory = $true)][string]$Operation
+        [string[]]$Arguments = @(),
+        [Parameter(Mandatory = $true)][string]$Operation,
+        [scriptblock]$Action = $null
     )
 
     $sha256 = [Security.Cryptography.SHA256]::Create()
@@ -210,6 +268,7 @@ function Invoke-LeanTTYSerializedUiTest {
         if (-not $acquired) {
             throw '[harness] UiTest control channel remained busy for 60 seconds'
         }
+        if ($null -ne $Action) { return & $Action }
         return Invoke-HdcChecked `
             -Hdc $Hdc `
             -Target $Target `
@@ -247,31 +306,19 @@ function Get-LeanTTYDeviceLayout {
     )
 
     for ($captureAttempt = 1; $captureAttempt -le 2; $captureAttempt++) {
-        $remotePath = '/data/local/tmp/leantty-layout-' + [Guid]::NewGuid().ToString('N') + '.json'
-        try {
-            $layoutArguments = @('dumpLayout', '-p', $remotePath)
-            if (-not [string]::IsNullOrWhiteSpace($BundleName)) {
-                $layoutArguments += @('-b', $BundleName)
+        $layout = Invoke-LeanTTYSerializedUiTest `
+            -Hdc $Hdc `
+            -Target $Target `
+            -Arguments @('shared-layout-capture') `
+            -Operation 'HarmonyOS UI layout capture' `
+            -Action {
+                Get-HdcUiLayout `
+                    -Hdc $Hdc `
+                    -Target $Target `
+                    -LocalPath $LocalPath `
+                    -BundleName $BundleName
             }
-            Invoke-LeanTTYSerializedUiTest `
-                -Hdc $Hdc `
-                -Target $Target `
-                -Arguments $layoutArguments `
-                -Operation 'HarmonyOS UI layout capture' | Out-Null
-            Invoke-HdcChecked `
-                -Hdc $Hdc `
-                -Target $Target `
-                -Arguments @('file', 'recv', $remotePath, $LocalPath) `
-                -Operation 'HarmonyOS UI layout transfer' `
-                -FailureDomain 'environment' | Out-Null
-            if (-not (Test-Path -LiteralPath $LocalPath -PathType Leaf)) {
-                throw 'HarmonyOS UI layout transfer produced no local file'
-            }
-            $layout = Get-Content -LiteralPath $LocalPath -Raw | ConvertFrom-Json -Depth 100
-            if (@($layout.children).Count -gt 0) { return $layout }
-        } finally {
-            & $Hdc -t $Target shell rm -f $remotePath 2>$null | Out-Null
-        }
+        if (@($layout.children).Count -gt 0) { return $layout }
         if ($captureAttempt -lt 2) { Start-Sleep -Milliseconds 500 }
     }
     throw '[environment] HarmonyOS UI layout remained empty after two captures'

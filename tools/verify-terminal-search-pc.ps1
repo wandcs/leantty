@@ -41,10 +41,6 @@ $harnessCommit = (& git -C $repoRoot rev-parse HEAD 2>&1).Trim()
 $harnessTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}' 2>&1).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve terminal-search harness identity' }
 
-$candidateRoot = Get-LeanTTYCandidateRoot `
-    -RepoRoot $repoRoot `
-    -CandidateBasePath $CandidateBasePath
-$candidateRecords = @(Get-LeanTTYCandidateRecords -CandidateRoot $candidateRoot)
 $harnessDifferencePaths = @()
 if ($DiagnosticHap) {
     if ([string]::IsNullOrWhiteSpace($HapPath)) {
@@ -61,17 +57,11 @@ if ($DiagnosticHap) {
         gitTree = $null
         gitDirty = $null
     }
-} elseif ([string]::IsNullOrWhiteSpace($HapPath)) {
-    $candidate = $candidateRecords | Select-Object -First 1
-    if ($null -eq $candidate) { throw 'No retained candidate exists; run tools/verify-pc.ps1 first' }
 } else {
-    $resolvedHap = [IO.Path]::GetFullPath($HapPath)
-    if (-not (Test-Path -LiteralPath $resolvedHap -PathType Leaf)) {
-        throw "Candidate HAP is missing: $resolvedHap"
-    }
-    $requestedHash = (Get-FileHash -LiteralPath $resolvedHap -Algorithm SHA256).Hash.ToLowerInvariant()
-    $candidate = $candidateRecords | Where-Object { $_.sha256 -eq $requestedHash } | Select-Object -First 1
-    if ($null -eq $candidate) { throw 'The selected HAP is not a retained verified candidate' }
+    $candidate = Resolve-LeanTTYRetainedCandidate `
+        -RepoRoot $repoRoot `
+        -HapPath $HapPath `
+        -CandidateBasePath $CandidateBasePath
 }
 if (-not $DiagnosticHap) {
     if ($candidate.gitDirty) { throw 'Terminal-search evidence requires a clean committed candidate' }

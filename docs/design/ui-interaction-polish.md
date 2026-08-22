@@ -129,12 +129,11 @@ Tab 仍然偏亮，因此先把三种模式收敛到低亮度角色；真机首�
 | B 稳定 | Low / Medium | base | base/surface0 80% | surface0/surface1 15% | surface0/surface1 40% | `0.94` |
 | C 高透明 | High / Extreme | base | surface0 | surface0/surface1 50% | surface0/surface1 75% | `0.86` |
 
-模式 A 深色使用 Mocha base `#1E1E2E` 到 surface0 `#313244` 的同色系插值，非活动/hover 分别为
-`#282839` / `#2C2D3F`；浅色使用 Latte base `#EFF1F5` 到 surface0 `#CCD0DA` 的反向插值，
-非活动/hover 分别为 `#DEE1E8` / `#D5D8E1`，活动态与菜单当前选中行共用 surface0。B/C 深色
-非活动/hover/活动为 `#2D2E40` / `#343547` / `#393A4D`，浅色为 `#D3D7DF` / `#CACED8` /
-`#C6CAD4`。C 深色三态为 `#313244` / `#3B3D4F` / `#404255`，浅色为 `#CCD0DA` / `#C4C8D3` /
-`#C0C4D0`。文字、关闭按钮与焦点环继续提供状态反馈。Tab 仍使用现有形状、
+产品只保留一套深色调色板，不表达可切换的 Light/System 主题。模式 A 使用 Mocha base
+`#1E1E2E` 到 surface0 `#313244` 的同色系插值，非活动/hover 分别为 `#282839` / `#2C2D3F`；
+B 模式非活动/hover/活动为 `#2D2E40` / `#343547` / `#393A4D`，C 模式三态为 `#313244` /
+`#3B3D4F` / `#404255`。这些固定 token 仍需在浅色与深色桌面背景上验证透明合成后的可辨性，
+但桌面背景差异不产生第二套应用 palette。文字、关闭按钮与焦点环继续提供状态反馈。Tab 仍使用现有形状、
 4vp 间距、文字权重、状态点和焦点环；不增加
 分隔线、阴影、渐变、主题选项或新状态源。完成条件是自动化锁定三模式映射，并用同一物理 PC
 的四 Tab 在浅色与深色桌面背景下逐档确认 rail、非活动 Tab 和活动 Tab 稳定可辨。

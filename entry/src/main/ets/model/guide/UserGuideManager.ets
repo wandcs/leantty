@@ -1,9 +1,9 @@
-import { abilityAccessCtrl, common, PermissionRequestResult, Permissions } from '@kit.AbilityKit'
+import { common } from '@kit.AbilityKit'
 import { Environment, fileIo as fs, fileUri } from '@kit.CoreFileKit'
 import { Logger } from '../../common/logger/Logger'
+import { DownloadsAccessManager } from '../transfer/DownloadsAccessManager'
 import { UserGuideFileDecision, UserGuidePolicy } from './UserGuidePolicy'
 
-const DOWNLOAD_PERMISSION: Permissions = 'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY'
 const logger: Logger = new Logger('UserGuideManager')
 
 export class UserGuideResult {
@@ -47,7 +47,7 @@ export class UserGuideManager {
 
   private static async performSync(context: common.Context): Promise<UserGuideResult> {
     try {
-      await UserGuideManager.ensureDownloadsAccess(context)
+      await DownloadsAccessManager.ensure(context)
       let downloadDirectory: string = Environment.getUserDownloadDir()
       let bundleName: string = context.applicationInfo.name
       let guideDirectory: string = UserGuidePolicy.guideDirectory(downloadDirectory, bundleName)
@@ -157,30 +157,6 @@ export class UserGuideManager {
       } catch (e) {
       }
     }
-  }
-
-  private static async ensureDownloadsAccess(context: common.Context): Promise<void> {
-    let accessManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager()
-    let result: PermissionRequestResult = await accessManager.requestPermissionsFromUser(context, [DOWNLOAD_PERMISSION])
-    if (result.authResults.length === 1 &&
-      result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
-      return
-    }
-    let dialogWasShown: boolean = result.dialogShownResults !== undefined &&
-      result.dialogShownResults.length === 1 && result.dialogShownResults[0]
-    if (!dialogWasShown) {
-      try {
-        let settingResults: abilityAccessCtrl.GrantStatus[] =
-          await accessManager.requestPermissionOnSetting(context, [DOWNLOAD_PERMISSION])
-        if (settingResults.length === 1 &&
-          settingResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
-          return
-        }
-      } catch (e) {
-        logger.warn('Downloads settings request failed: ' + e)
-      }
-    }
-    throw new Error('Downloads access was denied')
   }
 
   private static failure(message: string): UserGuideResult {

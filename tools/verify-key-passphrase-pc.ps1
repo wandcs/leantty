@@ -40,26 +40,10 @@ if ([string]::IsNullOrWhiteSpace($UnlockPasswordPath)) {
 Assert-LeanTTYCredentialPathOutsideRepository `
     -CredentialPath $UnlockPasswordPath `
     -RepositoryRoot $repoRoot
-$candidateRoot = Get-LeanTTYCandidateRoot `
+$candidate = Resolve-LeanTTYRetainedCandidate `
     -RepoRoot $repoRoot `
+    -HapPath $HapPath `
     -CandidateBasePath $CandidateBasePath
-$candidateRecords = @(Get-LeanTTYCandidateRecords -CandidateRoot $candidateRoot)
-if ([string]::IsNullOrWhiteSpace($HapPath)) {
-    $candidate = $candidateRecords | Select-Object -First 1
-    if ($null -eq $candidate) {
-        throw 'No retained candidate exists; run tools/verify-pc.ps1 first'
-    }
-} else {
-    $resolvedHap = [IO.Path]::GetFullPath($HapPath)
-    if (-not (Test-Path -LiteralPath $resolvedHap -PathType Leaf)) {
-        throw "Candidate HAP is missing: $resolvedHap"
-    }
-    $requestedHash = (Get-FileHash -LiteralPath $resolvedHap -Algorithm SHA256).Hash.ToLowerInvariant()
-    $candidate = $candidateRecords | Where-Object { $_.sha256 -eq $requestedHash } | Select-Object -First 1
-    if ($null -eq $candidate) {
-        throw 'The selected HAP is not a retained verified candidate'
-    }
-}
 if ($candidate.gitDirty) {
     throw 'Device behavior evidence requires a clean committed candidate; rerun tools/verify-pc.ps1 after committing'
 }

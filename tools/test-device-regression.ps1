@@ -143,6 +143,75 @@ Assert-True (-not (Test-HdcCommandFailure -Output 'Forwardport result:OK')) (
     'Successful HDC output was classified as a failure'
 )
 
+$helperTestRoot = Join-Path ([IO.Path]::GetTempPath()) (
+    'leantty-helper-' + [Guid]::NewGuid().ToString('N')
+)
+New-Item -ItemType Directory -Path $helperTestRoot | Out-Null
+try {
+    $controlDirectory = Join-Path $helperTestRoot 'fixture'
+    New-Item -ItemType Directory -Path $controlDirectory | Out-Null
+    Assert-True (
+        $null -eq (Read-LeanTTYFixtureReadiness -ControlDirectory $controlDirectory)
+    ) 'Missing fixture files were accepted as ready'
+    [IO.File]::WriteAllText(
+        (Join-Path $controlDirectory 'fixture-ready'),
+        "address=127.0.0.1:22222`npid=4242`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    [IO.File]::WriteAllText(
+        (Join-Path $controlDirectory 'server-credentials'),
+        "password=temporary`naccount=fixture`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    $fixtureReadiness = Read-LeanTTYFixtureReadiness `
+        -ControlDirectory $controlDirectory `
+        -RequiredCredentialNames @('password', 'account') `
+        -ExpectedAddress '127.0.0.1:22222'
+    Assert-True (
+        $fixtureReadiness.linuxPid -eq 4242 -and
+        $fixtureReadiness.credentials.password -eq 'temporary' -and
+        $null -eq (Read-LeanTTYFixtureReadiness `
+            -ControlDirectory $controlDirectory `
+            -ExpectedAddress '127.0.0.1:33333')
+    ) 'Fixture readiness parsing lost exact address, PID or credential validation'
+
+    & {
+        $script:confirmTransfer = $false
+        function Invoke-FakeFileHdc {
+            if ($args.Count -ge 6 -and $args[2] -eq 'file' -and $args[3] -eq 'recv') {
+                [IO.File]::WriteAllText($args[5], '{"children":[]}', [Text.UTF8Encoding]::new($false))
+                if ($script:confirmTransfer) { 'FileTransfer finish, Size:15, File count = 1' } else { 'done' }
+            }
+            $global:LASTEXITCODE = 0
+        }
+        $receivedPath = Join-Path $helperTestRoot 'received.json'
+        Assert-Throws -Action {
+            Receive-HdcFileChecked `
+                -Hdc 'Invoke-FakeFileHdc' `
+                -Target 'regression-device' `
+                -RemotePath '/data/local/tmp/layout.json' `
+                -LocalPath $receivedPath | Out-Null
+        } -Message 'Device file receive accepted output without FileTransfer finish'
+        $script:confirmTransfer = $true
+        $confirmedPath = Receive-HdcFileChecked `
+            -Hdc 'Invoke-FakeFileHdc' `
+            -Target 'regression-device' `
+            -RemotePath '/data/local/tmp/layout.json' `
+            -LocalPath $receivedPath
+        Assert-True (
+            $confirmedPath -eq [IO.Path]::GetFullPath($receivedPath)
+        ) 'Confirmed device file receive did not return the exact local file'
+    }
+} finally {
+    if ((Test-Path -LiteralPath $helperTestRoot) -and
+        [IO.Path]::GetFullPath($helperTestRoot).StartsWith(
+            [IO.Path]::GetFullPath([IO.Path]::GetTempPath()),
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        Remove-Item -LiteralPath $helperTestRoot -Recurse -Force
+    }
+}
+
 & {
     function Get-HdcTargets {
         return @([pscustomobject]@{
@@ -450,6 +519,7 @@ $waitLogParameters = (Get-Command Wait-LeanTTYAppLog).Parameters.Keys
 $waitLogSource = (Get-Command Wait-LeanTTYAppLog).Definition
 $layoutCaptureSource = (Get-Command Get-LeanTTYDeviceLayout).Definition
 $layoutCaptureParameters = (Get-Command Get-LeanTTYDeviceLayout).Parameters
+$layoutPrimitiveSource = (Get-Command Get-HdcUiLayout).Definition
 $physicalKeySource = (Get-Command Invoke-LeanTTYDevicePhysicalKey).Definition
 Assert-True (
     $appLogParameters -notcontains 'Pid' -and
@@ -465,7 +535,9 @@ Assert-True (
 Assert-True (
     $layoutCaptureParameters.ContainsKey('BundleName') -and
     $layoutCaptureSource.Contains("[string]`$BundleName = 'com.leantty.app'") -and
-    $layoutCaptureSource.Contains("if (-not [string]::IsNullOrWhiteSpace(`$BundleName))") -and
+    $layoutCaptureSource.Contains('Get-HdcUiLayout') -and
+    $layoutPrimitiveSource.Contains("if (-not [string]::IsNullOrWhiteSpace(`$BundleName))") -and
+    $layoutPrimitiveSource.Contains('Receive-HdcFileChecked') -and
     $devicePreflightText.Contains("-BundleName ''")
 ) 'Generic device preflight cannot request a global layout without launching LeanTTY'
 
@@ -946,6 +1018,10 @@ foreach ($scriptName in @(
             $content.Contains('Wait-AuthPaneCount -Count 1')
         ) 'SSH transport main-path coverage is incomplete'
         Assert-True (
+            $content.Contains("Wait-AuthLog -Pattern 'SSH error: target:SSH keepalive timed out'") -and
+            -not $content.Contains("Wait-AuthLog -Pattern 'SSH error: SSH keepalive timed out'")
+        ) 'SSH server-alive oracle does not match the structured target-layer error label'
+        Assert-True (
             $content.Contains("'performance-matrix'") -and
             $content.Contains("@('Off', 'Low', 'Medium', 'High', 'Extreme')") -and
             $content.Contains('Invoke-AuthPerfSample -CaseId $caseId') -and
@@ -1146,9 +1222,11 @@ Assert-True (
 $deviceRegressionText = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'device-regression.ps1'
 ) -Raw
+$hdcCommonText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'hdc-common.ps1') -Raw
 Assert-True (
-    $deviceRegressionText.Contains("@('dumpLayout', '-p', `$remotePath)") -and
-    -not $deviceRegressionText.Contains("@('dumpLayout', '-p', `$remotePath, '-a')")
+    $deviceRegressionText.Contains('Get-HdcUiLayout') -and
+    $hdcCommonText.Contains("@('shell', 'uitest', 'dumpLayout', '-p', `$remotePath)") -and
+    -not $hdcCommonText.Contains("'dumpLayout', '-p', `$remotePath, '-a'")
 ) 'Routine device layouts still request unused UiTest extended visual attributes'
 Assert-True (
     $deviceRegressionText.Contains("return 't' + [Guid]::NewGuid()") -and
@@ -1271,7 +1349,8 @@ Assert-True (
     $putGetVerifier.Contains('[switch]$ServerAliveBlackhole') -and
     $putGetVerifier.Contains('[switch]$AuthenticationMatrix') -and
     $putGetVerifier.Contains("'-SftpFault'") -and
-    $putGetVerifier.Contains('[IO.FileShare]::ReadWrite') -and
+    $putGetVerifier.Contains('Read-LeanTTYSharedTextFile') -and
+    $deviceRegressionText.Contains('[IO.FileShare]::ReadWrite') -and
     $putGetVerifier.Contains('FILE_TRANSFER result=failed code=REMOTE_CLEANUP') -and
     $putGetVerifier.Contains('Remote cleanup failure exposed the final remote file name') -and
     $putGetVerifier.Contains('device-put-remote-cleanup-failure.json') -and

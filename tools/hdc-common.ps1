@@ -115,3 +115,62 @@ function Invoke-HdcShell {
 
     return ((& $Hdc -t $Target shell $Command 2>&1) -join "`n")
 }
+
+function Receive-HdcFileChecked {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$RemotePath,
+        [Parameter(Mandatory = $true)][string]$LocalPath,
+        [string]$Operation = 'HDC device file receive',
+        [ValidateSet('environment', 'infrastructure', 'harness')]
+        [string]$FailureDomain = 'environment'
+    )
+
+    $output = Invoke-HdcChecked `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('file', 'recv', $RemotePath, $LocalPath) `
+        -Operation $Operation `
+        -FailureDomain $FailureDomain
+    if ($output -notmatch '(?m)FileTransfer finish' -or
+        -not (Test-Path -LiteralPath $LocalPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $LocalPath).Length -eq 0) {
+        throw "[$FailureDomain] $Operation produced no confirmed non-empty local file"
+    }
+    return [IO.Path]::GetFullPath($LocalPath)
+}
+
+function Get-HdcUiLayout {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$LocalPath,
+        [string]$BundleName = '',
+        [string]$Operation = 'HarmonyOS UI layout capture'
+    )
+
+    $remotePath = '/data/local/tmp/leantty-layout-' + [Guid]::NewGuid().ToString('N') + '.json'
+    try {
+        $arguments = @('shell', 'uitest', 'dumpLayout', '-p', $remotePath)
+        if (-not [string]::IsNullOrWhiteSpace($BundleName)) {
+            $arguments += @('-b', $BundleName)
+        }
+        Invoke-HdcChecked `
+            -Hdc $Hdc `
+            -Target $Target `
+            -Arguments $arguments `
+            -Operation $Operation `
+            -FailureDomain 'environment' | Out-Null
+        Receive-HdcFileChecked `
+            -Hdc $Hdc `
+            -Target $Target `
+            -RemotePath $remotePath `
+            -LocalPath $LocalPath `
+            -Operation "$Operation transfer" `
+            -FailureDomain 'environment' | Out-Null
+        return Get-Content -LiteralPath $LocalPath -Raw | ConvertFrom-Json -Depth 100
+    } finally {
+        & $Hdc -t $Target shell rm -f $remotePath 2>$null | Out-Null
+    }
+}

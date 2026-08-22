@@ -41,24 +41,6 @@ export struct ChromeBar {
     return 12 + this.tabs.length * 176
   }
 
-  private tabState(tab: TabInfo): SshSessionState {
-    for (let i = 0; i < tab.panes.length; i++) {
-      if (tab.panes[i].id === tab.activePaneId) {
-        return tab.panes[i].state
-      }
-    }
-    return SshSessionState.IDLE
-  }
-
-  private tabNeedsAttention(tab: TabInfo): boolean {
-    for (let i = 0; i < tab.panes.length; i++) {
-      if (tab.panes[i].needsAttention) {
-        return true
-      }
-    }
-    return false
-  }
-
   private tabRenderKey(tab: TabInfo): string {
     return tab.id
   }
