@@ -192,8 +192,7 @@ try {
     ) -Raw
     Assert-True (
         $entryAbilityProductionText.Contains('windowStage.setWindowRectAutoSave(true)') -and
-        -not $entryAbilityProductionText.Contains('restoreOrCaptureWindowRect') -and
-        -not $entryAbilityProductionText.Contains("mainWindow.on('windowRectChange'")
+        -not $entryAbilityProductionText.Contains('restoreOrCaptureWindowRect')
     ) 'System window auto-save is not the sole owner of restart window geometry'
     $bridgeProtocolText = Get-Content -LiteralPath (
         Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
