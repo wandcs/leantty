@@ -1,9 +1,24 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { InteractionPolicy, WorkspaceNavigationAction } from '../main/ets/model/ui/InteractionPolicy'
 import { ApplicationCloseCoordinator } from '../main/ets/model/ui/ApplicationCloseCoordinator'
+import { WindowGridSnapPolicy } from '../main/ets/model/ui/WindowGridSnapPolicy'
 
 export default function workspaceInteractionTest() {
   describe('WorkspaceInteraction', () => {
+    it('snapsWindowResizeToTheNearestTerminalCellForTheCurrentFont', 0, () => {
+      expect(WindowGridSnapPolicy.snapWidth(2986, 14, 2)).assertEqual(2984)
+      expect(WindowGridSnapPolicy.snapHeight(1900, 14, 2)).assertEqual(1912)
+      expect(WindowGridSnapPolicy.snapWidth(2986, 16, 2)).assertEqual(2994)
+      expect(WindowGridSnapPolicy.snapHeight(1900, 16, 2)).assertEqual(1895)
+      expect(WindowGridSnapPolicy.snapWidth(2986, 14, 0)).assertEqual(2986)
+    })
+
+    it('keepsGridSnappedWindowSizesInsidePlatformLimits', 0, () => {
+      expect(WindowGridSnapPolicy.clampExtent(500, 640, 3000)).assertEqual(640)
+      expect(WindowGridSnapPolicy.clampExtent(3200, 640, 3000)).assertEqual(3000)
+      expect(WindowGridSnapPolicy.clampExtent(1200, 640, 3000)).assertEqual(1200)
+    })
+
     it('routesExactCtrlCBeforeArkWebConsumesSelectionCopy', 0, () => {
       expect(InteractionPolicy.isTerminalCopyOrInterruptKey(2019, true, false)).assertEqual(true)
       expect(InteractionPolicy.isTerminalCopyOrInterruptKey(2019, true, true)).assertEqual(false)

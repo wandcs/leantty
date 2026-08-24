@@ -26,7 +26,7 @@
     #terminal-container > .xterm {
       width: 100%;
       height: 100%;
-      padding: 4px 2px 4px 10px;
+      padding: 8px 0px 8px 8px;
     }
     .xterm.secure-input .xterm-helper-textarea {
       -webkit-text-security: disc;
@@ -236,10 +236,10 @@
   <script>
     var TERMINAL_SCROLLBACK_LINES = 10000;
     var TERMINAL_SCROLLBAR_WIDTH = 8;
-    var TERMINAL_BASE_PADDING_TOP = 4;
-    var TERMINAL_BASE_PADDING_BOTTOM = 4;
-    var TERMINAL_BASE_PADDING_LEFT = 10;
-    var TERMINAL_BASE_PADDING_RIGHT = 2;
+    var TERMINAL_BASE_PADDING_TOP = 8;
+    var TERMINAL_BASE_PADDING_BOTTOM = 8;
+    var TERMINAL_BASE_PADDING_LEFT = 8;
+    var TERMINAL_BASE_PADDING_RIGHT = 0;
     var MAX_SNAPSHOT_PAYLOAD_LENGTH = 4 * 1024 * 1024;
     var nativePort = null;
     var term = null;

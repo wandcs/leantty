@@ -221,16 +221,21 @@ assert.doesNotMatch(terminalHtml, /JetBrainsMonoNerdFont-(?:Regular|Bold)\.ttf/,
   'the double-width Nerd Font assets must not return to the terminal font face');
 assert.match(terminalHtml, /addEventListener\('wheel', handleAlternateWheel, true\)/,
   'alternate-buffer wheel handling must run during capture before xterm scrolls its inner viewport');
-assert.match(terminalHtml, /#terminal-container > \.xterm\s*\{[^}]*padding:\s*4px 2px 4px 10px;/s,
-  'terminal padding must offset the scrollbar gutter without changing the total horizontal inset');
+const terminalPaddingMatch = terminalHtml.match(
+  /#terminal-container > \.xterm\s*\{[^}]*padding:\s*(\d+)px (\d+)(?:px)? (\d+)px (\d+)px;/s
+);
+assert.ok(terminalPaddingMatch, 'terminal padding must remain an explicit four-edge contract');
+const terminalPadding = terminalPaddingMatch.slice(1).map(value => Number.parseInt(value, 10));
+assert.deepEqual(terminalPadding, [8, 0, 8, 8],
+  'terminal padding plus the eight-pixel scrollbar gutter must provide one common visual inset');
 assert.match(terminalHtml, /function fitAndCenterTerminalGrid\(\)/,
   'terminal fitting must redistribute unused cell-grid space instead of leaving it on trailing edges');
 assert.match(terminalHtml,
   /centerGridLeadingPadding\(\s*TERMINAL_BASE_PADDING_TOP,\s*TERMINAL_BASE_PADDING_BOTTOM,/s,
   'terminal fitting must center rows with the tested layout policy');
 assert.match(terminalHtml,
-  /var TERMINAL_BASE_PADDING_LEFT = 10;[\s\S]*var TERMINAL_BASE_PADDING_RIGHT = 2;/,
-  'terminal fitting must preserve the compact horizontal inset around the scrollbar gutter');
+  /var TERMINAL_BASE_PADDING_TOP = 8;[\s\S]*var TERMINAL_BASE_PADDING_BOTTOM = 8;[\s\S]*var TERMINAL_BASE_PADDING_LEFT = 8;[\s\S]*var TERMINAL_BASE_PADDING_RIGHT = 0;/,
+  'terminal fitting must preserve the shared eight-pixel visual inset on every edge');
 assert.match(terminalHtml,
   /centerGridLeadingPadding\(\s*TERMINAL_BASE_PADDING_LEFT,\s*TERMINAL_BASE_PADDING_RIGHT \+\s*TERMINAL_SCROLLBAR_WIDTH,/s,
   'terminal fitting must split unused column-grid width around both pane edges');
