@@ -702,7 +702,8 @@ assert.doesNotThrow(() => {
   });
 }, 'the pinned terminal option must unlock the official addon decoration path');
 await runTerminalSearchTests(globalThis.Terminal, globalThis.SearchAddon.SearchAddon);
-await runTerminalSessionResetTests(globalThis.Terminal, globalThis.SerializeAddon.SerializeAddon);
+await runTerminalSessionResetTests(globalThis.Terminal, globalThis.SerializeAddon.SerializeAddon,
+  policy.sessionOutputAnchorRow);
 
 const terminalBridge = readFileSync(
   new URL('../../entry/src/main/ets/model/bridge/TerminalBridge.ets', import.meta.url), 'utf8');
@@ -715,6 +716,12 @@ assert.match(terminalBridge,
 assert.match(terminalBridge,
   /private pumpSessionResetViewport[\s\S]*?BridgeProtocol\.sessionResetViewport\(\)/,
   'the queued viewport operation must use the typed bridge control');
+assert.match(terminalBridge,
+  /positionSessionOutput\(onComplete:[\s\S]*?sessionOutputAnchorCompletion = onComplete[\s\S]*?pumpSessionOutputAnchor\(\)[\s\S]*?KIND_SESSION_OUTPUT_ANCHOR_COMPLETE[\s\S]*?completion\(true\)/,
+  'the local-output anchor must retain one bounded completion until ArkWeb positions the cursor');
+assert.match(terminalBridge,
+  /private pumpSessionOutputAnchor[\s\S]*?pendingDataHead < this\.pendingData\.length \|\| this\.inFlightMessages > 0[\s\S]*?BridgeProtocol\.sessionOutputAnchor\(\)/,
+  'the local-output anchor must wait for reset and restored output before crossing the typed bridge');
 assert.match(terminalBridge,
   /pumpPendingData\(\)[\s\S]*?pumpSessionResetViewport\(\)[\s\S]*?private pumpSessionResetViewport[\s\S]*?pendingDataHead < this\.pendingData\.length \|\| this\.inFlightMessages > 0/,
   'the viewport restore must wait until all earlier terminal writes are acknowledged');
@@ -791,6 +798,9 @@ assert.match(bridgeProtocol,
   /KIND_SESSION_RESET_VIEWPORT:\s*string = 'sessionResetViewport'[\s\S]*KIND_SESSION_RESET_COMPLETE:\s*string = 'sessionResetComplete'[\s\S]*KIND_SESSION_RESET_VIEWPORT[\s\S]*payload\.length > 0/,
   'Session viewport restore and completion must use empty-payload typed controls');
 assert.match(bridgeProtocol,
+  /KIND_SESSION_OUTPUT_ANCHOR:\s*string = 'sessionOutputAnchor'[\s\S]*KIND_SESSION_OUTPUT_ANCHOR_COMPLETE:\s*string = 'sessionOutputAnchorComplete'[\s\S]*KIND_SESSION_OUTPUT_ANCHOR[\s\S]*payload\.length > 0/,
+  'Session local-output positioning and completion must use empty-payload typed controls');
+assert.match(bridgeProtocol,
   /KIND_COPY_OR_INTERRUPT:\s*string = 'copyOrInterrupt'[\s\S]*KIND_COPY_OR_INTERRUPT && payload\.length > 0[\s\S]*copyOrInterrupt\(\): BridgeMessage/,
   'copy-or-interrupt must be a typed empty-payload native-to-web control');
 
@@ -857,14 +867,17 @@ assert.ok(terminalSurfaceController.includes(SESSION_BOUNDARY_RESET_SEQUENCE
   .replaceAll('\u001b', '\\u001b').replaceAll('\u0007', '\\u0007')),
   'the native Session boundary must send the xterm-proven bounded reset sequence');
 assert.match(terminalSurfaceController,
-  /resetSessionState\(writeLocalOutput: \(\) => void, onComplete: \(\) => void\): void[\s\S]*?writeSessionReset[\s\S]*?writeLocalOutput\(\)[\s\S]*?restoreSessionViewport\(onComplete\)/,
-  'the Terminal Surface must reset, write local output, then restore the viewport before completion');
+  /resetSessionState\(writeLocalOutput: \(\) => void, onComplete: \(\) => void\): void[\s\S]*?writeSessionReset[\s\S]*?positionSessionOutput[\s\S]*?writeLocalOutput\(\)[\s\S]*?restoreSessionViewport\(onComplete\)/,
+  'the Terminal Surface must reset, position and write local output, then restore the viewport before completion');
 assert.match(terminalSurfaceController,
   /activeBridge\.write\(resetBytes[\s\S]*?if \(written && this\.bridge === activeBridge\)[\s\S]*?onReset\(\)/,
   'the Session reset callback must wait for the ordered xterm write ACK');
 assert.match(terminalSurfaceController,
   /if \(sourceBridge === null\) \{\s*onReset\(\)\s*return\s*\}/,
   'an offline renderer must use the snapshot reset suffix instead of queueing duplicate reset bytes');
+assert.match(terminalSurfaceController,
+  /positionSessionOutput\(onComplete:[\s\S]*?pendingSessionOutputAnchorCompletion = onComplete[\s\S]*?activeBridge\.positionSessionOutput[\s\S]*?resumeSessionOutputAnchor[\s\S]*?this\.positionSessionOutput\(completion\)/,
+  'an offline or replaced renderer must defer local close output until the restored buffer can be positioned');
 assert.match(terminalSurfaceController,
   /snapshotCommitFloor = this\.nextSnapshotRequestId[\s\S]*?markSessionReset[\s\S]*?requestId >= this\.snapshotCommitFloor/,
   'a Session reset must reject older snapshot commits and retain reset state for renderer recovery');
@@ -893,6 +906,9 @@ assert.doesNotMatch(terminalSurfaceController, /releaseBuffers|term\.clear|term\
   'disconnect cleanup must not ask a live terminal surface to clear its screen or scrollback');
 assert.doesNotMatch(terminalSurfaceController, /terminateRendererForAcceptance|ACCEPTANCE_TESTS/,
   'production terminal-surface source must exclude acceptance-only renderer termination');
+assert.match(terminalHtml,
+  /function positionSessionOutput[\s\S]*?sessionOutputAnchorRow\(term\.buffer\.active, term\.rows\)[\s\S]*?term\.write\([\s\S]*?anchorRow\.toString\(\)[\s\S]*?case 'sessionOutputAnchor':[\s\S]*?sessionOutputAnchorComplete/,
+  'ArkWeb must position local close output after the last visible normal-buffer content before acknowledging');
 
 const indexPage = readFileSync(
   new URL('../../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
