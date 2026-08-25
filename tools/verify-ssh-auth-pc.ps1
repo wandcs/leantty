@@ -2148,8 +2148,18 @@ try {
         -Pattern 'terminal dirty case=escapealt result=enabled'
     # Focus reporting can send ESC[I after the command's newline. Like OpenSSH,
     # escape recognition resumes only after the user sends another newline.
+    $alternateFocusReportPattern = 'fixture command bytes=5b 49 result=unrecognized'
+    $alternateFocusReportCount = Get-FixtureLogMatchCount `
+        -Pattern ([regex]::Escape($alternateFocusReportPattern))
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    Start-Sleep -Milliseconds 250
+    try {
+        Wait-FixtureLogMatchCount `
+            -Pattern ([regex]::Escape($alternateFocusReportPattern)) `
+            -GreaterThan $alternateFocusReportCount `
+            -TimeoutSeconds 10 | Out-Null
+    } catch {
+        throw '[harness] Alternate-screen focus report submission was not observed'
+    }
     Assert-SshEscapeLocalOnly `
         -TypedText '~?' `
         -LogPattern 'SSH escape action=help' `
