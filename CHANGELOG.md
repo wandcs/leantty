@@ -6,6 +6,38 @@
 
 ### Added
 
+- Added English and Simplified Chinese resources for LeanTTY-owned native UI,
+  notifications, accessibility text, terminal search controls and the initial
+  offline-guide view. Explicit Chinese system languages use concise Chinese
+  UI—including “分屏” rather than “窗格”—while every other or unknown language
+  falls back to English. Terminal commands, local technical output and remote
+  TTY content remain English or unchanged, and no persistent language setting
+  is introduced.
+- Added one restrained local notification for terminal attention only
+  while the whole LeanTTY window is hidden. Each continuous background episode
+  gets at most one notification attempt; later BELs remain visible through the
+  existing in-app Pane attention without refreshing or chasing a notification
+  the user has ignored or dismissed. The fixed content excludes remote output
+  and host data and returns only to the first existing Pane that still owns
+  attention; stale clicks merely open the app. Notification permission is
+  requested contextually at most once after the first missed background BEL,
+  while rejection leaves the terminal and existing in-app attention unchanged.
+- Added bounded OSC 9, well-formed OSC 777 and a receive-only OSC 99 attention
+  subset at the terminal Web boundary. OSC 99 accepts only complete title/body
+  frames with `i/p/e/d` metadata. A bounded `p=?` query receives only the fixed
+  `p=title,body` capability plus its echoed query ID; no chunk assembly, actions
+  or lifecycle reports are implemented. Accepted sequences discard every remote field,
+  then reuse the existing empty-payload Pane attention, notification throttling
+  and return path; malformed, incomplete, control-bearing or over-1024-byte
+  payloads have no LeanTTY system effect. This does not add background execution:
+  notifications from output arriving after HarmonyOS suspends the hidden app
+  remain best effort.
+- Added a concise bilingual offline Agent workflow and a physical HarmonyOS PC
+  compatibility baseline for Codex CLI, OpenCode, Pi Agent and Qwen Code over
+  direct SSH and remote tmux. The guide keeps durable work in tmux/screen,
+  documents only observed notification, input, clipboard and scrollback
+  behavior, and treats late notifications after HarmonyOS suspension as best
+  effort instead of adding an Agent task model or background service.
 - Added import and use of existing OpenSSH ECDSA P-256, P-384 and P-521
   identities, including encrypted private keys. Imported ECDSA identities reuse
   the existing fingerprint, passphrase, comment, export, durable restart,
@@ -54,6 +86,20 @@
 
 ### Fixed
 
+- Kept the selected offline-guide language while following page-internal
+  section links. English links such as `Agent workflow` no longer fall back to
+  the default Chinese page merely because the target is a child section rather
+  than the language page root.
+- Rearmed terminal attention delivery when a visible terminal is blurred, so
+  an Agent's foreground-ready signal cannot suppress the first later eligible
+  background signal; unread Pane state and native background-episode throttling
+  remain unchanged.
+- Centered the terminal cell grid around one shared 8 px minimum visual inset,
+  including the scrollbar gutter, so character-cell rounding no longer leaves
+  full-screen TUIs visibly closer to the bottom edge than the left and right
+  edges. The scrollbar keeps its 8 px hit area and 2 px visible thumb while the
+  fitted grid continues to use the maximum rows and columns allowed by that
+  four-edge contract.
 - Snapped a floating main-window resize to the nearest whole terminal cell for
   the current font when the user releases the dragged edge. Resizing from the
   left or top keeps the opposite edge fixed, while the fitted grid centers on

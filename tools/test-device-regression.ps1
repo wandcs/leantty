@@ -587,7 +587,13 @@ Assert-True (
     $deviceRegressionText -notmatch 'hilog\s+-x[^\r\n]*\s-z\s'
 ) 'Device log query combines mutually exclusive hilog exit and tail modes'
 Assert-True (
-    $deviceRegressionText.Contains('TerminalSurfaceController,TerminalBridge,AppViewModel')
+    $deviceRegressionText.Contains(
+        'EntryAbility,IndexPage,'
+    ) -and
+    $deviceRegressionText.Contains(
+        'TerminalSurfaceController,TerminalBridge,AppViewModel,BackgroundBellNotification'
+    ) -and
+    -not $deviceRegressionText.Contains('EntryAbility,Index,IndexPage')
 ) 'Device log query omits the Pane attention state owner'
 Assert-True (
     $deviceRegressionText -notmatch 'terminal-line cleanup|backspaceCount'
@@ -747,6 +753,9 @@ foreach ($scriptName in @(
     'verify-key-passphrase-pc.ps1',
     'verify-ssh-auth-pc.ps1',
     'verify-terminal-search-pc.ps1',
+    'verify-background-bell-notification-pc.ps1',
+    'verify-background-bell-permission-pc.ps1',
+    'verify-long-task-notification-pc.ps1',
     'verify-proxy-jump-pc.ps1'
 )) {
     $scriptPath = Join-Path $PSScriptRoot $scriptName
@@ -1024,6 +1033,7 @@ foreach ($scriptName in @(
         Assert-True (
             $content.Contains("'performance-matrix'") -and
             $content.Contains("@('Off', 'Low', 'Medium', 'High', 'Extreme')") -and
+            $content.Contains("'Maximum' = 'Extreme'; '最高' = 'Extreme'") -and
             $content.Contains('Invoke-AuthPerfSample -CaseId $caseId') -and
             $content.Contains("' lines=12000 width=80 bytes=\d+ state=prepared'") -and
             $content.Contains('PERF prepare outcome is unknown') -and
@@ -1067,9 +1077,9 @@ foreach ($scriptName in @(
             $content.Contains('Clear-TerminalSearchQuery -CharacterCount $query.Length') -and
             $content.Contains('Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length') -and
             $content.Contains("'LEANTTY_NO_RESULT_ZXQVK'") -and
-            $content.Contains("'^Search text'") -and
+            $content.Contains("'^(?:Find text|Search text|查找内容)'") -and
             $content.Contains('[AllowEmptyString()]') -and
-            $content.Contains("'^No results$'") -and
+            $content.Contains("'^(?:No results|未找到结果)$'") -and
             $content.Contains('wrappedForward = $true') -and
             $content.Contains('wrappedBackward = $true') -and
             $content.Contains("'TerminalBridge: PERF bridge reason=destroy'") -and
@@ -1079,6 +1089,8 @@ foreach ($scriptName in @(
             $content.Contains("Invoke-LocalTerminalCommand -Command 'help'") -and
             $content.Contains('function Invoke-LocalTerminalCommand') -and
             $content.Contains('Get-LeanTTYActiveTerminalInputNodes -Layout $layout') -and
+            $content.Contains('$contentTop = Get-LeanTTYTerminalContentTop -Layout $Layout') -and
+            -not $content.Contains('[int]$Matches.top -ge 100') -and
             $content.Contains('Submit-LeanTTYDeviceCommand') -and
             $content.Contains('-ProcessId $appPid') -and
             $content.Contains('-InputNodeProvider') -and
@@ -1459,5 +1471,81 @@ foreach ($productionSource in @(
         )
     ) "Production ArkTS contains acceptance-only source: $productionSource"
 }
+
+$backgroundBellVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-background-bell-notification-pc.ps1'
+) -Raw
+Assert-True (
+    $backgroundBellVerifier.Contains('notificationCardCount') -and
+    $backgroundBellVerifier.Contains("minimizeBounds.Groups['y2']") -and
+    $backgroundBellVerifier.Contains("'-HapPath is required") -and
+    $backgroundBellVerifier.Contains('test-signed-diagnostic-hap') -and
+    $backgroundBellVerifier.Contains('suppressedPaneId') -and
+    $backgroundBellVerifier.Contains('resetPublished') -and
+    $backgroundBellVerifier.Contains('Expected one notification after visible reset') -and
+    $backgroundBellVerifier.Contains('notification suppressed for current background episode') -and
+    $backgroundBellVerifier.Contains('A terminal needs your attention') -and
+    $backgroundBellVerifier.Contains('终端有新提示') -and
+    $backgroundBellVerifier.Contains('Background BEL return applied') -and
+    $backgroundBellVerifier.Contains('Background BEL return ignored because the source is no longer pending') -and
+    $backgroundBellVerifier.Contains('source-handled-first') -and
+    $backgroundBellVerifier.Contains('source-pane-destroyed') -and
+    $backgroundBellVerifier.Contains('notification-panel-after-manual-dismiss') -and
+    $backgroundBellVerifier.Contains('notification-panel-after-dismiss-settle') -and
+    $backgroundBellVerifier.Contains('notification-cancel-requested-by-visible-lifecycle') -and
+    $backgroundBellVerifier.Contains('single-pane-confirmed') -and
+    $backgroundBellVerifier.Contains('[privacy]')
+) 'Background BEL notification scenario lacks suppression, return, privacy, or cleanup oracles'
+
+$backgroundBellSource = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\model\ui\BackgroundBellNotification.ets'
+) -Raw
+Assert-True (
+    $backgroundBellSource.Contains('autoDeletedTime: new Date().getTime() + NOTIFICATION_LIFETIME_MS') -and
+    $backgroundBellSource.Contains('const NOTIFICATION_LIFETIME_MS: number = 24 * 60 * 60 * 1000') -and
+    -not $backgroundBellSource.Contains('NotificationSubscriber') -and
+    -not $backgroundBellSource.Contains('subscribeNotification')
+) 'Background BEL expiration lost its bounded lifetime or introduced dismissal tracking'
+
+$longTaskVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-long-task-notification-pc.ps1'
+) -Raw
+Assert-True (
+    $longTaskVerifier.Contains("ValidateSet('shell', 'tmux', 'codex')") -and
+    $longTaskVerifier.Contains('Temporary WSL sshd') -and
+    $longTaskVerifier.Contains('codex exec --sandbox read-only') -and
+    $longTaskVerifier.Contains("tmux -L '") -and
+    $longTaskVerifier.Contains("printf '\a'") -and
+    $longTaskVerifier.Contains('Background BEL notification published') -and
+    $longTaskVerifier.Contains('Background BEL return applied') -and
+    $longTaskVerifier.Contains('genericPayload') -and
+    $longTaskVerifier.Contains('fport rm "tcp:$Port" "tcp:$Port"') -and
+    $longTaskVerifier.Contains('reverse mapping remained after cleanup') -and
+    $longTaskVerifier.Contains('reverse-port-removed') -and
+    $longTaskVerifier.Contains('app-identity-unchanged')
+) 'Long-task notification scenario lacks real workloads, notification return, privacy, or cleanup oracles'
+Assert-True (
+    $longTaskVerifier.Contains('cleanup-before-activation') -and
+    $longTaskVerifier.Contains('if ($cleanupInputs.Count -eq 0)')
+) 'Long-task notification cleanup must not toggle an already visible singleton window'
+
+$backgroundBellPermissionVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-background-bell-permission-pc.ps1'
+) -Raw
+Assert-True (
+    $backgroundBellPermissionVerifier.Contains('originalEnabled') -and
+    $backgroundBellPermissionVerifier.Contains("minimizeBounds.Groups['y2']") -and
+    $backgroundBellPermissionVerifier.Contains('notifications are disabled') -and
+    $backgroundBellPermissionVerifier.Contains('disabledNotificationCardCount') -and
+    $backgroundBellPermissionVerifier.Contains('permissionPromptObserved') -and
+    $backgroundBellPermissionVerifier.Contains('Handle disabled background BEL attention') -and
+    $backgroundBellPermissionVerifier.Contains('Pane attention cleared: pane-') -and
+    $backgroundBellPermissionVerifier.Contains('enabledPublished') -and
+    $backgroundBellPermissionVerifier.Contains('enabledReturned') -and
+    $backgroundBellPermissionVerifier.Contains('restore-original') -and
+    $backgroundBellPermissionVerifier.Contains('original-notification-setting-restored') -and
+    -not $backgroundBellPermissionVerifier.Contains('bm clean') -and
+    -not $backgroundBellPermissionVerifier.Contains('uninstall')
+) 'Background BEL permission scenario lacks disabled, enabled, return, or restoration oracles'
 
 Write-Host 'Device regression helper tests passed.' -ForegroundColor Green

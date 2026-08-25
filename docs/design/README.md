@@ -24,7 +24,7 @@
 
 | 功能点 | 状态 | milestone | 文档 |
 | --- | --- | --- | --- |
-| SSH 与 Mosh 命令体系 | Accepted 能力取舍基线 | 跨 1.1–1.7 | [`command-system.md`](command-system.md) |
+| SSH 与 Mosh 命令体系 | Accepted 能力取舍基线 | 跨 1.1–1.6 | [`command-system.md`](command-system.md) |
 | SSH keyboard-interactive 与多方法认证 | Verified / GitHub/AppGallery 已发布 | 1.1 | [`ssh-authentication.md`](ssh-authentication.md) |
 | 工作区键盘导航 | Verified / GitHub/AppGallery 已发布 | 1.1 | [`workspace-navigation.md`](workspace-navigation.md) |
 | 终端 scrollback 搜索 | Verified；GitHub/AppGallery 已发布 | 1.2 | [`terminal-search.md`](terminal-search.md) |
@@ -45,7 +45,10 @@
 | UpdateHostKeys | Closed / 依赖能力门禁失败 | 1.5 决策 | [`update-host-keys.md`](update-host-keys.md) |
 | SSH key comment change | Verified / 1.5 第七个切片已闭合 | 1.5 | [`key-comment-change.md`](key-comment-change.md) |
 | ECDSA key interoperability | Verified / 1.5 第八个切片已闭合 | 1.5 | [`ecdsa-key-interop.md`](ecdsa-key-interop.md) |
-| Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.7 | [`mosh.md`](mosh.md) |
+| 后台 BEL 通知与返回 | Verified / 1.5 | 1.5 | [`background-bell-notification.md`](background-bell-notification.md) |
+| 产品语言边界与中英文界面 | Verified / 1.5 | 1.5 | [`product-language.md`](product-language.md) |
+| Agent CLI/TUI 原生兼容 | Implementing / Codex 普通 SSH 与 tmux 已验证，其余三种待认证 | 1.5 | [`agent-tui-compatibility.md`](agent-tui-compatibility.md) |
+| Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.6 | [`mosh.md`](mosh.md) |
 
 ## 最小文档结构
 

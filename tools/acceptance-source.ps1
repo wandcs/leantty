@@ -46,6 +46,7 @@ function Add-LeanTTYAcceptanceSource {
     $indexImports = "import { BrowserLauncher } from '../model/browser/BrowserLauncher'`n" +
         "import { TransferFileManager, TransferLocalFile } from '../model/transfer/TransferFileManager'`n" +
         "import { Environment, fileIo as fs } from '@kit.CoreFileKit'`n" +
+        "import { notificationManager } from '@kit.NotificationKit'`n" +
         "import { ACCEPTANCE_TESTS } from 'BuildProfile'"
     if ($includeNativeFileDescriptorProbe) {
         $indexImports += "`nimport sshNative from 'libleantty_ssh.so'`n" +
@@ -56,10 +57,12 @@ function Add-LeanTTYAcceptanceSource {
         $indexImports
     $downloadsManagerMenuIndex = if ($includeNativeFileDescriptorProbe) { 9 } else { 8 }
     $transferFixtureMenuIndex = if ($includeNativeFileDescriptorProbe) { 10 } else { 9 }
+    $backgroundBellMenuIndex = if ($includeNativeFileDescriptorProbe) { 11 } else { 10 }
+    $notificationSettingsMenuIndex = if ($includeNativeFileDescriptorProbe) { 12 } else { 11 }
     $text.index = Set-LeanTTYAcceptanceSourceText $text.index `
         'const MENU_ACTION_COUNT: number = 6' `
         ('const MENU_ACTION_COUNT: number = ACCEPTANCE_TESTS ? ' +
-            $(if ($includeNativeFileDescriptorProbe) { '11' } else { '10' }) + ' : 6')
+            $(if ($includeNativeFileDescriptorProbe) { '13' } else { '12' }) + ' : 6')
     $selectionAnchor = "    if (selected === 4 || selected === 5) { return }"
     $selectionReplacement = "    if (selected === 6 && ACCEPTANCE_TESTS) {`n" +
         "      this.menuOpen = false`n" +
@@ -88,6 +91,16 @@ function Add-LeanTTYAcceptanceSource {
         "      this.toggleDownloadsTransferFixtureForAcceptance()`n" +
         "      return`n" +
         "    }`n"
+    $selectionReplacement += "    if (selected === $backgroundBellMenuIndex && ACCEPTANCE_TESTS) {`n" +
+        "      this.menuOpen = false`n" +
+        "      this.scheduleBackgroundBellForAcceptance()`n" +
+        "      return`n" +
+        "    }`n"
+    $selectionReplacement += "    if (selected === $notificationSettingsMenuIndex && ACCEPTANCE_TESTS) {`n" +
+        "      this.menuOpen = false`n" +
+        "      this.openNotificationSettingsForAcceptance()`n" +
+        "      return`n" +
+        "    }`n"
     $selectionReplacement += $selectionAnchor
     $text.index = Set-LeanTTYAcceptanceSourceText `
         $text.index $selectionAnchor $selectionReplacement
@@ -95,6 +108,10 @@ function Add-LeanTTYAcceptanceSource {
     let navigationAction: WorkspaceNavigationAction = InteractionPolicy.workspaceNavigationAction(
 '@
     $keyEventReplacement = @'
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && shiftKey && event.keyCode === 2033) {
+      this.scheduleBackgroundBellForAcceptance()
+      return true
+    }
     if (ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event.keyCode === 2033) {
       this.interruptSessionResetForAcceptance()
       return true
@@ -744,6 +761,46 @@ function Add-LeanTTYAcceptanceSource {
         }
         $rendererMethod = $rendererMethod.Substring(0, $fdMethodStart)
     }
+    $backgroundBellMethod = @'
+  private scheduleBackgroundBellForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    let tab: TabInfo | null = this.appVm.getActiveTab()
+    if (tab === null || tab.panes.length === 0) {
+      return
+    }
+    let firstPaneId: string = tab.panes[0].id
+    let secondPaneId: string = tab.panes.length === 2 ? tab.panes[1].id : firstPaneId
+    let resetProbe: boolean = secondPaneId !== firstPaneId && tab.panes[1].needsAttention
+    let firstState: string = resetProbe ? 'reset-' : ''
+    logger.info('ACCEPTANCE_BACKGROUND_BELL state=' + firstState + 'scheduled,paneId=' + firstPaneId)
+    setTimeout(() => {
+      this.markPaneAttention(firstPaneId)
+      logger.info('ACCEPTANCE_BACKGROUND_BELL state=' + firstState + 'fired,paneId=' + firstPaneId)
+    }, 2500)
+    if (secondPaneId !== firstPaneId && !resetProbe) {
+      logger.info('ACCEPTANCE_BACKGROUND_BELL state=suppression-scheduled,paneId=' + secondPaneId)
+      setTimeout(() => {
+        this.markPaneAttention(secondPaneId)
+        logger.info('ACCEPTANCE_BACKGROUND_BELL state=suppression-fired,paneId=' + secondPaneId)
+      }, 3500)
+    }
+  }
+
+  private openNotificationSettingsForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    let context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext
+    logger.info('ACCEPTANCE_NOTIFICATION_SETTINGS state=opening')
+    notificationManager.openNotificationSettings(context).catch(() => {
+      logger.error('ACCEPTANCE_NOTIFICATION_SETTINGS state=failed')
+    })
+  }
+
+'@
+    $rendererMethod += $backgroundBellMethod
     $text.index = Set-LeanTTYAcceptanceSourceText $text.index `
         "  @Builder`n  menuPanel() {" `
         ($rendererMethod + "  @Builder`n  menuPanel() {")
@@ -765,6 +822,12 @@ function Add-LeanTTYAcceptanceSource {
     $menuAddition += "        this.menuRow($transferFixtureMenuIndex, '⇄', " +
         "'Acceptance: Transfer Fixture', '', true,`n" +
         "          () => { this.toggleDownloadsTransferFixtureForAcceptance() })`n"
+    $menuAddition += "        this.menuRow($backgroundBellMenuIndex, '!', " +
+        "'Acceptance: Background BEL', '', true,`n" +
+        "          () => { this.scheduleBackgroundBellForAcceptance() })`n"
+    $menuAddition += "        this.menuRow($notificationSettingsMenuIndex, '⚙', " +
+        "'Acceptance: Notification Settings', '', true,`n" +
+        "          () => { this.openNotificationSettingsForAcceptance() })`n"
     $menuAddition += "      }`n"
     $text.index = Set-LeanTTYAcceptanceSourceText $text.index $menuAnchor $menuAddition
 

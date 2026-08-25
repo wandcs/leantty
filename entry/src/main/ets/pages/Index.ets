@@ -15,6 +15,8 @@ import { UserPreferences } from '../model/settings/UserPreferences'
 import { BrowserLauncher } from '../model/browser/BrowserLauncher'
 import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator'
 import { KeyCodeMap } from '../common/constants/KeyCodeMap'
+import { BackgroundBellNotification } from '../model/ui/BackgroundBellNotification'
+import { UiText } from '../model/ui/UiText'
 
 const logger: Logger = new Logger('IndexPage')
 const WARM_TAB_RETENTION_MS: number = 30000
@@ -37,12 +39,15 @@ struct Index {
   mainWindowVisible: boolean = true
   @StorageLink('windowTransparencyAvailable') @Watch('onWindowTransparencyAvailabilityChanged')
   windowTransparencyAvailable: boolean = false
+  @StorageLink('backgroundBellReturnPaneId') backgroundBellReturnPaneId: string = ''
+  @StorageLink('backgroundBellReturnToken') @Watch('onBackgroundBellReturnRequested')
+  backgroundBellReturnToken: number = 0
   @State splitRatio: number = 0.5
   @State splitDragging: boolean = false
   @State splitHandleHovered: boolean = false
   @State splitHandleFocused: boolean = false
   @State menuSelectedIndex: number = 0
-  @State transparencyLabel: string = 'Medium'
+  @State transparencyLabel: string = ''
   @State transparencyDecreaseHovered: boolean = false
   @State transparencyIncreaseHovered: boolean = false
   @State fontDecreaseHovered: boolean = false
@@ -60,6 +65,7 @@ struct Index {
   private applicationCloseHandler: () => Promise<void> = async (): Promise<void> => {
     await this.appVm.disconnectAllPaneRuntimes()
   }
+  private consumedBackgroundBellReturnToken: number = 0
 
   aboutToAppear(): void {
     this.fontSize = InteractionPolicy.clampFontSize(this.fontSize)
@@ -69,6 +75,7 @@ struct Index {
     this.applyTheme()
     ThemeManager.getInstance().onThemeChange(this.themeChangeHandler)
     ApplicationCloseCoordinator.register(this.applicationCloseHandler)
+    this.onBackgroundBellReturnRequested()
     logger.info('Index page initialized')
   }
 
@@ -120,6 +127,7 @@ struct Index {
                 runtime.attachSurface(ctrl)
                 runtime.viewModel.applyTerminalTheme(this.getTerminalThemeJson())
                 runtime.surface.setFontSize(this.fontSize)
+                runtime.surface.setLocalization(JSON.stringify(UiText.terminalSearch(this.uiContext())))
               },
               onPaneDisappear: () => {
                 runtime.detachSurface()
@@ -166,7 +174,7 @@ struct Index {
                   .height(5)
                   .fill(this.chromeColors.attention)
                   .position({ x: 0, y: 8 })
-                  .accessibilityText('Left pane attention requested')
+                  .accessibilityText(this.text('a11y_left_terminal_attention'))
               }
               if (this.splitPaneNeedsAttention(true)) {
                 Circle()
@@ -174,7 +182,7 @@ struct Index {
                   .height(5)
                   .fill(this.chromeColors.attention)
                   .position({ x: 9, y: 8 })
-                  .accessibilityText('Right pane attention requested')
+                  .accessibilityText(this.text('a11y_right_terminal_attention'))
               }
               Column()
                 .width(this.splitDragging || this.splitHandleHovered ? 3 : 2)
@@ -189,7 +197,7 @@ struct Index {
               .zIndex(2)
               .position({ x: this.splitRatio * 100 + '%', y: 0 })
               .translate({ x: -7, y: 0 })
-              .accessibilityText('Resize split panes')
+              .accessibilityText(this.text('a11y_resize_split'))
               .focusable(true)
               .onHover((hovered: boolean) => { this.splitHandleHovered = hovered })
               .onFocus(() => { this.splitHandleFocused = true })
@@ -296,8 +304,13 @@ struct Index {
   private onMainWindowVisibilityChanged(): void {
     logger.info('Main window visibility applied: visible=' + this.mainWindowVisible.toString())
     if (this.mainWindowVisible) {
+      BackgroundBellNotification.resetForVisibleWindow()
       this.restoreActivePaneFocus()
       return
+    }
+    let mounted: PaneRuntime[] = this.mountedPaneRuntimes()
+    for (let i = 0; i < mounted.length; i++) {
+      mounted[i].viewModel.requestBlur()
     }
     this.captureMountedTerminalSnapshots()
     if (this.warmTabId.length > 0) {
@@ -305,6 +318,33 @@ struct Index {
     }
     this.clearWarmTabEvictionTimer()
     this.warmTabId = ''
+  }
+
+  private onBackgroundBellReturnRequested(): void {
+    if (this.backgroundBellReturnToken <= this.consumedBackgroundBellReturnToken) {
+      return
+    }
+    this.consumedBackgroundBellReturnToken = this.backgroundBellReturnToken
+    let paneId: string = this.backgroundBellReturnPaneId
+    let pane: PaneInfo | null = this.appVm.getPane(paneId)
+    if (!InteractionPolicy.shouldApplyBackgroundBellReturn(
+      pane !== null, pane !== null && pane.needsAttention)) {
+      logger.info('Background BEL return ignored because the source is no longer pending')
+      return
+    }
+    if (pane === null) {
+      return
+    }
+    let tabIndex: number = this.findTabIndexForPane(paneId)
+    if (tabIndex < 0) {
+      return
+    }
+    if (tabIndex !== this.appVm.getActiveTabIndex()) {
+      this.selectTab(tabIndex)
+    }
+    this.focusPane(paneId, true)
+    BackgroundBellNotification.cancelIfTarget(paneId)
+    logger.info('Background BEL return applied: paneId=' + paneId)
   }
 
   private onWindowTransparencyAvailabilityChanged(): void {
@@ -363,7 +403,7 @@ struct Index {
     this.backgroundMaterial = this.windowTransparencyAvailable &&
       theme.transparencyMode !== TransparencyMode.OFF ?
       BlurStyle.BACKGROUND_REGULAR : BlurStyle.NONE
-    this.transparencyLabel = TransparencyPolicy.label(theme.transparencyMode)
+    this.transparencyLabel = this.transparencyModeLabel(theme.transparencyMode)
     let themeJson: string = theme.terminal.toJsInitObject()
     let runtimes: PaneRuntime[] = this.appVm.getPaneRuntimes()
     for (let i = 0; i < runtimes.length; i++) {
@@ -411,7 +451,7 @@ struct Index {
     }
     let runtime: PaneRuntime = new PaneRuntime(pane.id, vm)
     runtime.surface.setOnCopyResult((success: boolean) => {
-      this.showTransientFeedback(success ? 'Copied' : 'Copy failed')
+      this.showTransientFeedback(this.text(success ? 'feedback_copied' : 'feedback_copy_failed'))
     })
     runtime.surface.setOnBellAttention(() => {
       this.markPaneAttention(pane.id)
@@ -441,7 +481,7 @@ struct Index {
       return
     }
     if (index === activeTabIndex) {
-      this.appVm.clearPaneAttention(tabs[index].activePaneId)
+      this.clearPaneAttention(tabs[index].activePaneId)
       this.syncWorkspace()
       this.restoreActivePaneFocus()
       return
@@ -449,7 +489,7 @@ struct Index {
     let targetTabId: string = tabs[index].id
     this.deactivateActiveTab(targetTabId)
     this.appVm.setActiveTab(index)
-    this.appVm.clearPaneAttention(tabs[index].activePaneId)
+    this.clearPaneAttention(tabs[index].activePaneId)
     this.syncWorkspace()
     this.restoreActivePaneFocus()
   }
@@ -572,6 +612,9 @@ struct Index {
       this.clearWarmTabEvictionTimer()
       this.warmTabId = ''
     }
+    for (let paneIndex: number = 0; paneIndex < tab.panes.length; paneIndex++) {
+      BackgroundBellNotification.cancelIfTarget(tab.panes[paneIndex].id)
+    }
     this.appVm.removeTab(index)
     this.syncWorkspace()
     let activeAfterClose: TabInfo | null = this.activeTab()
@@ -592,8 +635,8 @@ struct Index {
       this.closeTab(index)
       return
     }
-    this.showConfirmation('Close active session?',
-      'Closing this tab will disconnect its SSH session.', 'Close tab', () => { this.closeTab(index) })
+    this.showConfirmation(this.text('dialog_close_tab_title'),
+      this.text('dialog_close_tab_message'), this.text('dialog_close_tab_action'), () => { this.closeTab(index) })
   }
 
   private requestCloseActivePane(): void {
@@ -602,16 +645,17 @@ struct Index {
       this.closeActivePane()
       return
     }
-    this.showConfirmation('Close active pane?',
-      'Closing this pane will disconnect its SSH session.', 'Close pane', () => { this.closeActivePane() })
+    this.showConfirmation(this.text('dialog_close_split_title'),
+      this.text('dialog_close_split_message'), this.text('dialog_close_split_action'),
+      () => { this.closeActivePane() })
   }
 
   private requestKeyDelete(name: string, fingerprint: string,
     onConfirm: () => void, onCancel: () => void): void {
-    let detail: string = fingerprint.length > 0 ? '\nFingerprint: ' + fingerprint : ''
-    this.showConfirmation('Delete key "' + name + '"?',
-      'This permanently deletes the private and public key files.' + detail,
-      'Delete key', onConfirm, onCancel)
+    let detail: string = fingerprint.length > 0 ? '\n' + this.text('dialog_key_fingerprint', fingerprint) : ''
+    this.showConfirmation(this.text('dialog_delete_key_title', name),
+      this.text('dialog_delete_key_message') + detail,
+      this.text('dialog_delete_key_action'), onConfirm, onCancel)
   }
 
   private async showConfirmation(title: string, message: string, confirmLabel: string,
@@ -621,7 +665,7 @@ struct Index {
         title: title,
         message: message,
         buttons: [
-          { text: 'Cancel', color: this.chromeColors.commandBarText },
+          { text: this.text('dialog_cancel'), color: this.chromeColors.commandBarText },
           { text: confirmLabel, color: '#F38BA8' }
         ]
       })
@@ -786,6 +830,8 @@ struct Index {
   }
 
   private markPaneAttention(paneId: string): void {
+    let paneBefore: PaneInfo | null = this.appVm.getPane(paneId)
+    let wasPending: boolean = paneBefore !== null && paneBefore.needsAttention
     let persistAttention: boolean = InteractionPolicy.shouldPersistBellAttention(
       this.isPaneInActiveTab(paneId),
       this.isPaneFocused(paneId),
@@ -793,6 +839,12 @@ struct Index {
       this.menuOpen)
     if (persistAttention) {
       this.appVm.markPaneAttention(paneId)
+    }
+    let paneAfter: PaneInfo | null = this.appVm.getPane(paneId)
+    let isPending: boolean = paneAfter !== null && paneAfter.needsAttention
+    if (InteractionPolicy.shouldPublishBackgroundBell(
+      wasPending, isPending, this.mainWindowVisible)) {
+      BackgroundBellNotification.publish(this.uiContext(), paneId)
     }
     this.attentionPulsePaneId = paneId
     this.attentionPulseCount = InteractionPolicy.bellPulseCount(persistAttention)
@@ -806,6 +858,7 @@ struct Index {
       return
     }
     this.appVm.clearPaneAttention(paneId)
+    BackgroundBellNotification.cancelIfTarget(paneId)
     this.syncWorkspace()
   }
 
@@ -815,6 +868,14 @@ struct Index {
     } catch (e) {
       logger.warn('Copy feedback failed: ' + e)
     }
+  }
+
+  private uiContext(): common.UIAbilityContext {
+    return this.getUIContext().getHostContext() as common.UIAbilityContext
+  }
+
+  private text(name: string, ...args: Array<string | number>): string {
+    return UiText.get(this.uiContext(), name, ...args)
   }
 
   private async openUrlForPane(paneId: string, generation: number, url: string): Promise<void> {
@@ -832,11 +893,11 @@ struct Index {
         opened = await BrowserLauncher.openUserGuide(context, url)
       }
       if (!opened) {
-        this.showTransientFeedback('Unable to open link')
+        this.showTransientFeedback(this.text('feedback_open_link_failed'))
       }
     } catch (e) {
       logger.warn('Open link failed')
-      this.showTransientFeedback('Unable to open link')
+      this.showTransientFeedback(this.text('feedback_open_link_failed'))
     }
   }
 
@@ -898,7 +959,7 @@ struct Index {
     }
     this.appVm.setActivePane(tab.id, paneId)
     if (userInitiated) {
-      this.appVm.clearPaneAttention(paneId)
+      this.clearPaneAttention(paneId)
     }
     this.syncWorkspace()
     this.restoreActivePaneFocus()
@@ -926,6 +987,7 @@ struct Index {
     if (removedPane === null) {
       return
     }
+    BackgroundBellNotification.cancelIfTarget(removedPane.id)
     this.syncWorkspace()
     this.restoreActivePaneFocus()
     await this.appVm.waitForPendingRuntimeDisposals()
@@ -1107,8 +1169,16 @@ struct Index {
       return
     }
     let mode: TransparencyMode = manager.stepTransparencyMode(direction)
-    this.transparencyLabel = TransparencyPolicy.label(mode)
+    this.transparencyLabel = this.transparencyModeLabel(mode)
     UserPreferences.saveTransparencyMode(mode)
+  }
+
+  private transparencyModeLabel(mode: TransparencyMode): string {
+    if (mode === TransparencyMode.OFF) return this.text('transparency_off')
+    if (mode === TransparencyMode.LOW) return this.text('transparency_low')
+    if (mode === TransparencyMode.HIGH) return this.text('transparency_high')
+    if (mode === TransparencyMode.EXTREME) return this.text('transparency_maximum')
+    return this.text('transparency_medium')
   }
 
   private moveMenuSelection(direction: number): void {
@@ -1133,10 +1203,12 @@ struct Index {
   @Builder
   menuPanel() {
     Column() {
-      this.menuRow(0, '+', 'New Tab', 'Ctrl+Shift+T', true, () => { this.newTab() })
-      this.menuRow(1, '⋕', 'Split Pane', 'Ctrl+Shift+D', !this.activeTabIsSplit(), () => { this.toggleSplit() })
-      this.menuRow(2, '✕', 'Close Pane', 'Ctrl+Shift+W', this.activeTabIsSplit(), () => { this.requestCloseActivePane() })
-      this.menuRow(3, '⌕', 'Search', 'Ctrl+Alt+F', this.activePaneRuntime() !== null,
+      this.menuRow(0, '+', this.text('menu_new_tab'), 'Ctrl+Shift+T', true, () => { this.newTab() })
+      this.menuRow(1, '⋕', this.text('menu_split_pane'), 'Ctrl+Shift+D', !this.activeTabIsSplit(),
+        () => { this.toggleSplit() })
+      this.menuRow(2, '✕', this.text('menu_close_pane'), 'Ctrl+Shift+W', this.activeTabIsSplit(),
+        () => { this.requestCloseActivePane() })
+      this.menuRow(3, '⌕', this.text('menu_find'), 'Ctrl+Alt+F', this.activePaneRuntime() !== null,
         () => { this.openActivePaneSearch() }, true, false)
       this.menuDivider()
       this.transparencyMenuRow()
@@ -1204,7 +1276,7 @@ struct Index {
         .fontColor(this.chromeColors.commandBarText)
         .width(24)
         .textAlign(TextAlign.Center)
-      Text('Transparency')
+      Text(this.text('menu_transparency'))
         .fontSize(13)
         .fontColor(this.chromeColors.commandBarText)
         .layoutWeight(1)
@@ -1222,7 +1294,7 @@ struct Index {
         .backgroundColor(this.transparencyDecreaseHovered ? this.chromeColors.commandBarBorder : '#00000000')
         .enabled(TransparencyPolicy.canDecrease(ThemeManager.getInstance().getTransparencyMode()))
         .focusable(false)
-        .accessibilityText('Decrease transparency, Ctrl+Alt+-')
+        .accessibilityText(this.text('a11y_decrease_transparency'))
         .onHover((hovered: boolean) => { this.transparencyDecreaseHovered = hovered })
         .bindTips('Ctrl+Alt+-', {
           appearingTime: 300,
@@ -1250,7 +1322,7 @@ struct Index {
         .backgroundColor(this.transparencyIncreaseHovered ? this.chromeColors.commandBarBorder : '#00000000')
         .enabled(TransparencyPolicy.canIncrease(ThemeManager.getInstance().getTransparencyMode()))
         .focusable(false)
-        .accessibilityText('Increase transparency, Ctrl+Alt+=')
+        .accessibilityText(this.text('a11y_increase_transparency'))
         .onHover((hovered: boolean) => { this.transparencyIncreaseHovered = hovered })
         .bindTips('Ctrl+Alt+=', {
           appearingTime: 300,
@@ -1267,8 +1339,7 @@ struct Index {
     .borderRadius(4)
     .backgroundColor(this.menuSelectedIndex === 4 ? this.chromeColors.commandBarBorder : '#00000000')
     .focusable(true)
-    .accessibilityText('Transparency, ' + this.transparencyLabel +
-      '. Use left and right arrow keys to adjust')
+    .accessibilityText(this.text('a11y_transparency', this.transparencyLabel))
     .onHover((hovered: boolean) => { if (hovered) { this.menuSelectedIndex = 4 } })
     .onClick(() => { this.menuSelectedIndex = 4 })
   }
@@ -1282,7 +1353,7 @@ struct Index {
         .fontColor(this.chromeColors.commandBarText)
         .width(24)
         .textAlign(TextAlign.Center)
-      Text('Font Size')
+      Text(this.text('menu_font_size'))
         .fontSize(13)
         .fontColor(this.chromeColors.commandBarText)
         .layoutWeight(1)
@@ -1300,7 +1371,7 @@ struct Index {
         .backgroundColor(this.fontDecreaseHovered ? this.chromeColors.commandBarBorder : '#00000000')
         .enabled(this.fontSize > InteractionPolicy.MIN_FONT_SIZE)
         .focusable(false)
-        .accessibilityText('Decrease font size, Ctrl+-')
+        .accessibilityText(this.text('a11y_decrease_font_size'))
         .onHover((hovered: boolean) => { this.fontDecreaseHovered = hovered })
         .bindTips('Ctrl+-', {
           appearingTime: 300,
@@ -1328,7 +1399,7 @@ struct Index {
         .backgroundColor(this.fontIncreaseHovered ? this.chromeColors.commandBarBorder : '#00000000')
         .enabled(this.fontSize < InteractionPolicy.MAX_FONT_SIZE)
         .focusable(false)
-        .accessibilityText('Increase font size, Ctrl+=')
+        .accessibilityText(this.text('a11y_increase_font_size'))
         .onHover((hovered: boolean) => { this.fontIncreaseHovered = hovered })
         .bindTips('Ctrl+=', {
           appearingTime: 300,
@@ -1345,8 +1416,7 @@ struct Index {
     .borderRadius(4)
     .backgroundColor(this.menuSelectedIndex === 5 ? this.chromeColors.commandBarBorder : '#00000000')
     .focusable(true)
-    .accessibilityText('Font size, ' + this.fontSize.toString() + ' pixels. ' +
-      'Use left and right arrow keys to adjust. Ctrl+0 resets')
+    .accessibilityText(this.text('a11y_font_size', this.fontSize.toString()))
     .onHover((hovered: boolean) => { if (hovered) { this.menuSelectedIndex = 5 } })
     .onClick(() => { this.menuSelectedIndex = 5 })
   }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { InteractionPolicy, WorkspaceNavigationAction } from '../main/ets/model/ui/InteractionPolicy'
 import { ApplicationCloseCoordinator } from '../main/ets/model/ui/ApplicationCloseCoordinator'
+import { UiText } from '../main/ets/model/ui/UiText'
 import { WindowGridSnapPolicy } from '../main/ets/model/ui/WindowGridSnapPolicy'
 
 export default function workspaceInteractionTest() {
@@ -17,6 +18,15 @@ export default function workspaceInteractionTest() {
       expect(WindowGridSnapPolicy.clampExtent(500, 640, 3000)).assertEqual(640)
       expect(WindowGridSnapPolicy.clampExtent(3200, 640, 3000)).assertEqual(3000)
       expect(WindowGridSnapPolicy.clampExtent(1200, 640, 3000)).assertEqual(1200)
+    })
+
+    it('selectsChineseOnlyForExplicitChineseLanguageTags', 0, () => {
+      expect(UiText.isChineseLanguage('zh')).assertEqual(true)
+      expect(UiText.isChineseLanguage('zh-CN')).assertEqual(true)
+      expect(UiText.isChineseLanguage('ZH_Hans_CN')).assertEqual(true)
+      expect(UiText.isChineseLanguage(' en-US ')).assertEqual(false)
+      expect(UiText.isChineseLanguage('ja-JP')).assertEqual(false)
+      expect(UiText.isChineseLanguage('')).assertEqual(false)
     })
 
     it('routesExactCtrlCBeforeArkWebConsumesSelectionCopy', 0, () => {
@@ -128,6 +138,19 @@ export default function workspaceInteractionTest() {
       expect(InteractionPolicy.shouldPersistBellAttention(true, true, true, true)).assertEqual(true)
       expect(InteractionPolicy.bellPulseCount(false)).assertEqual(1)
       expect(InteractionPolicy.bellPulseCount(true)).assertEqual(2)
+    })
+
+    it('publishesSystemBellOnlyForANewPendingTransitionWhileTheWholeWindowIsHidden', 0, () => {
+      expect(InteractionPolicy.shouldPublishBackgroundBell(false, true, false)).assertEqual(true)
+      expect(InteractionPolicy.shouldPublishBackgroundBell(false, true, true)).assertEqual(false)
+      expect(InteractionPolicy.shouldPublishBackgroundBell(true, true, false)).assertEqual(false)
+      expect(InteractionPolicy.shouldPublishBackgroundBell(false, false, false)).assertEqual(false)
+      expect(InteractionPolicy.shouldPublishBackgroundBell(true, false, false)).assertEqual(false)
+      expect(InteractionPolicy.shouldAttemptBackgroundBellForEpisode(false)).assertEqual(true)
+      expect(InteractionPolicy.shouldAttemptBackgroundBellForEpisode(true)).assertEqual(false)
+      expect(InteractionPolicy.shouldApplyBackgroundBellReturn(true, true)).assertEqual(true)
+      expect(InteractionPolicy.shouldApplyBackgroundBellReturn(true, false)).assertEqual(false)
+      expect(InteractionPolicy.shouldApplyBackgroundBellReturn(false, true)).assertEqual(false)
     })
 
     it('clampsLayoutAndKeepsOnlyOnePreviousTabSurfaceWarm', 0, () => {

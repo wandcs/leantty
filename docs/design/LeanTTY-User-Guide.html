@@ -107,17 +107,11 @@
       border-bottom: 1px solid var(--line);
     }
 
-    .language-control {
-      position: fixed;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    #language-zh:checked ~ .guide-en,
-    #language-en:checked ~ .guide-zh { display: none; }
+    .guide-en { display: none; }
+    body:has(.guide-en:target, .guide-en :target) .guide-zh { display: none; }
+    body:has(.guide-en:target, .guide-en :target) .guide-en { display: block; }
+    body:has(.guide-zh:target, .guide-zh :target) .guide-zh { display: block; }
+    body:has(.guide-zh:target, .guide-zh :target) .guide-en { display: none; }
 
     .masthead-meta {
       display: flex;
@@ -133,7 +127,7 @@
       background: var(--surface);
     }
 
-    .language-switch label {
+    .language-switch a {
       min-width: 58px;
       padding: 4px 9px;
       border-radius: 5px;
@@ -145,16 +139,15 @@
       user-select: none;
     }
 
-    .language-switch label:hover { color: var(--text-strong); }
+    .language-switch a:hover { color: var(--text-strong); }
 
-    #language-zh:checked ~ .guide-zh label[for="language-zh"],
-    #language-en:checked ~ .guide-en label[for="language-en"] {
+    body:not(:has(.guide-en:target, .guide-en :target)) .guide-zh a[href="#guide-zh"],
+    body:has(.guide-en:target, .guide-en :target) .guide-en a[href="#guide-en"] {
       background: var(--surface-soft);
       color: var(--text-strong);
     }
 
-    #language-zh:focus-visible ~ .guide-zh label[for="language-zh"],
-    #language-en:focus-visible ~ .guide-en label[for="language-en"] {
+    .language-switch a:focus-visible {
       outline: 2px solid var(--mint);
       outline-offset: 3px;
     }
@@ -822,7 +815,7 @@
       .masthead { padding-top: 28px; }
       .edition { display: none; }
       .masthead-meta { gap: 0; }
-      .language-switch label { min-width: 52px; padding-inline: 7px; }
+      .language-switch a { min-width: 52px; padding-inline: 7px; }
 
       .hero {
         padding: 48px 0 58px;
@@ -901,10 +894,7 @@
   </style>
 </head>
 <body>
-  <input class="language-control" type="radio" name="guide-language" id="language-zh" checked>
-  <input class="language-control" type="radio" name="guide-language" id="language-en">
-
-  <div class="guide-page guide-zh" lang="zh-CN">
+  <div id="guide-zh" class="guide-page guide-zh" lang="zh-CN">
   <a class="skip-link" href="#zh-content">跳到使用指南</a>
 
   <header class="masthead">
@@ -938,8 +928,8 @@
     <div class="masthead-meta">
       <span class="edition">使用指南 · 1.5.0</span>
       <div class="language-switch" role="group" aria-label="指南语言">
-        <label for="language-zh">中文</label>
-        <label for="language-en" lang="en">English</label>
+        <a href="#guide-zh" aria-current="page">中文</a>
+        <a href="#guide-en" lang="en">English</a>
       </div>
     </div>
   </header>
@@ -987,13 +977,14 @@
       <ol>
         <li><a href="#zh-practices"><span class="toc-index">01</span><span>日常最佳实践</span></a></li>
         <li><a href="#zh-start"><span class="toc-index">02</span><span>开始连接</span></a></li>
-        <li><a href="#zh-trust"><span class="toc-index">03</span><span>信任与身份</span></a></li>
-        <li><a href="#zh-workspace"><span class="toc-index">04</span><span>工作区</span></a></li>
-        <li><a href="#zh-shortcuts"><span class="toc-index">05</span><span>快捷键</span></a></li>
-        <li><a href="#zh-transfer"><span class="toc-index">06</span><span>单文件传输</span></a></li>
-        <li><a href="#zh-commands"><span class="toc-index">07</span><span>本地命令</span></a></li>
-        <li><a href="#zh-data"><span class="toc-index">08</span><span>数据与隐私</span></a></li>
-        <li><a href="#zh-recovery"><span class="toc-index">09</span><span>故障恢复</span></a></li>
+        <li><a href="#zh-agent"><span class="toc-index">03</span><span>Agent 工作方式</span></a></li>
+        <li><a href="#zh-trust"><span class="toc-index">04</span><span>信任与身份</span></a></li>
+        <li><a href="#zh-workspace"><span class="toc-index">05</span><span>工作区</span></a></li>
+        <li><a href="#zh-shortcuts"><span class="toc-index">06</span><span>快捷键</span></a></li>
+        <li><a href="#zh-transfer"><span class="toc-index">07</span><span>单文件传输</span></a></li>
+        <li><a href="#zh-commands"><span class="toc-index">08</span><span>本地命令</span></a></li>
+        <li><a href="#zh-data"><span class="toc-index">09</span><span>数据与隐私</span></a></li>
+        <li><a href="#zh-recovery"><span class="toc-index">10</span><span>故障恢复</span></a></li>
       </ol>
     </nav>
 
@@ -1023,8 +1014,8 @@
           </article>
           <article class="practice-item">
             <span class="practice-label">SEARCH</span>
-            <h3>只搜索当前 Pane</h3>
-            <p>按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> 搜索当前 Pane 中已经显示的终端内容，使用 <kbd>Enter</kbd>/<kbd>Shift</kbd>+<kbd>Enter</kbd> 前后跳转。</p>
+            <h3>只搜索当前分屏</h3>
+            <p>按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> 搜索当前分屏中已经显示的终端内容，使用 <kbd>Enter</kbd>/<kbd>Shift</kbd>+<kbd>Enter</kbd> 前后跳转。</p>
           </article>
           <article class="practice-item">
             <span class="practice-label">VERIFY</span>
@@ -1118,14 +1109,14 @@ ssh -J jump deploy@target.example.com</code></pre>
           <code>ProxyCommand</code> 或逗号分隔的多跳链。
         </p>
         <p>
-          连接成功后，当前 Tab 会显示 <code>用户@Host</code>；如果通过保存的 Host 名称连接，
+          连接成功后，当前标签页会显示 <code>用户@Host</code>；如果通过保存的 Host 名称连接，
           标题会保留这个短名称。正常退出远端 Shell、连接失败或取消连接后，标题会恢复为
           <code>ltty</code>。
         </p>
 
         <h3>已连接 SSH 的行首 escape</h3>
         <p>
-          在 Session 刚连接或按下 Enter 后，输入 <code>~.</code> 只断开当前 Pane，
+          在 SSH 连接刚建立或按下 Enter 后，输入 <code>~.</code> 只断开当前分屏，
           <code>~?</code> 显示 LeanTTY 支持的 escape，<code>~I</code> 显示脱敏后的目标、可选跳板
           和连接状态，<code>~~</code> 向远端发送一个字面 <code>~</code>。行中的 tilde 和未知的
           行首组合（例如 <code>~x</code>）会原样发送；连接信息不包含密码、认证回答或私钥路径。
@@ -1134,6 +1125,36 @@ ssh -J jump deploy@target.example.com</code></pre>
         <div class="callout">
           <strong>LeanTTY 负责连接，长期任务仍在远端运行。</strong>
           <p>如果工作必须跨越应用退出、重启或断网继续，请在远端使用 tmux 或 screen。</p>
+        </div>
+      </section>
+
+      <section id="zh-agent" class="doc-section">
+        <p class="section-kicker">远端 Agent</p>
+        <h2>把任务留在服务器，把 LeanTTY 当作 TTY 入口。</h2>
+        <p class="section-intro">
+          推荐先进入一个有名字的远端 tmux 会话，再启动 Agent。LeanTTY 负责连接、输入、显示、
+          搜索和提醒；应用退出、系统休眠或网络中断后的任务存活由 tmux 或 screen 负责。
+        </p>
+
+        <pre><code>ssh work
+tmux new -As agent
+codex                 # 也可以运行 opencode、pi 或 qwen</code></pre>
+        <p>
+          按 tmux 的 <kbd>Ctrl</kbd>+<kbd>B</kbd>，再按 <kbd>D</kbd> 可离开会话。重新连接服务器后，
+          运行 <code>tmux attach -t agent</code> 继续。不要把标签页或系统通知当作任务保活机制。
+        </p>
+
+        <h3>通知配置与已知边界</h3>
+        <p>以下结果核对于 2026-08-24：Codex CLI 0.149.0、OpenCode 1.18.22、Pi Agent 0.84.2 和 Qwen Code 0.22.0。</p>
+        <ul class="feature-list">
+          <li>Codex 可将 <code>tui.notification_method</code> 设为 <code>bel</code>；普通 SSH 和 tmux 的原生 BEL 已通过。</li>
+          <li>Qwen Code 启用 <code>general.terminalBell</code>，并把 <code>general.notificationMode</code> 设为 <code>all</code>。在 tmux 中还要加入 <code>set -g focus-events on</code>，让 Qwen 收到终端焦点变化；该 tmux 路径已通过。</li>
+          <li>Pi 随包提供的 <code>notify.ts</code> extension 会发出 OSC 777，LeanTTY 可以识别；但完成信号若在应用隐藏并被 HarmonyOS 暂停后才到达，系统通知可能不会出现。</li>
+          <li>OpenCode 普通 SSH 的原生 OSC 99 完成通知、通用系统通知和返回路径已通过。OpenCode 1.18.22 在 tmux 中仍可正常交互、离开和恢复，但即使启用 tmux passthrough 也没有发出完整通知帧，应视为上游 tmux 通知限制。LeanTTY 只接收完整的 title/body 通知帧，并丢弃标识和内容；更丰富的 OSC 99 操作不会触发本地效果。</li>
+        </ul>
+        <div class="callout warning">
+          <strong>系统通知是尽力而为，不是任务状态。</strong>
+          <p>LeanTTY 只显示固定的通用文案，不读取 Agent 回答或任务内容；每次连续后台停留最多尝试一次。重要任务请放进 tmux 或 screen，并回到真实终端确认结果。</p>
         </div>
       </section>
 
@@ -1183,9 +1204,9 @@ ssh-copy-id -i id_work user@example.com</code></pre>
 
       <section id="zh-workspace" class="doc-section">
         <p class="section-kicker">克制的工作区</p>
-        <h2>用 Tab 区分上下文，需要对照时再使用双 Pane。</h2>
+        <h2>用标签页区分上下文，需要对照时再使用双分屏。</h2>
         <p class="section-intro">
-          每个 Tab 可以放一个或两个 Pane。每个 Pane 都有独立的 SSH Session 和终端，
+          每个标签页可以放一个或两个分屏。每个分屏都有独立的 SSH 连接和终端，
           焦点、搜索、输出和连接状态互不干扰。
         </p>
 
@@ -1195,11 +1216,11 @@ ssh-copy-id -i id_work user@example.com</code></pre>
               <tr><th>任务</th><th>行为</th></tr>
             </thead>
             <tbody>
-              <tr><td>新建 Tab</td><td>打开一个新的本地提示符，可独立建立 SSH Session。</td></tr>
-              <tr><td>拆分 Pane</td><td>在当前 Tab 增加第二个 Pane；LeanTTY 不创建更深的布局。</td></tr>
-              <tr><td>搜索</td><td>只搜索活动 Pane 当前已经显示的终端内容；空查询和无结果均显示 <code>0/0</code>。</td></tr>
-              <tr><td>BEL 提醒</td><td>短暂强调来源 Tab；未查看的输出保留小型琥珀色标记。</td></tr>
-              <tr><td>关闭</td><td>关闭已连接的 Pane 会断开该 Pane 的 SSH Session。</td></tr>
+              <tr><td>新建标签页</td><td>打开一个新的本地提示符，可独立建立 SSH 连接。</td></tr>
+              <tr><td>新建分屏</td><td>在当前标签页增加第二个分屏；LeanTTY 不创建更深的布局。</td></tr>
+              <tr><td>搜索</td><td>只搜索当前分屏已经显示的终端内容；空查询和无结果均显示 <code>0/0</code>。</td></tr>
+              <tr><td>终端提醒</td><td>BEL 或受支持的 OSC 9/99/777 会在前台短暂强调来源标签页，未查看的输出保留小型琥珀色标记；整个应用不可见时，每次连续后台停留最多尝试一次不含远端内容的系统通知，点击只返回仍待处理的来源分屏。</td></tr>
+              <tr><td>关闭</td><td>关闭已连接的分屏会断开其中的 SSH 连接。</td></tr>
             </tbody>
           </table>
         </div>
@@ -1226,13 +1247,13 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         </p>
 
         <div class="key-grid" aria-label="LeanTTY 快捷键">
-          <div class="key-row"><span class="key-action">新建 Tab</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></span></div>
-          <div class="key-row"><span class="key-action">拆分 Pane</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></span></div>
-          <div class="key-row"><span class="key-action">下一个 Tab</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Tab</kbd></span></div>
-          <div class="key-row"><span class="key-action">上一个 Tab</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span></div>
-          <div class="key-row"><span class="key-action">聚焦左 / 右 Pane</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></span></div>
-          <div class="key-row"><span class="key-action">关闭活动 Pane</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></div>
-          <div class="key-row"><span class="key-action">搜索活动 Pane</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd></span></div>
+          <div class="key-row"><span class="key-action">新建标签页</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></span></div>
+          <div class="key-row"><span class="key-action">新建分屏</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></span></div>
+          <div class="key-row"><span class="key-action">下一个标签页</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Tab</kbd></span></div>
+          <div class="key-row"><span class="key-action">上一个标签页</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></span></div>
+          <div class="key-row"><span class="key-action">聚焦左 / 右分屏</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd></span></div>
+          <div class="key-row"><span class="key-action">关闭当前分屏</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></span></div>
+          <div class="key-row"><span class="key-action">搜索当前分屏</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd></span></div>
           <div class="key-row"><span class="key-action">复制 / 粘贴</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd></span></div>
           <div class="key-row"><span class="key-action">减小 / 增大字号</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>−</kbd> / <kbd>Ctrl</kbd>+<kbd>=</kbd></span></div>
           <div class="key-row"><span class="key-action">重置字号</span><span class="key-combo"><kbd>Ctrl</kbd>+<kbd>0</kbd></span></div>
@@ -1252,7 +1273,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
 
       <section id="zh-transfer" class="doc-section">
         <p class="section-kicker">Downloads 与 SFTP</p>
-        <h2>在当前 Pane 传输一个文件。</h2>
+        <h2>在当前分屏传输一个文件。</h2>
         <p class="section-intro">
           <code>put</code> 和 <code>get</code> 复用 <code>ssh</code> 的 Host、端口、私钥、
           主机校验和认证规则；远端必须提供 SFTP。
@@ -1309,7 +1330,7 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td><code>key list|import|export|rm</code></td><td>管理已经验证的 LeanTTY 密钥对。</td></tr>
               <tr><td><code>ssh-keygen …</code></td><td>生成、检查或更新密钥与主机信任记录。</td></tr>
               <tr><td><code>ssh-copy-id …</code></td><td>通过现有 SSH 路径安装一行公钥。</td></tr>
-              <tr><td><code>exit</code></td><td>关闭当前空闲 Pane；如果它是唯一 Pane，则关闭对应 Tab。</td></tr>
+              <tr><td><code>exit</code></td><td>关闭当前空闲分屏；如果它是唯一分屏，则关闭对应标签页。</td></tr>
             </tbody>
           </table>
         </div>
@@ -1338,7 +1359,7 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td>OpenSSH Host 配置</td><td>密码和认证回答</td></tr>
               <tr><td>已经信任的主机密钥</td><td>口令和未提交的秘密输入</td></tr>
               <tr><td>已经验证的密钥对</td><td>命令历史</td></tr>
-              <tr><td>字号和主窗口位置</td><td>应用退出后的 Tab、Pane、Session 与终端滚动记录</td></tr>
+              <tr><td>字号和主窗口位置</td><td>应用退出后的标签页、分屏、SSH 连接与终端滚动记录</td></tr>
               <tr><td>所选透明度档位</td><td>账号、云工作区或使用情况遥测</td></tr>
             </tbody>
           </table>
@@ -1360,7 +1381,7 @@ get work:/reports/latest.csv reports/</code></pre>
         <p class="section-kicker">遇到问题时</p>
         <h2>先看提示，再按最短步骤恢复。</h2>
         <p class="section-intro">
-          LeanTTY 会直接说明哪里失败。先看活动 Pane 里的提示，只处理当前问题；不要为了省一步
+          LeanTTY 会直接说明哪里失败。先看当前分屏里的提示，只处理当前问题；不要为了省一步
           而跳过主机校验、覆盖保护或其他安全检查。
         </p>
 
@@ -1423,7 +1444,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </footer>
   </div>
 
-  <div class="guide-page guide-en" lang="en">
+  <div id="guide-en" class="guide-page guide-en" lang="en">
   <a class="skip-link" href="#en-content">Skip to the guide</a>
 
   <header class="masthead">
@@ -1457,8 +1478,8 @@ get work:/reports/latest.csv reports/</code></pre>
     <div class="masthead-meta">
       <span class="edition">USER GUIDE · 1.5.0</span>
       <div class="language-switch" role="group" aria-label="Guide language">
-        <label for="language-zh" lang="zh-CN">中文</label>
-        <label for="language-en">English</label>
+        <a href="#guide-zh" lang="zh-CN">中文</a>
+        <a href="#guide-en" aria-current="page">English</a>
       </div>
     </div>
   </header>
@@ -1506,13 +1527,14 @@ get work:/reports/latest.csv reports/</code></pre>
       <ol>
         <li><a href="#en-practices"><span class="toc-index">01</span><span>Daily best practices</span></a></li>
         <li><a href="#en-start"><span class="toc-index">02</span><span>Start a session</span></a></li>
-        <li><a href="#en-trust"><span class="toc-index">03</span><span>Trust &amp; identity</span></a></li>
-        <li><a href="#en-workspace"><span class="toc-index">04</span><span>Workspace</span></a></li>
-        <li><a href="#en-shortcuts"><span class="toc-index">05</span><span>Shortcuts</span></a></li>
-        <li><a href="#en-transfer"><span class="toc-index">06</span><span>Single-file transfer</span></a></li>
-        <li><a href="#en-commands"><span class="toc-index">07</span><span>Local commands</span></a></li>
-        <li><a href="#en-data"><span class="toc-index">08</span><span>Data &amp; privacy</span></a></li>
-        <li><a href="#en-recovery"><span class="toc-index">09</span><span>Recovery</span></a></li>
+        <li><a href="#en-agent"><span class="toc-index">03</span><span>Agent workflow</span></a></li>
+        <li><a href="#en-trust"><span class="toc-index">04</span><span>Trust &amp; identity</span></a></li>
+        <li><a href="#en-workspace"><span class="toc-index">05</span><span>Workspace</span></a></li>
+        <li><a href="#en-shortcuts"><span class="toc-index">06</span><span>Shortcuts</span></a></li>
+        <li><a href="#en-transfer"><span class="toc-index">07</span><span>Single-file transfer</span></a></li>
+        <li><a href="#en-commands"><span class="toc-index">08</span><span>Local commands</span></a></li>
+        <li><a href="#en-data"><span class="toc-index">09</span><span>Data &amp; privacy</span></a></li>
+        <li><a href="#en-recovery"><span class="toc-index">10</span><span>Recovery</span></a></li>
       </ol>
     </nav>
 
@@ -1662,6 +1684,38 @@ ssh -J jump deploy@target.example.com</code></pre>
         </div>
       </section>
 
+      <section id="en-agent" class="doc-section">
+        <p class="section-kicker">Remote Agents</p>
+        <h2>Keep the job on the server. Use LeanTTY as the TTY entry point.</h2>
+        <p class="section-intro">
+          Enter a named remote tmux session before starting an Agent. LeanTTY owns the connection,
+          input, display, search and attention; tmux or screen owns survival across app exits,
+          system sleep and network breaks.
+        </p>
+
+        <pre><code>ssh work
+tmux new -As agent
+codex                 # or run opencode, pi or qwen</code></pre>
+        <p>
+          Press tmux's <kbd>Ctrl</kbd>+<kbd>B</kbd>, then <kbd>D</kbd> to detach. Reconnect and run
+          <code>tmux attach -t agent</code> to resume. Do not treat a tab or system notification as
+          a background-session service.
+        </p>
+
+        <h3>Notification setup and limits</h3>
+        <p>Checked on 2026-08-24 with Codex CLI 0.149.0, OpenCode 1.18.22, Pi Agent 0.84.2 and Qwen Code 0.22.0.</p>
+        <ul class="feature-list">
+          <li>Codex can set <code>tui.notification_method</code> to <code>bel</code>; native BEL passed in direct SSH and tmux.</li>
+          <li>For Qwen Code, enable <code>general.terminalBell</code> and set <code>general.notificationMode</code> to <code>all</code>. Inside tmux, also add <code>set -g focus-events on</code> so Qwen receives terminal focus changes; that tmux path passed.</li>
+          <li>Pi's packaged <code>notify.ts</code> extension emits OSC 777, which LeanTTY recognizes. A completion that arrives only after HarmonyOS suspends the hidden app may not produce a system notification.</li>
+          <li>OpenCode direct SSH passed its native OSC 99 completion notification, generic system notification and return flow. OpenCode 1.18.22 remained usable inside tmux, including detach and reattach, but did not emit a complete notification frame there even with tmux passthrough; treat that as an upstream tmux notification limit. LeanTTY accepts only complete title/body frames and discards their identifiers and content; richer OSC 99 operations have no local effect.</li>
+        </ul>
+        <div class="callout warning">
+          <strong>System notification is best effort, not task state.</strong>
+          <p>LeanTTY uses fixed generic text and never reads the Agent reply or task content. Each continuous hidden-window episode gets at most one attempt. Keep important work in tmux or screen and inspect the real terminal state when you return.</p>
+        </div>
+      </section>
+
       <section id="en-trust" class="doc-section">
         <p class="section-kicker">Security before convenience</p>
         <h2>Trust the host. Control the identity.</h2>
@@ -1723,7 +1777,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
               <tr><td>New tab</td><td>Starts another independent local prompt and session path.</td></tr>
               <tr><td>Split pane</td><td>Adds one second pane to the current tab. LeanTTY does not create deeper layouts.</td></tr>
               <tr><td>Search</td><td>Searches only the active pane's in-memory terminal surface. Empty and no-result queries show <code>0/0</code>.</td></tr>
-              <tr><td>BEL attention</td><td>Briefly emphasizes the source tab; unattended output keeps a small amber marker until visited.</td></tr>
+              <tr><td>Terminal attention</td><td>BEL or accepted OSC 9/99/777 briefly emphasizes the source tab and keeps a small amber marker for unattended output. While the whole app is hidden, each continuous background episode permits at most one generic notification attempt; a click returns only to the existing source pane if it still owns attention.</td></tr>
               <tr><td>Close</td><td>Closing a connected pane disconnects that pane's SSH session.</td></tr>
             </tbody>
           </table>

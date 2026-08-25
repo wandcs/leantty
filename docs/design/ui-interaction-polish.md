@@ -899,6 +899,12 @@ HAP SHA-256 为 `F96EC145ADEE6FEBD0BBBBE5ECE5FB22B2E9AE9A671FFCE0C2E0CD8AC94BE76
 
 ## 决策记录
 
+- 2026-08-25：复核非 Off 档在窗口失焦时切为不透明的问题。签名 ARM64 diagnostic HAP
+  将 PC 容器 active/inactive 同时设为透明时，物理 HarmonyOS PC 返回
+  `401 Parameter error.[window][setWindowContainerColor]` 并触发整项透明能力失败回退；
+  OpenHarmony 窗口管理实现明确要求非系统调用方的 inactive color alpha 必须为 `FF`。
+  因此保留 active 透明、inactive 主题不透明的受支持合同；不以系统签名、伪造桌面背景或
+  焦点监听规避平台信任边界。仅当公开平台合同允许普通应用使用透明 inactive 容器时重审。
 - 2026-08-15–16：SSH 连接成功后的 Tab 标题固定为 `user@displayHost`；OpenSSH alias 优先于解析后的
   hostname/IP；回到本地 `ltty>` 时标题恢复 `ltty`，重连未返回本地提示符时保留连接身份。保留
   稳定 Tab ID，通过 ArkUI V1 的 `@State → @Link → @ObjectLink` 状态链刷新，当前不允许远端

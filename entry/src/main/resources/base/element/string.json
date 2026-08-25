@@ -6,7 +6,7 @@
     },
     {
       "name": "EntryAbility_desc",
-      "value": "Modern terminal emulator for HarmonyOS large-screen PC mode"
+      "value": "SSH terminal for HarmonyOS PCs"
     },
     {
       "name": "EntryAbility_label",
@@ -18,7 +18,223 @@
     },
     {
       "name": "read_write_download_reason",
-      "value": "Used to export SSH key pairs to Downloads"
+      "value": "Used to transfer files and import or export SSH configuration and keys through Downloads"
+    },
+    {
+      "name": "menu_new_tab",
+      "value": "New Tab"
+    },
+    {
+      "name": "menu_split_pane",
+      "value": "Split Pane"
+    },
+    {
+      "name": "menu_close_pane",
+      "value": "Close Pane"
+    },
+    {
+      "name": "menu_find",
+      "value": "Find"
+    },
+    {
+      "name": "menu_transparency",
+      "value": "Transparency"
+    },
+    {
+      "name": "menu_font_size",
+      "value": "Font Size"
+    },
+    {
+      "name": "transparency_off",
+      "value": "Off"
+    },
+    {
+      "name": "transparency_low",
+      "value": "Low"
+    },
+    {
+      "name": "transparency_medium",
+      "value": "Medium"
+    },
+    {
+      "name": "transparency_high",
+      "value": "High"
+    },
+    {
+      "name": "transparency_maximum",
+      "value": "Maximum"
+    },
+    {
+      "name": "feedback_copied",
+      "value": "Copied"
+    },
+    {
+      "name": "feedback_copy_failed",
+      "value": "Copy failed"
+    },
+    {
+      "name": "feedback_open_link_failed",
+      "value": "Unable to open link"
+    },
+    {
+      "name": "notification_terminal_attention",
+      "value": "A terminal needs your attention."
+    },
+    {
+      "name": "dialog_cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "dialog_close_tab_title",
+      "value": "Close this tab?"
+    },
+    {
+      "name": "dialog_close_tab_message",
+      "value": "Any active SSH connections in this tab will be disconnected."
+    },
+    {
+      "name": "dialog_close_tab_action",
+      "value": "Close Tab"
+    },
+    {
+      "name": "dialog_close_split_title",
+      "value": "Close this pane?"
+    },
+    {
+      "name": "dialog_close_split_message",
+      "value": "The SSH connection in this pane will be disconnected."
+    },
+    {
+      "name": "dialog_close_split_action",
+      "value": "Close Pane"
+    },
+    {
+      "name": "dialog_delete_key_title",
+      "value": "Delete key “%s”?"
+    },
+    {
+      "name": "dialog_delete_key_message",
+      "value": "The private and public key files will be permanently deleted."
+    },
+    {
+      "name": "dialog_key_fingerprint",
+      "value": "Fingerprint: %s"
+    },
+    {
+      "name": "dialog_delete_key_action",
+      "value": "Delete Key"
+    },
+    {
+      "name": "dialog_quit_title",
+      "value": "Quit LeanTTY?"
+    },
+    {
+      "name": "dialog_quit_message",
+      "value": "All SSH connections will be disconnected."
+    },
+    {
+      "name": "dialog_quit_action",
+      "value": "Quit LeanTTY"
+    },
+    {
+      "name": "a11y_left_terminal_attention",
+      "value": "Left terminal needs attention"
+    },
+    {
+      "name": "a11y_right_terminal_attention",
+      "value": "Right terminal needs attention"
+    },
+    {
+      "name": "a11y_resize_split",
+      "value": "Resize panes"
+    },
+    {
+      "name": "a11y_close_active_split",
+      "value": "Close active pane"
+    },
+    {
+      "name": "a11y_close_tab",
+      "value": "Close tab: %s"
+    },
+    {
+      "name": "a11y_active_tab",
+      "value": "Active tab: %s"
+    },
+    {
+      "name": "a11y_tab",
+      "value": "Tab: %s"
+    },
+    {
+      "name": "a11y_attention_suffix",
+      "value": ", needs attention"
+    },
+    {
+      "name": "a11y_new_tab",
+      "value": "New tab"
+    },
+    {
+      "name": "a11y_open_menu",
+      "value": "Open terminal menu"
+    },
+    {
+      "name": "a11y_decrease_transparency",
+      "value": "Decrease transparency, Ctrl+Alt+-"
+    },
+    {
+      "name": "a11y_increase_transparency",
+      "value": "Increase transparency, Ctrl+Alt+="
+    },
+    {
+      "name": "a11y_transparency",
+      "value": "Transparency: %s. Use the left and right arrow keys to adjust."
+    },
+    {
+      "name": "a11y_decrease_font_size",
+      "value": "Decrease font size, Ctrl+-"
+    },
+    {
+      "name": "a11y_increase_font_size",
+      "value": "Increase font size, Ctrl+="
+    },
+    {
+      "name": "a11y_font_size",
+      "value": "Font size: %s pixels. Use the left and right arrow keys to adjust. Press Ctrl+0 to reset."
+    },
+    {
+      "name": "search_find_in_terminal",
+      "value": "Find in terminal"
+    },
+    {
+      "name": "search_find_text",
+      "value": "Find text"
+    },
+    {
+      "name": "search_placeholder",
+      "value": "Find"
+    },
+    {
+      "name": "search_results",
+      "value": "Find results"
+    },
+    {
+      "name": "search_previous_match",
+      "value": "Previous match, Shift+Enter"
+    },
+    {
+      "name": "search_next_match",
+      "value": "Next match, Enter"
+    },
+    {
+      "name": "search_close",
+      "value": "Close search, Escape"
+    },
+    {
+      "name": "search_type_to_find",
+      "value": "Type to find"
+    },
+    {
+      "name": "search_no_results",
+      "value": "No results"
     }
   ]
 }

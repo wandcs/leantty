@@ -2,7 +2,7 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-22
+> Last updated: 2026-08-24
 >
 > Applies to: the current repository 1.5.0 development behavior. AppGallery
 > currently distributes 1.4.0; check the matching GitHub Release and
@@ -50,6 +50,48 @@ Current source authentication supports direct password, unencrypted and
 encrypted private keys, SSH `keyboard-interactive`, authentication banners and
 multi-method authentication. Check the matching release before relying on a
 development capability in an installed build.
+
+## Working with Agent TUIs
+
+Keep the durable job on the server. Connect, enter a named tmux session, then
+start one Agent in that session:
+
+```text
+ssh work
+tmux new -As agent
+codex                 # or: opencode, pi, qwen
+```
+
+Detach with tmux's `Ctrl+B`, then `D`. Reconnect to the server and run
+`tmux attach -t agent` to resume. LeanTTY preserves the TTY while it is running;
+tmux or screen—not a LeanTTY tab or notification—owns survival across an app
+exit, system sleep or network break.
+
+Notification behavior was checked on 2026-08-24 with Codex CLI 0.149.0,
+OpenCode 1.18.22, Pi Agent 0.84.2 and Qwen Code 0.22.0:
+
+- Codex can use its `tui.notification_method = "bel"` setting; native BEL
+  attention worked in direct SSH and tmux.
+- For Qwen Code, enable `general.terminalBell` and set
+  `general.notificationMode` to `all`. When Qwen runs inside tmux, add
+  `set -g focus-events on` to the remote tmux configuration so Qwen receives
+  terminal focus changes. The tested tmux path completed the notification and
+  return flow.
+- Pi's packaged `notify.ts` extension emits OSC 777, which LeanTTY recognizes,
+  but a completion arriving after HarmonyOS has suspended the hidden app may
+  not produce a system notification.
+- OpenCode direct SSH passed with its native OSC 99 completion notification,
+  generic system notification and return flow. OpenCode 1.18.22 remained usable
+  inside tmux, including detach and reattach, but did not emit a complete
+  notification frame there even with tmux passthrough; treat that as an upstream
+  tmux notification limit. LeanTTY accepts only complete title/body frames and
+  discards their identifiers and content; richer OSC 99 operations are ignored.
+
+Accepted BEL, OSC 9, restricted OSC 99 and OSC 777 attention always uses LeanTTY's fixed generic
+notification text; remote titles, Agent replies and task content are discarded.
+Each continuous hidden-window episode gets at most one attempt. System
+notification is best effort: keep important work in tmux or screen and return
+to LeanTTY to inspect the real terminal state.
 
 ## Saved hosts and OpenSSH configuration
 
@@ -396,6 +438,28 @@ not active, the tab's
 leading status dot remains amber until that pane is entered; a non-focused pane
 in the current split also shows a small marker beside the divider. BEL never
 draws a warning frame around the terminal content.
+
+When the entire LeanTTY window is hidden, minimized or otherwise not visible,
+the first new unattended BEL or accepted OSC 9/99/777 attention in that continuous background episode
+may also publish one removable local system notification. Its text is generic:
+it does not include the host, user, command, terminal output, title or Agent
+response. Later BELs in the same background episode keep only their existing
+in-app tab/pane attention and do not refresh, replace or chase the notification.
+Making the window visible is the only reset for another notification attempt.
+Remote OSC title/body fields and identifiers are discarded. OSC 99 capability
+queries receive only the minimal title/body support response; incomplete chunks,
+actions and lifecycle operations are not accepted,
+and output that arrives after HarmonyOS suspends the hidden app cannot be relied
+on to publish immediately.
+
+Clicking the notification returns only to the existing pane that originally
+earned the attempt and still owns attention. If that pane was handled, closed,
+or lost with an application restart, the click only opens LeanTTY; it does not
+recreate a pane or SSH session or focus a different terminal. The card is
+automatically removed after 24 hours. Disabling or rejecting notification
+permission leaves terminal I/O and in-app attention unchanged; after the first
+missed background BEL, LeanTTY may ask once on a later foreground return and
+does not repeatedly request permission after that attempt.
 
 ## Data retention and uninstall
 

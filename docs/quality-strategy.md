@@ -159,7 +159,7 @@ these permanent areas.
 | Documentation/source policy | Public tree, references and prohibited artifact rules are consistent | Runtime correctness |
 | Rust pure-core tests | Key/file rules, known-host semantics, UTF-8 and other host-testable protocol policy | HarmonyOS/N-API integration |
 | ArkTS unit tests | Ownership, parser, Bridge policy, interaction state, persistence format and pure UI policy | Real ArkUI/ArkWeb/device behavior |
-| Web terminal policy tests | OSC 52, link, input, wheel, snapshot and xterm policy against packaged resources | HarmonyOS WebView lifecycle |
+| Web terminal policy tests | OSC 9/52/99/777, link, input, wheel, attention gate, snapshot and xterm policy against packaged resources | HarmonyOS WebView lifecycle |
 | Build-workflow tests | Locking, candidate retention and script control-flow policy | Product interaction |
 | Public CI | Secret scan, public-source checks, Rust fmt/clippy/tests and Web policy on clean hosted runners | DevEco build, signing or physical-PC behavior |
 | Clean ARM64 HAP build | ArkTS, N-API, Rust and packaged resources integrate for the only supported ABI | Focus, clipboard, lifecycle or SSH interoperability |
@@ -247,6 +247,15 @@ Formal release software gate, candidate build and deployment use one command:
 .\tools\verify-key-passphrase-pc.ps1
 .\tools\verify-ssh-auth-pc.ps1 -DiagnosticHap -HapPath <signed-test-hap> -Only key-comment-change-and-restart
 .\tools\verify-ssh-auth-pc.ps1 -DiagnosticHap -HapPath <signed-test-hap> -Only ecdsa-import-encrypted-and-restart
+.\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap>
+.\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -Suppression
+.\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -ColdStale
+.\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -LateHandled
+.\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -LateDestroyed
+.\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -ManualDismiss
+.\tools\verify-background-bell-permission-pc.ps1 -HapPath <signed-test-hap>
+.\tools\verify-long-task-notification-pc.ps1 -HapPath <signed-test-hap>
+.\tools\verify-agent-compatibility-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-ssh-matrix-pc.ps1
 ```
 
@@ -281,6 +290,92 @@ and 0600 mode, then deletes both the product Identity and source fixture with
 independent absence audits. P-384/P-521 and unencrypted formats remain covered
 by deterministic software fixtures; the physical scenario selects one curve
 because it validates the shared platform and interaction chain.
+
+`verify-agent-compatibility-pc.ps1` is the bounded 1.5 native Agent TUI
+compatibility scenario. It uses the desktop user's default WSL distribution,
+an isolated public-key-only OpenSSH server and an isolated test Tab, then runs
+the selected installed Agent in direct SSH and/or remote tmux. Each result MUST
+record the exact Agent version and authentication readiness. Missing
+authentication is `not-assessed`, never pass; `-AllowPartialAuthentication`
+only permits a partial evidence file to be retained without changing that
+meaning. The controlled server MUST set `LANG=C.UTF-8` and `LC_ALL=C.UTF-8`
+before its no-profile Bash starts, and the first connected session MUST record
+`locale charmap` as exactly `UTF-8` before any Agent result can be assessed.
+The fixture MUST NOT rely on SSH client locale forwarding: OpenSSH does not
+accept client environment variables by default, and tmux replaces non-ASCII
+output with underscores when its client locale is not UTF-8. A missing or
+non-UTF-8 controlled locale is an environment failure, never a LeanTTY or Agent
+compatibility result. Notification checks MUST use the Agent's native configured
+signal and MUST NOT append a fixture BEL. Process-scoped trust and Agent settings MUST NOT
+modify user configuration. OpenCode attention is enabled only through the
+run-scoped temporary `OPENCODE_CONFIG_DIR`; the default-disabled user setting is
+not treated as a product failure. Its notification prompt performs one bounded
+`sleep` tool call so completion happens after the physical window is hidden;
+the harness MUST wait for the interactive TUI and submit the prompt through
+LeanTTY rather than use the startup `--prompt` option, which can race the
+built-in notification subscriber. This is a timing precondition, not product workload. Proxy inheritance MAY use
+values already present in the default WSL process, but evidence records only
+variable names. Raw PTY input and output MUST be deleted after a content-free
+wire summary is produced. That summary records only the count of exact OSC 99
+`p=title,body` capability responses returned to the Agent, never the query
+identifier or payload.
+When the OSC 99 boundary itself is ambiguous, run the same scenario with
+`-Osc99CapabilityProbe`. This zero-model diagnostic sends only the standard
+OpenTUI capability query from the remote PTY and records whether the exact
+bounded LeanTTY response returns once. It does not start an Agent, emit an
+attention frame, minimize the window or prove native notification behavior;
+its sole purpose is to distinguish a terminal response-path failure from an
+Agent that queried the capability but did not later emit a notification.
+When raw mode, alternate-screen ownership or resize remains ambiguous, run the
+same scenario with `-InteractionOnlyProbe`. It starts each selected real Agent
+TUI without submitting a prompt, records `plannedModelRequests=0`, samples only
+content-free PTY termios and dimensions, sends a controlled physical English key
+sequence and a real HarmonyOS Chinese IME composition, toggles the real window
+size, restores the input method and window, exits the TUI and deletes raw PTY and
+termios files. A pass proves physical English/Chinese input, raw-mode entry, the
+Agent's observed alternate-screen choice and PTY resize propagation. It does not
+prove the visual shape of CJK glyphs, notification, model output, OSC 52/8
+activation or scrollback behavior. A visual CJK claim requires a current
+screenshot or bounded human review under the verified UTF-8 fixture.
+When native clipboard and Agent-owned virtualized history remain ambiguous, run
+`-ProtocolInteractionProbe` only with Qwen in tmux. The run uses one short,
+fixed model request, then requires Qwen's native `/copy` to emit OSC 52 and the
+unchanged LeanTTY clipboard bridge to report a non-empty successful system
+write. It fills history with Qwen's local `!seq` command without another model
+request, requires `PageUp` to visibly change the viewport, records the
+documented `Ctrl+End` restoration for bounded visual review, and deletes raw
+PTY content. OSC 8 is an observation in this probe, not a pass condition: when
+Qwen does not emit a non-empty URI frame, the result MUST say so and MUST NOT
+inject an escape sequence or report hyperlink activation as verified.
+The capture analyzer counts only OSC 8 frames with a non-empty URI as hyperlink
+opens and records empty-URI resets and malformed frames separately. This rule
+applies equally to direct frames and OSC sequences nested in tmux DCS wrappers;
+raw `oscCounts["8"]` is not itself a hyperlink count.
+`-OpenCodeForceOsc99Protocol` is a diagnostic-only upstream isolation switch
+and MUST be limited to `-Agents opencode`. It records the OpenTUI override in
+the result and bypasses capability detection, so its outcome can locate the
+remaining boundary but can never count as normal-configuration compatibility
+or release acceptance.
+Direct and tmux results remain separate, and a diagnostic HAP result is not
+release acceptance. The stable contract and current matrix are recorded in
+[`design/agent-tui-compatibility.md`](design/agent-tui-compatibility.md).
+The tmux fixture enables `focus-events` because DEC 1004 focus reporting is
+otherwise consumed at the outer tmux boundary. A captured native signal proves
+wire behavior, not system notification: if the physical app is suspended after
+the window becomes hidden, a later Agent completion signal is recorded as a
+product/lifecycle limitation rather than promoted to pass. OpenCode's OSC 99
+must match the approved complete receive-only title/body subset before it can
+enter the shared attention path; richer OSC 99 operations remain outside scope. Agent model usage
+is recorded when the tool exposes run-scoped accounting; otherwise it is
+`unavailable`, never estimated as zero.
+The temporary WSL server is owned by its run-scoped
+`leantty-agent-compat-<GUID>/sshd_config` and PID file. Cleanup MUST verify that
+exact identity, check TERM success, poll the same PID with root permission and
+use KILL only for that already-verified PID if it survives the bounded wait.
+Stopping the Windows `wsl.exe` wrapper is not proof that Linux `sshd` stopped.
+A cleanup pass is invalid if the exact listener or its `sudo` parent remains;
+periodic independent process audits may invalidate older cleanup metadata
+without invalidating separately proven PTY behavior.
 
 `verify-ssh-matrix-pc.ps1` is the formal SSH physical entry. It runs four
 isolated groups in the fixed order below against one retained candidate, stops

@@ -33,15 +33,22 @@ assert.doesNotMatch(html, /<(?:img|link|iframe|object|embed)\b[^>]*(?:src|href)=
 assert.doesNotMatch(html, /href=["'](?!#)[^"']+["']/i,
   'the guide must contain only in-document navigation links');
 
-assert.match(html, /id="language-zh" checked/);
-assert.match(html, /id="language-en"/);
-assert.match(html, /class="guide-page guide-zh" lang="zh-CN"/);
-assert.match(html, /class="guide-page guide-en" lang="en"/);
-assert.match(html, /#language-en:checked\s*~\s*\.guide-zh\s*\{[^}]*display:\s*none/s);
-assert.match(html, /#language-zh:checked\s*~\s*\.guide-en[^}]*display:\s*none/s);
+assert.match(html, /href="#guide-zh"/);
+assert.match(html, /href="#guide-en"/);
+assert.match(html, /id="guide-zh" class="guide-page guide-zh" lang="zh-CN"/);
+assert.match(html, /id="guide-en" class="guide-page guide-en" lang="en"/);
+assert.match(html,
+  /body:has\(\.guide-en:target, \.guide-en :target\)\s+\.guide-zh\s*\{[^}]*display:\s*none/s);
+assert.match(html,
+  /body:has\(\.guide-en:target, \.guide-en :target\)\s+\.guide-en\s*\{[^}]*display:\s*block/s);
+assert.match(html,
+  /body:has\(\.guide-zh:target, \.guide-zh :target\)\s+\.guide-en\s*\{[^}]*display:\s*none/s);
+assert.match(html,
+  /body:not\(:has\(\.guide-en:target, \.guide-en :target\)\)\s+\.guide-zh a\[href="#guide-zh"\]/s);
+assert.doesNotMatch(html, /id="language-(?:zh|en)"/, 'language switching must not use form controls');
 
 for (const phrase of [
-  '选中后直接右键', '无选区时右键粘贴', '按住 Ctrl 点击 URL', '只搜索当前 Pane',
+  '选中后直接右键', '无选区时右键粘贴', '按住 Ctrl 点击 URL', '只搜索当前分屏',
   '首次连接先核对指纹', '长期任务放在远端 tmux',
   'Select, then secondary-click', 'Secondary-click with no selection', 'Hold Ctrl and click a URL',
   'Search only the active pane', 'Check the first fingerprint', 'Keep long jobs in remote tmux'
@@ -56,6 +63,16 @@ for (const command of [
   'config import workstation.conf', 'config export workstation-backup.conf'
 ]) {
   assert.ok(html.includes(command), `missing command example: ${command}`);
+}
+
+for (const agentContract of [
+  'id="zh-agent"', 'id="en-agent"', 'tmux new -As agent', 'tmux attach -t agent',
+  'general.terminalBell', 'general.notificationMode', 'set -g focus-events on',
+  'notify.ts', 'OSC 777', 'OSC 99',
+  '系统通知是尽力而为，不是任务状态',
+  'System notification is best effort, not task state'
+]) {
+  assert.ok(html.includes(agentContract), `missing bounded Agent guide contract: ${agentContract}`);
 }
 
 function luminance(hex) {

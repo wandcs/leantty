@@ -8,6 +8,8 @@ import { DurableStateManager } from '../model/persistence/DurableStateManager';
 import webview from '@ohos.web.webview';
 import { BusinessError } from '@ohos.base';
 import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator';
+import { BackgroundBellNotification } from '../model/ui/BackgroundBellNotification';
+import { UiText } from '../model/ui/UiText';
 import { WindowGridSnapPolicy } from '../model/ui/WindowGridSnapPolicy';
 
 const logger: Logger = new Logger('EntryAbility')
@@ -18,6 +20,10 @@ export default class EntryAbility extends UIAbility {
   private windowDragStartRect: window.Rect | null = null
   private windowVisibilityChangeHandler: (visible: boolean) => void = (visible: boolean): void => {
     AppStorage.setOrCreate('mainWindowVisible', visible)
+    if (visible) {
+      BackgroundBellNotification.resetForVisibleWindow()
+      BackgroundBellNotification.requestPermissionIfScheduled(this.context)
+    }
     logger.info('Window visibility changed: visible=' + visible.toString())
   }
   private titleButtonRectChangeHandler: (rect: window.TitleButtonRect) => void =
@@ -51,6 +57,9 @@ export default class EntryAbility extends UIAbility {
       TransparencyPolicy.normalize(UserPreferences.loadTransparencyMode()))
     AppStorage.setOrCreate('hasActiveSshSession', false)
     AppStorage.setOrCreate('skipNextTerminateConfirmation', false)
+    AppStorage.setOrCreate('backgroundBellReturnPaneId', '')
+    AppStorage.setOrCreate('backgroundBellReturnToken', 0)
+    this.publishBackgroundBellReturnRequest(want)
     try {
       webview.WebviewController.setRenderProcessMode(webview.RenderProcessMode.SINGLE)
       webview.WebviewController.setWebDestroyMode(webview.WebDestroyMode.FAST_MODE)
@@ -120,6 +129,8 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     AppStorage.setOrCreate('mainWindowVisible', true)
+    BackgroundBellNotification.resetForVisibleWindow()
+    BackgroundBellNotification.requestPermissionIfScheduled(this.context)
     logger.info('Ability onForeground');
   }
 
@@ -131,6 +142,11 @@ export default class EntryAbility extends UIAbility {
       logger.warn('Deferred durable garbage collection failed: ' + e)
     }
     logger.info('Ability onBackground');
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    this.publishBackgroundBellReturnRequest(want)
+    logger.info('Ability onNewWant')
   }
 
   async onPrepareToTerminateAsync(): Promise<boolean> {
@@ -147,11 +163,11 @@ export default class EntryAbility extends UIAbility {
     }
     try {
       let result = await this.mainWindow.getUIContext().getPromptAction().showDialog({
-        title: 'Close active sessions?',
-        message: 'Closing LeanTTY will disconnect all active SSH sessions.',
+        title: UiText.get(this.context, 'dialog_quit_title'),
+        message: UiText.get(this.context, 'dialog_quit_message'),
         buttons: [
-          { text: 'Cancel', color: '#CDD6F4' },
-          { text: 'Close LeanTTY', color: '#F38BA8' }
+          { text: UiText.get(this.context, 'dialog_cancel'), color: '#CDD6F4' },
+          { text: UiText.get(this.context, 'dialog_quit_action'), color: '#F38BA8' }
         ]
       })
       if (result.index !== 1) {
@@ -306,5 +322,15 @@ export default class EntryAbility extends UIAbility {
     }).catch((e: Error) => {
       logger.warn('Window grid snap resize failed: ' + e.message)
     })
+  }
+  private publishBackgroundBellReturnRequest(want: Want): void {
+    let paneId: string = BackgroundBellNotification.paneIdFromWant(want)
+    if (paneId.length === 0) {
+      return
+    }
+    AppStorage.setOrCreate('backgroundBellReturnPaneId', paneId)
+    let token: number = AppStorage.get<number>('backgroundBellReturnToken') ?? 0
+    AppStorage.setOrCreate('backgroundBellReturnToken', token + 1)
+    logger.info('Background BEL return requested: paneId=' + paneId)
   }
 }

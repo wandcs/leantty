@@ -36,6 +36,7 @@ export class TerminalSurfaceController {
   private lastCommittedSnapshotRequestId: number = 0
   private snapshotCommitFloor: number = 1
   private inputMasked: boolean = false
+  private localizationJson: string = ''
   private snapshotCompletions: SnapshotCompletion[] = []
   private static readonly SNAPSHOT_COMPLETION_TIMEOUT_MS: number = 2000
   private static readonly SESSION_BOUNDARY_RESET_SEQUENCE: string = '\u001b[?1049l\u001b[?1047l\u001b[?47l\u001b[0m\u001b[?25h\u001b[5 q\u001b[?1l\u001b[?66l\u001b>\u001b[?2004l\u001b[?1004l\u001b[?9l\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1005l\u001b[?1006l\u001b[?1015l\u001b[?1016l\u001b[4l\u001b[?6l\u001b[?7h\u001b[?45l\u001b[?5l\u001b[?69l\u001b[20l\u001b[r\u001b[?2026l\u001b(B\u001b)B\u001b]104\u0007\u001b]110\u0007\u001b]111\u0007\u001b]112\u0007\u001b[999;1H'
@@ -87,6 +88,9 @@ export class TerminalSurfaceController {
     })
     this.bridge = bridge
     bridge.setInputMasked(this.inputMasked)
+    if (this.localizationJson.length > 0) {
+      bridge.setLocalization(this.localizationJson)
+    }
     let snapshot: string = this.outputBuffer.getSnapshot()
     if (snapshot.length > 0) {
       bridge.restoreSnapshot(snapshot)
@@ -248,6 +252,13 @@ export class TerminalSurfaceController {
   setFontSize(fontSize: number): void {
     if (this.bridge !== null) {
       this.bridge.setFontSize(fontSize)
+    }
+  }
+
+  setLocalization(localizationJson: string): void {
+    this.localizationJson = localizationJson
+    if (this.bridge !== null) {
+      this.bridge.setLocalization(localizationJson)
     }
   }
 

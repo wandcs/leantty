@@ -2,9 +2,9 @@
 
 > 状态：Accepted 能力取舍基线；待证实项保持 WIP，不授权实现
 >
-> 适用 milestone：跨 1.1–1.7
+> 适用 milestone：跨 1.1–1.6
 >
-> 更新日期：2026-08-17
+> 更新日期：2026-08-23
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
@@ -34,7 +34,7 @@ OpenSSH Unix 工具箱：
 | `host` | 必须做 | 管理唯一 OpenSSH Host 配置，不建立 GUI 主机数据库 |
 | `key` | 必须做 | 管理 HarmonyOS 中的 LeanTTY 私有密钥资产 |
 | `put/get` | 已采纳，1.3 | 受限单文件交付；内部使用 SFTP，不冒充 `scp/sftp` |
-| `mosh` | 应该做，WIP 1.7 | SSH bootstrap 后的交互式弱网 TTY Session |
+| `mosh` | 应该做，WIP 1.6 | SSH bootstrap 后的交互式弱网 TTY Session |
 | `scp`、`sftp` | 不做用户命令 | 标准语义超出受限单文件和 TTY 入口边界 |
 | `ssh-agent`、`ssh-add` | 不做 | 没有 Unix agent socket、子进程和环境变量模型 |
 | `ssh-keyscan` | 不做 | 采集不能证明主机密钥真实性 |
@@ -237,9 +237,9 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 
 Mosh 的产品方向通过前五道决策门：它直接改善合盖、短断网、网络切换和高延迟下的
 交互式 TTY 可靠性。但在 UDP、native 依赖、安全、终端同步和真机生命周期证据闭合前，
-第六道完整交付门仍未通过，因此整体保持 WIP 1.7。
+第六道完整交付门仍未通过，因此整体保持 WIP 1.6。
 
-| 能力 | 决策 | 1.7 边界 |
+| 能力 | 决策 | 1.6 边界 |
 | --- | --- | --- |
 | `mosh [user@]host|alias` | 必须做 | 唯一用户入口；复用 SSH Host/User/Identity |
 | SSH bootstrap | 必须做 | 复用主机校验、全部认证、取消和错误；启动远端 server 后结束 SSH |
@@ -302,9 +302,8 @@ ProxyJump 最多帮助 Mosh 的 SSH bootstrap；它不转发 UDP。只有目标 
 | 1.2 | 不强行加入命令能力；保持终端搜索的单一主题 |
 | 1.3 | 已采纳 `put/get`；SFTP 只作内部 subsystem，不开放 `scp/sftp` |
 | 1.4 | 启动性能；`ProxyJump` 配置与标准 `-J`，首版单跳并保持 jump/target 双重信任与认证。HSL 专用入口因公开发现门禁失败而裁剪，手工 HSL Host 仍复用现有 SSH 命令、认证和主机信任 |
-| 1.5 | `ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v`、受控 config import/export、`ssh-keygen -c` 与现有 ECDSA P-256/P-384/P-521 Identity 导入/认证已闭合；`-4/-6` / `AddressFamily` 因真机 IPv6 fixture 门禁暂缓；UpdateHostKeys 因 russh 0.62.5 缺少完整 proof 公开 API 而裁剪。ECDSA 不包含生成入口 |
-| 1.6 | 长任务注意力与返回路径；不为版本号强行增加命令能力 |
-| 1.7 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
+| 1.5 | `ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v`、受控 config import/export、`ssh-keygen -c` 与现有 ECDSA P-256/P-384/P-521 Identity 导入/认证已闭合；`-4/-6` / `AddressFamily` 因真机 IPv6 fixture 门禁暂缓；UpdateHostKeys 因 russh 0.62.5 缺少完整 proof 公开 API 而裁剪；长任务注意力与返回路径不为版本号强行增加命令能力。ECDSA 不包含生成入口 |
+| 1.6 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
 
 路线图分配不等于实现授权。每个后续 milestone 确认并把第一段可执行工作写入
 `next-work.md` 后才能开始实现；1.2 不为“每版都加命令”而混入无关范围。

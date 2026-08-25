@@ -8,6 +8,8 @@ const logger: Logger = new Logger('UserPreferences')
 const PREFERENCES_NAME: string = 'leantty_settings'
 const TERMINAL_FONT_SIZE_KEY: string = 'terminal_font_size'
 const TERMINAL_TRANSPARENCY_MODE_KEY: string = 'terminal_transparency_mode'
+const BACKGROUND_BELL_PERMISSION_PENDING_KEY: string = 'background_bell_permission_pending'
+const BACKGROUND_BELL_PERMISSION_ATTEMPTED_KEY: string = 'background_bell_permission_attempted'
 const DEFAULT_TRANSPARENCY_MODE: number = 1
 
 export class UserPreferences {
@@ -85,6 +87,56 @@ export class UserPreferences {
       UserPreferences.store.flushSync()
     } catch (e) {
       logger.warn('Failed to save terminal transparency mode: ' + e)
+    }
+  }
+
+  static scheduleBackgroundBellPermissionRequest(): void {
+    if (UserPreferences.store === null) {
+      logger.warn('Cannot schedule notification permission before preferences initialization')
+      return
+    }
+    try {
+      if (UserPreferences.backgroundBellPermissionAttempted()) {
+        return
+      }
+      UserPreferences.store.putSync(BACKGROUND_BELL_PERMISSION_PENDING_KEY, true)
+      UserPreferences.store.flushSync()
+    } catch (e) {
+      logger.warn('Failed to schedule notification permission: ' + e)
+    }
+  }
+
+  static consumeBackgroundBellPermissionRequest(): boolean {
+    if (UserPreferences.store === null) {
+      return false
+    }
+    try {
+      let pendingValue: preferences.ValueType = UserPreferences.store.getSync(
+        BACKGROUND_BELL_PERMISSION_PENDING_KEY, false)
+      if (pendingValue !== true || UserPreferences.backgroundBellPermissionAttempted()) {
+        return false
+      }
+      UserPreferences.store.putSync(BACKGROUND_BELL_PERMISSION_PENDING_KEY, false)
+      UserPreferences.store.putSync(BACKGROUND_BELL_PERMISSION_ATTEMPTED_KEY, true)
+      UserPreferences.store.flushSync()
+      return true
+    } catch (e) {
+      logger.warn('Failed to consume notification permission request: ' + e)
+      return false
+    }
+  }
+
+  private static backgroundBellPermissionAttempted(): boolean {
+    if (UserPreferences.store === null) {
+      return false
+    }
+    try {
+      let attemptedValue: preferences.ValueType = UserPreferences.store.getSync(
+        BACKGROUND_BELL_PERMISSION_ATTEMPTED_KEY, false)
+      return attemptedValue === true
+    } catch (e) {
+      logger.warn('Failed to read notification permission history: ' + e)
+      return false
     }
   }
 
