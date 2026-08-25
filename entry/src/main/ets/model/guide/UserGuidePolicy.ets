@@ -99,6 +99,13 @@ export class UserGuidePolicy {
       raw.toLowerCase().indexOf('%2e%2e') < 0 && raw.indexOf('/../') < 0
   }
 
+  static localizedOpenUri(expected: string, chinese: boolean): string {
+    if (!UserGuidePolicy.isAllowedGuideUri(expected, expected)) {
+      throw new Error('Invalid user guide URI')
+    }
+    return expected + (chinese ? '#guide-zh' : '#guide-en')
+  }
+
   static osc8Link(uri: string): string {
     return '\u001b]8;;' + uri + '\u001b\\' + UserGuidePolicy.FILE_NAME + '\u001b]8;;\u001b\\'
   }

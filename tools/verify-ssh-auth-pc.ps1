@@ -1079,6 +1079,18 @@ function Invoke-AuthLayoutNodeClick {
         -Operation 'LeanTTY layout node click'
 }
 
+function ConvertFrom-AuthTransparencyLabel {
+    param([Parameter(Mandatory = $true)][string]$Label)
+    $labels = @{
+        'Off' = 'Off'; '关闭' = 'Off'
+        'Low' = 'Low'; '低' = 'Low'
+        'Medium' = 'Medium'; '中' = 'Medium'
+        'High' = 'High'; '高' = 'High'
+        'Maximum' = 'Extreme'; '最高' = 'Extreme'
+    }
+    return [string]$labels[$Label]
+}
+
 function Open-AuthToolMenu {
     param([Parameter(Mandatory = $true)][string]$LayoutPrefix)
     $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target `
@@ -1117,7 +1129,7 @@ function Open-AuthToolMenu {
         $menuLayout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $menuPath
         $labels = @(Get-LeanTTYLayoutNodes -Node $menuLayout | Where-Object {
             [string]$_.attributes.type -eq 'Text' -and
-            [string]$_.attributes.text -in @('Off', 'Low', 'Medium', 'High', 'Extreme')
+            [string]$_.attributes.text -in @('Off', 'Low', 'Medium', 'High', 'Maximum', '关闭', '低', '中', '高', '最高')
         })
         if ($labels.Count -eq 1) { return $menuLayout }
         Start-Sleep -Milliseconds 200
@@ -1130,10 +1142,10 @@ function Get-AuthTransparencyMode {
     $layout = Open-AuthToolMenu -LayoutPrefix $LayoutPrefix
     $labels = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
         [string]$_.attributes.type -eq 'Text' -and
-        [string]$_.attributes.text -in @('Off', 'Low', 'Medium', 'High', 'Extreme')
+        [string]$_.attributes.text -in @('Off', 'Low', 'Medium', 'High', 'Maximum', '关闭', '低', '中', '高', '最高')
     })
     if ($labels.Count -ne 1) { throw '[harness] Transparency mode label was not unique' }
-    $mode = [string]$labels[0].attributes.text
+    $mode = ConvertFrom-AuthTransparencyLabel -Label ([string]$labels[0].attributes.text)
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2070
     return $mode
 }
@@ -1145,14 +1157,15 @@ function Set-AuthTransparencyMode {
         [Parameter(Mandatory = $true)][string]$LayoutPrefix
     )
     $order = @('Off', 'Low', 'Medium', 'High', 'Extreme')
+    $visibleLabels = @('Off', 'Low', 'Medium', 'High', 'Maximum', '关闭', '低', '中', '高', '最高')
     for ($step = 0; $step -lt 6; $step++) {
         $layout = Open-AuthToolMenu -LayoutPrefix "$LayoutPrefix-$step"
         $labels = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
             [string]$_.attributes.type -eq 'Text' -and
-            [string]$_.attributes.text -in $order
+            [string]$_.attributes.text -in $visibleLabels
         })
         if ($labels.Count -ne 1) { throw '[harness] Transparency mode label was not unique' }
-        $current = [string]$labels[0].attributes.text
+        $current = ConvertFrom-AuthTransparencyLabel -Label ([string]$labels[0].attributes.text)
         if ($current -eq $Mode) {
             Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2070
             return

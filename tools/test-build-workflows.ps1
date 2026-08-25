@@ -192,8 +192,7 @@ try {
     ) -Raw
     Assert-True (
         $entryAbilityProductionText.Contains('windowStage.setWindowRectAutoSave(true)') -and
-        -not $entryAbilityProductionText.Contains('restoreOrCaptureWindowRect') -and
-        -not $entryAbilityProductionText.Contains("mainWindow.on('windowRectChange'")
+        -not $entryAbilityProductionText.Contains('restoreOrCaptureWindowRect')
     ) 'System window auto-save is not the sole owner of restart window geometry'
     $bridgeProtocolText = Get-Content -LiteralPath (
         Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
@@ -342,6 +341,24 @@ try {
         }
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_SUBMIT')) (
             'Debug acceptance source injection omitted input telemetry'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_BACKGROUND_BELL')) (
+            'Debug acceptance source injection omitted the delayed background BEL trigger'
+        )
+        Assert-True (($injectedText -join "`n").Contains('Acceptance: Background BEL')) (
+            'Debug acceptance source injection omitted the background BEL menu action'
+        )
+        Assert-True (($injectedText -join "`n").Contains('state=suppression-fired')) (
+            'Debug acceptance source injection omitted the split-pane notification suppression probe'
+        )
+        Assert-True (($injectedText -join "`n").Contains("resetProbe ? 'reset-' : ''")) (
+            'Debug acceptance source injection omitted the visible-reset notification probe'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_NOTIFICATION_SETTINGS')) (
+            'Debug acceptance source injection omitted notification settings telemetry'
+        )
+        Assert-True (($injectedText -join "`n").Contains('Acceptance: Notification Settings')) (
+            'Debug acceptance source injection omitted the notification settings menu action'
         )
         Assert-True (($injectedText -join "`n").Contains(
                 "logAcceptanceInputSubmit('key-comment-passphrase')"

@@ -931,8 +931,8 @@ function Get-LeanTTYAppLogs {
             'shell',
             (
                 "hilog -z 500 -t app -P $ProcessId " +
-                '-T SessionViewModel,KeyCommandService,SshClient,FileTransferClient,EntryAbility,Index,' +
-                'TerminalSurfaceController,TerminalBridge,AppViewModel'
+                '-T SessionViewModel,KeyCommandService,SshClient,FileTransferClient,EntryAbility,IndexPage,' +
+                'TerminalSurfaceController,TerminalBridge,AppViewModel,BackgroundBellNotification'
             )
         ) `
         -Operation 'HarmonyOS application log query'

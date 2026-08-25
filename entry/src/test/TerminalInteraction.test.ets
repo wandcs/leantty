@@ -264,6 +264,14 @@ export default function terminalInteractionTest() {
     it('routesTerminalSurfaceActionsThroughBridgeControls', 0, () => {
       expect(BridgeProtocol.fit().serialize()).assertEqual('H2|N2W|CONTROL|fit|')
       expect(BridgeProtocol.fontSize(18).serialize()).assertEqual('H2|N2W|CONTROL|fontSize|18')
+      let localization: string = '{"language":"zh-CN"}'
+      expect(BridgeProtocol.localization(localization).serialize())
+        .assertEqual('H2|N2W|CONTROL|localization|' + localization)
+      expect(BridgeProtocol.parse(BridgeProtocol.localization(localization).serialize()) !== null).assertEqual(true)
+      expect(BridgeProtocol.parse('H2|N2W|CONTROL|localization|')).assertEqual(null)
+      expect(BridgeProtocol.parse('H2|N2W|CONTROL|localization|' +
+        'x'.repeat(BridgeProtocol.MAX_LOCALIZATION_PAYLOAD_LENGTH + 1))).assertEqual(null)
+      expect(BridgeProtocol.parse('H2|W2N|CONTROL|localization|' + localization)).assertEqual(null)
       expect(BridgeProtocol.inputSecurity(true).serialize())
         .assertEqual('H2|N2W|CONTROL|inputSecurity|masked')
       expect(BridgeProtocol.inputSecurity(false).serialize())

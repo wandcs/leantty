@@ -166,6 +166,11 @@ Invoke-RegressionCheck -Name 'device-regression-helpers' -Groups @('tooling') -A
     if ($LASTEXITCODE -ne 0) { throw 'Device regression helper tests failed' }
 }
 
+Invoke-RegressionCheck -Name 'agent-compatibility-helpers' -Groups @('tooling') -Action {
+    & (Join-Path $PSScriptRoot 'test-agent-compatibility.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Agent compatibility helper tests failed' }
+}
+
 Invoke-RegressionCheck -Name 'ssh-transport-contract' -Groups @('ssh-flow') -Action {
     & (Join-Path $PSScriptRoot 'check-ssh-transport-flow.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'SSH generated transport contract check failed' }

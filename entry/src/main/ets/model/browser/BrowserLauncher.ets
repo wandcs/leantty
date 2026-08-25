@@ -2,6 +2,7 @@ import { common, Want, wantConstant } from '@kit.AbilityKit'
 import url from '@ohos.url'
 import { UserGuideManager } from '../guide/UserGuideManager'
 import { UserGuidePolicy } from '../guide/UserGuidePolicy'
+import { UiText } from '../ui/UiText'
 
 export class BrowserLauncher {
   static readonly MAX_URL_LENGTH: number = 4096
@@ -124,7 +125,7 @@ export class BrowserLauncher {
     try {
       let want: Want = {
         action: 'ohos.want.action.viewData',
-        uri: expected,
+        uri: UserGuidePolicy.localizedOpenUri(expected, UiText.isChineseSystemLanguage()),
         type: 'text/html',
         flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION
       }

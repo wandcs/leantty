@@ -1,6 +1,8 @@
 import { TabInfo, SshSessionState } from '../../common/types/TerminalTypes'
 import { ChromeColors } from '../theme/ThemeConstants'
 import { accessibility } from '@kit.AccessibilityKit'
+import { common } from '@kit.AbilityKit'
+import { UiText } from '../../model/ui/UiText'
 
 @Component
 export struct ChromeBar {
@@ -216,6 +218,11 @@ struct ChromeTab {
     return false
   }
 
+  private text(name: string, ...args: Array<string | number>): string {
+    let context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    return UiText.get(context, name, ...args)
+  }
+
   private surfaceColor(): string {
     if (this.isActive) {
       return this.chromeColors.tabActiveBackground
@@ -283,7 +290,7 @@ struct ChromeTab {
             .borderRadius(8)
             .border({ width: this.closeFocused ? 1 : 0, color: this.chromeColors.focusRing })
             .focusable(true)
-            .accessibilityText('Close tab ' + this.tab.title)
+            .accessibilityText(this.text('a11y_close_tab', this.tab.title))
             .onClick(() => { this.onClose() })
             .onFocus(() => { this.closeFocused = true })
             .onBlur(() => { this.closeFocused = false })
@@ -304,8 +311,8 @@ struct ChromeTab {
     .width(176)
     .height(40)
     .accessibilityDescription(this.tab.title)
-    .accessibilityText((this.isActive ? 'Active tab, ' : 'Tab, ') + this.tab.title +
-      (this.hasAttention() ? ', attention requested' : ''))
+    .accessibilityText(this.text(this.isActive ? 'a11y_active_tab' : 'a11y_tab', this.tab.title) +
+      (this.hasAttention() ? this.text('a11y_attention_suffix') : ''))
     .focusable(true)
     .onFocus(() => { this.focused = true })
     .onBlur(() => { this.focused = false })
@@ -322,6 +329,11 @@ struct ChromeButton {
   @State focused: boolean = false
   onTap: () => void = () => {}
 
+  private text(name: string): string {
+    let context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    return UiText.get(context, name)
+  }
+
   build() {
     Text(this.symbol)
       .fontSize(13)
@@ -334,7 +346,7 @@ struct ChromeButton {
       .backgroundColor(this.hovered ? this.chromeColors.commandBarBorder : '#00000000')
       .border({ width: this.focused ? 1 : 0, color: this.chromeColors.focusRing, radius: 6 })
       .focusable(true)
-      .accessibilityText('New tab')
+      .accessibilityText(this.text('a11y_new_tab'))
       .onClick(() => { this.onTap() })
       .onHover((isHover: boolean) => { this.hovered = isHover })
       .onFocus(() => { this.focused = true })
@@ -348,6 +360,11 @@ struct MoreButton {
   @State hovered: boolean = false
   @State focused: boolean = false
   onTap: () => void = () => {}
+
+  private text(name: string): string {
+    let context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    return UiText.get(context, name)
+  }
 
   build() {
     Stack() {
@@ -384,7 +401,7 @@ struct MoreButton {
     .backgroundColor(this.hovered ? this.chromeColors.commandBarBorder : '#00000000')
     .border({ width: this.focused ? 1 : 0, color: this.chromeColors.focusRing, radius: 6 })
     .focusable(true)
-    .accessibilityText('Open terminal menu')
+    .accessibilityText(this.text('a11y_open_menu'))
     .onClick(() => { this.onTap() })
     .onHover((isHover: boolean) => { this.hovered = isHover })
     .onFocus(() => { this.focused = true })

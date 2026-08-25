@@ -1,56 +1,63 @@
 # LeanTTY 当前工作
 
-> 状态：唯一有效的项目 TODO
+> 状态：唯一有效的项目 TODO；当前没有已授权且未完成的产品工作
 >
-> 更新日期：2026-08-23
+> 更新日期：2026-08-25
 >
-> 当前 milestone：[`1.5 — SSH 连接可靠性、诊断与资产互操作`](roadmap.md)
+> 当前 milestone：[`1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容`](roadmap.md)
 >
-> 当前工程阶段：1.5 产品开发范围、终端透明语义修复及已授权代码清理均已闭合；当前没有活动开发项，release preparation 仍需单独授权
+> 当前工程阶段：1.5 产品开发已闭合；尚未进入 release preparation
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
 > 测试权威：[`quality-strategy.md`](quality-strategy.md)
 
-本文件只保留尚未完成、已经授权的活动工作，并按实际依赖顺序执行。完成事实进入相应
-规范、设计文档和 Git 历史；旧 checkbox、定向实现证据、WIP 技术方案及后续 milestone
-不在这里维护第二份清单。
+本文件只保留尚未完成、已经授权的活动工作。当前没有这类事项。完成事实进入相应规范、
+设计文档和 Git 历史；历史 checkbox、定向证据和后续 milestone 不在这里维护第二份清单。
 
 ## 当前发布基线
 
 `v1.3.0` 已于 2026-08-17 通过 AppGallery 审核并正式上架。`v1.4.0` 已由不可变签名
-标签、精确发布源和 GitHub Release 冻结，production APP、review-test HAP、manifest、
-哈希和发布材料已经完成；维护者于 2026-08-22 确认匹配的 production APP 已通过
-AppGallery 审核并正式上架。当前工作不修改 `v1.4.0` 的发布身份，也不补做新的 1.4
-产品范围。
+标签、精确发布源和 GitHub Release 冻结，维护者于 2026-08-22 确认匹配的 production APP
+已通过 AppGallery 审核并正式上架。当前工作不修改 `v1.4.0` 的发布身份，也不补做新的
+1.4 产品范围。
 
-1.4 发布复盘形成的验收与发布工具链优化是 1.5 的第一项工程基础：稳定规则写入
-`quality-strategy.md`，研究、红绿证据和量化结果写入 `test-release-efficiency.md`。它不改变
-用户可见产品源，也不能替代 1.5 产品范围确认。
+## 1.5 产品开发闭合事实
 
-## 1.5 当前状态
+1.5 的 SSH 可靠性与资产互操作、长任务 attention/通知/返回、英文默认与明确中文系统语言
+的双语界面，以及 Codex CLI、OpenCode、Pi Agent、Qwen Code 的普通 SSH/tmux 兼容矩阵均已
+完成产品源、映射软件门、测试签名 ARM64 debug HAP 和适用的物理 HarmonyOS PC 命名场景。
 
-`ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v`、
-受控 config import/export、`ssh-keygen -c` 和现有 OpenSSH ECDSA P-256/P-384/P-521 Identity
-导入/使用已分别完成专项实现、映射软件门、签名 ARM64 debug HAP 与所需的物理 HarmonyOS PC
-闭环。ECDSA 复用既有 Identity、口令、comment、durable asset、direct/ProxyJump、`put/get` 和
-删除路径，不新增生成入口或第二套状态。
+Agent 兼容矩阵按真实适用性闭合，而不是要求每个工具人为发出每种协议：四种 TUI 的输入、
+真实中文输入法、raw/alternate、resize、搜索、重连和 tmux 恢复已经覆盖；Qwen tmux 原生
+OSC 52 复制与 PageUp/`Ctrl+End` scrollback 已通过。所选 Agent 的真实渲染路径没有发出
+OSC 8，LeanTTY 通用 HTTP(S)/OSC 8 激活由独立终端门禁负责，不向 Agent 注入控制序列。
+连接中断、半开检测和重连由既有 SSH/ServerAlive 与 Session 合同负责，不按 Agent 重复建立
+传输层实现。
 
-`AddressFamily` / `ssh -4/-6` 因当前设备没有可重复的全局 IPv6 fixture 路径而暂缓；
-UpdateHostKeys 因 russh 缺少完整 proof request/reply、session binding 和验签公开 API 而按安全
-停止条件裁剪。专项完成事实和重新进入条件保留在 roadmap 与对应设计文档，不在本文件复制历史
-checklist。
+受限 OSC 9/777/99 入口复用唯一 BEL attention 所有权并在 Web 边界丢弃远端内容。OpenCode
+普通 SSH 的原生 OSC 99 通知、系统提醒与返回通过；OpenCode tmux 上游只查询能力而不发完整
+通知帧。Pi direct/tmux 可发原生 OSC 777，但 HarmonyOS 隐藏后暂停 ArkTS/ArkWeb，较晚输出
+无法及时形成系统提醒；所选 Agent 没有 OSC 9 原生样本。以上是已验证的平台/上游边界，
+不授权常驻服务、第二解析器、Agent 专属 workaround 或额外模型请求。
 
-当前没有继续授权的 1.5 SSH 产品功能或维护工作。ECDSA 生成、certificate、FIDO/PKCS#11 和通用算法
-覆盖仍不进入范围。已授权的代码清理只删除了经调用图和验证证明的无效分支、重复状态与重复工具规则，
-没有借重构引入新产品能力。
-1.5 正式候选、版本元数据、完整验证、production 签名、GitHub Release 和 AppGallery 交付必须由
-维护者单独启动 release preparation；开发期签名 HAP 和局部真机诊断证据不能自动推导为正式候选
-或商店能力。推广手册只提供稳定工作方法；未单独写入本文件的 Pxx 不属于活动任务。
+离线指南已交付中英文 Agent 工作方法，并在最终同源测试 HAP 上确认本地 `help` 链接、中文
+Agent 章节、文档内英文切换和英文 Agent 页内跳转。页内锚点曾使英文页面回落中文，已修正为
+由语言页本身或其任一后代锚点共同维持语言。完整矩阵、请求/Token 审计、证据身份与失败边界见
+[`design/agent-tui-compatibility.md`](design/agent-tui-compatibility.md)；协议、架构、安全、质量和
+用户合同分别保留在 roadmap、`architecture.md`、`security-model.md`、`quality-strategy.md`
+与用户指南中。
+
+## 当前活动工作
+
+无。
+
+1.5 正式候选、版本元数据冻结、完整验证、production 签名、GitHub Release 和 AppGallery
+交付不属于已完成的开发授权。只有维护者明确启动 release preparation 并把对应可执行工作
+写入本文件后才能开始。拟议 1.6 Mosh 和其他 roadmap 候选同样不构成当前授权。
 
 ## 维护规则
 
-1. 只保留未完成且已授权工作；完成后把事实同步到权威文档和 Git 历史，并从本文件删除。
-2. 每项任务必须说明可观察完成条件；代码修改、一次通过、构建、安装、窗口出现或 HDC 成功
-   都不能替代真实端到端证据。
+1. 只保留未完成且已授权工作；完成事实同步到权威文档和 Git 历史后从本文件删除。
+2. 代码修改、一次通过、构建、安装、窗口出现或 HDC 成功不能替代真实端到端证据。
 3. `docs/archive/`、历史 checkbox、WIP 方案和未写入本文的候选不授权实现。

@@ -44,14 +44,6 @@ export class TransparencyPolicy {
     return mode !== TransparencyMode.EXTREME
   }
 
-  static label(mode: TransparencyMode): string {
-    if (mode === TransparencyMode.OFF) return 'Off'
-    if (mode === TransparencyMode.HIGH) return 'High'
-    if (mode === TransparencyMode.LOW) return 'Low'
-    if (mode === TransparencyMode.EXTREME) return 'Extreme'
-    return 'Medium'
-  }
-
   static contentOpacity(mode: TransparencyMode): number {
     if (mode === TransparencyMode.OFF) return 1.00
     if (mode === TransparencyMode.HIGH) return 0.60

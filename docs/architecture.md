@@ -2,7 +2,7 @@
 
 > Status: current implementation baseline
 >
-> Last updated: 2026-08-22
+> Last updated: 2026-08-24
 >
 > Governing rules: [`project-principles.md`](project-principles.md)
 
@@ -193,7 +193,14 @@ delivery.
 Remote output, terminal titles, OSC sequences and Bridge messages are untrusted
 input. xterm handles terminal emulation, while ArkTS validates the limited
 system effects that can leave the terminal surface, such as clipboard writes
-and URL opens.
+and URL opens. The Web boundary accepts only bounded OSC 9, well-formed
+`OSC 777;notify;title;body`, and complete receive-only OSC 99 title/body frames
+whose metadata is limited to `i/p/e/d`. It discards every remote field after
+validation and emits the same empty-payload control message as BEL. A valid,
+bounded OSC 99 `p=?` query is answered synchronously through ordinary terminal
+input with only `p=title,body` and the echoed query ID; the ID is not retained or
+logged. Incomplete chunks, actions, close/alive operations and all other
+notification protocols have no LeanTTY system effect or response.
 
 Terminal transparency has one composition owner per region. The ArkUI Chrome
 and content surfaces own their selected alpha; ArkWeb and xterm's default
@@ -242,6 +249,23 @@ This is renderer recovery, not Session persistence:
 The UIAbility records foreground/background state, captures terminal
 checkpoints before relevant surface teardown, restores window geometry, and
 asks before terminating active sessions.
+
+`PaneInfo.needsAttention` remains the sole authority for BEL attention. A
+background system notification is only a removable external side effect: it
+binds the first eligible stable Pane ID in one continuous hidden-window episode
+and stores no Session, terminal output or second attention state. `EntryAbility`
+passes a validated notification Want into short-lived `AppStorage`; `Index`
+then resolves the current workspace and returns only when that Pane still
+exists and still owns attention. Foreground return, attention handling and Pane
+destruction cancel the side effect. A stale Want can open the application but
+cannot reconstruct or redirect terminal ownership.
+
+This notification path is not a background execution owner. When HarmonyOS
+suspends ArkTS/ArkWeb after the whole window is hidden, later SSH output can be
+buffered but its BEL/OSC attention cannot be parsed and published until the app
+runs again. LeanTTY does not add a resident service, foreground disguise or a
+second native terminal parser to bypass that lifecycle; durable remote work
+still belongs in tmux or screen, and system notification is best effort.
 
 ## Persistent state
 

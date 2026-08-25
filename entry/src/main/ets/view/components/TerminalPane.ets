@@ -1,5 +1,7 @@
 import webview from '@ohos.web.webview'
 import { TerminalMode } from '../../common/types/TerminalTypes'
+import { common } from '@kit.AbilityKit'
+import { UiText } from '../../model/ui/UiText'
 
 @Component
 export struct TerminalPane {
@@ -25,6 +27,11 @@ export struct TerminalPane {
   onRendererExited: () => void = () => {}
   aboutToDisappear(): void {
     this.onPaneDisappear()
+  }
+
+  private text(name: string): string {
+    let context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    return UiText.get(context, name)
   }
 
   build() {
@@ -92,7 +99,7 @@ export struct TerminalPane {
           .position({ x: '100%', y: 8 })
           .translate({ x: -38, y: 0 })
           .focusable(true)
-          .accessibilityText('Close active pane')
+          .accessibilityText(this.text('a11y_close_active_split'))
           .onClick(() => { this.onClosePane() })
           .onHover((hovered: boolean) => { this.closeButtonHovered = hovered })
           .onFocus(() => { this.closeButtonFocused = true })

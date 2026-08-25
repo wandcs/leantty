@@ -24,6 +24,7 @@ export class TerminalBridge {
   private pendingBytes: number = 0
   private pendingTheme: string = ''
   private pendingFontSize: number = 0
+  private pendingLocalization: string = ''
   private inputMasked: boolean = false
   private pendingFit: boolean = false
   private pendingRestoreSnapshot: string = ''
@@ -96,6 +97,7 @@ export class TerminalBridge {
     this.pendingBytes = 0
     this.pendingTheme = ''
     this.pendingFontSize = 0
+    this.pendingLocalization = ''
     this.pendingFit = false
     this.pendingRestoreSnapshot = ''
     this.pendingSnapshotRequestIds = []
@@ -196,6 +198,14 @@ export class TerminalBridge {
       return
     }
     this.send(BridgeProtocol.fontSize(fontSize))
+  }
+
+  setLocalization(localizationJson: string): void {
+    if (!this.ready) {
+      this.pendingLocalization = localizationJson
+      return
+    }
+    this.send(BridgeProtocol.localization(localizationJson))
   }
 
   setInputMasked(masked: boolean): void {
@@ -361,6 +371,10 @@ export class TerminalBridge {
       if (this.pendingFontSize > 0) {
         this.send(BridgeProtocol.fontSize(this.pendingFontSize))
         this.pendingFontSize = 0
+      }
+      if (this.pendingLocalization.length > 0) {
+        this.send(BridgeProtocol.localization(this.pendingLocalization))
+        this.pendingLocalization = ''
       }
       this.send(BridgeProtocol.inputSecurity(this.inputMasked))
       if (this.pendingFit) {

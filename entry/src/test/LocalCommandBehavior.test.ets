@@ -127,6 +127,8 @@ export default function localCommandBehaviorTest() {
       expect(BrowserLauncher.isAllowedUserGuideUrl('https://example.com', expected)).assertEqual(false)
       expect(UserGuidePolicy.osc8Link(expected)).assertEqual(
         '\u001b]8;;' + expected + '\u001b\\LeanTTY-User-Guide.html\u001b]8;;\u001b\\')
+      expect(UserGuidePolicy.localizedOpenUri(expected, true)).assertEqual(expected + '#guide-zh')
+      expect(UserGuidePolicy.localizedOpenUri(expected, false)).assertEqual(expected + '#guide-en')
     })
 
     it('keepsUnknownAndInvalidLocalCommandsDistinct', 0, () => {

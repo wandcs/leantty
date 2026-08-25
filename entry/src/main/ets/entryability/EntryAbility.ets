@@ -8,14 +8,22 @@ import { DurableStateManager } from '../model/persistence/DurableStateManager';
 import webview from '@ohos.web.webview';
 import { BusinessError } from '@ohos.base';
 import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator';
+import { BackgroundBellNotification } from '../model/ui/BackgroundBellNotification';
+import { UiText } from '../model/ui/UiText';
+import { WindowGridSnapPolicy } from '../model/ui/WindowGridSnapPolicy';
 
 const logger: Logger = new Logger('EntryAbility')
 const FALLBACK_TITLE_BUTTON_WIDTH: number = 140
 
 export default class EntryAbility extends UIAbility {
   private mainWindow: window.Window | null = null
+  private windowDragStartRect: window.Rect | null = null
   private windowVisibilityChangeHandler: (visible: boolean) => void = (visible: boolean): void => {
     AppStorage.setOrCreate('mainWindowVisible', visible)
+    if (visible) {
+      BackgroundBellNotification.resetForVisibleWindow()
+      BackgroundBellNotification.requestPermissionIfScheduled(this.context)
+    }
     logger.info('Window visibility changed: visible=' + visible.toString())
   }
   private titleButtonRectChangeHandler: (rect: window.TitleButtonRect) => void =
@@ -24,6 +32,19 @@ export default class EntryAbility extends UIAbility {
       logger.info('Title button rect changed: right=' + rect.right.toString() +
         ', top=' + rect.top.toString() + ', width=' + rect.width.toString() +
         ', height=' + rect.height.toString())
+    }
+  private windowRectChangeHandler: (options: window.RectChangeOptions) => void =
+    (options: window.RectChangeOptions): void => {
+      if (options.reason === window.RectChangeReason.DRAG_START) {
+        this.windowDragStartRect = this.copyWindowRect(options.rect)
+        return
+      }
+      if (options.reason !== window.RectChangeReason.DRAG_END || this.windowDragStartRect === null) {
+        return
+      }
+      let startRect: window.Rect = this.windowDragStartRect
+      this.windowDragStartRect = null
+      this.snapWindowAfterDrag(startRect, options.rect)
     }
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -36,6 +57,9 @@ export default class EntryAbility extends UIAbility {
       TransparencyPolicy.normalize(UserPreferences.loadTransparencyMode()))
     AppStorage.setOrCreate('hasActiveSshSession', false)
     AppStorage.setOrCreate('skipNextTerminateConfirmation', false)
+    AppStorage.setOrCreate('backgroundBellReturnPaneId', '')
+    AppStorage.setOrCreate('backgroundBellReturnToken', 0)
+    this.publishBackgroundBellReturnRequest(want)
     try {
       webview.WebviewController.setRenderProcessMode(webview.RenderProcessMode.SINGLE)
       webview.WebviewController.setWebDestroyMode(webview.WebDestroyMode.FAST_MODE)
@@ -93,6 +117,11 @@ export default class EntryAbility extends UIAbility {
       } catch (e) {
         logger.warn('Failed to unregister window visibility listener: ' + e)
       }
+      try {
+        this.mainWindow.off('windowRectChange', this.windowRectChangeHandler)
+      } catch (e) {
+        logger.warn('Failed to unregister window rect listener: ' + e)
+      }
       this.mainWindow = null
     }
     logger.info('Ability onWindowStageDestroy');
@@ -100,6 +129,8 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     AppStorage.setOrCreate('mainWindowVisible', true)
+    BackgroundBellNotification.resetForVisibleWindow()
+    BackgroundBellNotification.requestPermissionIfScheduled(this.context)
     logger.info('Ability onForeground');
   }
 
@@ -111,6 +142,11 @@ export default class EntryAbility extends UIAbility {
       logger.warn('Deferred durable garbage collection failed: ' + e)
     }
     logger.info('Ability onBackground');
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    this.publishBackgroundBellReturnRequest(want)
+    logger.info('Ability onNewWant')
   }
 
   async onPrepareToTerminateAsync(): Promise<boolean> {
@@ -127,11 +163,11 @@ export default class EntryAbility extends UIAbility {
     }
     try {
       let result = await this.mainWindow.getUIContext().getPromptAction().showDialog({
-        title: 'Close active sessions?',
-        message: 'Closing LeanTTY will disconnect all active SSH sessions.',
+        title: UiText.get(this.context, 'dialog_quit_title'),
+        message: UiText.get(this.context, 'dialog_quit_message'),
         buttons: [
-          { text: 'Cancel', color: '#CDD6F4' },
-          { text: 'Close LeanTTY', color: '#F38BA8' }
+          { text: UiText.get(this.context, 'dialog_cancel'), color: '#CDD6F4' },
+          { text: UiText.get(this.context, 'dialog_quit_action'), color: '#F38BA8' }
         ]
       })
       if (result.index !== 1) {
@@ -162,6 +198,13 @@ export default class EntryAbility extends UIAbility {
       logger.info('Window visibility listener registered')
     } catch (e) {
       logger.warn('Window visibility listener registration failed: ' + e)
+    }
+
+    try {
+      mainWindow.on('windowRectChange', this.windowRectChangeHandler)
+      logger.info('Window grid snap listener registered')
+    } catch (e) {
+      logger.warn('Window grid snap listener registration failed: ' + e)
     }
 
     try {
@@ -209,5 +252,86 @@ export default class EntryAbility extends UIAbility {
     if (rect.width > 0 && rect.height > 0) {
       AppStorage.setOrCreate('pcTitleButtonReservedWidth', rect.right + rect.width)
     }
+  }
+
+  private copyWindowRect(rect: window.Rect): window.Rect {
+    return {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height
+    }
+  }
+
+  private snapWindowAfterDrag(startRect: window.Rect, endRect: window.Rect): void {
+    if (this.mainWindow === null) {
+      return
+    }
+    let widthChanged: boolean = Math.abs(endRect.width - startRect.width) >= 1
+    let heightChanged: boolean = Math.abs(endRect.height - startRect.height) >= 1
+    if (!widthChanged && !heightChanged) {
+      return
+    }
+
+    let fontSize: number = InteractionPolicy.clampFontSize(
+      AppStorage.get<number>('terminalFontSize') ?? InteractionPolicy.DEFAULT_FONT_SIZE)
+    let density: number = 0
+    try {
+      density = this.mainWindow.getUIContext().vp2px(1)
+    } catch (e) {
+      logger.warn('Window grid snap skipped because display density is unavailable: ' + e)
+      return
+    }
+    let targetWidth: number = widthChanged ?
+      WindowGridSnapPolicy.snapWidth(endRect.width, fontSize, density) : endRect.width
+    let targetHeight: number = heightChanged ?
+      WindowGridSnapPolicy.snapHeight(endRect.height, fontSize, density) : endRect.height
+    try {
+      let limits: window.WindowLimits = this.mainWindow.getWindowLimits()
+      targetWidth = WindowGridSnapPolicy.clampExtent(targetWidth, limits.minWidth, limits.maxWidth)
+      targetHeight = WindowGridSnapPolicy.clampExtent(targetHeight, limits.minHeight, limits.maxHeight)
+    } catch (e) {
+      logger.warn('Window limits unavailable during grid snap: ' + e)
+    }
+
+    let leftEdgeMoved: boolean = widthChanged && Math.abs(endRect.left - startRect.left) >= 1
+    let topEdgeMoved: boolean = heightChanged && Math.abs(endRect.top - startRect.top) >= 1
+    let targetLeft: number = leftEdgeMoved ?
+      startRect.left + startRect.width - targetWidth : endRect.left
+    let targetTop: number = topEdgeMoved ?
+      startRect.top + startRect.height - targetHeight : endRect.top
+    if (targetWidth === endRect.width && targetHeight === endRect.height &&
+      targetLeft === endRect.left && targetTop === endRect.top) {
+      return
+    }
+
+    let snapWindow: window.Window = this.mainWindow
+    snapWindow.resize(targetWidth, targetHeight).then(() => {
+      if (targetLeft === endRect.left && targetTop === endRect.top) {
+        logger.info('Window grid snap applied: width=' + targetWidth.toString() +
+          ', height=' + targetHeight.toString() + ', fontSize=' + fontSize.toString())
+        return
+      }
+      snapWindow.moveWindowTo(targetLeft, targetTop).then(() => {
+        logger.info('Window grid snap applied: left=' + targetLeft.toString() +
+          ', top=' + targetTop.toString() + ', width=' + targetWidth.toString() +
+          ', height=' + targetHeight.toString() + ', fontSize=' + fontSize.toString())
+      }).catch((e: Error) => {
+        logger.warn('Window grid snap position correction failed: ' + e.message)
+      })
+    }).catch((e: Error) => {
+      logger.warn('Window grid snap resize failed: ' + e.message)
+    })
+  }
+
+  private publishBackgroundBellReturnRequest(want: Want): void {
+    let paneId: string = BackgroundBellNotification.paneIdFromWant(want)
+    if (paneId.length === 0) {
+      return
+    }
+    AppStorage.setOrCreate('backgroundBellReturnPaneId', paneId)
+    let token: number = AppStorage.get<number>('backgroundBellReturnToken') ?? 0
+    AppStorage.setOrCreate('backgroundBellReturnToken', token + 1)
+    logger.info('Background BEL return requested: paneId=' + paneId)
   }
 }

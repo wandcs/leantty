@@ -95,6 +95,19 @@ export class InteractionPolicy {
     return persistAttention ? 2 : 1
   }
 
+  static shouldPublishBackgroundBell(wasPending: boolean, isPending: boolean,
+    isWindowVisible: boolean): boolean {
+    return !wasPending && isPending && !isWindowVisible
+  }
+
+  static shouldAttemptBackgroundBellForEpisode(alreadyAttempted: boolean): boolean {
+    return !alreadyAttempted
+  }
+
+  static shouldApplyBackgroundBellReturn(sourceExists: boolean, isPending: boolean): boolean {
+    return sourceExists && isPending
+  }
+
   static workspaceNavigationAction(keyCode: number, ctrlKey: boolean,
     altKey: boolean, shiftKey: boolean): WorkspaceNavigationAction {
     if (!ctrlKey) {

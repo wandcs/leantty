@@ -3,6 +3,7 @@
 
   var MAX_CLIPBOARD_BYTES = 1024 * 1024;
   var MAX_CLIPBOARD_BASE64_LENGTH = Math.ceil(MAX_CLIPBOARD_BYTES / 3) * 4;
+  var MAX_ATTENTION_OSC_BYTES = 1024;
 
   function rejectOsc52(reason) {
     return { accepted: false, text: '', reason: reason, byteLength: 0 };
@@ -32,6 +33,109 @@
     } catch (ex) {
       return rejectOsc52('invalid-utf8');
     }
+  }
+
+  function rejectAttentionOsc(reason) {
+    return { accepted: false, reason: reason };
+  }
+
+  function createOsc99CapabilityResponse(payload) {
+    if (typeof payload !== 'string' || payload.length === 0 ||
+        payload.length > MAX_ATTENTION_OSC_BYTES ||
+        new TextEncoder().encode(payload).byteLength > MAX_ATTENTION_OSC_BYTES) {
+      return '';
+    }
+    var separator = payload.indexOf(';');
+    if (separator < 0 || separator !== payload.length - 1) return '';
+    var entries = payload.substring(0, separator).split(':');
+    var identifier = '';
+    var query = false;
+    for (var entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+      var entry = entries[entryIndex];
+      var equals = entry.indexOf('=');
+      if (equals !== 1 || entry.length <= 2) return '';
+      var key = entry.substring(0, 1);
+      var value = entry.substring(2);
+      if (key === 'i' && identifier.length === 0 &&
+          /^[A-Za-z0-9\-_\/+.,(){}\[\]*&^%$#@!`~]+$/.test(value)) {
+        identifier = value;
+      } else if (key === 'p' && !query && value === '?') {
+        query = true;
+      } else {
+        return '';
+      }
+    }
+    if (identifier.length === 0 || !query) return '';
+    return '\x1b]99;i=' + identifier + ':p=?;p=title,body\x1b\\';
+  }
+
+  function validateOsc99Attention(payload) {
+    var separator = payload.indexOf(';');
+    if (separator < 0) return rejectAttentionOsc('missing-separator');
+    var metadata = payload.substring(0, separator);
+    var content = payload.substring(separator + 1);
+    if (content.length === 0) return rejectAttentionOsc('empty-payload');
+
+    var fields = Object.create(null);
+    if (metadata.length > 0) {
+      var entries = metadata.split(':');
+      for (var entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+        var entry = entries[entryIndex];
+        var equals = entry.indexOf('=');
+        if (equals !== 1 || entry.length <= 2) {
+          return rejectAttentionOsc('invalid-metadata');
+        }
+        var key = entry.substring(0, 1);
+        var value = entry.substring(2);
+        if (key !== 'i' && key !== 'p' && key !== 'e' && key !== 'd') {
+          return rejectAttentionOsc('unsupported-metadata');
+        }
+        if (fields[key] !== undefined) return rejectAttentionOsc('duplicate-metadata');
+        if (!/^[A-Za-z0-9\-_\/+.,(){}\[\]*&^%$#@!`~]+$/.test(value)) {
+          return rejectAttentionOsc('invalid-metadata-value');
+        }
+        fields[key] = value;
+      }
+    }
+
+    if (fields.p !== undefined && fields.p !== 'title' && fields.p !== 'body') {
+      return rejectAttentionOsc('unsupported-payload-type');
+    }
+    if (fields.d !== undefined && fields.d !== '1') {
+      return rejectAttentionOsc('incomplete-notification');
+    }
+    if (fields.e !== undefined && fields.e !== '1') {
+      return rejectAttentionOsc('unsupported-encoding');
+    }
+    if (fields.e === '1') {
+      if (content.length % 4 === 1 ||
+          !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(content)) {
+        return rejectAttentionOsc('invalid-base64');
+      }
+    } else if (/[\x00-\x1f\x7f]/.test(content)) {
+      return rejectAttentionOsc('control-character');
+    }
+    return { accepted: true, reason: 'ok' };
+  }
+
+  function validateAttentionOsc(code, payload) {
+    if (code !== 9 && code !== 99 && code !== 777) return rejectAttentionOsc('unsupported-code');
+    if (typeof payload !== 'string') return rejectAttentionOsc('invalid-payload');
+    if (payload.length === 0) return rejectAttentionOsc('empty-payload');
+    if (payload.length > MAX_ATTENTION_OSC_BYTES ||
+        new TextEncoder().encode(payload).byteLength > MAX_ATTENTION_OSC_BYTES) {
+      return rejectAttentionOsc('payload-too-large');
+    }
+    if (code === 99) return validateOsc99Attention(payload);
+    if (/[\x00-\x1f\x7f]/.test(payload)) return rejectAttentionOsc('control-character');
+    if (code === 777) {
+      if (payload.indexOf('notify;') !== 0) return rejectAttentionOsc('unsupported-command');
+      var titleEnd = payload.indexOf(';', 7);
+      if (titleEnd <= 7 || titleEnd === payload.length - 1) {
+        return rejectAttentionOsc('invalid-notify-fields');
+      }
+    }
+    return { accepted: true, reason: 'ok' };
   }
 
   function createWheelState() {
@@ -199,7 +303,10 @@
   global.LeanTTYTerminalPolicy = {
     MAX_CLIPBOARD_BYTES: MAX_CLIPBOARD_BYTES,
     MAX_CLIPBOARD_BASE64_LENGTH: MAX_CLIPBOARD_BASE64_LENGTH,
+    MAX_ATTENTION_OSC_BYTES: MAX_ATTENTION_OSC_BYTES,
     decodeOsc52: decodeOsc52,
+    createOsc99CapabilityResponse: createOsc99CapabilityResponse,
+    validateAttentionOsc: validateAttentionOsc,
     countPerfPayloadBytes: countPerfPayloadBytes,
     createBellAttentionGate: createBellAttentionGate,
     createWheelState: createWheelState,

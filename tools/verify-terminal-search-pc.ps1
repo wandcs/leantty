@@ -128,7 +128,7 @@ function Get-TerminalSearchInputNodes {
     param([Parameter(Mandatory = $true)]$Layout)
     return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
         [string]$_.attributes.type -eq 'textField' -and
-        [string]$_.attributes.hint -match '^Search text' -and
+        [string]$_.attributes.hint -match '^(?:Find text|Search text|查找内容)' -and
         [string]$_.attributes.visible -eq 'true'
     })
 }
@@ -137,7 +137,7 @@ function Get-TerminalSearchContainerNodes {
     param([Parameter(Mandatory = $true)]$Layout)
     return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
         [string]$_.attributes.type -eq 'search' -and
-        [string]$_.attributes.text -eq 'Find in terminal' -and
+        [string]$_.attributes.text -in @('Find in terminal', '在终端中查找') -and
         [string]$_.attributes.visible -eq 'true'
     })
 }
@@ -179,6 +179,7 @@ function Get-LeanTTYTabNodes {
 
 function Get-LeanTTYActiveTerminalInputNodes {
     param([Parameter(Mandatory = $true)]$Layout)
+    $contentTop = Get-LeanTTYTerminalContentTop -Layout $Layout
     $result = [Collections.Generic.List[object]]::new()
     $visit = {
         param($Node, [bool]$InsideActiveSurface)
@@ -187,7 +188,7 @@ function Get-LeanTTYActiveTerminalInputNodes {
         if ([string]$Node.attributes.type -eq '__Common__') {
             $bounds = [string]$Node.attributes.bounds
             if ($bounds -match '^\[\d+,(?<top>\d+)\]\[\d+,(?<bottom>\d+)\]$' -and
-                [int]$Matches.top -ge 100 -and [int]$Matches.bottom -gt 120) {
+                [int]$Matches.top -ge $contentTop -and [int]$Matches.bottom -gt ($contentTop + 20)) {
                 $inside = [string]$Node.attributes.opacity -eq '1.000000' -and
                     [string]$Node.attributes.zIndex -eq '1'
             }
@@ -208,6 +209,7 @@ function Get-LeanTTYActiveTerminalInputNodes {
 
 function Get-LeanTTYActiveTerminalSurfaceNodes {
     param([Parameter(Mandatory = $true)]$Layout)
+    $contentTop = Get-LeanTTYTerminalContentTop -Layout $Layout
 
     return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
         if ([string]$_.attributes.type -ne '__Common__' -or
@@ -217,7 +219,7 @@ function Get-LeanTTYActiveTerminalSurfaceNodes {
         }
         $bounds = [string]$_.attributes.bounds
         if ($bounds -notmatch '^\[\d+,(?<top>\d+)\]\[\d+,(?<bottom>\d+)\]$' -or
-            [int]$Matches.top -lt 100 -or [int]$Matches.bottom -le 120) {
+            [int]$Matches.top -lt $contentTop -or [int]$Matches.bottom -le ($contentTop + 20)) {
             return $false
         }
         return @(Get-LeanTTYLayoutNodes -Node $_ | Where-Object {
@@ -306,8 +308,8 @@ function Get-TerminalSearchResultNodes {
     param([Parameter(Mandatory = $true)]$Layout)
     return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
         [string]$_.attributes.visible -eq 'true' -and
-        ([string]$_.attributes.text -match '^(?:No results|[1-9][0-9]*/[1-9][0-9]*)$' -or
-            [string]$_.attributes.originalText -match '^(?:No results|[1-9][0-9]*/[1-9][0-9]*)$')
+        ([string]$_.attributes.text -match '^(?:No results|未找到结果|[1-9][0-9]*/[1-9][0-9]*)$' -or
+            [string]$_.attributes.originalText -match '^(?:No results|未找到结果|[1-9][0-9]*/[1-9][0-9]*)$')
     })
 }
 
@@ -748,7 +750,7 @@ try {
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $missingQuery
         $missing = Wait-TerminalSearchQueryState `
             -ExpectedQuery $missingQuery `
-            -ExpectedResultPattern '^No results$' `
+            -ExpectedResultPattern '^(?:No results|未找到结果)$' `
             -LayoutName 'layout-ascii-query-no-results.json'
 
         Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length
@@ -855,7 +857,7 @@ try {
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Syntax'
         Wait-TerminalSearchQueryState `
             -ExpectedQuery 'Syntax' `
-            -ExpectedResultPattern '^No results$' `
+            -ExpectedResultPattern '^(?:No results|未找到结果)$' `
             -LayoutName 'layout-ownership-right-no-result.json' | Out-Null
 
         Invoke-TerminalWorkspaceChord -Action 'focus-left'
@@ -914,7 +916,7 @@ try {
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Syntax'
         Wait-TerminalSearchQueryState `
             -ExpectedQuery 'Syntax' `
-            -ExpectedResultPattern '^No results$' `
+            -ExpectedResultPattern '^(?:No results|未找到结果)$' `
             -LayoutName 'layout-ownership-second-tab-no-result.json' | Out-Null
         Invoke-TerminalWorkspaceChord -Action 'next-tab'
         Wait-TerminalWorkspaceState `

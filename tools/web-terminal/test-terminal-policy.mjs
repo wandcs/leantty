@@ -14,6 +14,23 @@ import '../../entry/src/main/resources/rawfile/terminal-policy.js';
 const policy = globalThis.LeanTTYTerminalPolicy;
 const encode = text => `c;${Buffer.from(text, 'utf8').toString('base64')}`;
 
+const englishStrings = JSON.parse(readFileSync(
+  new URL('../../entry/src/main/resources/base/element/string.json', import.meta.url), 'utf8'
+)).string;
+const chineseStrings = JSON.parse(readFileSync(
+  new URL('../../entry/src/main/resources/zh_CN/element/string.json', import.meta.url), 'utf8'
+)).string;
+const englishByName = new Map(englishStrings.map(item => [item.name, item.value]));
+const chineseByName = new Map(chineseStrings.map(item => [item.name, item.value]));
+assert.deepEqual([...chineseByName.keys()].sort(), [...englishByName.keys()].sort(),
+  'Chinese resources must exactly cover the English default resource names');
+assert.equal(chineseByName.get('menu_split_pane'), '新建分屏');
+assert.equal(chineseByName.get('menu_close_pane'), '关闭分屏');
+assert.ok([...chineseByName.values()].every(value => !value.includes('窗格')),
+  'Chinese product text must use 分屏 instead of introducing 窗格');
+assert.equal(englishByName.get('menu_split_pane'), 'Split Pane');
+assert.equal(englishByName.get('menu_close_pane'), 'Close Pane');
+
 const packageJson = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf8')
 );
@@ -103,6 +120,55 @@ assert.equal(policy.decodeOsc52('c;?').reason, 'read-not-supported');
 assert.equal(policy.decodeOsc52('p;YQ==').reason, 'unsupported-target');
 assert.equal(policy.decodeOsc52('c;%%%').reason, 'invalid-base64');
 assert.equal(policy.decodeOsc52(`c;${'A'.repeat(policy.MAX_CLIPBOARD_BASE64_LENGTH + 4)}`).reason, 'encoded-too-large');
+
+for (const sample of [
+  [9, 'Ready for input'],
+  [9, '任务完成'],
+  [99, ';Ready for input'],
+  [99, 'i=opentui-1:p=body:e=1:d=1;UmVhZHkgZm9yIGlucHV0'],
+  [99, 'i=opentui-2:p=title:d=1;OpenCode'],
+  [777, 'notify;Pi;Ready for input'],
+  [777, 'notify;Pi;Ready; with details']
+]) {
+  assert.equal(policy.validateAttentionOsc(sample[0], sample[1]).accepted, true);
+}
+for (const sample of [
+  [8, 'Ready'],
+  [99, 'i=1'],
+  [99, 'i=1:p=?;'],
+  [99, 'i=1:p=close;'],
+  [99, 'i=1:p=body:d=0;pending'],
+  [99, 'i=1:p=body:e=0;plain'],
+  [99, 'i=1:p=body:e=1;%%%'],
+  [99, 'i=1:p=body:a=report;Ready'],
+  [99, 'i=1:p=body:p=title;Ready'],
+  [99, 'i=1:p=body;line\nbreak'],
+  [9, ''],
+  [9, 'line\nbreak'],
+  [9, 'x'.repeat(policy.MAX_ATTENTION_OSC_BYTES + 1)],
+  [777, 'notify;;Ready'],
+  [777, 'notify;Pi;'],
+  [777, 'message;Pi;Ready'],
+  [777, 'notify;Pi\u007f;Ready']
+]) {
+  assert.equal(policy.validateAttentionOsc(sample[0], sample[1]).accepted, false);
+}
+assert.deepEqual(Object.keys(policy.validateAttentionOsc(777, 'notify;Pi;Ready')).sort(),
+  ['accepted', 'reason'],
+  'attention validation must not return remote title or body content');
+assert.deepEqual(Object.keys(policy.validateAttentionOsc(
+  99, 'i=opentui-1:p=body:e=1:d=1;UmVhZHk='
+)).sort(), ['accepted', 'reason'],
+  'OSC 99 attention validation must not return metadata, identifiers, or content');
+assert.equal(policy.createOsc99CapabilityResponse('i=opentui-notifications:p=?;'),
+  '\u001b]99;i=opentui-notifications:p=?;p=title,body\u001b\\');
+for (const malformedQuery of [
+  'p=?;', 'i=one:p=?;payload', 'i=one:p=?:a=report;', 'i=one:i=two:p=?;',
+  'i=one:p=title;'
+]) {
+  assert.equal(policy.createOsc99CapabilityResponse(malformedQuery), '',
+    'only a bounded identifier plus p=? may receive the minimal OSC 99 capability response');
+}
 
 const bellAttention = policy.createBellAttentionGate();
 let bellAttentionCount = 0;
@@ -221,16 +287,21 @@ assert.doesNotMatch(terminalHtml, /JetBrainsMonoNerdFont-(?:Regular|Bold)\.ttf/,
   'the double-width Nerd Font assets must not return to the terminal font face');
 assert.match(terminalHtml, /addEventListener\('wheel', handleAlternateWheel, true\)/,
   'alternate-buffer wheel handling must run during capture before xterm scrolls its inner viewport');
-assert.match(terminalHtml, /#terminal-container > \.xterm\s*\{[^}]*padding:\s*4px 2px 4px 10px;/s,
-  'terminal padding must offset the scrollbar gutter without changing the total horizontal inset');
+const terminalPaddingMatch = terminalHtml.match(
+  /#terminal-container > \.xterm\s*\{[^}]*padding:\s*(\d+)px (\d+)(?:px)? (\d+)px (\d+)px;/s
+);
+assert.ok(terminalPaddingMatch, 'terminal padding must remain an explicit four-edge contract');
+const terminalPadding = terminalPaddingMatch.slice(1).map(value => Number.parseInt(value, 10));
+assert.deepEqual(terminalPadding, [8, 0, 8, 8],
+  'terminal padding plus the eight-pixel scrollbar gutter must provide one common visual inset');
 assert.match(terminalHtml, /function fitAndCenterTerminalGrid\(\)/,
   'terminal fitting must redistribute unused cell-grid space instead of leaving it on trailing edges');
 assert.match(terminalHtml,
   /centerGridLeadingPadding\(\s*TERMINAL_BASE_PADDING_TOP,\s*TERMINAL_BASE_PADDING_BOTTOM,/s,
   'terminal fitting must center rows with the tested layout policy');
 assert.match(terminalHtml,
-  /var TERMINAL_BASE_PADDING_LEFT = 10;[\s\S]*var TERMINAL_BASE_PADDING_RIGHT = 2;/,
-  'terminal fitting must preserve the compact horizontal inset around the scrollbar gutter');
+  /var TERMINAL_BASE_PADDING_TOP = 8;[\s\S]*var TERMINAL_BASE_PADDING_BOTTOM = 8;[\s\S]*var TERMINAL_BASE_PADDING_LEFT = 8;[\s\S]*var TERMINAL_BASE_PADDING_RIGHT = 0;/,
+  'terminal fitting must preserve the shared eight-pixel visual inset on every edge');
 assert.match(terminalHtml,
   /centerGridLeadingPadding\(\s*TERMINAL_BASE_PADDING_LEFT,\s*TERMINAL_BASE_PADDING_RIGHT \+\s*TERMINAL_SCROLLBAR_WIDTH,/s,
   'terminal fitting must split unused column-grid width around both pane edges');
@@ -435,8 +506,20 @@ assert.match(terminalHtml,
   /case 'focus':[\s\S]*?bellAttentionGate\.rearmDelivery\(\);[\s\S]*?term\.focus\(\);/s,
   'programmatic focus must rearm BEL delivery without acknowledging pane attention');
 assert.match(terminalHtml,
-  /term\.onBell\s*\(function\(\)\s*\{\s*if\s*\(bellAttentionGate\.trigger\(\)\)\s*\{\s*sendBridgeControl\('bellAttention', ''\)/s,
-  'a BEL flood must cross the bridge only after the source-side attention gate accepts it');
+  /case 'blur':[\s\S]*?bellAttentionGate\.rearmDelivery\(\);[\s\S]*?term\.blur\(\);/s,
+  'programmatic blur must let the first later background attention signal reach native policy');
+assert.match(terminalHtml,
+  /function triggerTerminalAttention\(\)[\s\S]*?bellAttentionGate\.trigger\(\)[\s\S]*?sendBridgeControl\('bellAttention', ''\)/s,
+  'all accepted terminal attention must share the empty-payload BEL gate');
+assert.match(terminalHtml,
+  /registerOscHandler\(9,[\s\S]*?validateAttentionOsc\(9, payload\)[\s\S]*?triggerTerminalAttention\(\)[\s\S]*?registerOscHandler\(99,[\s\S]*?validateAttentionOsc\(99, payload\)[\s\S]*?triggerTerminalAttention\(\)[\s\S]*?registerOscHandler\(777,[\s\S]*?validateAttentionOsc\(777, payload\)[\s\S]*?triggerTerminalAttention\(\)/s,
+  'OSC 9, bounded OSC 99, and OSC 777 must validate then discard payload before entering attention');
+assert.match(terminalHtml,
+  /registerOscHandler\(99,[\s\S]*?createOsc99CapabilityResponse\(payload\)[\s\S]*?term\.input\(capabilityResponse, false\)[\s\S]*?else if \(LeanTTYTerminalPolicy\.validateAttentionOsc\(99, payload\)\.accepted\)/s,
+  'OSC 99 capability queries must receive only the fixed terminal-generated response and never attention');
+assert.match(terminalHtml,
+  /term\.onBell\s*\(function\(\)\s*\{\s*triggerTerminalAttention\(\);\s*\}\);/s,
+  'BEL must continue to use the shared attention gate');
 assert.doesNotMatch(terminalHtml, /term\.onBell\s*\(function\(\)\s*\{\s*sendBridgeControl\('bellAttention'/s,
   'bell attention must never be sent directly for every parsed BEL');
 assert.match(terminalHtml, /term\.onTitleChange\s*\(/,
@@ -506,6 +589,26 @@ logicalBackgroundTerminal.dispose();
 const sourceTerminal = new globalThis.Terminal({ cols: 20, rows: 4, scrollback: 20 });
 const sourceSerializer = new globalThis.SerializeAddon.SerializeAddon();
 sourceTerminal.loadAddon(sourceSerializer);
+const parsedAttentionCodes = [];
+const generatedTerminalReplies = [];
+sourceTerminal.onData(data => generatedTerminalReplies.push(data));
+for (const attentionCode of [9, 777]) {
+  sourceTerminal.parser.registerOscHandler(attentionCode, payload => {
+    if (policy.validateAttentionOsc(attentionCode, payload).accepted) {
+      parsedAttentionCodes.push(attentionCode);
+    }
+    return true;
+  });
+}
+sourceTerminal.parser.registerOscHandler(99, payload => {
+  const capabilityResponse = policy.createOsc99CapabilityResponse(payload);
+  if (capabilityResponse.length > 0) {
+    sourceTerminal.input(capabilityResponse, false);
+  } else if (policy.validateAttentionOsc(99, payload).accepted) {
+    parsedAttentionCodes.push(99);
+  }
+  return true;
+});
 sourceTerminal.write('first\r\n');
 sourceTerminal.write('second\r\n');
 sourceTerminal.write('third\r\n');
@@ -513,14 +616,26 @@ sourceTerminal.write('fourth\r\n');
 sourceTerminal.write('fifth\r\n');
 sourceTerminal.write('\u001b]0;checkpoint-title\u0007');
 sourceTerminal.write('\u001b]52;c;Y2hlY2twb2ludA==\u0007');
+sourceTerminal.write('\u001b]9;private-task-name\u0007');
+sourceTerminal.write('\u001b]99;i=private-id:p=body:e=1:d=1;cHJpdmF0ZS1yZXN1bHQ=\u001b\\');
+sourceTerminal.write('\u001b]99;i=private-id:p=body:d=0;incomplete\u001b\\');
+sourceTerminal.write('\u001b]99;i=private-id:p=?;\u001b\\');
+sourceTerminal.write('\u001b]777;notify;private-agent;private-result\u0007');
 sourceTerminal.write('\u001b[31msixth\u001b[0m\u001b[?25l\u001b[?1004h');
 await new Promise(resolve => {
   sourceTerminal.write('', resolve);
 });
+assert.deepEqual(parsedAttentionCodes, [9, 99, 777],
+  'xterm must deliver only accepted complete OSC attention frames to the shared policy');
+assert.deepEqual(generatedTerminalReplies.filter(data => data.startsWith('\u001b]99;')),
+  ['\u001b]99;i=private-id:p=?;p=title,body\u001b\\'],
+  'xterm must send one fixed minimal response for a valid OSC 99 capability query');
 const cursorVisibility = sourceTerminal._core.coreService.isCursorHidden ? '\u001b[?25l' : '';
 const serializedSnapshot = sourceSerializer.serialize({ scrollback: 20 }) + cursorVisibility;
 assert.doesNotMatch(serializedSnapshot, /\u0007|\u001b\]0;|\u001b\]52;/,
   'framebuffer checkpoints must not retain title, clipboard, or bell side effects');
+assert.doesNotMatch(serializedSnapshot, /private-task-name|private-id|private-agent|private-result/,
+  'framebuffer checkpoints must not retain OSC attention payloads');
 assert.match(serializedSnapshot, /\u001b\[\?1004h/,
   'the focus-reporting fixture must exercise serializer mode restoration');
 const restoredTerminal = new globalThis.Terminal({ cols: 20, rows: 4, scrollback: 20 });
@@ -882,6 +997,9 @@ assert.match(indexPage,
   /private onMainWindowVisibilityChanged[\s\S]*?captureMountedTerminalSnapshots\(\)/,
   'backgrounding the window must checkpoint every currently mounted terminal');
 assert.match(indexPage,
+  /private onMainWindowVisibilityChanged[\s\S]*?requestBlur\(\)[\s\S]*?captureMountedTerminalSnapshots\(\)/,
+  'backgrounding the window must report terminal focus loss before checkpointing');
+assert.match(indexPage,
   /private onMainWindowVisibilityChanged[\s\S]*?if \(this\.mainWindowVisible\) \{[\s\S]*?this\.restoreActivePaneFocus\(\)/,
   'restoring the window must restore focus to the active pane');
 assert.match(indexPage,
@@ -934,10 +1052,10 @@ assert.match(indexPage,
   /selected === 4 \|\| selected === 5\) \{ return \}[\s\S]*selected === 3\)[\s\S]*this\.openActivePaneSearch\(\)/,
   'Enter must leave both composite steppers stable while Search opens on the active pane');
 assert.match(indexPage,
-  /menuRow\(3, '⌕', 'Search'[\s\S]*transparencyMenuRow\(\)[\s\S]*fontSizeMenuRow\(\)/,
+  /menuRow\(3, '⌕', this\.text\('menu_find'\)[\s\S]*transparencyMenuRow\(\)[\s\S]*fontSizeMenuRow\(\)/,
   'the rendered menu must place production Search before both composite steppers');
 assert.match(indexPage,
-  /menuRow\(3, '⌕', 'Search'[\s\S]*\(\) => \{ this\.openActivePaneSearch\(\) \}, true, false\)/,
+  /menuRow\(3, '⌕', this\.text\('menu_find'\)[\s\S]*\(\) => \{ this\.openActivePaneSearch\(\) \}, true, false\)/,
   'menu Search must close the menu without stealing focus back from the search field');
 assert.match(indexPage,
   /Text\('−'\)[\s\S]*Text\(this\.transparencyLabel\)[\s\S]*Text\('\+'\)/,
@@ -946,10 +1064,10 @@ assert.match(indexPage,
   /Text\('−'\)[\s\S]*\.enabled\(TransparencyPolicy\.canDecrease[\s\S]*Text\('\+'\)[\s\S]*\.enabled\(TransparencyPolicy\.canIncrease/,
   'both transparency buttons must expose real disabled states at the range boundaries');
 assert.match(indexPage,
-  /private adjustTransparency\(direction: number\): void[\s\S]*canDecrease[\s\S]*canIncrease[\s\S]*stepTransparencyMode\(direction\)[\s\S]*this\.transparencyLabel = TransparencyPolicy\.label\(mode\)/,
+  /private adjustTransparency\(direction: number\): void[\s\S]*canDecrease[\s\S]*canIncrease[\s\S]*stepTransparencyMode\(direction\)[\s\S]*this\.transparencyLabel = this\.transparencyModeLabel\(mode\)/,
   'the open transparency row must clamp at both boundaries and update its label in place');
 assert.match(indexPage,
-  /menuSelectedIndex === 4[\s\S]*accessibilityText\('Transparency, ' \+ this\.transparencyLabel \+[\s\S]*Use left and right arrow keys to adjust/,
+  /menuSelectedIndex === 4[\s\S]*accessibilityText\(this\.text\('a11y_transparency', this\.transparencyLabel\)\)/,
   'the composite row must expose the current semantic level and keyboard adjustment guidance');
 assert.match(indexPage,
   /menuSelectedIndex === 4 && event\.keyCode === 2014[\s\S]*adjustTransparency\(-1\)/,
@@ -1077,8 +1195,14 @@ assert.match(terminalHtml, /#search-result\s*\{[\s\S]*?width:\s*48px;[\s\S]*?max
 assert.match(terminalHtml, /#search-panel\s*\{[\s\S]*?right:\s*54px;/,
   'the search panel must keep clear of the pane close control');
 assert.match(terminalHtml,
-  /resultDescription[\s\S]*'Type to search'[\s\S]*'No results'[\s\S]*setAttribute\('aria-label', resultDescription\)/,
+  /resultDescription[\s\S]*searchText\.typeToFind[\s\S]*searchText\.noResults[\s\S]*setAttribute\('aria-label', resultDescription\)/,
   'compact 0/0 feedback must distinguish an empty query from a completed no-results search for accessibility');
+assert.match(terminalHtml,
+  /case 'localization':[\s\S]*applyLocalization\(JSON\.parse\(message\.payload\)\)/,
+  'native localization must cross the existing structured control channel');
+assert.match(terminalHtml,
+  /function applyLocalization\(text\)[\s\S]*document\.documentElement\.lang[\s\S]*input\.setAttribute\('placeholder', text\.placeholder\)/,
+  'terminal search localization must update both document semantics and visible controls');
 assert.match(terminalHtml, /#search-panel button\s*\{[\s\S]*?flex:\s*0 0 26px;[\s\S]*?width:\s*26px;/,
   'search actions must remain compact and equally sized');
 assert.match(terminalHtml,
