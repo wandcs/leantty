@@ -380,7 +380,11 @@ without invalidating separately proven PTY behavior.
 `verify-ssh-matrix-pc.ps1` is the formal SSH physical entry. It runs four
 isolated groups in the fixed order below against one retained candidate, stops
 at the first failed group, and validates each group's acceptance mode,
-candidate SHA-256, clean harness tree, unchanged Preferences and cleanup result.
+candidate SHA-256, clean harness tree, Preferences boundary and cleanup result.
+Non-setting groups require a byte-identical Preferences digest. The performance
+group requires a byte-identical digest before its intentional transparency
+changes, then requires the exact original transparency mode to be restored;
+ArkData's serialized bytes are not a valid semantic oracle after those writes.
 It does not silently retry or skip a failed group.
 
 | SSH group | Owned public stages | Run-scoped state and primary oracle |
@@ -394,7 +398,8 @@ Each group creates its own fixture process, reverse mapping, known-host
 boundary, app restart and evidence directory, then removes or restores those
 resources. Groups for the same PC and fixture port MUST run serially. The
 performance group captures the existing transparency mode and restores that
-exact mode on both success and failure.
+exact mode on both success and failure. Its evidence records the digest
+comparison boundary and the one allowed, semantically restored setting.
 
 For a routine diagnostic against an explicit test HAP, select one group with
 `-DiagnosticHap -HapPath ... -Group <name>`; it remains diagnostic evidence. For

@@ -118,6 +118,20 @@ try {
         if (-not $groupEvidence.preferences.unchanged) {
             throw "SSH group changed persistent preferences: $group"
         }
+        if ($group -eq 'transport-performance') {
+            if ([string]$groupEvidence.preferences.comparisonBoundary -ne
+                    'before-transparency-performance' -or
+                [string]$groupEvidence.preferences.allowedMutation -ne
+                    'terminal-transparency-mode-restored' -or
+                [string]$groupEvidence.performanceMatrix.initialMode -ne
+                    [string]$groupEvidence.performanceMatrix.restoredMode) {
+                throw 'SSH performance group did not restore its transparency preference boundary'
+            }
+        } elseif ([string]$groupEvidence.preferences.comparisonBoundary -ne
+                'all-selected-stages' -or
+            [string]$groupEvidence.preferences.allowedMutation -ne 'none') {
+            throw "SSH group did not preserve the complete Preferences boundary: $group"
+        }
         if ([string]$groupEvidence.executionGroup -ne $group) {
             throw "SSH group evidence identity mismatch: $group"
         }
