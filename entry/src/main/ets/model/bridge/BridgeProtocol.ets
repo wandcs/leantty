@@ -38,6 +38,8 @@ export class BridgeProtocol {
   static readonly KIND_SNAPSHOT_REQUEST: string = 'snapshotRequest'
   static readonly KIND_RESTORE_SNAPSHOT: string = 'restoreSnapshot'
   static readonly KIND_RESTORE_COMPLETE: string = 'restoreComplete'
+  static readonly KIND_SESSION_OUTPUT_ANCHOR: string = 'sessionOutputAnchor'
+  static readonly KIND_SESSION_OUTPUT_ANCHOR_COMPLETE: string = 'sessionOutputAnchorComplete'
   static readonly KIND_SESSION_RESET_VIEWPORT: string = 'sessionResetViewport'
   static readonly KIND_SESSION_RESET_COMPLETE: string = 'sessionResetComplete'
   static readonly KIND_SEARCH_OPEN: string = 'searchOpen'
@@ -98,6 +100,8 @@ export class BridgeProtocol {
       return null
     }
     if ((kind === BridgeProtocol.KIND_RESTORE_COMPLETE ||
+      kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR ||
+      kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR_COMPLETE ||
       kind === BridgeProtocol.KIND_SESSION_RESET_VIEWPORT ||
       kind === BridgeProtocol.KIND_SESSION_RESET_COMPLETE) && payload.length > 0) {
       return null
@@ -197,6 +201,10 @@ export class BridgeProtocol {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SESSION_RESET_VIEWPORT)
   }
 
+  static sessionOutputAnchor(): BridgeMessage {
+    return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR)
+  }
+
   static searchOpen(): BridgeMessage {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SEARCH_OPEN)
   }
@@ -259,6 +267,7 @@ export class BridgeProtocol {
         kind === BridgeProtocol.KIND_COPY_OR_INTERRUPT ||
         kind === BridgeProtocol.KIND_SNAPSHOT_REQUEST ||
         kind === BridgeProtocol.KIND_RESTORE_SNAPSHOT ||
+        kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR ||
         kind === BridgeProtocol.KIND_SESSION_RESET_VIEWPORT ||
         kind === BridgeProtocol.KIND_SEARCH_OPEN ||
         kind === BridgeProtocol.KIND_SEARCH_CLOSE
@@ -277,6 +286,7 @@ export class BridgeProtocol {
       kind === BridgeProtocol.KIND_RENDERER_STATE ||
       kind === BridgeProtocol.KIND_OPEN_URL ||
       kind === BridgeProtocol.KIND_RESTORE_COMPLETE ||
+      kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR_COMPLETE ||
       kind === BridgeProtocol.KIND_SESSION_RESET_COMPLETE ||
       kind === BridgeProtocol.KIND_SEARCH_STATE ||
       kind === BridgeProtocol.KIND_SNAPSHOT

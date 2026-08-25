@@ -254,6 +254,23 @@
     return leading + Math.max(0, unusedSize) / 2;
   }
 
+  function sessionOutputAnchorRow(buffer, rows) {
+    if (!buffer || typeof buffer.baseY !== 'number' || typeof buffer.length !== 'number' ||
+        typeof buffer.getLine !== 'function' || typeof rows !== 'number' || !isFinite(rows)) {
+      return 1;
+    }
+    var viewportStart = Math.max(0, Math.floor(buffer.baseY));
+    var viewportRows = Math.max(1, Math.floor(rows));
+    var viewportEnd = Math.min(buffer.length, viewportStart + viewportRows) - 1;
+    for (var row = viewportEnd; row >= viewportStart; row--) {
+      var line = buffer.getLine(row);
+      if (line && line.translateToString(true).length > 0) {
+        return row - viewportStart + 1;
+      }
+    }
+    return 1;
+  }
+
   function isLinkModifierActive(event, mouseTrackingMode) {
     if (!event ||
         event.ctrlKey !== true ||
@@ -315,6 +332,7 @@
     hasPendingWheelSteps: hasPendingWheelSteps,
     pendingWheelLines: pendingWheelLines,
     centerGridLeadingPadding: centerGridLeadingPadding,
+    sessionOutputAnchorRow: sessionOutputAnchorRow,
     isLinkModifierActive: isLinkModifierActive,
     shouldActivateLink: shouldActivateLink,
     shouldRunTerminalSecondaryAction: shouldRunTerminalSecondaryAction,

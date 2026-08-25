@@ -56,7 +56,7 @@
 6. 固定 xterm 6.0.0 行为矩阵确认：`47`、`1047`、`1049` 三种 alternate-buffer 进入方式
    可以由统一边界退出，但不存在一条仅靠固定退出序列排列、同时为三种方式保留远端
    cursor 的通用契约。Session 结束后因此只保留 normal buffer/scrollback，不保留远端
-   cursor；新的本地输出显式锚定在屏幕末行之后。
+   cursor；新的本地输出接在当前底部 viewport 最后一行非空 normal 内容之后。
 7. xterm `write` 完成回调证明字节已经解析，但不保证用户当前 viewport 位于底部；
    alternate buffer 退出后若用户原先停留在 scrollback，必须在本地 close/prompt 写入并
    完成 ACK 后，再通过公开 `scrollToBottom()` 恢复可见位置。
@@ -220,19 +220,38 @@ SSH Transport / PTY closes
 开发候选采用一个窄的组合边界：
 
 1. 复用现有 Terminal binary write 与 ACK，发送固定、有界的标准序列，退出三类
-   alternate buffer，恢复已证实的输入、鼠标、光标、滚动区域、字符集和颜色状态；
-   最后用标准 CUP 把新的本地输出锚定到屏幕末行，不清除 normal buffer 或 scrollback。
-2. reset 字节完成 ACK 后，由 Session 的唯一结束回调写入 close/error 与 `ltty>`；这些本地
-   字节继续走同一个有序输出队列。
-3. Bridge 只有在所有较早 pending/in-flight writes 都完成 ACK 后，才发送一个空 payload 的
-   `sessionResetViewport` 控制意图；ArkWeb 仅调用 xterm 公共 `scrollToBottom()` 并返回
-   `sessionResetComplete`。
-4. Session 在完成回执前拒绝本地输入和迟到远端字节；bridge detach 会中断旧回调并由当前
+   alternate buffer，恢复已证实的输入、鼠标、光标、滚动区域、字符集和颜色状态；保留末行
+   CUP 仅作为无法完成后续定位时避免覆盖 normal 内容的安全回退。
+2. reset 字节完成 ACK 后，Bridge 通过空 payload 的 `sessionOutputAnchor` 意图，在 xterm 公共
+   Buffer API 中有界扫描底部 viewport，使用标准 CUP 把光标重新定位到最后一行非空 normal
+   内容；不清屏、不修改 scrollback，也不为尾部空白补行。renderer 离线时，本地结束输出等待
+   snapshot 恢复和该定位完成。
+3. 定位完成后，由 Session 的唯一结束回调写入 close/error 与 `ltty>`；这些本地字节继续走
+   同一个有序输出队列。
+4. Bridge 只有在所有本地结束输出完成 ACK 后，才发送空 payload 的 `sessionResetViewport`
+   控制意图；ArkWeb 调用 xterm 公共 `scrollToBottom()` 并返回 `sessionResetComplete`。
+5. Session 在完成回执前拒绝本地输入和迟到远端字节；bridge detach 会中断旧回调并由当前
    Surface 重新完成边界，旧 snapshot request 不能越过 reset commit floor。
 
 之所以保留这个类型化 viewport 意图，是因为标准序列可以确定 parser/cursor 状态，却不能
 代表用户 viewport 已回到底部。它不提供任意 xterm 操作，不引入通用终端管理器、新持久状态
 或调试面板。
+
+### 1.5 退出定位修正
+
+2026-08-25 的真实使用反馈确认，原本无条件使用 `CSI 999;1H` 作为最终输出锚点会在 SSH
+`exit` 前的光标位于屏幕中部时，把 `Connection closed` 与 `ltty>` 推到最后一行并暴露整屏
+空白。不能简单删除该 CUP：固定 xterm 矩阵证明 dirty origin/scroll-region 与 alternate buffer
+组合会让本地输出覆盖既有 normal 内容。因此 1.5 只把最终锚点改为上述有界 Buffer 定位；
+完整 Session reset、normal scrollback、renderer 恢复、viewport 回底和输入门禁保持不变。
+
+本次开发候选完成以下变更范围证据：固定 xterm 6.0.0 覆盖 normal buffer、`47`/`1047`/
+`1049` alternate buffer、SerializeAddon restore、完整模式与颜色复位、normal 内容与 scrollback、
+无空白行关闭输出和首个本地输入；Web 与 ArkTS 聚焦组、测试签名 ARM64 debug HAP 构建通过。
+物理 HarmonyOS PC 的受控密码 SSH 正常 `exit` 场景通过；dirty target 强制断开场景进一步证明
+alternate buffer、隐藏光标、mouse、focus、bracketed paste 和颜色复位，本地提示符与后续命令
+连续显示且可输入，临时 fixture、known_hosts 与 reverse mapping 清理通过。这些是 1.5 开发期
+L0-L3 证据，不替代正式 release candidate 的 L4 门禁。
 
 ### 明确拒绝的修复
 

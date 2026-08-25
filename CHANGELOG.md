@@ -86,6 +86,10 @@
 
 ### Fixed
 
+- Kept SSH session-boundary mode, cursor, color and alternate-buffer cleanup while placing
+  `Connection closed` and the local prompt immediately after the last visible terminal content,
+  instead of forcing them to the final screen row and exposing a large blank gap. Normal
+  scrollback, renderer recovery, viewport restoration and first-key input ordering remain intact.
 - Kept the selected offline-guide language while following page-internal
   section links. English links such as `Agent workflow` no longer fall back to
   the default Chinese page merely because the target is a child section rather

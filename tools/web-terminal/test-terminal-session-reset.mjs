@@ -27,12 +27,16 @@ function write(terminal, data) {
 }
 
 function normalBufferText(terminal) {
+  return normalBufferLines(terminal).join('\n');
+}
+
+function normalBufferLines(terminal) {
   const buffer = terminal.buffer.normal;
   const lines = [];
   for (let row = 0; row < buffer.length; row++) {
     lines.push(buffer.getLine(row)?.translateToString(true) ?? '');
   }
-  return lines.join('\n');
+  return lines;
 }
 
 function observeColorEvents(terminal) {
@@ -92,7 +96,8 @@ function assertColorResets(events) {
   }
 }
 
-async function exerciseSessionBoundary(TerminalCtor, SerializeAddonCtor, restoreFromSnapshot) {
+async function exerciseSessionBoundary(TerminalCtor, SerializeAddonCtor, sessionOutputAnchorRow,
+  restoreFromSnapshot) {
   const source = new TerminalCtor({
     cols: 24,
     rows: 4,
@@ -148,6 +153,8 @@ async function exerciseSessionBoundary(TerminalCtor, SerializeAddonCtor, restore
   }
 
   await write(terminal, SESSION_BOUNDARY_RESET_SEQUENCE);
+  const anchorRow = sessionOutputAnchorRow(terminal.buffer.active, terminal.rows);
+  await write(terminal, `\u001b[${anchorRow};1H`);
   await write(terminal, '\r\nConnection closed (exit 0).\r\n\u001b[0mltty> ');
   if (!restoreFromSnapshot) {
     assert.ok(terminal.buffer.active.viewportY < terminal.buffer.active.baseY,
@@ -188,11 +195,45 @@ async function exerciseAlternateBufferExit(TerminalCtor, enterMode) {
   terminal.dispose();
 }
 
-export async function runTerminalSessionResetTests(TerminalCtor, SerializeAddonCtor) {
+async function exerciseCloseOutputPlacement(TerminalCtor, sessionOutputAnchorRow, enterMode = 0) {
+  const terminal = new TerminalCtor({ cols: 40, rows: 8, scrollback: 20 });
+  await write(terminal, 'remote-shell$ exit');
+  if (enterMode > 0) {
+    await write(terminal, `\u001b[?${enterMode}hremote-alternate`);
+    assert.equal(terminal.buffer.active.type, 'alternate',
+      `DEC private mode ${enterMode} must enter the alternate buffer`);
+  }
+
+  await write(terminal, SESSION_BOUNDARY_RESET_SEQUENCE);
+  const anchorRow = sessionOutputAnchorRow(terminal.buffer.active, terminal.rows);
+  await write(terminal, `\u001b[${anchorRow};1H`);
+  await write(terminal, '\r\nConnection closed (exit 0).\r\n\u001b[0mltty> r');
+  terminal.scrollToBottom();
+
+  const lines = normalBufferLines(terminal);
+  const exitLine = lines.findIndex(line => line.includes('remote-shell$ exit'));
+  const closeLine = lines.findIndex(line => line.includes('Connection closed (exit 0).'));
+  const promptLine = lines.findIndex(line => line.includes('ltty> r'));
+  const label = enterMode > 0 ? `alternate mode ${enterMode}` : 'normal buffer';
+  assert.ok(exitLine >= 0 && closeLine >= 0 && promptLine >= 0,
+    `${label} must retain the exit line, local close output and first local input`);
+  assert.equal(closeLine, exitLine + 1,
+    `${label} close output must follow the remote exit without blank terminal rows`);
+  assert.equal(promptLine, closeLine + 1,
+    `${label} prompt and first local input must immediately follow the close output`);
+  assertLocalStateRestored(terminal);
+  terminal.dispose();
+}
+
+export async function runTerminalSessionResetTests(TerminalCtor, SerializeAddonCtor, sessionOutputAnchorRow) {
   for (const enterMode of [47, 1047, 1049]) {
     await exerciseAlternateBufferExit(TerminalCtor, enterMode);
   }
-  await exerciseSessionBoundary(TerminalCtor, SerializeAddonCtor, false);
-  await exerciseSessionBoundary(TerminalCtor, SerializeAddonCtor, true);
+  await exerciseCloseOutputPlacement(TerminalCtor, sessionOutputAnchorRow);
+  for (const enterMode of [47, 1047, 1049]) {
+    await exerciseCloseOutputPlacement(TerminalCtor, sessionOutputAnchorRow, enterMode);
+  }
+  await exerciseSessionBoundary(TerminalCtor, SerializeAddonCtor, sessionOutputAnchorRow, false);
+  await exerciseSessionBoundary(TerminalCtor, SerializeAddonCtor, sessionOutputAnchorRow, true);
   console.log('terminal session-boundary reset matrix tests passed');
 }

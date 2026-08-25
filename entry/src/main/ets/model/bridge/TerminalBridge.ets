@@ -31,6 +31,8 @@ export class TerminalBridge {
   private pendingSnapshotRequestIds: number[] = []
   private pendingSearchOpen: boolean = false
   private awaitingRestoreComplete: boolean = false
+  private sessionOutputAnchorCompletion: ((completed: boolean) => void) | null = null
+  private sessionOutputAnchorSent: boolean = false
   private sessionResetViewportCompletion: ((completed: boolean) => void) | null = null
   private sessionResetViewportSent: boolean = false
   private readyHandlerNotified: boolean = false
@@ -78,6 +80,8 @@ export class TerminalBridge {
     this.logMetrics('destroy')
     let interruptedWrites: PendingTerminalWrite[] = this.inFlightWrites.concat(
       this.pendingData.slice(this.pendingDataHead))
+    let interruptedAnchorCompletion: ((completed: boolean) => void) | null =
+      this.sessionOutputAnchorCompletion
     let interruptedViewportCompletion: ((completed: boolean) => void) | null =
       this.sessionResetViewportCompletion
     if (this.msgPort !== null) {
@@ -103,6 +107,8 @@ export class TerminalBridge {
     this.pendingSnapshotRequestIds = []
     this.pendingSearchOpen = false
     this.awaitingRestoreComplete = false
+    this.sessionOutputAnchorCompletion = null
+    this.sessionOutputAnchorSent = false
     this.sessionResetViewportCompletion = null
     this.sessionResetViewportSent = false
     this.readyHandlerNotified = false
@@ -120,6 +126,9 @@ export class TerminalBridge {
     }
     if (interruptedViewportCompletion !== null) {
       interruptedViewportCompletion(false)
+    }
+    if (interruptedAnchorCompletion !== null) {
+      interruptedAnchorCompletion(false)
     }
   }
 
@@ -271,6 +280,16 @@ export class TerminalBridge {
     this.pumpSessionResetViewport()
   }
 
+  positionSessionOutput(onComplete: (completed: boolean) => void): void {
+    if (this.sessionOutputAnchorCompletion !== null) {
+      onComplete(false)
+      return
+    }
+    this.sessionOutputAnchorCompletion = onComplete
+    this.sessionOutputAnchorSent = false
+    this.pumpSessionOutputAnchor()
+  }
+
   private postTerminalPacket(data: Uint8Array): number {
     if (this.msgPort === null) {
       return 0
@@ -353,6 +372,7 @@ export class TerminalBridge {
           completedWrite.onWritten(true)
         }
         this.pumpPendingData()
+        this.pumpSessionOutputAnchor()
         this.pumpSessionResetViewport()
         this.pumpSnapshotRequests()
         this.acknowledgedBytes += acknowledged
@@ -386,6 +406,7 @@ export class TerminalBridge {
         this.pendingRestoreSnapshot = ''
       }
       this.pumpPendingData()
+      this.pumpSessionOutputAnchor()
       this.pumpSessionResetViewport()
       this.pumpSnapshotRequests()
       this.pumpSearchOpen()
@@ -398,9 +419,21 @@ export class TerminalBridge {
     if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_RESTORE_COMPLETE) {
       if (this.awaitingRestoreComplete) {
         this.awaitingRestoreComplete = false
+        this.pumpSessionOutputAnchor()
+        this.pumpSessionResetViewport()
         this.pumpSnapshotRequests()
         this.pumpSearchOpen()
         this.notifyReadyHandler()
+      }
+      return
+    }
+    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR_COMPLETE) {
+      let completion: ((completed: boolean) => void) | null = this.sessionOutputAnchorCompletion
+      this.sessionOutputAnchorCompletion = null
+      this.sessionOutputAnchorSent = false
+      if (completion !== null) {
+        completion(true)
       }
       return
     }
@@ -453,6 +486,21 @@ export class TerminalBridge {
     if (!this.sessionResetViewportSent) {
       let completion: ((completed: boolean) => void) | null = this.sessionResetViewportCompletion
       this.sessionResetViewportCompletion = null
+      if (completion !== null) {
+        completion(false)
+      }
+    }
+  }
+
+  private pumpSessionOutputAnchor(): void {
+    if (this.sessionOutputAnchorCompletion === null || this.sessionOutputAnchorSent || !this.ready ||
+      this.awaitingRestoreComplete || this.pendingDataHead < this.pendingData.length || this.inFlightMessages > 0) {
+      return
+    }
+    this.sessionOutputAnchorSent = this.send(BridgeProtocol.sessionOutputAnchor())
+    if (!this.sessionOutputAnchorSent) {
+      let completion: ((completed: boolean) => void) | null = this.sessionOutputAnchorCompletion
+      this.sessionOutputAnchorCompletion = null
       if (completion !== null) {
         completion(false)
       }
