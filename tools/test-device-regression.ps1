@@ -885,6 +885,12 @@ foreach ($scriptName in @(
             $content.Contains("ctrlVPaste = 'navigation input hex=6c 65 61 6e 74 74 79")
         ) 'SSH authentication scenario does not capture terminal key bytes at the server boundary'
         Assert-True (
+            $content.Contains("`$alternateFocusReportPattern = 'fixture command bytes=5b 49 result=unrecognized'") -and
+            $content.Contains('$alternateFocusReportCount = Get-FixtureLogMatchCount') -and
+            $content.Contains('-GreaterThan $alternateFocusReportCount') -and
+            $content.Contains('Alternate-screen focus report submission was not observed')
+        ) 'SSH alternate-screen escape coverage relies on a fixed line-boundary delay'
+        Assert-True (
             $content.Contains('[string[]]$Only') -and
             $content.Contains('[string]$Group') -and
             $content.Contains("'transport-performance'") -and
