@@ -918,6 +918,15 @@ foreach ($scriptName in @(
             $content.Contains("'diagnostic'") -and
             $content.Contains("'acceptance'")
         ) 'SSH authentication harness lacks targeted diagnostics or auditable live evidence'
+        Assert-True (
+            $content.Contains("`$preferencesComparisonBoundary = 'all-selected-stages'") -and
+            $content.Contains("`$preferencesAllowedMutation = 'none'") -and
+            $content.Contains("'before-transparency-performance'") -and
+            $content.Contains("'terminal-transparency-mode-restored'") -and
+            $content.Contains("'preferences-unchanged-before-transparency-performance'") -and
+            $content.Contains('comparisonBoundary = $preferencesComparisonBoundary') -and
+            $content.Contains('allowedMutation = $preferencesAllowedMutation')
+        ) 'SSH performance coverage can misclassify restored transparency as a Preferences change'
         $groupDefinitionStart = $content.IndexOf('$authGroupDefinitions = [ordered]@{')
         $groupDefinitionEnd = $content.IndexOf('$availableStages = @(', $groupDefinitionStart)
         Assert-True (
@@ -1245,6 +1254,10 @@ Assert-True (
     $sshMatrixVerifier.Contains('candidate.retained') -and
     $sshMatrixVerifier.Contains('harness.gitDirty') -and
     $sshMatrixVerifier.Contains('preferences.unchanged') -and
+    $sshMatrixVerifier.Contains("'before-transparency-performance'") -and
+    $sshMatrixVerifier.Contains("'terminal-transparency-mode-restored'") -and
+    $sshMatrixVerifier.Contains('performanceMatrix.initialMode') -and
+    $sshMatrixVerifier.Contains('performanceMatrix.restoredMode') -and
     $sshMatrixVerifier.Contains('candidate.sha256') -and
     $sshMatrixVerifier.Contains('harness.gitTree') -and
     $sshMatrixVerifier.Contains("'ssh-matrix.json'") -and

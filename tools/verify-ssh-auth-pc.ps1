@@ -238,6 +238,9 @@ $caughtError = $null
 $preferencesDigestBefore = ''
 $preferencesDigestAfter = ''
 $preferencesDigestUnchanged = $null
+$preferencesComparisonBoundary = 'all-selected-stages'
+$preferencesAllowedMutation = 'none'
+$preferencesComparisonCompleted = $false
 $knownHostCleanupCompleted = $false
 $bellEvidence = [ordered]@{
     selected = $false
@@ -1648,6 +1651,8 @@ function Write-AuthEvidence {
             beforeCaptured = (-not [string]::IsNullOrWhiteSpace($preferencesDigestBefore))
             afterCaptured = (-not [string]::IsNullOrWhiteSpace($preferencesDigestAfter))
             unchanged = $preferencesDigestUnchanged
+            comparisonBoundary = $preferencesComparisonBoundary
+            allowedMutation = $preferencesAllowedMutation
         }
         coverage = @($checks | Where-Object { $_.name -ne 'fixture-and-device-preflight' } |
             ForEach-Object { $_.name })
@@ -2265,6 +2270,20 @@ try {
 
     if (Test-AuthStageSelected -Name 'performance-matrix') {
     Start-AuthStage -Name 'performance-matrix'
+    if ($VerifyPreferencesUnchanged) {
+        $preferencesCheck = [Diagnostics.Stopwatch]::StartNew()
+        $preferencesDigestAfter = Get-LeanTTYPreferencesDigest
+        $preferencesDigestUnchanged = ($preferencesDigestBefore -ceq $preferencesDigestAfter)
+        if (-not $preferencesDigestUnchanged) {
+            throw 'LeanTTY Preferences changed before the transparency performance stage'
+        }
+        $preferencesComparisonBoundary = 'before-transparency-performance'
+        $preferencesAllowedMutation = 'terminal-transparency-mode-restored'
+        $preferencesComparisonCompleted = $true
+        Add-AuthCheck `
+            -Name 'preferences-unchanged-before-transparency-performance' `
+            -DurationMs $preferencesCheck.ElapsedMilliseconds
+    }
     $performanceEvidence.selected = $true
     $performanceInitialTransparencyMode = Get-AuthTransparencyMode `
         -LayoutPrefix 'performance-initial-mode'
@@ -2798,7 +2817,7 @@ try {
         -Command "ssh-keygen -R [127.0.0.1]:$FixturePort" `
         -LayoutName 'layout-final-known-hosts-command-focus.json'
     $knownHostCleanupCompleted = $true
-    if ($VerifyPreferencesUnchanged) {
+    if ($VerifyPreferencesUnchanged -and -not $preferencesComparisonCompleted) {
         $preferencesCheck = [Diagnostics.Stopwatch]::StartNew()
         $preferencesDigestAfter = Get-LeanTTYPreferencesDigest
         $preferencesDigestUnchanged = ($preferencesDigestBefore -ceq $preferencesDigestAfter)
@@ -2808,6 +2827,14 @@ try {
         Add-AuthCheck `
             -Name 'preferences-unchanged-during-authentication' `
             -DurationMs $preferencesCheck.ElapsedMilliseconds
+        $preferencesComparisonCompleted = $true
+    } elseif ($VerifyPreferencesUnchanged -and
+        $preferencesAllowedMutation -eq 'terminal-transparency-mode-restored') {
+        if (-not $performanceTransparencyRestored -or
+            [string]$performanceInitialTransparencyMode -ne [string]$performanceEvidence.restoredMode) {
+            throw 'LeanTTY transparency preference was not restored after the performance stage'
+        }
+        Add-AuthCheck -Name 'transparency-preference-restored-after-performance' -DurationMs 0
     }
     $scenarioResult = 'passed'
 } catch {
