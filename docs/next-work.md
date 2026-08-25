@@ -1,19 +1,19 @@
 # LeanTTY 当前工作
 
-> 状态：唯一有效的项目 TODO；当前没有已授权且未完成的产品工作
+> 状态：唯一有效的项目 TODO；1.5.0 正式发布准备进行中
 >
 > 更新日期：2026-08-25
 >
 > 当前 milestone：[`1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容`](roadmap.md)
 >
-> 当前工程阶段：1.5 产品开发已闭合；尚未进入 release preparation
+> 当前工程阶段：1.5 产品开发已闭合；已进入 1.5.0 release preparation
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
 > 测试权威：[`quality-strategy.md`](quality-strategy.md)
 
-本文件只保留尚未完成、已经授权的活动工作。当前没有这类事项。完成事实进入相应规范、
-设计文档和 Git 历史；历史 checkbox、定向证据和后续 milestone 不在这里维护第二份清单。
+本文件只保留尚未完成、已经授权的活动工作。完成事实进入相应规范、设计文档和 Git 历史；
+历史 checkbox、定向证据和后续 milestone 不在这里维护第二份清单。
 
 ## 当前发布基线
 
@@ -50,11 +50,29 @@ Agent 章节、文档内英文切换和英文 Agent 页内跳转。页内锚点�
 
 ## 当前活动工作
 
-无。
+### 1.5.0 正式发布准备
 
-1.5 正式候选、版本元数据冻结、完整验证、production 签名、GitHub Release 和 AppGallery
-交付不属于已完成的开发授权。只有维护者明确启动 release preparation 并把对应可执行工作
-写入本文件后才能开始。拟议 1.6 Mosh 和其他 roadmap 候选同样不构成当前授权。
+维护者已于 2026-08-25 明确启动 release preparation。发布准备以
+[`release-process.md`](release-process.md)、[`versioning.md`](versioning.md) 和
+[`quality-strategy.md`](quality-strategy.md) 为执行权威；本节只记录仍未完成的发布结果，
+不复制命令或建立第二套流程。
+
+- [ ] 在 `release/1.5.0` 上定稿 Changelog、双语离线用户指南、版本元数据和发布资料；只允许
+  发布源与 release-blocking 修复，不再加入新产品范围。
+- [ ] 通过 PR 把发布源合入 `main`，确认工作区干净、远程一致，并冻结一个精确 GitHub 提交
+  作为 1.5.0 release commit。
+- [ ] 从隔离的 production/review checkout 对该提交完成签名与廉价预检，构建并归档同源的
+  production APP、production HAP 和 review-test HAP；核对 commit、tree、版本、ABI、native
+  哈希、签名、产物角色和 manifest。
+- [ ] 对未变化的 review-test HAP 完成 L4 全量软件门、acceptance-harness qualification、
+  全部适用的物理 HarmonyOS PC 命名场景和最终真实设备 smoke；保留证据与清理结果。
+- [ ] 在全部门禁通过后创建并验证不可变签名 `v1.5.0` 标签，发布匹配提交和归档资产的非草稿
+  GitHub Release。
+- [ ] 向维护者交付唯一可上传的 production signed APP、SHA-256、商店资料和提交清单；由维护者
+  本人核对并提交 AppGallery，随后按其确认记录审核状态。
+
+任一产品源、依赖、资源、版本或打包输入变化都会使候选失效，必须形成新的已推送提交并从相应
+检查点重建、重验。拟议 1.6 Mosh 和其他 roadmap 候选不属于本次发布授权。
 
 ## 维护规则
 
