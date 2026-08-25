@@ -1012,6 +1012,16 @@ function Resolve-LeanTTYAuthenticationObservation {
     }
 }
 
+function Resolve-LeanTTYDialogButtonTexts {
+    param([Parameter(Mandatory = $true)][string]$ButtonText)
+
+    switch ($ButtonText.Trim().ToLowerInvariant()) {
+        'delete key' { return @('Delete key', '删除密钥') }
+        'close pane' { return @('Close pane', '关闭分屏') }
+        default { return @($ButtonText) }
+    }
+}
+
 function Invoke-LeanTTYDialogButton {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
@@ -1021,9 +1031,10 @@ function Invoke-LeanTTYDialogButton {
     )
 
     $layout = Get-LeanTTYDeviceLayout -Hdc $Hdc -Target $Target -LocalPath $LayoutPath
+    $buttonTexts = @(Resolve-LeanTTYDialogButtonTexts -ButtonText $ButtonText)
     $buttonNode = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
-        [string]$_.attributes.text -eq $ButtonText -or
-        [string]$_.attributes.originalText -eq $ButtonText
+        $buttonTexts -contains [string]$_.attributes.text -or
+        $buttonTexts -contains [string]$_.attributes.originalText
     } | Select-Object -First 1)
     if ($buttonNode.Count -ne 1) { throw "Dialog button was not found: $ButtonText" }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$buttonNode[0].attributes.bounds)
