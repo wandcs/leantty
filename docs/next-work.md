@@ -57,8 +57,6 @@ Agent 章节、文档内英文切换和英文 Agent 页内跳转。页内锚点�
 [`quality-strategy.md`](quality-strategy.md) 为执行权威；本节只记录仍未完成的发布结果，
 不复制命令或建立第二套流程。
 
-- [ ] 在 `release/1.5.0` 上定稿 Changelog、双语离线用户指南、版本元数据和发布资料；只允许
-  发布源与 release-blocking 修复，不再加入新产品范围。
 - [ ] 通过 PR 把发布源合入 `main`，确认工作区干净、远程一致，并冻结一个精确 GitHub 提交
   作为 1.5.0 release commit。
 - [ ] 从隔离的 production/review checkout 对该提交完成签名与廉价预检，构建并归档同源的

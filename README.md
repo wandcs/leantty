@@ -31,14 +31,15 @@ published on GitHub on 2026-08-19 from its immutable release identity. On
 passed AppGallery review and was available to users.
 
 The `main` branch can contain behavior listed under `CHANGELOG.md` →
-`Unreleased` or the selected version's `In development` section. Source-tree
-documentation marks that applicability explicitly; do not assume development
-behavior is present in the AppGallery version.
+`Unreleased` or a selected release section. Source-tree documentation marks
+that applicability explicitly; do not assume later source behavior is present
+in the AppGallery version.
 
 The immutable `v1.0.0` through `v1.4.0` tags record each rejected, superseded
-or published release identity. `v1.4.0` is the current AppGallery and GitHub
-release; later source remains development behavior until its own release gates
-and store review are complete.
+or published release identity. `v1.4.0` is the AppGallery baseline preceding
+the 1.5.0 release source. Use the matching GitHub Release and AppGallery entry
+to determine whether a later version has completed its respective release and
+store-review stages.
 Exact submitted-source mapping, artifact hashes and signing verification remain
 in the private release evidence archive. No signing credential or generated
 application package is stored in Git.

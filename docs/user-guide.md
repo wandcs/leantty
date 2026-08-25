@@ -2,11 +2,11 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-24
+> Last updated: 2026-08-25
 >
-> Applies to: the current repository 1.5.0 development behavior. AppGallery
-> currently distributes 1.4.0; check the matching GitHub Release and
-> `CHANGELOG.md` before relying on later behavior that has not yet shipped.
+> Applies to: the 1.5.0 release source. Version 1.4.0 is the preceding
+> AppGallery baseline; check the matching GitHub Release and AppGallery entry
+> before relying on 1.5.0 behavior in an installed build.
 
 LeanTTY is a keyboard-first SSH terminal for a physical ARM64 HarmonyOS PC. It
 provides the TTY entry point; the shell, tmux, editor and Agent TUI continue to
@@ -178,6 +178,18 @@ Inspect the effective supported fields without connecting:
 ```text
 ssh -G work
 ```
+
+When a connection fails before the remote prompt appears, rerun that one
+attempt with bounded diagnostics:
+
+```text
+ssh -v work
+```
+
+LeanTTY reports fixed, redacted jump/target stages for name resolution, TCP,
+SSH version and key exchange. It does not enable raw transport logs or expose
+hosts, identities, paths, fingerprints, prompts, credentials or terminal
+content. Normal `ssh` and reconnect remain non-verbose.
 
 For a target that is reachable only through one standard SSH jump host, save
 both hosts in the same configuration or use a one-time `-J` override:
@@ -415,6 +427,10 @@ does not support OSC 52 clipboard reads.
 The split divider can be dragged. When it has keyboard focus, Left/Right adjust
 the ratio and Enter resets the split to equal widths.
 
+After a floating main-window resize, LeanTTY aligns the final content size to
+whole terminal cells. A small final adjustment is expected; dragging the left
+or top edge keeps the opposite edge fixed.
+
 Search belongs only to the current pane and its in-memory terminal surface. It
 does not search another pane, tab, remote file, command history or a destroyed
 session. Closing search restores terminal focus without sending the query to
@@ -495,6 +511,10 @@ record. See [the privacy policy](../PRIVACY.md) for the exact boundary.
   persistent shell session; use remote tmux or screen for durable work.
 - **SSH disconnected after sleep or network change:** use the visible reconnect
   path. LeanTTY does not claim transparent SSH session roaming.
+- **A remote shell ended:** `Connection closed` and the restored `ltty>` prompt
+  appear directly after the last visible terminal content. Existing scrollback
+  remains available; the first local key is accepted only after the prompt is
+  restored.
 
 For a reproducible product defect, follow [SUPPORT.md](../SUPPORT.md). Remove
 private data from screenshots and logs. Security vulnerabilities must use the

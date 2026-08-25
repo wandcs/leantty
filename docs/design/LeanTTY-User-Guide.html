@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="6">
+  <meta name="leantty-guide-revision" content="7">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LeanTTY 1.5.0 使用指南 / User Guide</title>
@@ -1097,6 +1097,14 @@ config export workstation-backup.conf</code></pre>
           export 默认写入 <code>leantty-ssh-config</code>，已有 Downloads 文件永不覆盖。
         </p>
 
+        <h3>连接失败时查看安全诊断</h3>
+        <pre><code>ssh -v work</code></pre>
+        <p>
+          只在需要排查的那次连接中使用 <code>-v</code>。LeanTTY 会按跳板和目标分别显示域名解析、
+          TCP、SSH 版本和密钥交换阶段，并隐藏主机、Identity、路径、指纹、提示、凭据和终端内容。
+          普通 <code>ssh</code> 和重新连接不会自动开启诊断。
+        </p>
+
         <h3>通过一个 SSH 跳板连接</h3>
         <pre><code>host add jump gateway@jump.example.com
 host add private deploy@target.example.com -J jump
@@ -1112,6 +1120,10 @@ ssh -J jump deploy@target.example.com</code></pre>
           连接成功后，当前标签页会显示 <code>用户@Host</code>；如果通过保存的 Host 名称连接，
           标题会保留这个短名称。正常退出远端 Shell、连接失败或取消连接后，标题会恢复为
           <code>ltty</code>。
+        </p>
+        <p>
+          远端 Shell 退出或当前连接被断开后，<code>Connection closed</code> 和新的
+          <code>ltty&gt;</code> 会紧接最后一行可见内容显示，不会被推到窗口底部；原有滚动记录仍可查看。
         </p>
 
         <h3>已连接 SSH 的行首 escape</h3>
@@ -1185,12 +1197,15 @@ ssh-keygen -R [example.com]:2222</code></pre>
         <pre><code>ssh-keygen -t ed25519 -f id_work -C work
 key list
 ssh-keygen -l -f id_work
+ssh-keygen -p -f id_work
+ssh-keygen -c -f id_work
 ssh-copy-id -i id_work user@example.com</code></pre>
         <ul class="feature-list">
           <li>生成 Ed25519 和 RSA-4096 密钥</li>
           <li>导入并使用 OpenSSH Ed25519、RSA 及 ECDSA P-256/P-384/P-521 私钥（包括加密私钥）</li>
           <li>新密钥生成仍限于 Ed25519 和 RSA-4096</li>
           <li>交互式修改私钥口令</li>
+          <li>交互式修改或清除私钥注释</li>
           <li>密码和键盘交互式（keyboard-interactive）认证</li>
           <li>按服务器要求连续尝试多种认证方式</li>
           <li>使用 <kbd>Ctrl</kbd>+<kbd>C</kbd> 明确取消</li>
@@ -1199,6 +1214,12 @@ ssh-copy-id -i id_work user@example.com</code></pre>
           <code>key export</code> 会请求 Downloads 访问权限，并且不会覆盖私钥或对应的
           <code>.pub</code> 文件。导出的私钥是敏感的用户文件；完成预定传输后，请及时移动
           或删除。
+        </p>
+        <p>
+          <code>ssh-keygen -c</code> 会先验证加密私钥的当前口令，再同时更新私钥和
+          <code>.pub</code> 注释；留空可清除注释。<code>key rm</code> 只有在持久记录和应用私有文件
+          都已删除后才会报告成功。若删除失败，请重新启动 LeanTTY，先用 <code>key list</code>
+          确认状态，再重试。
         </p>
       </section>
 
@@ -1236,6 +1257,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         <p>
           四点菜单提供关、低、中、高、极限五档透明度，也可以在这里调节字号。终端或 TUI
           自己设置的背景色始终优先；系统不支持窗口透明时，LeanTTY 会自动使用不透明背景。
+          拖动浮动窗口边缘并松开后，窗口会按完整终端字符格对齐；从左边或上边拖动时，另一侧
+          边缘保持不动，因此松手时可能出现一次很小的尺寸调整。
         </p>
       </section>
 
@@ -1302,6 +1325,8 @@ get work:/reports/latest.csv reports/</code></pre>
           第一个可用的 <code>name (n).ext</code>。进度在单行显示百分比、已传输量、实时速度与 ETA，
           完成后显示文件大小和耗时。无选区时 <kbd>Ctrl</kbd>+<kbd>C</kbd> 取消当前传输；有选区时
           仍只复制。正常取消和受控关闭只清理本任务拥有的临时文件。
+          Host 中的 <code>ServerAliveInterval</code>/<code>ServerAliveCountMax</code> 同样适用于
+          <code>put</code>/<code>get</code>；加密通道超时后会停止传输、清理本次下载临时文件，并允许立即重试。
         </p>
       </section>
 
@@ -1323,6 +1348,7 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td><code>help &lt;command&gt;</code></td><td>显示一个受支持命令的简短帮助。</td></tr>
               <tr><td><code>ssh …</code></td><td>直接连接，或通过保存的 OpenSSH Host / 单个 ProxyJump 连接。</td></tr>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>不连接服务器，只显示 LeanTTY 最终会采用的配置。</td></tr>
+              <tr><td><code>ssh -v …</code></td><td>只为当前连接尝试显示固定、脱敏的分阶段诊断。</td></tr>
               <tr><td><code>put …</code></td><td>通过 SFTP 上传 Downloads 中的一个文件。</td></tr>
               <tr><td><code>get …</code></td><td>通过 SFTP 下载一个文件到 Downloads。</td></tr>
               <tr><td><code>config import|export</code></td><td>通过 Downloads 迁移或备份唯一 OpenSSH config。</td></tr>
@@ -1426,6 +1452,16 @@ get work:/reports/latest.csv reports/</code></pre>
         </details>
 
         <details>
+          <summary>连接在进入远端提示符前失败</summary>
+          <div class="details-body">
+            <p>
+              先按原命令重试一次；仍失败时使用 <code>ssh -v …</code>，查看问题发生在跳板还是目标的
+              域名解析、TCP、SSH 版本或密钥交换阶段。诊断不会显示主机名、凭据或终端内容。
+            </p>
+          </div>
+        </details>
+
+        <details>
           <summary>休眠或网络变化后 SSH 断开</summary>
           <div class="details-body">
             <p>
@@ -1439,7 +1475,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.5.0</strong> · 离线使用指南 · 修订 6 · 版本日期 2026-08-21</div>
+    <div><strong>LeanTTY 1.5.0</strong> · 离线使用指南 · 修订 7 · 版本日期 2026-08-25</div>
     <div>先核对，再连接；先保留工作，再处理断线。</div>
   </footer>
   </div>
@@ -1651,6 +1687,15 @@ config export workstation-backup.conf</code></pre>
           to <code>leantty-ssh-config</code> and never overwrites an existing Downloads file.
         </p>
 
+        <h3>Use safe diagnostics when a connection fails</h3>
+        <pre><code>ssh -v work</code></pre>
+        <p>
+          Use <code>-v</code> only for the attempt you need to diagnose. LeanTTY reports redacted
+          name-resolution, TCP, SSH-version and key-exchange stages for the jump and target. It does not
+          expose hosts, identities, paths, fingerprints, prompts, credentials or terminal content. Normal
+          <code>ssh</code> and reconnect remain non-verbose.
+        </p>
+
         <h3>Connect through one SSH jump host</h3>
         <pre><code>host add jump gateway@jump.example.com
 host add private deploy@target.example.com -J jump
@@ -1667,6 +1712,11 @@ ssh -J jump deploy@target.example.com</code></pre>
           After a successful connection, the current Tab shows <code>user@Host</code> and keeps a saved
           Host alias when one was used. After a normal remote-shell exit, a failed connection or a
           cancelled connection, the title returns to <code>ltty</code>.
+        </p>
+        <p>
+          When the remote shell exits or the current connection is closed, <code>Connection closed</code>
+          and the new <code>ltty&gt;</code> prompt appear directly after the last visible content instead of at
+          the bottom of the window. Existing scrollback remains available.
         </p>
 
         <h3>Line-start escapes in connected SSH</h3>
@@ -1743,12 +1793,15 @@ ssh-keygen -R [example.com]:2222</code></pre>
         <pre><code>ssh-keygen -t ed25519 -f id_work -C work
 key list
 ssh-keygen -l -f id_work
+ssh-keygen -p -f id_work
+ssh-keygen -c -f id_work
 ssh-copy-id -i id_work user@example.com</code></pre>
         <ul class="feature-list">
           <li>Ed25519 and RSA-4096 generation</li>
           <li>OpenSSH Ed25519, RSA and ECDSA P-256/P-384/P-521 import and use, including encrypted keys</li>
           <li>New-key generation remains limited to Ed25519 and RSA-4096</li>
           <li>Interactive passphrase change</li>
+          <li>Interactive private-key comment change or removal</li>
           <li>Password and keyboard-interactive authentication</li>
           <li>Multi-method authentication sequences</li>
           <li>Explicit cancellation with <kbd>Ctrl</kbd>+<kbd>C</kbd></li>
@@ -1757,6 +1810,12 @@ ssh-copy-id -i id_work user@example.com</code></pre>
           <code>key export</code> asks for Downloads access and never overwrites either the private key
           or its <code>.pub</code> partner. Exported private keys are sensitive user-owned files; move or
           delete them after the intended transfer.
+        </p>
+        <p>
+          <code>ssh-keygen -c</code> verifies an encrypted key's current passphrase before updating the
+          private and <code>.pub</code> comments together; submit an empty comment to remove it.
+          <code>key rm</code> reports success only after both the durable record and private projection are
+          absent. If removal fails, restart LeanTTY, inspect <code>key list</code>, then retry.
         </p>
       </section>
 
@@ -1795,6 +1854,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
           The four-dot menu contains five transparency levels—Off, Low, Medium, High and Extreme—and a
           matching font-size stepper. Explicit terminal or TUI background colors remain authoritative.
           Platforms that cannot enable transparency fall back to an opaque surface.
+          Releasing a dragged floating-window edge aligns the final size to whole terminal cells. Dragging
+          from the left or top keeps the opposite edge fixed, so a small final size adjustment is expected.
         </p>
       </section>
 
@@ -1864,6 +1925,9 @@ get work:/reports/latest.csv reports/</code></pre>
           shows percentage, transferred size, live speed and ETA, and completion reports size and elapsed
           time. Without a selection, <kbd>Ctrl</kbd>+<kbd>C</kbd> cancels the active transfer; with a selection,
           it only copies. Normal cancellation and confirmed close clean only this task's temporary file.
+          Host <code>ServerAliveInterval</code>/<code>ServerAliveCountMax</code> settings also apply to
+          <code>put</code>/<code>get</code>; an encrypted-channel timeout stops the transfer, removes its owned
+          download temporary file and allows an immediate retry.
         </p>
       </section>
 
@@ -1885,6 +1949,7 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td><code>help &lt;command&gt;</code></td><td>Show concise help for one supported command.</td></tr>
               <tr><td><code>ssh …</code></td><td>Connect directly or through a saved OpenSSH Host / single ProxyJump.</td></tr>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>Show the supported effective configuration without connecting.</td></tr>
+              <tr><td><code>ssh -v …</code></td><td>Show fixed, redacted stage diagnostics for this connection attempt only.</td></tr>
               <tr><td><code>put …</code></td><td>Upload one Downloads file through SFTP.</td></tr>
               <tr><td><code>get …</code></td><td>Download one SFTP file into Downloads.</td></tr>
               <tr><td><code>config import|export</code></td><td>Migrate or back up the single OpenSSH config through Downloads.</td></tr>
@@ -1991,6 +2056,17 @@ get work:/reports/latest.csv reports/</code></pre>
         </details>
 
         <details>
+          <summary>Connection fails before the remote prompt appears</summary>
+          <div class="details-body">
+            <p>
+              Retry the original command once. If it still fails, use <code>ssh -v …</code> to see whether
+              the jump or target stopped at name resolution, TCP, SSH version or key exchange. Diagnostics
+              do not reveal host names, credentials or terminal content.
+            </p>
+          </div>
+        </details>
+
+        <details>
           <summary>SSH disconnected after sleep or a network change</summary>
           <div class="details-body">
             <p>
@@ -2004,7 +2080,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.5.0</strong> · Offline user guide · Revision 6 · Version date 2026-08-21</div>
+    <div><strong>LeanTTY 1.5.0</strong> · Offline user guide · Revision 7 · Version date 2026-08-25</div>
     <div>Verify first. Keep work durable. Recover deliberately.</div>
   </footer>
   </div>
