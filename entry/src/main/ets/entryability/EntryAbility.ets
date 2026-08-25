@@ -323,7 +323,6 @@ export default class EntryAbility extends UIAbility {
       logger.warn('Window grid snap resize failed: ' + e.message)
     })
   }
-
   private publishBackgroundBellReturnRequest(want: Want): void {
     let paneId: string = BackgroundBellNotification.paneIdFromWant(want)
     if (paneId.length === 0) {

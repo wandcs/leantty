@@ -100,6 +100,11 @@
   edges. The scrollbar keeps its 8 px hit area and 2 px visible thumb while the
   fitted grid continues to use the maximum rows and columns allowed by that
   four-edge contract.
+- Snapped a floating main-window resize to the nearest whole terminal cell for
+  the current font when the user releases the dragged edge. Resizing from the
+  left or top keeps the opposite edge fixed, while the fitted grid centers on
+  one shared 8 px minimum visual inset including the scrollbar gutter. The
+  scrollbar retains its 8 px hit area and 2 px visible thumb.
 - Restored standard terminal color semantics under window transparency. LeanTTY
   now applies opacity only to its Chrome and content surfaces while keeping
   application-defined ANSI/TrueColor cell backgrounds opaque, removing the
