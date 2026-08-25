@@ -334,8 +334,8 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 
 ## 当前 milestone：1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容
 
-1.5 产品开发已于 2026-08-25 闭合，当前没有已授权的产品工作；正式候选与发布准备仍须
-维护者单独启动并写入 `next-work.md`。
+1.5 产品开发已于 2026-08-25 闭合，当前没有已授权的产品工作；维护者已于同日启动
+1.5.0 release preparation，未完成的正式候选与发布结果只在 `next-work.md` 维护。
 
 ### 用户结果
 
@@ -497,8 +497,8 @@ CLI/TUI 自身发出的标准终端通知、常用键盘输入、复制、链接
   英文 Agent 页内跳转。检查中发现英文子章节锚点会回落中文，已把语言选择从“语言页根节点
   target”修正为“语言页或其任一后代 target”，并完成红绿真机复验。
 - **闭合结论：** 上述结果满足 1.5 用户目标，同时保持一个 Terminal Surface、Pane attention、
-  Session、浏览器和指南所有权。1.5 产品开发重新闭合；不再为重复结论消耗 Agent Token，
-  release preparation 仍由维护者另行授权。
+  Session、浏览器和指南所有权。1.5 产品开发重新闭合；不再为重复结论消耗 Agent Token。
+  该结论形成时 release preparation 尚待维护者另行授权，维护者随后于 2026-08-25 正式启动。
 
 命令边界与单项门禁见 [`design/command-system.md`](design/command-system.md)。其中 SSH
 产品开发曾按 `next-work.md` 执行，原 SSH 范围已经闭合。首个 `ConnectTimeout` 切片已经闭合。
@@ -516,9 +516,9 @@ P-256/P-384/P-521 Identity 也已通过锁定库、加密格式、共同安全�
 命名真机场景门禁，进入既有导入、认证、重启与删除路径；不新增 ECDSA 生成入口。原 1.5 SSH
 子范围与 BEL 驱动的长任务注意力/返回路径已经完成产品源、聚焦软件门、同一签名 ARM64
 diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent 原生兼容矩阵、OSC
-9/777/99 受限输入和中英文指南也已于 2026-08-25 按上述适用性边界闭合。1.5 尚未进入正式
-候选；release preparation 仍须由维护者单独授权并写入 `next-work.md` 后开始，开发期证据
-不自动获得发布资格。
+9/777/99 受限输入和中英文指南也已于 2026-08-25 按上述适用性边界闭合。维护者同日已授权
+并在 `next-work.md` 启动 1.5.0 release preparation；开发期证据不自动获得发布资格，仍须对
+冻结后的精确候选完成正式门禁。
 
 ## 拟议 milestone：1.6 — Mosh 弱网连接
 

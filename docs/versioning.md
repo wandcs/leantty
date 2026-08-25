@@ -263,4 +263,4 @@ monotonically whenever a newer package supersedes an earlier package. It must
 not be used to infer MAJOR, MINOR or PATCH compatibility. The submitted `1.0.0`
 package uses `versionCode` `1000000`; the released `1.1.1`, `1.2.0` and `1.3.0`
 packages use `1001001`, `1002000` and `1003000`; `1.4.0` uses `1004000`; the
-current `1.5.0` development line uses `1005000`.
+current `1.5.0` release line uses `1005000`.
