@@ -26,6 +26,26 @@ function Assert-Throws {
     if (-not $threw) { throw $Message }
 }
 
+$deleteKeyButtonTexts = @(Resolve-LeanTTYDialogButtonTexts -ButtonText 'Delete key')
+Assert-True (
+    $deleteKeyButtonTexts.Count -eq 2 -and
+    $deleteKeyButtonTexts -contains 'Delete key' -and
+    $deleteKeyButtonTexts -contains '删除密钥'
+) 'Delete-key dialog matching does not cover the supported English and Chinese labels'
+
+$closePaneButtonTexts = @(Resolve-LeanTTYDialogButtonTexts -ButtonText 'Close pane')
+Assert-True (
+    $closePaneButtonTexts.Count -eq 2 -and
+    $closePaneButtonTexts -contains 'Close pane' -and
+    $closePaneButtonTexts -contains '关闭分屏'
+) 'Close-pane dialog matching does not cover the supported English and Chinese labels'
+
+$unknownButtonTexts = @(Resolve-LeanTTYDialogButtonTexts -ButtonText 'Acceptance action')
+Assert-True (
+    $unknownButtonTexts.Count -eq 1 -and
+    $unknownButtonTexts[0] -eq 'Acceptance action'
+) 'Unknown dialog actions must keep exact matching'
+
 $layout = @'
 {
   "attributes": {"bounds":"[0,0][3120,2080]","text":"","originalText":"","hint":""},
