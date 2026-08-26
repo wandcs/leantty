@@ -332,10 +332,11 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 完成方案：[`design/proxy-jump.md`](design/proxy-jump.md)。实现、验证与发布事实以该方案、
 `CHANGELOG.md`、不可变标签和 GitHub Release 为准；ProxyJump 不再是当前活动工作。
 
-## 当前 milestone：1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容
+## 已发布 milestone：1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容
 
-1.5 产品开发已于 2026-08-25 闭合，当前没有已授权的产品工作；维护者已于同日启动
-1.5.0 release preparation，未完成的正式候选与发布结果只在 `next-work.md` 维护。
+1.5 产品开发已于 2026-08-25 闭合；`v1.5.0` 已于 2026-08-26 由不可变签名标签、精确发布源、
+非草稿 GitHub Release 和归档发布产物冻结。当前没有已授权的产品工作；AppGallery 交接与
+审核状态只在 `next-work.md` 维护，商店可获取性仍以维护者确认而不是本地或 GitHub 事实为准。
 
 ### 用户结果
 
@@ -498,7 +499,8 @@ CLI/TUI 自身发出的标准终端通知、常用键盘输入、复制、链接
   target”修正为“语言页或其任一后代 target”，并完成红绿真机复验。
 - **闭合结论：** 上述结果满足 1.5 用户目标，同时保持一个 Terminal Surface、Pane attention、
   Session、浏览器和指南所有权。1.5 产品开发重新闭合；不再为重复结论消耗 Agent Token。
-  该结论形成时 release preparation 尚待维护者另行授权，维护者随后于 2026-08-25 正式启动。
+  该结论形成时 release preparation 尚待维护者另行授权，维护者随后于 2026-08-25 正式启动，
+  并于 2026-08-26 完成 GitHub 正式发布。
 
 命令边界与单项门禁见 [`design/command-system.md`](design/command-system.md)。其中 SSH
 产品开发曾按 `next-work.md` 执行，原 SSH 范围已经闭合。首个 `ConnectTimeout` 切片已经闭合。
@@ -517,8 +519,9 @@ P-256/P-384/P-521 Identity 也已通过锁定库、加密格式、共同安全�
 子范围与 BEL 驱动的长任务注意力/返回路径已经完成产品源、聚焦软件门、同一签名 ARM64
 diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent 原生兼容矩阵、OSC
 9/777/99 受限输入和中英文指南也已于 2026-08-25 按上述适用性边界闭合。维护者同日已授权
-并在 `next-work.md` 启动 1.5.0 release preparation；开发期证据不自动获得发布资格，仍须对
-冻结后的精确候选完成正式门禁。
+并在 `next-work.md` 启动 1.5.0 release preparation；冻结后的精确候选随后完成正式软件门、
+真机门禁、归档生产/审核构建、不可变签名标签和 GitHub Release。AppGallery 尚待维护者提交
+与确认，不由上述工程事实推断。
 
 ## 拟议 milestone：1.6 — Mosh 弱网连接
 

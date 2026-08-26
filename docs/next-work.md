@@ -1,12 +1,12 @@
 # LeanTTY 当前工作
 
-> 状态：唯一有效的项目 TODO；1.5.0 正式发布准备进行中
+> 状态：唯一有效的项目 TODO；1.5.0 AppGallery 交接进行中
 >
-> 更新日期：2026-08-25
+> 更新日期：2026-08-26
 >
 > 当前 milestone：[`1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容`](roadmap.md)
 >
-> 当前工程阶段：1.5 产品开发已闭合；已进入 1.5.0 release preparation
+> 当前工程阶段：1.5 产品与 GitHub 正式发布已闭合；等待 AppGallery 提交与审核
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -20,7 +20,9 @@
 `v1.3.0` 已于 2026-08-17 通过 AppGallery 审核并正式上架。`v1.4.0` 已由不可变签名
 标签、精确发布源和 GitHub Release 冻结，维护者于 2026-08-22 确认匹配的 production APP
 已通过 AppGallery 审核并正式上架。当前工作不修改 `v1.4.0` 的发布身份，也不补做新的
-1.4 产品范围。
+1.4 产品范围。`v1.5.0` 已于 2026-08-26 由不可变签名标签、精确发布源、非草稿
+[GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.5.0) 和归档产物冻结；这不
+表示 AppGallery 已提交、通过审核或正式上架。
 
 ## 1.5 产品开发闭合事实
 
@@ -50,27 +52,20 @@ Agent 章节、文档内英文切换和英文 Agent 页内跳转。页内锚点�
 
 ## 当前活动工作
 
-### 1.5.0 正式发布准备
+### 1.5.0 AppGallery 交接
 
-维护者已于 2026-08-25 明确启动 release preparation。发布准备以
+1.5.0 的发布源冻结、production/review 构建归档、正式软件与物理门禁、不可变签名标签和
+GitHub Release 均已完成。剩余交接以
 [`release-process.md`](release-process.md)、[`versioning.md`](versioning.md) 和
 [`quality-strategy.md`](quality-strategy.md) 为执行权威；本节只记录仍未完成的发布结果，
 不复制命令或建立第二套流程。
 
-- [ ] 通过 PR 把发布源合入 `main`，确认工作区干净、远程一致，并冻结一个精确 GitHub 提交
-  作为 1.5.0 release commit。
-- [ ] 从隔离的 production/review checkout 对该提交完成签名与廉价预检，构建并归档同源的
-  production APP、production HAP 和 review-test HAP；核对 commit、tree、版本、ABI、native
-  哈希、签名、产物角色和 manifest。
-- [ ] 对未变化的 review-test HAP 完成 L4 全量软件门、acceptance-harness qualification、
-  全部适用的物理 HarmonyOS PC 命名场景和最终真实设备 smoke；保留证据与清理结果。
-- [ ] 在全部门禁通过后创建并验证不可变签名 `v1.5.0` 标签，发布匹配提交和归档资产的非草稿
-  GitHub Release。
 - [ ] 向维护者交付唯一可上传的 production signed APP、SHA-256、商店资料和提交清单；由维护者
   本人核对并提交 AppGallery，随后按其确认记录审核状态。
 
-任一产品源、依赖、资源、版本或打包输入变化都会使候选失效，必须形成新的已推送提交并从相应
-检查点重建、重验。拟议 1.6 Mosh 和其他 roadmap 候选不属于本次发布授权。
+不得移动或复用 `v1.5.0` 标签和 Release。若 AppGallery 审核失败或上传产物必须变化，按发布
+规则提升版本并重新走发布流程，不在既有版本身份上替换产物。拟议 1.6 Mosh 和其他 roadmap
+候选不属于本次发布授权。
 
 ## 维护规则
 
