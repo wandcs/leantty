@@ -1,13 +1,13 @@
 # LeanTTY 当前工作
 
-> 状态：唯一有效的项目 TODO；1.5.0 等待维护者提交 AppGallery，发布效率改进已授权
+> 状态：唯一有效的项目 TODO；1.5.0 AppGallery 审核中，发布效率改进已授权
 >
 > 更新日期：2026-08-26
 >
 > 当前 milestone：[`1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容`](roadmap.md)
 >
-> 当前工程阶段：1.5 产品、GitHub 正式发布与维护者交接已闭合；等待 AppGallery 提交与审核，
-> 同时改进下一次正式发布的工程效率
+> 当前工程阶段：1.5 产品、GitHub 正式发布、维护者交接与首轮推广产品入口已闭合；
+> AppGallery 审核中，同时改进下一次正式发布的工程效率
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -22,8 +22,9 @@
 标签、精确发布源和 GitHub Release 冻结，维护者于 2026-08-22 确认匹配的 production APP
 已通过 AppGallery 审核并正式上架。当前工作不修改 `v1.4.0` 的发布身份，也不补做新的
 1.4 产品范围。`v1.5.0` 已于 2026-08-26 由不可变签名标签、精确发布源、非草稿
-[GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.5.0) 和归档产物冻结；这不
-表示 AppGallery 已提交、通过审核或正式上架。
+[GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.5.0) 和归档产物冻结；维护者
+同日确认已把匹配的 production APP 提交 AppGallery 审核。当前只能表述为“已提交审核”或
+“审核中”，不能表述为已通过审核或正式上架。
 
 ## 1.5 产品开发闭合事实
 
@@ -62,8 +63,8 @@ GitHub Release 均已完成；唯一 production signed APP、SHA-256、商店文
 [`quality-strategy.md`](quality-strategy.md) 为执行权威；本节只记录仍未完成的发布结果，
 不复制命令或建立第二套流程。
 
-- [ ] 由维护者本人复核并上传唯一 production signed APP，核对商店资料后提交 AppGallery；
-  随后按维护者反馈记录提交、审核或上架状态。
+- [ ] 等待维护者反馈 AppGallery 审核结果；若通过并成为 `Released`，记录匹配 production APP
+  的正式上架事实；若审核失败或上传产物必须变化，提升版本并重新走发布流程。
 
 不得移动或复用 `v1.5.0` 标签和 Release。若 AppGallery 审核失败或上传产物必须变化，按发布
 规则提升版本并重新走发布流程，不在既有版本身份上替换产物。拟议 1.6 Mosh 和其他 roadmap
