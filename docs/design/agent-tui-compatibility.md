@@ -122,6 +122,15 @@ HAP、WSL OpenSSH、SSH PTY 与 Terminal Surface 链路中只发送一次标准�
 收到精确响应、响应次数和接收字节数。该探针不启动 Agent、不发送通知帧、不最小化窗口，也不能
 替代 OpenCode 原生通知验收；它只负责定位“终端回传”这一条边界。
 
+2026-08-26 的正式 1.5 候选验收发现自动化 verdict 仍把上述已闭合的适用性边界当成“每个
+Agent/mode 都必须完成系统通知”。这不是产品合同：OpenCode tmux 未发原生 attention 时记录
+`not-emitted-by-agent`；Pi direct/tmux 与 Qwen direct 已捕获原生信号、但命中隐藏窗口暂停边界
+时记录 `platform-deferred`。两者都不能写成系统通知通过，且只有搜索、输入、重连、tmux 恢复、
+UTF-8、清理等其余断言全部通过时才是非阻断结论。Codex direct/tmux、OpenCode direct、Qwen
+tmux 以及任何实际已发出并进入 LeanTTY 的支持路径仍要求通用 payload、系统通知和准确返回。
+验收脚本还必须绑定保留候选的 commit/tree/hash 与干净 harness 身份；诊断 HAP 不能进入发布
+证据。该修正只调整测试判定和证据身份，不增加产品分支、后台保活或模型请求。
+
 2026-08-25 使用同一最终 test-signed HAP
 `3EE504FEFACCB1D244A25335749AE6A0A924E1348B99E1E4CE7B6F16C8130D39` 补齐了三个证据缺口。
 首先，Codex、Pi、Qwen 的 tmux 零模型同步截图与先前 OpenCode 复测共同确认 UTF-8 fixture 下

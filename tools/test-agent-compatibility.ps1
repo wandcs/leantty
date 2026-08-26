@@ -3,6 +3,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+. (Join-Path $PSScriptRoot 'agent-compatibility-policy.ps1')
 
 function Assert-True {
     param(
@@ -17,6 +18,93 @@ $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) (
 )
 New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
 try {
+    $strictPass = Resolve-LeanTTYAgentNotificationAssessment `
+        -Agent codex -Mode direct `
+        -NativeAttentionObserved $true `
+        -SystemNotificationCompleted $true `
+        -AgentChildExitCode 0
+    Assert-True (
+        $strictPass.status -eq 'passed' -and
+        $strictPass.classification -eq 'verified' -and
+        $strictPass.systemNotification -eq 'passed'
+    ) 'Codex direct notification must remain a strict verified path'
+
+    $strictFailure = Resolve-LeanTTYAgentNotificationAssessment `
+        -Agent opencode -Mode direct `
+        -NativeAttentionObserved $true `
+        -SystemNotificationCompleted $false `
+        -AgentChildExitCode 0 `
+        -NotificationFailure '[product] Agent emitted native attention but LeanTTY did not publish it'
+    Assert-True (
+        $strictFailure.status -eq 'failed' -and
+        $strictFailure.failureDomain -eq 'product'
+    ) 'OpenCode direct must fail when an emitted native signal is not published'
+
+    $openCodeTmux = Resolve-LeanTTYAgentNotificationAssessment `
+        -Agent opencode -Mode tmux `
+        -NativeAttentionObserved $false `
+        -SystemNotificationCompleted $false `
+        -AgentChildExitCode 0 `
+        -NotificationFailure '[external-agent] Agent exited without native attention, childExitCode=0'
+    Assert-True (
+        $openCodeTmux.status -eq 'passed' -and
+        $openCodeTmux.classification -eq 'not-emitted-by-agent' -and
+        $openCodeTmux.nativeAttention -eq 'not-observed' -and
+        $openCodeTmux.systemNotification -eq 'not-exercised'
+    ) 'OpenCode tmux must record the upstream no-emission boundary without claiming notification pass'
+
+    $openCodeTmuxCrash = Resolve-LeanTTYAgentNotificationAssessment `
+        -Agent opencode -Mode tmux `
+        -NativeAttentionObserved $false `
+        -SystemNotificationCompleted $false `
+        -AgentChildExitCode 1 `
+        -NotificationFailure '[external-agent] Agent exited without native attention, childExitCode=1'
+    Assert-True (
+        $openCodeTmuxCrash.status -eq 'failed' -and
+        $openCodeTmuxCrash.classification -eq 'unexpected-failure'
+    ) 'OpenCode tmux no-emission classification must not hide an Agent process failure'
+
+    foreach ($platformCase in @(
+        @{ agent = 'pi'; mode = 'direct' },
+        @{ agent = 'pi'; mode = 'tmux' },
+        @{ agent = 'qwen'; mode = 'direct' }
+    )) {
+        $assessment = Resolve-LeanTTYAgentNotificationAssessment `
+            -Agent $platformCase.agent -Mode $platformCase.mode `
+            -NativeAttentionObserved $true `
+            -SystemNotificationCompleted $false `
+            -AgentChildExitCode 0 `
+            -NotificationFailure '[product] Agent emitted native attention but LeanTTY did not publish it'
+        Assert-True (
+            $assessment.status -eq 'passed' -and
+            $assessment.classification -eq 'platform-deferred' -and
+            $assessment.nativeAttention -eq 'observed' -and
+            $assessment.systemNotification -eq 'not-observed'
+        ) "$($platformCase.agent) $($platformCase.mode) must preserve the background lifecycle limitation"
+    }
+
+    $missingPiSignal = Resolve-LeanTTYAgentNotificationAssessment `
+        -Agent pi -Mode direct `
+        -NativeAttentionObserved $false `
+        -SystemNotificationCompleted $false `
+        -AgentChildExitCode 0 `
+        -NotificationFailure '[external-agent] Agent exited without native attention, childExitCode=0'
+    Assert-True (
+        $missingPiSignal.status -eq 'failed' -and
+        $missingPiSignal.failureDomain -eq 'compatibility'
+    ) 'Pi must still emit its expected native attention signal'
+
+    $privacyFailure = Resolve-LeanTTYAgentNotificationAssessment `
+        -Agent pi -Mode tmux `
+        -NativeAttentionObserved $true `
+        -SystemNotificationCompleted $false `
+        -AgentChildExitCode 0 `
+        -NotificationFailure '[privacy] Agent notification exposed source or workload information'
+    Assert-True (
+        $privacyFailure.status -eq 'failed' -and
+        $privacyFailure.failureDomain -eq 'privacy'
+    ) 'Applicability policy must not downgrade notification privacy failures'
+
     $sentinelPath = Join-Path $temporaryDirectory '.leantty-agent-compat'
     [IO.File]::WriteAllText(
         $sentinelPath,
@@ -233,6 +321,14 @@ try {
         $deviceScript.Contains('[switch]$InteractionOnlyProbe') -and
         $deviceScript.Contains('[switch]$ProtocolInteractionProbe') -and
         $deviceScript.Contains('[switch]$OpenCodeForceOsc99Protocol') -and
+        $deviceScript.Contains('[switch]$DiagnosticHap') -and
+        $deviceScript.Contains('Resolve-LeanTTYRetainedCandidate') -and
+        $deviceScript.Contains('Assert-LeanTTYCandidateHarnessCompatibility') -and
+        $deviceScript.Contains('agent-compatibility-policy.ps1') -and
+        $deviceScript.Contains('harnessDifferencePaths') -and
+        $deviceScript.Contains('gitCommit') -and
+        $deviceScript.Contains('gitTree') -and
+        $deviceScript.Contains('gitDirty') -and
         $deviceScript.Contains("@('OPENTUI_NOTIFICATION_PROTOCOL=osc99')") -and
         $deviceScript.Contains('function Invoke-Osc99CapabilityProbeCheck') -and
         $deviceScript.Contains('function Invoke-AgentInteractionOnlyCheck') -and

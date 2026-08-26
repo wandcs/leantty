@@ -21,19 +21,73 @@ param(
     [switch]$Osc99CapabilityProbe,
     [switch]$InteractionOnlyProbe,
     [switch]$ProtocolInteractionProbe,
-    [switch]$OpenCodeForceOsc99Protocol
+    [switch]$OpenCodeForceOsc99Protocol,
+    [switch]$DiagnosticHap,
+    [string]$CandidateBasePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
+. (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+. (Join-Path $PSScriptRoot 'agent-compatibility-policy.ps1')
 
-$HapPath = [IO.Path]::GetFullPath($HapPath)
-if (-not (Test-Path -LiteralPath $HapPath -PathType Leaf) -or
-    (Split-Path $HapPath -Leaf) -match 'unsigned') {
-    throw "Signed diagnostic HAP not found: $HapPath"
+$harnessStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect Agent compatibility harness source state' }
+$harnessDirty = ($harnessStatus.Count -gt 0)
+if ($harnessDirty -and -not $DiagnosticHap) {
+    throw 'Agent compatibility harness requires a clean committed tree for acceptance evidence'
+}
+$harnessCommit = (& git -C $repoRoot rev-parse HEAD 2>&1).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve Agent compatibility harness commit' }
+$harnessTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}' 2>&1).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve Agent compatibility harness tree' }
+
+$harnessDifferencePaths = @()
+if ($DiagnosticHap) {
+    $resolvedHap = [IO.Path]::GetFullPath($HapPath)
+    if (-not (Test-Path -LiteralPath $resolvedHap -PathType Leaf)) {
+        throw "Diagnostic HAP is missing: $resolvedHap"
+    }
+    $candidate = [pscustomobject][ordered]@{
+        sha256 = (Get-FileHash -LiteralPath $resolvedHap -Algorithm SHA256).Hash.ToLowerInvariant()
+        hapPath = $resolvedHap
+        gitCommit = $null
+        gitTree = $null
+        gitDirty = $null
+        verificationMode = 'diagnostic'
+    }
+} else {
+    $candidate = Resolve-LeanTTYRetainedCandidate `
+        -RepoRoot $repoRoot `
+        -HapPath $HapPath `
+        -CandidateBasePath $CandidateBasePath
+    if ([bool]$candidate.gitDirty) {
+        throw 'Agent compatibility evidence requires a clean committed candidate'
+    }
+    $harnessDifferencePaths = @(Assert-LeanTTYCandidateHarnessCompatibility `
+        -RepoRoot $repoRoot `
+        -Candidate $candidate `
+        -AllowedHarnessPaths @(
+            'tools/verify-agent-compatibility-pc.ps1',
+            'tools/agent-compatibility-policy.ps1',
+            'tools/agent-compatibility-wsl.sh',
+            'tools/agent-compatibility/*',
+            'tools/test-agent-compatibility.ps1',
+            'tools/test-acceptance-harness.ps1',
+            'tools/candidate-store.ps1',
+            'tools/device-regression.ps1',
+            'tools/hdc-common.ps1',
+            'tools/rust-wsl.ps1',
+            'docs/quality-strategy.md',
+            'docs/design/agent-tui-compatibility.md'
+        ))
+}
+$HapPath = [string]$candidate.hapPath
+if ((Split-Path $HapPath -Leaf) -match 'unsigned') {
+    throw 'Agent compatibility device verification requires a signed HAP'
 }
 if ($Port -eq 0) { $Port = Get-Random -Minimum 30000 -Maximum 45000 }
 $probeModeCount = 0
@@ -62,7 +116,7 @@ New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
 
 $hdc = Resolve-Hdc
 $Target = Resolve-LeanTTYRegressionTarget -Hdc $hdc -Target $Target
-$candidateSha256 = (Get-FileHash -LiteralPath $HapPath -Algorithm SHA256).Hash
+$candidateSha256 = [string]$candidate.sha256
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
 $fixtureDirectory = Join-Path $temporaryRoot (
     'leantty-agent-compat-' + [Guid]::NewGuid().ToString('N')
@@ -96,7 +150,7 @@ $connectedCommandObservations = [Collections.Generic.List[object]]::new()
 $controlledLocaleChecked = $false
 
 $result = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     scenario = $(if ($Osc99CapabilityProbe) {
         'osc99-capability-response-over-default-wsl-openssh'
     } elseif ($InteractionOnlyProbe) {
@@ -107,11 +161,25 @@ $result = [ordered]@{
         'native-agent-tui-compatibility-over-default-wsl-openssh'
     })
     startedAt = $startedAt.ToString('o')
+    runMode = $(if ($DiagnosticHap) { 'diagnostic' } else { 'acceptance' })
+    releaseEligible = (-not $DiagnosticHap)
     target = $Target
     candidate = [ordered]@{
         hapPath = $HapPath
         sha256 = $candidateSha256
-        role = 'test-signed-diagnostic-hap'
+        role = $(if ($DiagnosticHap) { 'test-signed-diagnostic-hap' } else { 'retained-test-candidate' })
+        gitCommit = $candidate.gitCommit
+        gitTree = $candidate.gitTree
+        gitDirty = $candidate.gitDirty
+        verificationMode = $candidate.verificationMode
+        retained = (-not $DiagnosticHap)
+        reusedAcrossHarnessOnlyChanges = ($harnessDifferencePaths.Count -gt 0)
+    }
+    harness = [ordered]@{
+        gitCommit = $harnessCommit
+        gitTree = $harnessTree
+        gitDirty = $harnessDirty
+        differencePathsFromCandidate = @($harnessDifferencePaths)
     }
     server = [ordered]@{
         environment = 'default-wsl-isolated-openssh'
@@ -655,6 +723,7 @@ function Invoke-AgentModeCheck {
         nativeNotification = $false
         genericNotificationPayload = $false
         returnApplied = $false
+        notificationAssessment = $null
         unicodeInput = 'harmony-uitest-semantic-unicode-not-physical-ime-composition'
         largeInputCharacters = 4096
         shiftEnter = 'physical-key-injected-captured-at-pty'
@@ -719,10 +788,8 @@ function Invoke-AgentModeCheck {
         Wait-File -Path $captureResultPath -TimeoutSeconds 30
         $capture = Get-Content -LiteralPath $captureResultPath -Raw | ConvertFrom-Json -Depth 30
         $expectedAttention = Get-AgentExpectedAttentionKind -Agent $Agent
-        if (-not $capture.output.nativeAttentionSignalObserved) {
-            throw '[compatibility] Agent PTY capture did not contain native attention'
-        }
-        if ($expectedAttention.Length -gt 0 -and
+        $nativeAttentionObserved = [bool]$capture.output.nativeAttentionSignalObserved
+        if ($nativeAttentionObserved -and $expectedAttention.Length -gt 0 -and
             $capture.output.nativeAttentionSignalKinds -notcontains $expectedAttention) {
             throw "[compatibility] Agent PTY capture did not contain expected $expectedAttention"
         }
@@ -730,12 +797,20 @@ function Invoke-AgentModeCheck {
             throw '[compatibility] Controlled Unicode or large input did not reach the Agent PTY'
         }
         $check.captureSummary = "results/$stage-notification.json"
+        $notificationAssessment = Resolve-LeanTTYAgentNotificationAssessment `
+            -Agent $Agent `
+            -Mode $Mode `
+            -NativeAttentionObserved $nativeAttentionObserved `
+            -SystemNotificationCompleted ([bool]$check.nativeNotification) `
+            -AgentChildExitCode ([int]$capture.childExitCode) `
+            -NotificationFailure $deferredFailure
+        $check.notificationAssessment = $notificationAssessment
         Disconnect-AgentServer
         Connect-AgentServer -Stage "$stage-final-reconnect"
         $check.reconnect = $true
         Disconnect-AgentServer
-        if ($deferredFailure.Length -gt 0) {
-            throw $deferredFailure
+        if ($notificationAssessment.status -ne 'passed') {
+            throw $notificationAssessment.failure
         }
         $check.status = 'passed'
     } catch {
@@ -753,6 +828,8 @@ function Invoke-AgentModeCheck {
             'external-agent'
         } elseif ($check.failure -match '^\[compatibility\]') {
             'compatibility'
+        } elseif ($check.failure -match '^\[privacy\]') {
+            'privacy'
         } else {
             'unknown'
         }

@@ -63,6 +63,10 @@ try {
         & (Join-Path $PSScriptRoot 'test-device-regression.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'Device regression helper test failed' }
     }
+    Invoke-HarnessCheck -Name 'agent-compatibility-verdict' -Action {
+        & (Join-Path $PSScriptRoot 'test-agent-compatibility.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'Agent compatibility verdict test failed' }
+    }
     Invoke-HarnessCheck -Name 'git-diff-check' -Action {
         & git -C $repoRoot diff --check
         if ($LASTEXITCODE -ne 0) { throw 'Unstaged diff check failed' }
