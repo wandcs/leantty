@@ -619,6 +619,7 @@ try {
         $qualificationEntryText.Contains('[Parameter(Mandatory = $true)][string]$ReviewHapPath') -and
         $qualificationEntryText.Contains("'test-acceptance-harness.ps1'") -and
         $qualificationEntryText.Contains("Only = @('password-success')") -and
+        $qualificationEntryText.Contains('DiagnosticHap = $true') -and
         $qualificationEntryText.Contains('releaseEligible = (-not $Diagnostic -and -not $failure)') -and
         $qualificationEntryText.Contains('harness-commit-or-tree-change')
     ) 'Harness qualification no longer binds the explicit package, minimum scenario and freeze identity'

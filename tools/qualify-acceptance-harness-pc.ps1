@@ -94,11 +94,11 @@ try {
         CandidateBasePath = $CandidateBasePath
         Only = @('password-success')
         Distribution = $Distribution
+        DiagnosticHap = $true
     }
     if (-not [string]::IsNullOrWhiteSpace($UnlockPasswordPath)) {
         $physicalArgs['UnlockPasswordPath'] = $UnlockPasswordPath
     }
-    if ($Diagnostic) { $physicalArgs['DiagnosticHap'] = $true }
     & (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1') @physicalArgs
     if ($LASTEXITCODE -ne 0) { throw 'Minimum physical harness scenario failed' }
 
@@ -143,6 +143,7 @@ try {
         result = $(if ($failure) { 'failed' } else { 'passed' })
         releaseEligible = (-not $Diagnostic -and -not $failure)
         productBehaviorClaimed = $false
+        physicalCandidateAuthority = 'qualifier-validates-retained-candidate-inner-only-run-is-diagnostic'
         startedAt = $startedAt.ToString('o')
         completedAt = [DateTimeOffset]::UtcNow.ToString('o')
         reviewTestHap = [ordered]@{
