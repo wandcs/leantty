@@ -368,6 +368,62 @@ must match the approved complete receive-only title/body subset before it can
 enter the shared attention path; richer OSC 99 operations remain outside scope. Agent model usage
 is recorded when the tool exposes run-scoped accounting; otherwise it is
 `unavailable`, never estimated as zero.
+
+Formal notification verdicts are applicability-aware while every interaction,
+UTF-8, search, input, reconnect and applicable tmux-resume assertion remains
+blocking. Codex direct/tmux, OpenCode direct and Qwen tmux require the complete
+native-signal, generic system-notification and return chain. OpenCode tmux is
+`not-emitted-by-agent` only when the final raw-free PTY summary contains no
+native attention and the notification wait ended in the external Agent domain;
+if OpenCode does emit a native signal, the complete LeanTTY notification chain
+becomes required. Pi direct/tmux and Qwen direct must still emit their expected
+native signal; when that signal is captured but the exact hidden-window
+non-publication boundary occurs, record `platform-deferred` and
+`systemNotification=not-observed`, never a notification pass. If those paths do
+publish, generic payload and accurate return remain required. Privacy, harness,
+environment, infrastructure, unexpected product and missing required-signal
+failures are never downgraded by applicability. A mode may be compatible with
+an explicit non-blocking classification only after all other assertions pass.
+
+The acceptance result MUST use an exact retained candidate by default, record
+candidate commit/tree/hash and clean harness commit/tree, and list every
+harness-only path between them. An arbitrary HAP is diagnostic-only and
+requires `-DiagnosticHap`. A verdict-policy repair may reuse the unchanged
+candidate under R1/R2 only after the policy has a red/green software test, the
+intervening paths stay on this scenario's allowlist, the clean harness is
+requalified and this complete Agent scenario is rerun. Known applicability
+limitations do not authorize additional model requests merely to reproduce the
+same boundary.
+
+### 2026-08-26 notification applicability research record
+
+- **Question:** whether every Agent/mode must emit a native notification and
+  complete a HarmonyOS system notification for the compatibility matrix to
+  pass, or whether upstream emission and platform lifecycle are separate facts.
+- **Primary/upstream evidence:** OpenTUI documents that notification selection
+  is asynchronous, remote/multiplexer sessions often begin without a selected
+  protocol, tmux requires DCS passthrough, and queuing an OSC sequence does not
+  prove desktop display. OpenCode issue
+  [#29099](https://github.com/anomalyco/opencode/issues/29099) records its TUI
+  notification failure under tmux/zellij. Pi's shipped
+  [`notify.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/examples/extensions/notify.ts)
+  is the native OSC 777 source used by the fixture. HarmonyOS documents that
+  preventing background suspension requires a declared background-task
+  capability and permission. Together with the observed hidden-window behavior,
+  this supports the inference that ordinary UIAbility execution has no
+  equivalent guarantee. See [OpenTUI notifications](https://opentui.com/docs/core-concepts/notifications/)
+  and [HarmonyOS background task management](https://developer.huawei.com/consumer/en/doc/harmonyos-references-V5/js-apis-resourceschedule-backgroundtaskmanager-V5).
+- **Agreement with physical evidence:** OpenCode direct emitted complete OSC 99
+  and passed, while tmux queried capability but emitted no complete attention;
+  Pi direct/tmux emitted OSC 777 after the hidden window had suspended the
+  application-side parser. The matrix therefore records wire emission,
+  terminal handling and system display as distinct observations.
+- **Remaining gap and stop rule:** future Agent or HarmonyOS versions may alter
+  these paths. Reassess only when a version change or new native signal provides
+  contrary evidence; do not add an Agent-specific workaround, background
+  service or second session owner solely to turn a documented limitation into a
+  synthetic pass.
+
 The temporary WSL server is owned by its run-scoped
 `leantty-agent-compat-<GUID>/sshd_config` and PID file. Cleanup MUST verify that
 exact identity, check TERM success, poll the same PID with root permission and
