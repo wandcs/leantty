@@ -325,6 +325,8 @@ try {
         $deviceScript.Contains('Resolve-LeanTTYRetainedCandidate') -and
         $deviceScript.Contains('Assert-LeanTTYCandidateHarnessCompatibility') -and
         $deviceScript.Contains('agent-compatibility-policy.ps1') -and
+        $deviceScript.Contains("'tools/qualify-acceptance-harness-pc.ps1'") -and
+        $deviceScript.Contains("'tools/test-build-workflows.ps1'") -and
         $deviceScript.Contains('harnessDifferencePaths') -and
         $deviceScript.Contains('gitCommit') -and
         $deviceScript.Contains('gitTree') -and
