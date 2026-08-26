@@ -1,12 +1,12 @@
 # LeanTTY 当前工作
 
-> 状态：唯一有效的项目 TODO；1.5.0 AppGallery 交接进行中
+> 状态：唯一有效的项目 TODO；1.5.0 等待维护者提交 AppGallery
 >
 > 更新日期：2026-08-26
 >
 > 当前 milestone：[`1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容`](roadmap.md)
 >
-> 当前工程阶段：1.5 产品与 GitHub 正式发布已闭合；等待 AppGallery 提交与审核
+> 当前工程阶段：1.5 产品、GitHub 正式发布与维护者交接已闭合；等待 AppGallery 提交与审核
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -52,16 +52,17 @@ Agent 章节、文档内英文切换和英文 Agent 页内跳转。页内锚点�
 
 ## 当前活动工作
 
-### 1.5.0 AppGallery 交接
+### 1.5.0 AppGallery 提交与审核
 
 1.5.0 的发布源冻结、production/review 构建归档、正式软件与物理门禁、不可变签名标签和
-GitHub Release 均已完成。剩余交接以
+GitHub Release 均已完成；唯一 production signed APP、SHA-256、商店文案和提交清单也已归档
+并交付维护者。剩余工作以
 [`release-process.md`](release-process.md)、[`versioning.md`](versioning.md) 和
 [`quality-strategy.md`](quality-strategy.md) 为执行权威；本节只记录仍未完成的发布结果，
 不复制命令或建立第二套流程。
 
-- [ ] 向维护者交付唯一可上传的 production signed APP、SHA-256、商店资料和提交清单；由维护者
-  本人核对并提交 AppGallery，随后按其确认记录审核状态。
+- [ ] 由维护者本人复核并上传唯一 production signed APP，核对商店资料后提交 AppGallery；
+  随后按维护者反馈记录提交、审核或上架状态。
 
 不得移动或复用 `v1.5.0` 标签和 Release。若 AppGallery 审核失败或上传产物必须变化，按发布
 规则提升版本并重新走发布流程，不在既有版本身份上替换产物。拟议 1.6 Mosh 和其他 roadmap

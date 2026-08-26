@@ -335,7 +335,7 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 ## 已发布 milestone：1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容
 
 1.5 产品开发已于 2026-08-25 闭合；`v1.5.0` 已于 2026-08-26 由不可变签名标签、精确发布源、
-非草稿 GitHub Release 和归档发布产物冻结。当前没有已授权的产品工作；AppGallery 交接与
+非草稿 GitHub Release 和归档发布产物冻结。当前没有已授权的产品工作；AppGallery 提交与
 审核状态只在 `next-work.md` 维护，商店可获取性仍以维护者确认而不是本地或 GitHub 事实为准。
 
 ### 用户结果
