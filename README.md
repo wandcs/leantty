@@ -1,162 +1,110 @@
 # LeanTTY
 
-LeanTTY is a keyboard-first, zero-configuration remote terminal for ARM64
-HarmonyOS PC, inspired by [Ghostty](https://ghostty.org).
+**简体中文** | [English](README.en.md)
 
-The project aims to be reliable, quiet and native to HarmonyOS PC. Ghostty is a
-reference for product quality, not a feature-parity target. Scope and technical
-decisions follow the [project principles](docs/project-principles.md).
+**LeanTTY 是为鸿蒙系统打造的键盘优先 SSH / TTY 终端，让开发者和运维人员能够可靠、
+高效地进入 Linux 子系统、服务器和开发环境，完成专业命令行与 Coding Agent 工作。**
 
-## Status
+![LeanTTY 1.5 在鸿蒙电脑上的左右分屏](docs/assets/leantty-1.5-workspace.png)
 
-Version 1.0.0 was rejected by Huawei AppGallery Connect because the former
-application name contained an unauthorized trademark; it was never published.
-[LeanTTY 1.0.1](https://github.com/wandcs/leantty/releases/tag/v1.0.1) passed
-AppGallery review and became the first public release on 2026-07-28.
-[LeanTTY 1.1.0](https://github.com/wandcs/leantty/releases/tag/v1.1.0) was
-published on GitHub on 2026-08-05, then superseded before AppGallery submission
-when its production Profile authorization needed correction.
-[LeanTTY 1.1.1](https://github.com/wandcs/leantty/releases/tag/v1.1.1) was
-published on GitHub on 2026-08-06 with the corrected production Profile, then
-passed AppGallery review and was released to users on 2026-08-08.
-[LeanTTY 1.2.0](https://github.com/wandcs/leantty/releases/tag/v1.2.0) was
-published on GitHub on 2026-08-08 after its exact production and review builds
-passed the formal software, signing and physical-PC gates. The matching
-production APP passed AppGallery review and was released to users on 2026-08-13.
-[LeanTTY 1.3.0](https://github.com/wandcs/leantty/releases/tag/v1.3.0) passed
-AppGallery review and was released to users on 2026-08-17.
-[LeanTTY 1.4.0](https://github.com/wandcs/leantty/releases/tag/v1.4.0) was
-published on GitHub on 2026-08-19 from its immutable release identity. On
-2026-08-22, the maintainer confirmed that the matching production APP had
-passed AppGallery review and was available to users.
-[LeanTTY 1.5.0](https://github.com/wandcs/leantty/releases/tag/v1.5.0) was
-published on GitHub on 2026-08-26 after its exact production and review builds
-passed the formal software, signing, physical-PC and Agent compatibility gates.
-Its AppGallery package has been prepared for maintainer submission; it is not
-described as submitted, approved or available until the maintainer confirms
-that store state.
+> **当前支持范围：** 物理 ARM64 HarmonyOS PC 与键鼠场景。MatePad 和纯触控场景尚未支持。
+>
+> **当前版本状态：** AppGallery 已确认上架 1.4.0；1.5.0 已于 2026-08-26 提交审核，
+> 尚未确认正式上架。1.5.0 的源码与不可变发布产物见
+> [GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.5.0)。
 
-The `main` branch can contain behavior listed under `CHANGELOG.md` →
-`Unreleased` or a selected release section. Source-tree documentation marks
-that applicability explicitly; do not assume later source behavior is present
-in the AppGallery version.
+## 为什么选择 LeanTTY
 
-The immutable `v1.0.0` through `v1.5.0` tags record each rejected, superseded
-or published release identity. `v1.4.0` remains the confirmed AppGallery
-baseline while 1.5.0 awaits store submission and review. Use the matching
-GitHub Release and AppGallery entry to determine whether a later version has
-completed its respective release and store-review stages.
-Exact submitted-source mapping, artifact hashes and signing verification remain
-in the private release evidence archive. No signing credential or generated
-application package is stored in Git.
+- **简洁：** 保留一条清楚的 SSH / TTY 主路径，不建立另一套主机资产平台，也不追求大而全。
+- **高效：** 多标签、最多双分屏、终端搜索、系统剪贴板和稳定的键盘路径，帮助用户减少切换并
+  快速找回上下文。
+- **安全：** 没有 LeanTTY 账号、广告、分析 SDK、遥测或 LeanTTY 云服务；主机配置和已验证
+  密钥保存在设备上的受保护本地存储中。
+- **稳定：** 连接、输入输出、焦点、尺寸、剪贴板、断线与恢复都以可预测为目标，并在物理
+  HarmonyOS PC 上验证关键交互。
+- **现代化：** 自然使用鸿蒙系统的窗口、键盘、剪贴板、语言和通知能力，并面向今天的
+  OpenSSH、tmux、编辑器与 Coding Agent TUI 工作流。
 
-## Features
+## 适合哪些场景
 
-- SSH password and private-key authentication
-- OpenSSH `known_hosts` verification
-- Multi-tab terminal with at most two panes per tab
-- Keyboard-first focus, selection, copy and paste
-- OpenSSH-compatible host configuration and key management
-- Catppuccin Mocha and Latte themes
-- Rust/russh transport through napi-ohos
-- xterm.js rendering in ArkWeb
+### 把鸿蒙电脑的 Linux 子系统作为本机执行环境
 
-## Terminal interaction
+在支持的鸿蒙电脑上，可以安装华为官方[融合开发引擎（Linux 子系统）](https://consumer.huawei.com/cn/support/content/zh-cn16091898/)，
+在 openEuler 中运行 Shell、工具链、tmux、编辑器或 Coding Agent，不需要先拥有外部服务器。
+当前需要用户在子系统中手工启动 `sshd`、查看当前 IP，并把它配置成普通 SSH Host；LeanTTY
+不会自动安装、启动、发现或管理 Linux 子系统。
 
-- Hold `Ctrl` and left-click an HTTP(S) or OSC 8 link to open it in the system
-  browser.
-- When tmux or another TUI has enabled mouse reporting, use
-  `Ctrl+Shift+Left Click` instead.
-- With tmux mouse mode enabled, drag normally to use tmux selection; releasing
-  the mouse copies through tmux's standard OSC 52 clipboard path.
-- Hold `Shift` and drag to bypass TUI mouse reporting for local text selection,
-  then press `Ctrl+C` to copy it.
+### 连接服务器和远程开发环境
 
-## Product scope
+如果已经有 Linux 服务器、开发机或其他 SSH 执行环境，可以沿用 OpenSSH Host 配置、私钥和
+单跳 ProxyJump，通过同一套键盘工作区进入不同任务。
 
-LeanTTY currently targets only ARM64 HarmonyOS PC with keyboard and mouse. It
-is an SSH terminal, not a local shell, Linux environment, file manager or
-general remote-administration suite.
+### 运行需要长时间交互的 TUI 与 Coding Agent
 
-For installation, first connection, current commands, keyboard interaction,
-data retention and recovery, see the [User Guide](docs/user-guide.md). LeanTTY's
-local-data and network boundaries are documented in the
-[Privacy Policy](PRIVACY.md) and [Security Policy](SECURITY.md).
+LeanTTY 1.5 已为 Codex CLI、OpenCode、Pi Agent 和 Qwen Code 的选定稳定版本建立普通 SSH 与
+tmux 兼容基线。当远端程序发出受支持的终端提醒信号时，LeanTTY 可以提供克制的系统提醒并
+返回来源分屏；它不会分析终端内容来猜测任务是否完成。
 
-## Requirements
+## 核心能力
 
-- Windows and DevEco Studio with HarmonyOS SDK API 6.1.1 (24)
-- Rust 1.96+ with the `aarch64-unknown-linux-ohos` target
-- An ARM64 HarmonyOS PC for interaction and lifecycle verification
+- SSH 密码认证，以及 OpenSSH Ed25519、RSA、ECDSA 私钥认证
+- `known_hosts` 主机指纹校验、OpenSSH Host 配置和单跳 ProxyJump
+- OpenSSH 配置与密钥导入导出、连接超时、ServerAlive 和一次性脱敏诊断
+- 多标签、每个标签最多双分屏、终端搜索、链接打开与系统剪贴板
+- 当前前台分屏中的受控单文件 `put` / `get`
+- 中英文原生界面；命令、技术输出和远端终端内容保持原样
+- ArkTS / ArkUI 应用外壳、Rust / russh SSH 传输与 ArkWeb / xterm.js 终端渲染
 
-## Build and verify
+## 开始使用
+
+1. 在鸿蒙电脑的应用市场中搜索 **LeanTTY** 并安装当前已上架版本。
+2. 准备一个可访问的执行环境：鸿蒙电脑上的融合开发引擎，或已有 SSH 服务器。
+3. 在 LeanTTY 中配置普通 SSH Host，核对首次连接的主机指纹，然后开始工作。
+4. 首次连接、键盘交互、文件传输、数据保留与恢复见[用户指南](docs/user-guide.md)。
+
+LeanTTY 是执行环境的入口，不内置 Linux、本地 Shell、Coding Agent、模型服务或 SSH 服务器。
+
+## 信任与产品边界
+
+LeanTTY 只会为用户主动发起的 SSH 连接和操作处理必要数据。SSH 协议数据会发送到用户选择的
+服务器；系统浏览器、HarmonyOS 与 AppGallery 也有各自的数据处理边界。完整说明见
+[隐私政策](PRIVACY.md)与[安全模型](docs/security-model.md)。
+
+LeanTTY 当前不是 GUI SFTP 文件管理器、堡垒机、协作审计平台或大规模主机资产管理工具；也
+不为手机、竖屏、纯触控和虚拟键盘优先场景引入当前复杂度。长期设备范围可以扩展到外接实体
+键盘的 MatePad，但只有经过对应真机适配与验证后才会正式支持。
+
+## 文档
+
+- [用户指南](docs/user-guide.md)
+- [产品原则](docs/project-principles.md)
+- [版本路线图](docs/roadmap.md)
+- [隐私政策](PRIVACY.md)
+- [安全政策](SECURITY.md)
+- [支持与常见问题](SUPPORT.md)
+
+## 开发与贡献
+
+开发环境需要 Windows、DevEco Studio 与 HarmonyOS SDK API 6.1.1 (24)，以及带有
+`aarch64-unknown-linux-ohos` 目标的 Rust 1.96+。真实键盘、窗口、生命周期和 SSH 交互必须在
+物理 ARM64 HarmonyOS PC 上验证。
 
 ```powershell
-rustup target add aarch64-unknown-linux-ohos
-
-# Build only
+# 构建
 .\tools\build-all.ps1
 
-# Formal release: complete software regression gate
-.\tools\test-regression.ps1
+# 日常相关检查示例
+.\tools\test-regression.ps1 -Group policy,tooling
 
-# Routine change: build, test-sign, install and launch when relevant
+# 需要真机交互时的开发循环
 .\tools\dev-pc.ps1
-
-# Formal release: clean committed candidate and real-PC deployment
-.\tools\verify-pc.ps1
-
-# Run only a named scenario affected by a routine change; run all at release
-.\tools\verify-key-passphrase-pc.ps1
 ```
 
-After a feature iteration or bug fix, run only tests for the changed event
-chain plus the smallest stable main-path smoke checks that finish quickly.
-Complete software regression, a clean ARM64 candidate build and the full
-physical-PC matrix are reserved for preparing a formal release package. See
-[the regression test standard](docs/quality-strategy.md).
-
-Device deployment requires a local signing configuration and certificate.
-Those files are deliberately excluded from the repository. See
-[the release process](docs/release-process.md) for the trust boundary.
-
-## Architecture
-
-```text
-App Shell
-  └─ Tab → Pane → Session
-                 ├─ SSH Transport
-                 ├─ Terminal Surface
-                 └─ System Services
-```
-
-- ArkTS/ArkUI owns application state, windows, tabs, panes and system services.
-- Rust/russh owns SSH transport, PTY and byte streams.
-- ArkWeb/xterm.js owns terminal rendering, input, selection and resize.
-- The bridge carries validated protocol messages; it does not contain business
-  rules.
-
-The current event chains, runtime ownership, terminal recovery and persistent
-state model are documented in [the architecture baseline](docs/architecture.md).
-
-## Contributing
-
-Issues and pull requests are welcome under the bounded policy in
-[CONTRIBUTING.md](CONTRIBUTING.md). Feature proposals are evaluated against the
-project principles before implementation.
-
-Community expectations, support boundaries and the security reporting channel
-are documented in:
-
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Support](SUPPORT.md)
-- [Security Policy](SECURITY.md)
-- [Privacy Policy](PRIVACY.md)
-- [Trademark Policy](TRADEMARKS.md)
+正式发布使用独立的完整门禁。开始贡献前请阅读[贡献指南](CONTRIBUTING.md)、
+[编码指南](docs/coding-guide.md)、[质量策略](docs/quality-strategy.md)和
+[发布流程](docs/release-process.md)。
 
 ## License
 
-LeanTTY is licensed under Apache-2.0. See [LICENSE](LICENSE).
-
-Third-party components remain under their own licenses; see
-[THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
+LeanTTY 使用 [Apache-2.0](LICENSE) 许可证。第三方组件继续遵循各自许可证，详见
+[第三方声明](docs/THIRD_PARTY_NOTICES.md)。
