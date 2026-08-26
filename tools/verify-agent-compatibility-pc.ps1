@@ -77,6 +77,8 @@ if ($DiagnosticHap) {
             'tools/agent-compatibility/*',
             'tools/test-agent-compatibility.ps1',
             'tools/test-acceptance-harness.ps1',
+            'tools/qualify-acceptance-harness-pc.ps1',
+            'tools/test-build-workflows.ps1',
             'tools/candidate-store.ps1',
             'tools/device-regression.ps1',
             'tools/hdc-common.ps1',
