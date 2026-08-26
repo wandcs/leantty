@@ -480,6 +480,16 @@ focused software harness gate and one bounded `password-success` physical
 scenario; it does not promote product behavior evidence or replace any C3
 scenario.
 
+The qualifier itself owns retained-candidate validation: it resolves the
+explicit HAP before device setup and binds its hash and clean source identity to
+the final qualification. Its inner `password-success -Only` invocation is a
+control-channel diagnostic and therefore always passes `-DiagnosticHap` to the
+SSH scenario. This prevents that scenario's product-specific compatibility
+allowlist from rejecting unrelated harness-only changes while preserving the
+outer candidate check, clean harness check, exact HAP hash, physical evidence
+identity and `releaseEligible` decision. It does not make a formal
+qualification diagnostic and does not widen the SSH matrix allowlist.
+
 The passing record MUST prove all of the following for its declared context of
 use:
 
