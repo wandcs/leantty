@@ -29,17 +29,23 @@ AppGallery review and was released to users on 2026-08-17.
 published on GitHub on 2026-08-19 from its immutable release identity. On
 2026-08-22, the maintainer confirmed that the matching production APP had
 passed AppGallery review and was available to users.
+[LeanTTY 1.5.0](https://github.com/wandcs/leantty/releases/tag/v1.5.0) was
+published on GitHub on 2026-08-26 after its exact production and review builds
+passed the formal software, signing, physical-PC and Agent compatibility gates.
+Its AppGallery package has been prepared for maintainer submission; it is not
+described as submitted, approved or available until the maintainer confirms
+that store state.
 
 The `main` branch can contain behavior listed under `CHANGELOG.md` →
 `Unreleased` or a selected release section. Source-tree documentation marks
 that applicability explicitly; do not assume later source behavior is present
 in the AppGallery version.
 
-The immutable `v1.0.0` through `v1.4.0` tags record each rejected, superseded
-or published release identity. `v1.4.0` is the AppGallery baseline preceding
-the 1.5.0 release source. Use the matching GitHub Release and AppGallery entry
-to determine whether a later version has completed its respective release and
-store-review stages.
+The immutable `v1.0.0` through `v1.5.0` tags record each rejected, superseded
+or published release identity. `v1.4.0` remains the confirmed AppGallery
+baseline while 1.5.0 awaits store submission and review. Use the matching
+GitHub Release and AppGallery entry to determine whether a later version has
+completed its respective release and store-review stages.
 Exact submitted-source mapping, artifact hashes and signing verification remain
 in the private release evidence archive. No signing credential or generated
 application package is stored in Git.
