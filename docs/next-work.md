@@ -1,6 +1,6 @@
 # LeanTTY 当前工作
 
-> 状态：唯一有效的项目 TODO；1.5.1 产品与发布工具开发已闭合，等待合入和正式发布准备
+> 状态：唯一有效的项目 TODO；1.5.1 发布源已合入，进入正式发布准备
 >
 > 更新日期：2026-08-28
 >
@@ -25,7 +25,7 @@
 
 ## 当前活动工作
 
-### 1.5.1 — 合入与正式发布准备
+### 1.5.1 — 正式发布准备
 
 1.5.1 已完成 `host add|set -i <identity|none>`、严格错误、原子 OpenSSH config 持久化、
 解析优先级和中英文指南。聚焦软件门覆盖新增、更新、保留、删除、错误输入、重启解析、
@@ -41,8 +41,6 @@ harness 分别绑定精确身份；SSH、通知和 Agent 长矩阵具有原子�
 可执行入口。以上工具只减少重复工作，不改变签名、正式软件门、真实 PC、不可变标签、
 GitHub Release 或 AppGallery 维护者操作的进入条件。
 
-- [ ] 将本轮聚焦分支通过 PR 合入 `main`，并证明本地与远端 `main` commit/tree 相同、
-  ahead/behind 为 `0/0`、工作区干净且主题分支已删除。
 - [ ] 在干净 development、production 和 review checkout 上运行冻结前
   `test-release-readiness.ps1`，预生成并审计 license ZIP、Release notes、AppGallery 文案、
   交接清单和附件摘要；不得创建正式候选、标签或调用 Agent 模型。
@@ -50,7 +48,8 @@ GitHub Release 或 AppGallery 维护者操作的进入条件。
   [`release-process.md`](release-process.md) 和
   [`quality-strategy.md`](quality-strategy.md) 完成正式软件门、生产签名、匹配 review HAP
   与适用物理 PC 矩阵。候选与 harness 身份、清理状态和恢复级别必须完整。
-- [ ] 全部门禁通过后冻结 1.5.1 日期，创建不可变签名标签和非草稿 GitHub Release；核对远程
+- [ ] 以 2026-08-28 冻结 1.5.1 日期；全部门禁通过后创建不可变签名标签和非草稿
+  GitHub Release；核对远程
   commit、tag、附件和 SHA-256 后，向维护者交付同版本 production APP 与 AppGallery 材料。
 - [ ] GitHub Release 与维护者交接事实齐备后只创建一个状态 PR。AppGallery `Released` 只能在
   维护者确认后记录；HSL/openEuler 推广文章也只在 1.5.1 正式上架后恢复发布。
