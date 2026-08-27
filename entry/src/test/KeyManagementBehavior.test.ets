@@ -251,6 +251,55 @@ export default function keyManagementBehaviorTest() {
       expect(config.previewConfigText().includes('  ProxyJump none\n')).assertEqual(true)
     })
 
+    it('persistsPreservesAndRemovesOneExplicitHostIdentity', 0, () => {
+      let configured: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add hsl developer@192.0.2.10 -i id_hsl')
+      let duplicate: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add hsl developer@192.0.2.10 -i id_hsl -i id_other')
+      let invalid: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add hsl developer@192.0.2.10 -i ../id_hsl')
+      let missing: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host add hsl developer@192.0.2.10 -i')
+      expect(configured.errorMessage).assertEqual('')
+      expect(configured.sshIdentitySpecified).assertEqual(true)
+      expect(configured.sshIdentityFile).assertEqual('id_hsl')
+      expect(duplicate.errorMessage).assertEqual('Duplicate host option: -i')
+      expect(invalid.errorMessage.includes('one key name')).assertEqual(true)
+      expect(missing.errorMessage.length > 0).assertEqual(true)
+
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('')
+      config.addAlias('hsl', configured.sshHost, configured.sshPort, configured.sshUser,
+        null, null, null, null, configured.sshIdentityFile)
+      let persisted: string = config.previewConfigText()
+      expect(persisted.includes('  IdentityFile id_hsl\n')).assertEqual(true)
+      let restarted: SshConfig = new SshConfig()
+      restarted.loadFromText(persisted)
+      let resolved = CommandParser.parseCommand('ssh hsl', restarted)
+      expect(resolved.identityFile).assertEqual('id_hsl')
+      let transfer: TransferCommandResult = CommandParser.parseTransfer(
+        'put report.txt hsl:/tmp/report.txt', restarted)
+      expect(transfer.identityFile).assertEqual('id_hsl')
+
+      restarted.addAlias('jump', 'jump.example.com', 22, 'gateway', null, null, null, null, 'id_jump')
+      restarted.addAlias('private', 'private.example.com', 22, 'developer', 'jump', null, null, null,
+        'id_hsl')
+      let jumped = CommandParser.parseCommand('ssh private', restarted)
+      expect(jumped.identityFile).assertEqual('id_hsl')
+      expect(jumped.jumpIdentityFile).assertEqual('id_jump')
+
+      config.addAlias('hsl', '198.51.100.20', 22, 'developer')
+      expect(config.previewConfigText().includes('  IdentityFile id_hsl\n')).assertEqual(true)
+
+      let removed: KeyCommandResult = CommandParser.parseAliasAdd(
+        'host set hsl developer@198.51.100.20 -i none')
+      expect(removed.sshIdentitySpecified).assertEqual(true)
+      config.addAlias('hsl', removed.sshHost, removed.sshPort, removed.sshUser,
+        null, null, null, null, '')
+      expect(config.previewConfigText().includes('  IdentityFile ')).assertEqual(false)
+      expect(CommandParser.parseCommand('ssh hsl', config).identityFile).assertEqual('')
+    })
+
     it('rejectsInvalidKnownCommandSyntaxExplicitly', 0, () => {
       let invalidKey = CommandParser.parseInput('key unknown', new SshConfig())
       let invalidHost = CommandParser.parseInput('host unknown', new SshConfig())

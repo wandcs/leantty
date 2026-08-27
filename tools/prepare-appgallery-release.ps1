@@ -26,6 +26,9 @@ param(
 
     [string]$ReviewCheckout,
 
+    [Parameter(Mandatory = $true)]
+    [string]$AppGalleryCopyPath,
+
     [switch]$SkipBuild,
 
     [switch]$SkipProductionBuild,
@@ -36,11 +39,24 @@ param(
 $ErrorActionPreference = 'Stop'
 $productionCheckout = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'build-lock.ps1')
+. (Join-Path $PSScriptRoot 'prepare-release-assets.ps1')
 $productionBuildScript = Join-Path $PSScriptRoot 'build-all.ps1'
 $releaseRootFull = [IO.Path]::GetFullPath($ReleaseRoot)
 $releaseDirectory = Join-Path $releaseRootFull "releases\$ReleaseId"
 $packageDirectory = Join-Path $releaseDirectory 'package'
 $evidenceDirectory = Join-Path $releaseDirectory 'evidence'
+$productionPrefix = [IO.Path]::GetFullPath($productionCheckout).TrimEnd('\') + '\'
+$appGalleryCopyFull = [IO.Path]::GetFullPath($AppGalleryCopyPath)
+if (-not $appGalleryCopyFull.StartsWith(
+        $productionPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'AppGallery copy must be a reviewed file inside the production checkout'
+}
+$appGalleryCopyRelative = $appGalleryCopyFull.Substring($productionPrefix.Length).Replace('\', '/')
+& git -C $productionCheckout ls-files --error-unmatch -- $appGalleryCopyRelative 2>$null |
+    Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "AppGallery copy must be tracked by the release commit: $appGalleryCopyRelative"
+}
 
 function Get-PathWithinRoot {
     param(
@@ -283,8 +299,9 @@ $packageChecksums = @($packageFiles | ForEach-Object {
     '{0}  {1}' -f (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash,
         (Split-Path $_ -Leaf)
 })
-Set-Content -LiteralPath (Join-Path $packageDirectory 'SHA256SUMS.txt') `
-    -Value $packageChecksums -Encoding utf8
+Write-LeanTTYAtomicText `
+    -Path (Join-Path $packageDirectory 'SHA256SUMS.txt') `
+    -Content (($packageChecksums -join "`n") + "`n")
 
 $identity = [ordered]@{
     releaseId = $ReleaseId
@@ -315,8 +332,10 @@ $identity = [ordered]@{
         $null
     }
 }
-Set-Content -LiteralPath (Join-Path $evidenceDirectory 'release-identity.json') `
-    -Value (ConvertTo-Json -InputObject $identity -Depth 5) -Encoding utf8
+Write-LeanTTYAtomicJson `
+    -Path (Join-Path $evidenceDirectory 'release-identity.json') `
+    -Value $identity `
+    -Depth 5
 
 $artifactRoles = @(
     "LeanTTY-$ReleaseId-arm64-v8a-signed.app: upload this production APP to AppGallery.",
@@ -326,8 +345,9 @@ $artifactRoles = @(
 if ($review) {
     $artifactRoles += "LeanTTY-$ReleaseId-review-test-signed.hap: device acceptance and media capture only; never upload it to AppGallery."
 }
-Set-Content -LiteralPath (Join-Path $evidenceDirectory 'artifact-roles.txt') `
-    -Value $artifactRoles -Encoding utf8
+Write-LeanTTYAtomicText `
+    -Path (Join-Path $evidenceDirectory 'artifact-roles.txt') `
+    -Content (($artifactRoles -join "`n") + "`n")
 
 if ($review) {
     Copy-CheckedFile -Source $review.SignedHap -Destination (
@@ -343,6 +363,12 @@ if ($review) {
         Join-Path $evidenceDirectory 'review-hap-signing-profile.p7b'
     )
 }
+
+New-LeanTTYReleaseAssets `
+    -ReleaseId $ReleaseId `
+    -Checkout $productionCheckout `
+    -ReleaseDirectory $releaseDirectory `
+    -AppGalleryCopyPath $appGalleryCopyFull | Out-Null
 
 $prohibitedExtensions = @('.jks', '.key', '.keystore', '.p12', '.pem', '.pfx')
 $prohibitedNames = @('password.txt', 'signing.local.json5')
@@ -366,7 +392,9 @@ $bundleChecksums = @($archivedFiles |
         '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash,
             $relative
     })
-Set-Content -LiteralPath $bundleChecksumPath -Value $bundleChecksums -Encoding utf8
+Write-LeanTTYAtomicText `
+    -Path $bundleChecksumPath `
+    -Content (($bundleChecksums -join "`n") + "`n")
 
 Write-Host "APPGALLERY RELEASE ARCHIVE READY [$ReleaseId]" -ForegroundColor Green
 Write-Host "Upload APP: $archivedApp" -ForegroundColor Cyan

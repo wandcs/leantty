@@ -120,3 +120,43 @@ function Assert-LeanTTYPowerShellAutomaticVariableSafety {
         throw ('PowerShell automatic-variable collisions found:' + "`n" + ($violations -join "`n"))
     }
 }
+
+function Write-LeanTTYAtomicText {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Content
+    )
+
+    $resolvedPath = [IO.Path]::GetFullPath($Path)
+    $parent = Split-Path $resolvedPath -Parent
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $temporaryPath = Join-Path $parent ('.tmp-' + [Guid]::NewGuid().ToString('N'))
+    $backupPath = Join-Path $parent ('.bak-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::WriteAllText($temporaryPath, $Content, [Text.UTF8Encoding]::new($false))
+        if (Test-Path -LiteralPath $resolvedPath -PathType Leaf) {
+            [IO.File]::Replace($temporaryPath, $resolvedPath, $backupPath, $true)
+            Remove-Item -LiteralPath $backupPath -Force
+        } else {
+            [IO.File]::Move($temporaryPath, $resolvedPath)
+        }
+    } finally {
+        foreach ($cleanupPath in @($temporaryPath, $backupPath)) {
+            if (Test-Path -LiteralPath $cleanupPath -PathType Leaf) {
+                Remove-Item -LiteralPath $cleanupPath -Force
+            }
+        }
+    }
+}
+
+function Write-LeanTTYAtomicJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][object]$Value,
+        [ValidateRange(2, 20)][int]$Depth = 8
+    )
+
+    Write-LeanTTYAtomicText -Path $Path -Content (
+        ConvertTo-Json -InputObject $Value -Depth $Depth
+    )
+}

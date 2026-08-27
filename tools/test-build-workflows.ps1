@@ -35,11 +35,24 @@ function Assert-Throws {
 function Wait-ForPath {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [ValidateRange(1, 30)][int]$TimeoutSeconds = 5
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 15,
+        [Diagnostics.Process]$Process = $null,
+        [string]$ErrorPath = ''
     )
 
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while (-not (Test-Path -LiteralPath $Path)) {
+        if ($null -ne $Process) {
+            $Process.Refresh()
+            if ($Process.HasExited) {
+                $detail = if ($ErrorPath -and (Test-Path -LiteralPath $ErrorPath)) {
+                    (Get-Content -LiteralPath $ErrorPath -Raw).Trim()
+                } else {
+                    ''
+                }
+                throw "Test worker exited before signal (exit=$($Process.ExitCode)): $detail"
+            }
+        }
         if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
             throw "Timed out waiting for test signal: $Path"
         }
@@ -71,6 +84,132 @@ try {
         "Release tooling helper is missing: $releaseToolingScript"
     )
     . $releaseToolingScript
+
+    $atomicRecordPath = Join-Path $testRoot 'atomic\record.json'
+    Write-LeanTTYAtomicJson -Path $atomicRecordPath -Value ([ordered]@{ attempt = 1 })
+    Write-LeanTTYAtomicJson -Path $atomicRecordPath -Value ([ordered]@{ attempt = 2 })
+    $atomicRecord = Get-Content -LiteralPath $atomicRecordPath -Raw | ConvertFrom-Json
+    Assert-True (
+        [int]$atomicRecord.attempt -eq 2 -and
+        @(Get-ChildItem -LiteralPath (Split-Path $atomicRecordPath -Parent) -Force |
+            Where-Object { $_.Name -match '^\.(?:tmp|bak)-' }).Count -eq 0
+    ) 'Atomic evidence replacement left stale files or incomplete JSON'
+
+    Assert-True (
+        $candidateScriptText.Contains('remote get-url origin') -and
+        -not $candidateScriptText.Contains('git-common-dir')
+    ) 'Candidate storage still depends on one checkout Git common-dir'
+    $candidateNamespaceRoots = @()
+    foreach ($checkoutName in @('namespace-production', 'namespace-review')) {
+        $checkout = Join-Path $testRoot $checkoutName
+        New-Item -ItemType Directory -Path $checkout -Force | Out-Null
+        & git -C $checkout init --quiet
+        & git -C $checkout remote add origin 'git@github.com:wandcs/leantty.git'
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to configure candidate namespace fixture' }
+        $candidateNamespaceRoots += Get-LeanTTYCandidateRoot `
+            -RepoRoot $checkout -CandidateBasePath (Join-Path $testRoot 'stable-candidates')
+    }
+    Assert-True (
+        $candidateNamespaceRoots[0] -eq $candidateNamespaceRoots[1]
+    ) 'Independent checkouts did not resolve one stable candidate namespace'
+
+    $releaseAssetsScript = Join-Path $PSScriptRoot 'prepare-release-assets.ps1'
+    Assert-True (Test-Path -LiteralPath $releaseAssetsScript -PathType Leaf) (
+        "Release asset helper is missing: $releaseAssetsScript"
+    )
+    . $releaseAssetsScript
+    $assetCheckout = Join-Path $testRoot 'asset-checkout'
+    $assetReleaseDirectory = Join-Path $testRoot 'asset-release\releases\9.8.7'
+    $assetPackageDirectory = Join-Path $assetReleaseDirectory 'package'
+    $assetLicenseDirectory = Join-Path $assetCheckout 'build\outputs\release\licenses'
+    New-Item -ItemType Directory -Path $assetPackageDirectory, $assetLicenseDirectory -Force |
+        Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $assetCheckout 'CHANGELOG.md'),
+        "## [9.8.7] - 2026-08-28`n`n### Fixed`n`n- Verified release fixture.`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    [IO.File]::WriteAllText(
+        (Join-Path $assetLicenseDirectory 'LICENSE.txt'),
+        'fixture license',
+        [Text.UTF8Encoding]::new($false)
+    )
+    $assetCopy = Join-Path $assetCheckout 'appgallery.md'
+    [IO.File]::WriteAllText(
+        $assetCopy,
+        "LeanTTY 9.8.7`n`nImproves the verified main path.`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    $assetApp = Join-Path $assetPackageDirectory 'LeanTTY-9.8.7-arm64-v8a-signed.app'
+    [IO.File]::WriteAllText($assetApp, 'signed app fixture', [Text.UTF8Encoding]::new($false))
+    $assetManifest = [ordered]@{
+        releaseId = '9.8.7'
+        buildMode = 'release'
+        app = [ordered]@{ versionName = '9.8.7' }
+        signedApp = [ordered]@{
+            sha256 = (Get-FileHash -LiteralPath $assetApp -Algorithm SHA256).Hash
+        }
+    }
+    [IO.File]::WriteAllText(
+        (Join-Path $assetPackageDirectory 'build-manifest.json'),
+        (ConvertTo-Json -InputObject $assetManifest -Depth 5),
+        [Text.UTF8Encoding]::new($false)
+    )
+    $assetResult = New-LeanTTYReleaseAssets `
+        -ReleaseId '9.8.7' `
+        -Checkout $assetCheckout `
+        -ReleaseDirectory $assetReleaseDirectory `
+        -AppGalleryCopyPath $assetCopy
+    Assert-True (
+        (Test-Path -LiteralPath $assetResult.licenses -PathType Leaf) -and
+        (Test-Path -LiteralPath $assetResult.releaseNotes -PathType Leaf) -and
+        (Get-Content -LiteralPath $assetResult.handoff -Raw).Contains(
+            (Get-FileHash -LiteralPath $assetApp -Algorithm SHA256).Hash.ToLowerInvariant()
+        )
+    ) 'Release assets did not bind notes, licenses and AppGallery handoff to the package'
+
+    $statusUpdateScript = Join-Path $PSScriptRoot 'prepare-release-status-update.ps1'
+    $statusUpdatePath = Join-Path $testRoot 'post-release-status.md'
+    & $statusUpdateScript `
+        -ReleaseId '9.8.7' `
+        -Tag 'v9.8.7' `
+        -Commit ('a' * 40) `
+        -GitHubReleaseUrl 'https://github.com/wandcs/leantty/releases/tag/v9.8.7' `
+        -AppGalleryState 'Submitted' `
+        -MaintainerReportedAt ([DateTimeOffset]'2026-08-28T12:00:00+08:00') `
+        -OutputPath $statusUpdatePath
+    Assert-True (
+        (Get-Content -LiteralPath $statusUpdatePath -Raw).Contains(
+            'Record this file, the matching current-status documentation, and the maintainer'
+        )
+    ) 'Post-release status helper does not require one combined status PR'
+
+    $readinessScript = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'test-release-readiness.ps1'
+    ) -Raw
+    foreach ($readinessContract in @(
+        "'release-readiness-drill'",
+        'releaseEligible = $false',
+        'candidateCreated = $false',
+        'agentModelInvocations = 0',
+        "'focused-policy-tooling-web-arkts'",
+        "'offline-agent-notification-replay'",
+        "'stable-candidate-namespace'",
+        "'release-package-marker-exclusion'",
+        '-PreflightOnly'
+    )) {
+        Assert-True ($readinessScript.Contains($readinessContract)) (
+            "Release-readiness drill omitted contract: $readinessContract"
+        )
+    }
+
+    $prepareAppGalleryText = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'prepare-appgallery-release.ps1'
+    ) -Raw
+    Assert-True (
+        $prepareAppGalleryText.Contains('[string]$AppGalleryCopyPath') -and
+        $prepareAppGalleryText.Contains('New-LeanTTYReleaseAssets')
+    ) 'Formal AppGallery preparation does not create reversible assets before tagging'
 
     $fakeSigningRepo = Join-Path $testRoot 'git-signing-repo'
     New-Item -ItemType Directory -Path $fakeSigningRepo -Force | Out-Null
@@ -893,6 +1032,8 @@ Invoke-WithLeanTTYBuildLock -RepoRoot $RepoRoot -Operation 'workflow-test' -Acti
     $firstAcquired = Join-Path $testRoot 'first-acquired'
     $secondAcquired = Join-Path $testRoot 'second-acquired'
     $releaseFirst = Join-Path $testRoot 'release-first'
+    $firstWorkerError = Join-Path $testRoot 'first-worker.err'
+    $secondWorkerError = Join-Path $testRoot 'second-worker.err'
     $firstProcess = Start-Process -FilePath $pwsh -WindowStyle Hidden -PassThru -ArgumentList @(
         '-NoProfile',
         '-File', $workerPath,
@@ -900,8 +1041,8 @@ Invoke-WithLeanTTYBuildLock -RepoRoot $RepoRoot -Operation 'workflow-test' -Acti
         '-RepoRoot', $repoRoot,
         '-AcquiredPath', $firstAcquired,
         '-ReleasePath', $releaseFirst
-    )
-    Wait-ForPath -Path $firstAcquired
+    ) -RedirectStandardError $firstWorkerError
+    Wait-ForPath -Path $firstAcquired -Process $firstProcess -ErrorPath $firstWorkerError
 
     $secondProcess = Start-Process -FilePath $pwsh -WindowStyle Hidden -PassThru -ArgumentList @(
         '-NoProfile',
@@ -909,14 +1050,14 @@ Invoke-WithLeanTTYBuildLock -RepoRoot $RepoRoot -Operation 'workflow-test' -Acti
         '-BuildLockScript', (Join-Path $PSScriptRoot 'build-lock.ps1'),
         '-RepoRoot', $repoRoot,
         '-AcquiredPath', $secondAcquired
-    )
+    ) -RedirectStandardError $secondWorkerError
     Start-Sleep -Milliseconds 500
     Assert-True (-not (Test-Path -LiteralPath $secondAcquired)) (
         'Second build writer acquired the lock while the first still held it'
     )
 
     [IO.File]::WriteAllText($releaseFirst, 'release')
-    Wait-ForPath -Path $secondAcquired
+    Wait-ForPath -Path $secondAcquired -Process $secondProcess -ErrorPath $secondWorkerError
     [void]$firstProcess.WaitForExit(5000)
     [void]$secondProcess.WaitForExit(5000)
     Assert-True ($firstProcess.ExitCode -eq 0) 'First build-lock worker failed'

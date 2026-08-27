@@ -826,7 +826,7 @@ dependencies = [
 
 [[package]]
 name = "leantty-ssh-core"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "data-encoding",
  "hmac",
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "leantty_ssh"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "leantty-ssh-core",
  "napi-build-ohos",

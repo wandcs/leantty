@@ -76,10 +76,12 @@ const KEY_HELP: string =
   '<key-name> is the name shown by "key list". <file-name> is the optional Downloads basename; ' +
   'it defaults to <key-name>. Import accepts OpenSSH Ed25519, RSA and ECDSA P-256/P-384/P-521 ' +
   'private keys; generation remains Ed25519/RSA only. Files are never overwritten.\r\n'
-const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] ' +
+const HOST_HELP: string = '\r\nUsage: host add|set <host-name> <user>@<host>[:<port>] ' +
+  '[-i <identity|none>] [-J <jump>] ' +
   '[--connect-timeout <1-300|default>] [--server-alive-interval <0-3600|default>] ' +
   '[--server-alive-count-max <1-100|default>]\r\n' +
   '       host rm <host-name>\r\n       host list\r\n\r\n' +
+  '-i saves one key shown by key list; none removes the saved IdentityFile.\r\n' +
   '-J saves one ProxyJump in the same OpenSSH Host entry; -J none disables it.\r\n' +
   '--connect-timeout saves whole seconds in that Host; default restores 15 seconds.\r\n' +
   '--server-alive-interval uses whole seconds; 0 disables probes and default restores 30.\r\n' +
@@ -404,14 +406,26 @@ export class KeyCommandService {
       ctx.writeError(current.errorMessage + '\r\nCheck the matching Host entry in ~/.ssh/config.')
       return
     }
+    if (result.sshIdentitySpecified && result.sshIdentityFile !== 'none' &&
+      SshKeyManager.findKeyByName(ctx.context, result.sshIdentityFile) === null) {
+      ctx.writeError('Identity not found or invalid: ' + KeyCommandService.safeText(result.sshIdentityFile) +
+        '.\r\nChoose a key shown by key list, or use -i none.')
+      return
+    }
+    let identityFile: string | null = result.sshIdentitySpecified ?
+      (result.sshIdentityFile === 'none' ? '' : result.sshIdentityFile) : null
     config.addAlias(result.keyName, result.sshHost, result.sshPort, result.sshUser,
       result.sshJump.length > 0 ? result.sshJump : null,
       result.sshConnectTimeoutMs >= 0 ? result.sshConnectTimeoutMs : null,
       result.sshServerAliveIntervalSeconds >= 0 ? result.sshServerAliveIntervalSeconds : null,
-      result.sshServerAliveCountMax >= 0 ? result.sshServerAliveCountMax : null)
+      result.sshServerAliveCountMax >= 0 ? result.sshServerAliveCountMax : null,
+      identityFile)
     config.saveConfig(ctx.context)
     let info: string = result.keyName + ' -> ' + result.sshUser + '@' + result.sshHost
     if (result.sshPort !== 22) { info += ':' + result.sshPort.toString() }
+    if (result.sshIdentitySpecified) {
+      info += result.sshIdentityFile === 'none' ? ' identity=default' : ' identity=' + result.sshIdentityFile
+    }
     if (result.sshJump.length > 0) { info += ' via ' + result.sshJump }
     if (result.sshConnectTimeoutMs >= 0) {
       info += ' timeout=' + Math.floor(result.sshConnectTimeoutMs / 1000).toString() + 's'

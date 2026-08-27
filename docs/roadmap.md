@@ -335,8 +335,8 @@ LeanTTY 已有的 Host、Identity、主机校验、认证、取消和错误模�
 ## 已发布 milestone：1.5 — SSH 可靠性、资产互操作、长任务返回与 Agent TUI 兼容
 
 1.5 产品开发已于 2026-08-25 闭合；`v1.5.0` 已于 2026-08-26 由不可变签名标签、精确发布源、
-非草稿 GitHub Release 和归档发布产物冻结。当前没有已授权的产品工作；AppGallery 提交与
-审核状态只在 `next-work.md` 维护，商店可获取性仍以维护者确认而不是本地或 GitHub 事实为准。
+非草稿 GitHub Release 和归档发布产物冻结。维护者于 2026-08-28 确认匹配的 production APP
+已通过 AppGallery 审核并正式上架。该商店状态来自维护者确认，不由本地或 GitHub 事实推断。
 
 ### 用户结果
 
@@ -520,8 +520,51 @@ P-256/P-384/P-521 Identity 也已通过锁定库、加密格式、共同安全�
 diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent 原生兼容矩阵、OSC
 9/777/99 受限输入和中英文指南也已于 2026-08-25 按上述适用性边界闭合。维护者同日已授权
 并在 `next-work.md` 启动 1.5.0 release preparation；冻结后的精确候选随后完成正式软件门、
-真机门禁、归档生产/审核构建、不可变签名标签和 GitHub Release。AppGallery 尚待维护者提交
-与确认，不由上述工程事实推断。
+真机门禁、归档生产/审核构建、不可变签名标签和 GitHub Release。维护者于 2026-08-28 确认
+匹配的 production APP 已通过 AppGallery 审核并正式上架。
+
+## 当前 milestone：1.5.1 — Host/Identity 主路径修复与发布工程效率
+
+### 用户结果
+
+用户为一个 Host 安装专用公钥后，可以一次把该 Identity 绑定到同一短名称；后续 `ssh`、
+`put/get` 和 ProxyJump 解析共同复用该 Host，而无需重复输入 `-i` 或绕到 config 导入导出。
+项目同时把 1.5.0 发布复盘转化为可演练、可恢复、身份明确的发布工具，减少下一次正式发布的
+无效重建、矩阵重跑和相邻状态 PR。
+
+### 范围与完成条件
+
+- `host add|set ... -i <identity>` 在唯一 OpenSSH Host 权威中保存 `IdentityFile`；`-i none`
+  删除显式绑定。命令级 `ssh/put/get -i` 仍只覆盖当次操作并保持最高优先级。
+- `ssh-copy-id -i` 只安装用户明确选择的公钥。LeanTTY 不根据最近复制、最近连接、文件名或
+  密钥数量猜测 Host 绑定，也不改变既有默认 Identity 顺序。
+- 软件门覆盖解析、持久化、未知 config 保留、优先级、失败恢复和 direct/ProxyJump/transfer
+  共用结果；物理 PC 使用临时专用 Identity 验证安装、绑定、短名称登录、重启、解绑和清理。
+- 发布工程按 `next-work.md` 的 P0、P1、P1、P2 顺序完成 readiness drill、product/harness
+  双身份、原子检查点与恢复、可逆资产前移和单一发布后状态 PR。效率改进不得弱化正式门禁。
+
+### 2026-08-28 开发闭合事实
+
+- Host/Identity 产品路径、聚焦软件门和中英文指南已完成；受控 russh `key-install` 夹具在
+  物理 ARM64 HarmonyOS PC 上按同一公钥 SHA-256 指纹证明安装、绑定认证、应用重启、解绑
+  后密码回退、恢复绑定及独立清理。
+- 冻结前 readiness drill、稳定候选命名空间、product/harness 双身份、三类长矩阵原子
+  checkpoint 与只读恢复、无内容进度、可逆资产预生成和单一发布后状态更新入口已完成并通过
+  聚焦工具门。正式候选和发布仍须在干净 checkout 中按发布规范执行。
+
+### 2026-08-28 PATCH 与方案决策
+
+- **动机与证据：** HSL/openEuler 推广实测证明 `ssh-copy-id -i id_hsl` 已正确安装公钥，显式
+  `ssh -i id_hsl hsl` 也能认证；阻断只在 `host add` 无法保存现有标准 `IdentityFile`。因此这是
+  已发布 Host 主路径的向后兼容修复，使用 PATCH `1.5.1`。
+- **采用方案：** 把显式 `-i` 加到现有 `host add|set`，写回同一 OpenSSH Host。OpenSSH 把
+  `-i` 定义为当次 identity 选择，并允许在 config 中按 Host 保存 `IdentityFile`；显式绑定与
+  LeanTTY 现有 config、`ssh -G`、ProxyJump 和 `put/get` 解析所有权一致。
+- **未采用方案：** 不新增全局默认 Identity，不在 `ssh-copy-id` 成功后隐式修改 Host，也不按
+  “最近使用”或“唯一密钥”自动选择。以上方案会引入隐藏状态、跨 Host 影响或不可靠推断。
+- **裁剪与顺序：** 1.5.1 只包含本节修复及发布工具改进。拟议 1.6 Mosh、MatePad 适配、
+  ssh-agent、Identity 列表和其他 OpenSSH 扩展不进入本版本。先完成产品主路径和聚焦真机验收，
+  再以改进后的工具准备 1.5.1 正式发布。
 
 ## 拟议 milestone：1.6 — Mosh 弱网连接
 

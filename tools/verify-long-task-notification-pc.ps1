@@ -12,7 +12,10 @@ param(
     [string]$EvidenceDirectory = '',
     [string]$HapPath = '',
     [ValidateRange(20000, 40000)]
-    [int]$Port = 23150
+    [int]$Port = 23150,
+    [switch]$DiagnosticHap,
+    [string]$CandidateBasePath = '',
+    [string]$PreviousAttemptId = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +23,8 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+. (Join-Path $PSScriptRoot 'candidate-store.ps1')
+. (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
 if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
     $EvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) (
@@ -32,12 +37,56 @@ New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
 if ([string]::IsNullOrWhiteSpace($HapPath)) {
     throw '-HapPath is required and must identify one exact signed diagnostic HAP'
 }
-$HapPath = [IO.Path]::GetFullPath($HapPath)
-if (-not (Test-Path -LiteralPath $HapPath -PathType Leaf) -or
-    (Split-Path $HapPath -Leaf) -match 'unsigned') {
-    throw "Signed diagnostic HAP not found: $HapPath"
+$harnessStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect notification harness source state' }
+$harnessDirty = ($harnessStatus.Count -gt 0)
+if ($harnessDirty -and -not $DiagnosticHap) {
+    throw 'Long-task notification acceptance requires a clean committed harness'
 }
-$candidateSha256 = (Get-FileHash -LiteralPath $HapPath -Algorithm SHA256).Hash
+$harnessCommit = (& git -C $repoRoot rev-parse HEAD 2>&1).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve notification harness commit' }
+$harnessTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}' 2>&1).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve notification harness tree' }
+$harnessDifferencePaths = @()
+if ($DiagnosticHap) {
+    $HapPath = [IO.Path]::GetFullPath($HapPath)
+    if (-not (Test-Path -LiteralPath $HapPath -PathType Leaf)) {
+        throw "Signed diagnostic HAP not found: $HapPath"
+    }
+    $candidate = [pscustomobject][ordered]@{
+        hapPath = $HapPath
+        sha256 = (Get-FileHash -LiteralPath $HapPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        gitCommit = $null
+        gitTree = $null
+        gitDirty = $null
+        verificationMode = 'diagnostic'
+    }
+} else {
+    $candidate = Resolve-LeanTTYRetainedCandidate `
+        -RepoRoot $repoRoot -HapPath $HapPath -CandidateBasePath $CandidateBasePath
+    if ([bool]$candidate.gitDirty) {
+        throw 'Long-task notification acceptance requires a clean committed candidate'
+    }
+    $harnessDifferencePaths = @(Assert-LeanTTYCandidateHarnessCompatibility `
+        -RepoRoot $repoRoot `
+        -Candidate $candidate `
+        -AllowedHarnessPaths @(
+            'tools/verify-long-task-notification-pc.ps1',
+            'tools/test-device-regression.ps1',
+            'tools/candidate-store.ps1',
+            'tools/release-tooling.ps1',
+            'tools/device-regression.ps1',
+            'tools/hdc-common.ps1',
+            'tools/rust-wsl.ps1',
+            'docs/quality-strategy.md'
+        ))
+}
+$HapPath = [string]$candidate.hapPath
+if ((Split-Path $HapPath -Leaf) -match 'unsigned') {
+    throw "Signed HAP not found: $HapPath"
+}
+$candidateSha256 = [string]$candidate.sha256
+$attemptId = [Guid]::NewGuid().ToString('N')
 $hdc = Resolve-Hdc
 $Target = Resolve-LeanTTYRegressionTarget -Hdc $hdc -Target $Target
 $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
@@ -266,11 +315,28 @@ function Invoke-WorkloadScenario {
 }
 
 $result = [ordered]@{
+    schemaVersion = 2
+    scenario = 'long-task-notification'
+    attemptId = $attemptId
+    previousAttemptId = $PreviousAttemptId
+    runMode = $(if ($DiagnosticHap) { 'diagnostic' } else { 'acceptance' })
+    releaseEligible = (-not $DiagnosticHap)
     target = $Target
     candidate = [ordered]@{
         hapPath = $HapPath
         sha256 = $candidateSha256
-        role = 'test-signed-diagnostic-hap'
+        role = $(if ($DiagnosticHap) { 'test-signed-diagnostic-hap' } else { 'retained-test-candidate' })
+        gitCommit = $candidate.gitCommit
+        gitTree = $candidate.gitTree
+        gitDirty = $candidate.gitDirty
+        verificationMode = $candidate.verificationMode
+        retained = (-not $DiagnosticHap)
+    }
+    harness = [ordered]@{
+        gitCommit = $harnessCommit
+        gitTree = $harnessTree
+        gitDirty = $harnessDirty
+        differencePathsFromCandidate = @($harnessDifferencePaths)
     }
     remote = [ordered]@{
         environment = 'default-wsl-temporary-openssh'
@@ -282,6 +348,21 @@ $result = [ordered]@{
     commandAutomation = $null
     cleanup = 'pending'
     status = 'failed'
+}
+
+function Write-LongTaskProgress {
+    param([Parameter(Mandatory = $true)][string]$Stage)
+    Write-LeanTTYAtomicJson -Path (Join-Path $EvidenceDirectory 'progress.json') -Value ([ordered]@{
+        schemaVersion = 1
+        scenario = 'long-task-notification'
+        attemptId = $attemptId
+        previousAttemptId = $PreviousAttemptId
+        stage = $Stage
+        completedWorkloadCount = @($result.workloads).Count
+        totalWorkloadCount = 3
+        updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        contentRecorded = $false
+    })
 }
 
 try {
@@ -394,12 +475,15 @@ try {
     $result.workloads += Invoke-WorkloadScenario `
         -Name shell -Command $wslShellPath `
         -CompletionPath $shellCompletionPath -CompletionPattern '^shell-ok' -TimeoutSeconds 30
+    Write-LongTaskProgress -Stage 'shell-complete'
     $result.workloads += Invoke-WorkloadScenario `
         -Name tmux -Command $wslTmuxPath `
         -CompletionPath $tmuxCompletionPath -CompletionPattern '^tmux-ok' -TimeoutSeconds 30
+    Write-LongTaskProgress -Stage 'tmux-complete'
     $result.workloads += Invoke-WorkloadScenario `
         -Name codex -Command $wslCodexPath `
         -CompletionPath $codexCompletionPath -CompletionPattern '^codex-exit=0' -TimeoutSeconds 180
+    Write-LongTaskProgress -Stage 'codex-complete'
 
     Submit-LocalCommand `
         -Command "ssh-keygen -R [127.0.0.1]:$Port" `
@@ -452,11 +536,11 @@ try {
         $result.cleanup = 'failed: ' + ($cleanupFailures -join '; ')
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
-    [IO.File]::WriteAllText(
-        (Join-Path $EvidenceDirectory 'result.json'),
-        ($result | ConvertTo-Json -Depth 8),
-        [Text.UTF8Encoding]::new($false)
-    )
+    Write-LeanTTYAtomicJson `
+        -Path (Join-Path $EvidenceDirectory 'result.json') `
+        -Value $result `
+        -Depth 10
+    Write-LongTaskProgress -Stage 'complete'
 }
 
 if ($cleanupFailures.Count -gt 0) {

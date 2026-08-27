@@ -247,6 +247,8 @@ Formal release software gate, candidate build and deployment use one command:
 .\tools\verify-key-passphrase-pc.ps1
 .\tools\verify-ssh-auth-pc.ps1 -DiagnosticHap -HapPath <signed-test-hap> -Only key-comment-change-and-restart
 .\tools\verify-ssh-auth-pc.ps1 -DiagnosticHap -HapPath <signed-test-hap> -Only ecdsa-import-encrypted-and-restart
+.\tools\verify-host-identity-pc.ps1 -HapPath <signed-test-hap>
+.\tools\verify-host-identity-pc.ps1 -HapPath <signed-test-hap> -OpenSshCompatibility
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -Suppression
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -ColdStale
@@ -290,6 +292,17 @@ and 0600 mode, then deletes both the product Identity and source fixture with
 independent absence audits. P-384/P-521 and unencrypted formats remain covered
 by deterministic software fixtures; the physical scenario selects one curve
 because it validates the shared platform and interaction chain.
+
+`verify-host-identity-pc.ps1` is the bounded 1.5.1 Host/Identity scenario. It
+uses the repository-controlled russh `key-install` account, installs one
+disposable public key through the real `ssh-copy-id` password path, and accepts
+subsequent public-key authentication only when the SHA-256 fingerprint matches
+the installed key. It proves saved-Host authentication before and after app
+restart, password fallback after `-i none`, and recovery after restoring the
+binding. The scenario is diagnostic evidence for a supplied signed HAP; it
+creates no system user, does not modify the system `sshd` or a real
+`authorized_keys`, and must remove the Host, key, known-host entry, reverse
+mapping, fixture process and screen-timeout lease independently.
 
 `verify-agent-compatibility-pc.ps1` is the bounded 1.5 native Agent TUI
 compatibility scenario. It uses the desktop user's default WSL distribution,
@@ -526,6 +539,15 @@ Full release testing is checkpointed work, not one indivisible terminal command.
 A failure response is determined by evidence identity and affected state, not by
 how expensive the previous run was.
 
+Before freezing C0, run `test-release-readiness.ps1` against independent clean
+production/review checkouts and one release-mode HAP. The drill runs only the
+focused `policy,tooling,web,arkts` gate, offline Agent compatibility replay,
+release-package marker audit, stable candidate-namespace check and both release
+preflights. Its evidence must state `releaseEligible=false`,
+`candidateCreated=false` and `agentModelInvocations=0`. Failure repairs the
+corresponding product/tooling input before C0; the drill never creates or
+substitutes for a formal candidate.
+
 ### Formal checkpoints
 
 | Checkpoint | Required output | Reusable when |
@@ -548,6 +570,17 @@ record and validate it. Until a scenario supports acceptance-mode resume, rerun
 the smallest enclosing acceptance script rather than manually promoting an
 `-Only`/`runMode=diagnostic` result. SSH groups are the acceptance-mode resume
 boundary; individual stages inside a group are not.
+
+Checkpoint JSON is replaced atomically after each independent group. It records
+the exact candidate commit/tree/HAP hash, clean harness commit/tree, attempt and
+previous-attempt identity, result and cleanup audits. A separate `progress.json`
+may expose only scenario, Agent/mode or stage, counts and timestamps; it must
+record `contentRecorded=false` and never contain PTY input/output, prompts,
+Agent replies or credentials. SSH `-Resume` first validates the fixed-order
+prefix and exact identities, then performs a read-only device/reverse/process
+audit before selecting the next group. Agent/mode and notification workload
+runs use the same atomic attempt/progress contract; a diagnostic retry remains
+diagnostic and cannot be promoted to acceptance.
 
 ### What “restart from the beginning” means
 
@@ -629,6 +662,12 @@ every intervening path is on the scenario's explicit harness/document allowlist.
 Any ArkTS, Rust, Web/package resource, dependency or build-input change requires
 R4.
 
+The retained-candidate namespace is derived from the normalized `origin`
+repository identity, not a checkout's Git common directory. Independent
+production, review and harness checkouts therefore resolve the same candidate
+store while explicit HAP selection still has to match a retained manifest and
+SHA-256 record.
+
 ## Candidate and evidence states
 
 Retained candidates use only these monotonic modes:
@@ -701,6 +740,13 @@ Every automated physical scenario MUST:
   and special-key semantics. Common helper-driven layout, click, text, key and
   screenshot operations MUST share one device-scoped UiTest mutex because the
   platform interface is not concurrent;
+- a disposable numeric password for an explicitly selected system-OpenSSH
+  compatibility diagnostic may be entered as individual physical digit keys
+  when the masked password buffer intentionally cannot be observed. Generate it
+  per run, pass it to Linux account tooling through LF-only stdin, never put it
+  in an HDC command or evidence, and delete plus absence-audit the account and
+  home in `finally`; this exception does not authorize physical-key emulation
+  for ordinary command text;
 - before Enter can submit an ordinary local command, start from a verified empty
   state, read the acceptance-only native command buffer and require an ordinal
   character-for-character match. A mismatch may be cleared through the real

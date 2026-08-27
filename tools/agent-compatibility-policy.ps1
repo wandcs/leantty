@@ -1,3 +1,12 @@
+function Get-LeanTTYAgentCompatibilityContract {
+    return [pscustomobject][ordered]@{
+        agents = @('codex', 'opencode', 'pi', 'qwen')
+        modes = @('direct', 'tmux')
+        requestCount = 8
+        automaticRetries = 0
+    }
+}
+
 function Get-LeanTTYAgentNotificationFailureDomain {
     param([AllowEmptyString()][string]$Failure)
 

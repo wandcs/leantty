@@ -772,6 +772,7 @@ foreach ($scriptName in @(
     'preflight-device.ps1',
     'verify-key-passphrase-pc.ps1',
     'verify-ssh-auth-pc.ps1',
+    'verify-host-identity-pc.ps1',
     'verify-terminal-search-pc.ps1',
     'verify-background-bell-notification-pc.ps1',
     'verify-background-bell-permission-pc.ps1',
@@ -1267,8 +1268,61 @@ Assert-True (
     $sshMatrixVerifier.Contains('candidate.sha256') -and
     $sshMatrixVerifier.Contains('harness.gitTree') -and
     $sshMatrixVerifier.Contains("'ssh-matrix.json'") -and
-    $sshMatrixVerifier.Contains('completedGroups')
+    $sshMatrixVerifier.Contains('completedGroups') -and
+    $sshMatrixVerifier.Contains('[switch]$Resume') -and
+    $sshMatrixVerifier.Contains('Write-LeanTTYAtomicJson') -and
+    $sshMatrixVerifier.Contains("'progress.json'") -and
+    $sshMatrixVerifier.Contains('attemptId = [string]$groupEvidence.attemptId') -and
+    $sshMatrixVerifier.Contains("throw 'R2: harness identity changed") -and
+    $sshMatrixVerifier.Contains("throw 'R4: product candidate identity changed") -and
+    $sshMatrixVerifier.Contains('contentRecorded = $false')
 ) 'Formal SSH physical matrix does not enforce isolated fixed-order checkpoints'
+
+$hostIdentityVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-host-identity-pc.ps1'
+) -Raw
+foreach ($hostIdentityContract in @(
+    'Get-LeanTTYDeviceUnlockPasswordPath',
+    "`$keyName = 'ltty_reg_' + `$runSuffix",
+    "`$fixtureUser = 'key-install'",
+    "'start-ssh-auth-fixture.ps1'",
+    'Read-LeanTTYFixtureReadiness',
+    '$fixtureLinuxPid',
+    'native auth event kind=password, layer=target',
+    'Assert-LeanTTYLayoutExcludesValues',
+    'host add $hostAlias',
+    'ssh-copy-id -i $keyName',
+    'ssh $hostAlias',
+    'Restart-HostIdentityApp',
+    '-i none',
+    'Wait-HostIdentityFixtureLog',
+    'auth method=publickey scenario=KeyInstall fingerprint=',
+    'key-install fingerprint=',
+    'identity-removal-restored-password-fallback',
+    'explicit-binding-recovery',
+    'Invoke-LeanTTYDialogButton',
+    'Controlled SSH fixture Linux process cleanup failed',
+    "'failure-app.log'",
+    "'fixture-stderr.log'",
+    "scenario = 'host-identity-binding'"
+)) {
+    Assert-True ($hostIdentityVerifier.Contains($hostIdentityContract)) (
+        "Host Identity physical verifier omitted contract: $hostIdentityContract"
+    )
+}
+Assert-True (
+    $hostIdentityVerifier.Contains('[switch]$OpenSshCompatibility') -and
+    $hostIdentityVerifier.Contains('sudo -n useradd') -and
+    $hostIdentityVerifier.Contains('sudo -n userdel -r') -and
+    $hostIdentityVerifier.Contains('Disposable WSL OpenSSH account remained after cleanup') -and
+    $hostIdentityVerifier.Contains('Physical secret input accepts only disposable numeric passwords') -and
+    $hostIdentityVerifier.Contains('StandardInput.Write("$UserName`:$Password`n")') -and
+    -not $hostIdentityVerifier.Contains('StandardInput.WriteLine("$UserName`:$Password")') -and
+    $hostIdentityVerifier.Contains('System OpenSSH omitted the exact accepted public-key fingerprint') -and
+    -not $hostIdentityVerifier.Contains('pgrep -u $temporaryWslUser -x sshd') -and
+    -not $hostIdentityVerifier.Contains('/usr/sbin/sshd') -and
+    $hostIdentityVerifier.Contains('/.ssh/authorized_keys')
+) 'Host Identity OpenSSH compatibility mode lacks bounded account setup, proof, or cleanup'
 
 $deviceRegressionText = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'device-regression.ps1'
@@ -1561,12 +1615,29 @@ Assert-True (
     $longTaskVerifier.Contains('fport rm "tcp:$Port" "tcp:$Port"') -and
     $longTaskVerifier.Contains('reverse mapping remained after cleanup') -and
     $longTaskVerifier.Contains('reverse-port-removed') -and
-    $longTaskVerifier.Contains('app-identity-unchanged')
+    $longTaskVerifier.Contains('app-identity-unchanged') -and
+    $longTaskVerifier.Contains('Resolve-LeanTTYRetainedCandidate') -and
+    $longTaskVerifier.Contains('harness = [ordered]@{') -and
+    $longTaskVerifier.Contains('attemptId = $attemptId') -and
+    $longTaskVerifier.Contains('previousAttemptId = $PreviousAttemptId') -and
+    $longTaskVerifier.Contains('Write-LeanTTYAtomicJson') -and
+    $longTaskVerifier.Contains('contentRecorded = $false')
 ) 'Long-task notification scenario lacks real workloads, notification return, privacy, or cleanup oracles'
 Assert-True (
     $longTaskVerifier.Contains('cleanup-before-activation') -and
     $longTaskVerifier.Contains('if ($cleanupInputs.Count -eq 0)')
 ) 'Long-task notification cleanup must not toggle an already visible singleton window'
+
+$agentCompatibilityVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1'
+) -Raw
+Assert-True (
+    $agentCompatibilityVerifier.Contains('attemptId = $attemptId') -and
+    $agentCompatibilityVerifier.Contains('previousAttemptId = $PreviousAttemptId') -and
+    $agentCompatibilityVerifier.Contains('Write-AgentCompatibilityProgress') -and
+    $agentCompatibilityVerifier.Contains('Write-LeanTTYAtomicJson') -and
+    $agentCompatibilityVerifier.Contains('contentRecorded = $false')
+) 'Agent compatibility groups lack atomic attempt checkpoints and content-free progress'
 
 $backgroundBellPermissionVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-background-bell-permission-pc.ps1'

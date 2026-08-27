@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
+## [1.5.1] - In development
+
+### Fixed
+
+- Allow `host add` and `host set` to save or remove one explicit per-Host
+  `IdentityFile`, so later `ssh`, `put/get` and ProxyJump resolution can reuse a
+  dedicated verified LeanTTY key without repeating `-i`.
+
+### Changed
+
+- Add pre-release readiness drills, explicit product/harness identities,
+  recoverable matrix checkpoints and earlier reversible asset preparation to
+  the formal release tooling without weakening candidate or physical-PC gates.
+
 ## [1.5.0] - 2026-08-25
+
+**AppGallery review approved; released to users on 2026-08-28.**
 
 ### Added
 

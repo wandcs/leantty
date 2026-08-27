@@ -157,7 +157,7 @@ export class SshConfig {
 
   addAlias(alias: string, hostname: string, port: number, user: string, proxyJump: string | null = null,
     connectTimeoutMs: number | null = null, serverAliveIntervalSeconds: number | null = null,
-    serverAliveCountMax: number | null = null): void {
+    serverAliveCountMax: number | null = null, identityFile: string | null = null): void {
     let existing: SshConfigHost | null = null
     for (let i = 0; i < this.hosts.length; i++) {
       if (this.hosts[i].alias === alias) {
@@ -169,6 +169,7 @@ export class SshConfig {
       existing.hostname = hostname
       existing.port = port
       existing.user = user
+      if (identityFile !== null) { existing.identityFile = identityFile }
       if (proxyJump !== null) { existing.proxyJump = proxyJump }
       if (connectTimeoutMs !== null) { existing.connectTimeoutMs = connectTimeoutMs }
       if (serverAliveIntervalSeconds !== null) { existing.serverAliveIntervalSeconds = serverAliveIntervalSeconds }
@@ -178,6 +179,7 @@ export class SshConfig {
       host.hostname = hostname
       host.port = port
       host.user = user
+      if (identityFile !== null) { host.identityFile = identityFile }
       if (proxyJump !== null) { host.proxyJump = proxyJump }
       if (connectTimeoutMs !== null) { host.connectTimeoutMs = connectTimeoutMs }
       if (serverAliveIntervalSeconds !== null) { host.serverAliveIntervalSeconds = serverAliveIntervalSeconds }

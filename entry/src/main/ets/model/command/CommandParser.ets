@@ -57,6 +57,8 @@ export class KeyCommandResult {
   sshHost: string
   sshPort: number
   sshUser: string
+  sshIdentityFile: string
+  sshIdentitySpecified: boolean
   sshJump: string
   sshConnectTimeoutMs: number
   sshServerAliveIntervalSeconds: number
@@ -73,6 +75,8 @@ export class KeyCommandResult {
     this.sshHost = ''
     this.sshPort = 22
     this.sshUser = ''
+    this.sshIdentityFile = ''
+    this.sshIdentitySpecified = false
     this.sshJump = ''
     this.sshConnectTimeoutMs = -1
     this.sshServerAliveIntervalSeconds = -1
@@ -262,7 +266,8 @@ export class CommandParser {
     if (words[0] === 'host') {
       let result: KeyCommandResult = new KeyCommandResult()
       result.kind = KeyCommandKind.ALIAS_LIST
-      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-J <jump>] ' +
+      result.errorMessage = 'Usage: host add|set <host-name> <user>@<host>[:<port>] [-i <identity|none>] ' +
+        '[-J <jump>] ' +
         '[--connect-timeout <1-300|default>] [--server-alive-interval <0-3600|default>] ' +
         '[--server-alive-count-max <1-100|default>] | ' +
         'host rm <host-name> | host list'
@@ -947,9 +952,9 @@ export class CommandParser {
     let parts: string[] = input.split(/\s+/)
     let operation: string = parts.length >= 2 && parts[1] === 'set' ? 'set' : 'add'
     let usage: string = 'Usage: host ' + operation + ' <host-name> <user>@<host>[:<port>] ' +
-      '[-J <jump>] [--connect-timeout <1-300|default>] ' +
+      '[-i <identity|none>] [-J <jump>] [--connect-timeout <1-300|default>] ' +
       '[--server-alive-interval <0-3600|default>] [--server-alive-count-max <1-100|default>]'
-    if (parts.length < 4 || parts.length > 12 || parts.length % 2 !== 0) {
+    if (parts.length < 4 || parts.length > 14 || parts.length % 2 !== 0) {
       result.errorMessage = usage
       return result
     }
@@ -960,7 +965,18 @@ export class CommandParser {
         result.errorMessage = usage
         return result
       }
-      if (option === '-J') {
+      if (option === '-i') {
+        if (result.sshIdentitySpecified) {
+          result.errorMessage = 'Duplicate host option: -i'
+          return result
+        }
+        if (value !== 'none' && !/^[A-Za-z0-9._-]+$/.test(value)) {
+          result.errorMessage = 'Host identity must be one key name from key list, or none'
+          return result
+        }
+        result.sshIdentityFile = value
+        result.sshIdentitySpecified = true
+      } else if (option === '-J') {
         if (result.sshJump.length > 0) {
           result.errorMessage = 'Duplicate host option: -J'
           return result
