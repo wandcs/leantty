@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [1.5.1] - In development
+## [1.5.1] - 2026-08-28
 
 ### Fixed
 
