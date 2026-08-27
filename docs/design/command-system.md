@@ -202,6 +202,11 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
   不再增加等价 `key` 子命令。
 - `host list/add/set/rm` 只管理唯一 OpenSSH config 中 LeanTTY 负责的 Host block，
   不演进成主机数据库、标签、分组或 GUI 资产管理。
+- 1.5.1 为现有 Host 主路径增加 `host add|set ... -i <identity|none>`：明确 key name 写为
+  `IdentityFile`，`none` 删除显式绑定。`host set` 未提供 `-i` 时保留既有值；命令级
+  `ssh/put/get -i` 继续只覆盖当次操作。
+- `host add|set -i` 只接受 `key list` 中的已验证 key。不得按最近复制、最近连接、文件名或
+  key 数量猜测绑定，也不得新增全局默认 Identity 或第二份 Host 状态。
 - 查看有效 Host 使用 `ssh -G`；查找和删除主机信任使用 `ssh-keygen -F/-R`，不增加
   平行的 `host show-known-key` 命令。
 - 1.5 可增加受控 config import/export，但不得导入后静默忽略关键 directive。
@@ -211,10 +216,37 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
 `ssh-copy-id -i key [-p port] user@host` 保留为必须做的受控标准子集：
 
 - 只安装用户明确选择的一个公钥，不上传私钥，不覆盖 `authorized_keys`。
+- 安装成功不隐式修改 Host；用户用 `host add|set -i` 明确建立持久关联。
 - 复用 Host、主机校验、认证、取消和错误模型；对重复 key、权限、远端 shell 失败和
   持久结果具有确定行为。
 - `-f/-n/-s`、批量 identity 和其他未实现语法明确报错；只有真实受限 shell 场景证明
   SFTP mode 必要时才重议。
+
+### 7.4 1.5.1 Host Identity 真机 harness 依据（2026-08-28）
+
+OpenSSH 把 `-i` 定义为命令级 Identity，并允许在每个 Host 的配置中使用
+`IdentityFile`；上游 `ssh-copy-id` 只安装明确选择的公钥，不负责写客户端 Host 绑定。因此
+本版本保持三条独立语义：`ssh-copy-id` 安装，`host add|set -i` 持久选择，`ssh -i` 单次覆盖。
+
+OpenHarmony arkXtest 文档提供指定坐标的 `uiInput inputText`、key event 和 `dumpLayout`，
+但其上游问题也表明命令存在或退出码不能替代结果断言。物理场景继续复用项目已有的串行
+UiTest 输入合同，并通过 HDC 反向端口映射连接仓库内受控的 russh 夹具。夹具的
+`key-install` 场景只识别 LeanTTY 有界 `ssh-copy-id` 命令，记录安装公钥的 SHA-256 指纹，
+随后只接受同一指纹。主判据覆盖安装、应用重启、删除 Host 绑定后的密码回退，以及恢复
+绑定后的同指纹认证。应用日志只作为等待点和诊断材料；夹具指纹状态和物理 PC 结果才是
+最终证据。默认模式不创建系统账户、不修改系统 `sshd`，也不接触用户的真实
+`authorized_keys`。显式 `-OpenSshCompatibility` 另用已运行的 WSL 系统 OpenSSH 创建随机
+临时账户，服务端以新增的 `Accepted publickey` 精确 SHA-256 指纹作为 oracle；随机密码只
+通过 stdin LF 设置并以真机物理数字键输入，避免隐藏密码框无法回读时把 UiTest 文本短写
+误判为产品认证失败。该模式在 `finally` 中删除账户和 home，并独立确认用户不存在。
+
+主要依据：
+
+- [OpenSSH ssh(1)](https://github.com/openssh/openssh-portable/blob/master/ssh.1)
+- [OpenSSH ssh_config(5)](https://github.com/openssh/openssh-portable/blob/master/ssh_config.5)
+- [OpenSSH ssh-copy-id](https://github.com/openssh/openssh-portable/blob/master/contrib/ssh-copy-id)
+- [OpenHarmony arkXtest shell 操作](https://gitee.com/openharmony/testfwk_arkxtest/blob/master/README_zh.md)
+- [OpenHarmony dumpLayout 文档修正](https://gitee.com/openharmony/testfwk_arkxtest/issues/I9KTGC)
 
 ## 八、文件、agent、采集、helper 与 server
 

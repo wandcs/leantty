@@ -100,8 +100,9 @@ Create a short Host name with:
 ```text
 host add work user@example.com
 host add lab user@example.com:2222
-host add private deploy@target.example.com -J jump
-host set work user@new.example.com:2222 --connect-timeout 9
+host add private deploy@target.example.com -i id_private -J jump
+host set work user@new.example.com:2222 -i id_work --connect-timeout 9
+host set work user@new.example.com:2222 -i none
 host list
 host rm work
 ```
@@ -114,6 +115,13 @@ ssh work
 
 `host rm` removes only Host entries created inside LeanTTY's managed section.
 It does not silently rewrite unrelated OpenSSH configuration.
+
+`host add` and `host set` accept `-i <identity>` to save one key shown by
+`key list` as that Host's `IdentityFile`. The key is then reused by `ssh`,
+`put` and `get`; a command-local `-i` still overrides only that command. Use
+`-i none` to remove the saved binding and return to the normal default-key
+selection. Updating another Host field without `-i` preserves the existing
+binding.
 
 The current documented `ssh_config` subset is:
 
@@ -303,7 +311,10 @@ ssh-copy-id -i id_work -p 2222 user@example.com
 ```
 
 The command installs one public-key line and does not duplicate an identical
-existing line. It is a bounded helper, not a general remote file editor.
+existing line. It does not change any saved Host. When the installed key is not
+a default Identity, bind it explicitly with `host add ... -i <identity>` or
+`host set ... -i <identity>`. The command is a bounded helper, not a general
+remote file editor.
 
 ## Single-file transfer
 

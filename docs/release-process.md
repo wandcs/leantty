@@ -142,12 +142,16 @@ release checkout:
   -ReleaseId 'X.Y.Z' `
   -ExpectedCommit '<release-commit-sha>' `
   -ReleaseRoot 'C:\path\to\LeanTTY-release' `
-  -ReviewCheckout 'C:\path\to\LeanTTY-review'
+  -ReviewCheckout 'C:\path\to\LeanTTY-review' `
+  -AppGalleryCopyPath '.\docs\release\X.Y.Z-appgallery.md'
 ```
 
 The command performs both release preflights before compiling, builds and
 verifies both checkouts, compares their source/native identity, and archives
-the production upload APP separately from the review-test HAP. Omit
+the production upload APP separately from the review-test HAP. Before any tag
+is created it also prepares the license ZIP, GitHub Release notes, reviewed
+AppGallery copy, handoff checklist and attachment hashes. These files are
+reversible outputs; their presence does not authorize tagging or publishing. Omit
 `-ReviewCheckout` only when no device/media build is required. `-SkipBuild`
 may archive existing outputs after the same manifest and hash checks; it does
 not weaken validation. If only one build needs recovery, use
@@ -287,7 +291,8 @@ Only after the exact release artifact passes the final real-PC smoke test:
 4. Reconfirm the locally verified tag resolves to the commit recorded by
    `build-manifest.json`, then push it: `git push origin vX.Y.Z`.
 5. Publish the non-draft GitHub Release on that tag. Attach
-   `build-manifest.json`, `licenses/` and the SHA-256 checksum file, then verify
+   `build-manifest.json`, the prepared license ZIP and the SHA-256 checksum file;
+   use the prepared Release notes. Then verify
    the release points to the expected tag and commit and exposes the archived
    assets. The GitHub Release is the canonical version identity and consumes
    the version number.
@@ -304,6 +309,12 @@ Only after the exact release artifact passes the final real-PC smoke test:
    GitHub Release, tag, exact commit, build manifest, artifact hashes and
    AppGallery submission state. Do not infer submission success from prepared
    local materials or an open browser page.
+
+After both the GitHub Release and maintainer handoff facts exist, generate one
+post-release record with `prepare-release-status-update.ps1`. Commit that
+record and all matching current-status documentation in one status pull
+request. Do not open a GitHub-only status PR followed by a second adjacent PR
+for the handoff state.
 
 If AppGallery review fails for any reason, including store listing text,
 screenshots, qualifications or metadata outside the APP, the published GitHub
@@ -328,7 +339,9 @@ version as `Released`:
 2. Confirm the already-published GitHub Release still points to that tag and
    commit; do not replace its assets.
 3. Record the AppGallery `Released` state and approval mapping in the release
-   archive, then update current-status documentation.
+   archive, then update current-status documentation in the same status pull
+   request when that state is part of the original maintainer handoff; otherwise
+   use one later approval-status pull request because the fact did not yet exist.
 
 Never move or reuse a pushed version tag or published GitHub Release, including
 one whose AppGallery submission was rejected.

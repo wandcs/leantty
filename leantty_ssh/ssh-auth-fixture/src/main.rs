@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use russh::keys::{Algorithm, PrivateKey, PublicKey};
+use russh::keys::{Algorithm, HashAlg, PrivateKey, PublicKey};
 use russh::server::{Auth, Handler, Msg, Response, Server, Session};
 use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet};
 use russh_sftp::protocol::{Attrs, Data, FileAttributes, Handle, OpenFlags, Status, StatusCode};
@@ -29,6 +29,7 @@ const USER_KBDINT_MULTIROUND: &str = "kbdint-multiround";
 const USER_KBDINT_ZERO: &str = "kbdint-zero";
 const USER_UNSUPPORTED: &str = "unsupported";
 const USER_CHANNEL_DENIED: &str = "channel-denied";
+const USER_KEY_INSTALL: &str = "key-install";
 const USER_NAVIGATION: &str = "navigation";
 const USER_NAVIGATION_TWO: &str = "navigation-two";
 const USER_NAVIGATION_THREE: &str = "navigation-three";
@@ -139,6 +140,7 @@ enum Scenario {
     KeyboardInteractiveZeroPrompt,
     UnsupportedMethod,
     ChannelDenied,
+    KeyInstall,
     Navigation,
 }
 
@@ -154,6 +156,7 @@ impl Scenario {
             USER_KBDINT_ZERO => Some(Self::KeyboardInteractiveZeroPrompt),
             USER_UNSUPPORTED => Some(Self::UnsupportedMethod),
             USER_CHANNEL_DENIED => Some(Self::ChannelDenied),
+            USER_KEY_INSTALL => Some(Self::KeyInstall),
             USER_NAVIGATION | USER_NAVIGATION_TWO | USER_NAVIGATION_THREE => Some(Self::Navigation),
             _ => None,
         }
@@ -227,6 +230,7 @@ struct FixtureServer {
     pending_perf_request: Option<PerfStreamRequest>,
     pending_paste: Option<PasteTransfer>,
     channels: Arc<Mutex<HashMap<ChannelId, Option<Channel<Msg>>>>>,
+    installed_key_fingerprint: Arc<Mutex<Option<String>>>,
     sftp_root: Arc<PathBuf>,
     sftp_delay: Duration,
     sftp_fault: SftpFault,
@@ -271,6 +275,7 @@ impl FixtureServer {
             pending_perf_request: None,
             pending_paste: None,
             channels: Arc::new(Mutex::new(HashMap::new())),
+            installed_key_fingerprint: Arc::new(Mutex::new(None)),
             sftp_root,
             sftp_delay,
             sftp_fault,
@@ -309,7 +314,7 @@ impl FixtureServer {
                 }
                 self.shell_input.clear();
             } else if byte.is_ascii() && !byte.is_ascii_control() {
-                if self.shell_input.len() < 256 {
+                if self.shell_input.len() < 2048 {
                     self.shell_input.push(*byte);
                 } else {
                     self.shell_input.clear();
@@ -357,6 +362,10 @@ impl FixtureServer {
         eprintln!("auth method=password scenario={scenario:?} result=matched");
         match scenario {
             Scenario::Password | Scenario::ChannelDenied | Scenario::Navigation => {
+                self.session_scenario = Some(scenario);
+                Auth::Accept
+            }
+            Scenario::KeyInstall => {
                 self.session_scenario = Some(scenario);
                 Auth::Accept
             }
@@ -487,8 +496,13 @@ impl Scenario {
             Self::Password
             | Self::PasswordKeyboardInteractive
             | Self::ChannelDenied
+            | Self::KeyInstall
             | Self::Navigation => {
-                vec![MethodKind::Password]
+                if self == Self::KeyInstall {
+                    vec![MethodKind::PublicKey, MethodKind::Password]
+                } else {
+                    vec![MethodKind::Password]
+                }
             }
             Self::PublicKey | Self::PublicKeyPassword | Self::PublicKeyKeyboardInteractive => {
                 vec![MethodKind::PublicKey]
@@ -530,6 +544,7 @@ impl Server for FixtureServer {
             self.direct_tcpip_behavior,
         );
         client.input_snapshot_path = self.input_snapshot_path.as_ref().map(Arc::clone);
+        client.installed_key_fingerprint = Arc::clone(&self.installed_key_fingerprint);
         client
     }
 
@@ -552,8 +567,22 @@ impl Handler for FixtureServer {
     async fn auth_publickey(
         &mut self,
         user: &str,
-        _public_key: &PublicKey,
+        public_key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
+        if Scenario::for_user(user) == Some(Scenario::KeyInstall) {
+            let actual = public_key.fingerprint(HashAlg::Sha256).to_string();
+            let installed = self.installed_key_fingerprint.lock().await;
+            let accepted = installed.as_deref() == Some(actual.as_str());
+            eprintln!(
+                "auth method=publickey scenario=KeyInstall fingerprint={actual} result={}",
+                if accepted { "accept" } else { "reject" }
+            );
+            if accepted {
+                self.session_scenario = Some(Scenario::KeyInstall);
+                return Ok(Auth::Accept);
+            }
+            return Ok(Self::reject(&[MethodKind::Password], false));
+        }
         Ok(self.public_key(user))
     }
 
@@ -817,6 +846,15 @@ impl Handler for FixtureServer {
         }
         session.data(channel, data.to_vec())?;
         match self.take_fixture_command(data) {
+            Some(FixtureCommand::KeyInstall(request)) => {
+                *self.installed_key_fingerprint.lock().await = Some(request.fingerprint.clone());
+                eprintln!(
+                    "key-install fingerprint={} result=installed",
+                    request.fingerprint
+                );
+                let response = format!("\r\n{}:0\r\n", request.marker);
+                session.data(channel, response.into_bytes())?;
+            }
             Some(FixtureCommand::Perf(PerfCommand::Prepare(request))) => {
                 let expected_bytes = perf_stream_expected_bytes(&request);
                 eprintln!(
@@ -958,8 +996,15 @@ struct PasteTransfer {
     received: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct KeyInstallRequest {
+    fingerprint: String,
+    marker: String,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 enum FixtureCommand {
+    KeyInstall(KeyInstallRequest),
     Perf(PerfCommand),
     Paste(PasteRequest),
     InputCheck(String),
@@ -969,6 +1014,9 @@ enum FixtureCommand {
 }
 
 fn parse_fixture_command(input: &[u8]) -> Option<FixtureCommand> {
+    if let Some(request) = parse_key_install_command(input) {
+        return Some(FixtureCommand::KeyInstall(request));
+    }
     if let Some(command) = parse_perf_command(input) {
         return Some(FixtureCommand::Perf(command));
     }
@@ -1013,6 +1061,28 @@ fn parse_fixture_command(input: &[u8]) -> Option<FixtureCommand> {
         case_id: case_id.to_string(),
         bytes,
     }))
+}
+
+fn parse_key_install_command(input: &[u8]) -> Option<KeyInstallRequest> {
+    let command = std::str::from_utf8(input).ok()?;
+    let key_prefix = "(grep -qxF -- '";
+    let key_start = command.find(key_prefix)? + key_prefix.len();
+    let key_suffix = "' ~/.ssh/authorized_keys";
+    let key_end = command[key_start..].find(key_suffix)? + key_start;
+    let public_key = PublicKey::from_openssh(&command[key_start..key_end]).ok()?;
+
+    let marker_prefix = "'__LTTY_KEYPUSH_";
+    let marker_start = command.find(marker_prefix)? + 1;
+    let marker_end = command[marker_start..].find('\'')? + marker_start;
+    let marker = &command[marker_start..marker_end];
+    let timestamp = marker.strip_prefix("__LTTY_KEYPUSH_")?;
+    if timestamp.is_empty() || !timestamp.bytes().all(|value| value.is_ascii_digit()) {
+        return None;
+    }
+    Some(KeyInstallRequest {
+        fingerprint: public_key.fingerprint(HashAlg::Sha256).to_string(),
+        marker: marker.to_string(),
+    })
 }
 
 fn parse_fixture_command_line(input: &[u8]) -> Option<FixtureCommand> {
@@ -1867,6 +1937,25 @@ mod tests {
 
     #[test]
     fn parses_and_builds_bounded_paste_payloads() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let public_key = key.public_key();
+        let public_text = public_key.to_openssh().unwrap();
+        let marker = "__LTTY_KEYPUSH_1735689600000";
+        let key_install = format!(
+            "mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && (grep -qxF -- '{public_text}' ~/.ssh/authorized_keys || printf '%s\\n' '{public_text}' >> ~/.ssh/authorized_keys); command_status=$?; printf '\\n%s:%s\\n' '{marker}' \"$command_status\""
+        );
+        assert_eq!(
+            parse_fixture_command(key_install.as_bytes()),
+            Some(FixtureCommand::KeyInstall(KeyInstallRequest {
+                fingerprint: public_key.fingerprint(HashAlg::Sha256).to_string(),
+                marker: marker.to_string(),
+            }))
+        );
+        assert_eq!(
+            parse_key_install_command(key_install.replace(marker, "__LTTY_KEYPUSH_bad").as_bytes()),
+            None
+        );
+
         let request = PasteRequest {
             case_id: "paste01".to_string(),
             bytes: PASTE_MAX_BYTES,

@@ -23,7 +23,8 @@ param(
     [switch]$ProtocolInteractionProbe,
     [switch]$OpenCodeForceOsc99Protocol,
     [switch]$DiagnosticHap,
-    [string]$CandidateBasePath = ''
+    [string]$CandidateBasePath = '',
+    [string]$PreviousAttemptId = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +34,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
 . (Join-Path $PSScriptRoot 'agent-compatibility-policy.ps1')
+. (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
 $harnessStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect Agent compatibility harness source state' }
@@ -108,6 +110,7 @@ if ($OpenCodeForceOsc99Protocol -and
     throw '-OpenCodeForceOsc99Protocol requires -Agents opencode'
 }
 $startedAt = [DateTimeOffset]::UtcNow
+$attemptId = [Guid]::NewGuid().ToString('N')
 if ([string]::IsNullOrWhiteSpace($EvidenceDirectory)) {
     $EvidenceDirectory = Join-Path $repoRoot (
         'build\verification\agent-compatibility-' + $startedAt.ToString('yyyyMMddTHHmmssfffZ')
@@ -163,6 +166,8 @@ $result = [ordered]@{
         'native-agent-tui-compatibility-over-default-wsl-openssh'
     })
     startedAt = $startedAt.ToString('o')
+    attemptId = $attemptId
+    previousAttemptId = $PreviousAttemptId
     runMode = $(if ($DiagnosticHap) { 'diagnostic' } else { 'acceptance' })
     releaseEligible = (-not $DiagnosticHap)
     target = $Target
@@ -206,6 +211,21 @@ $result = [ordered]@{
     commandAutomation = $null
     cleanup = [ordered]@{ result = 'pending'; detail = '' }
     status = 'invalid/interrupted'
+}
+
+function Write-AgentCompatibilityProgress {
+    param([Parameter(Mandatory = $true)][string]$Stage)
+    Write-LeanTTYAtomicJson -Path (Join-Path $EvidenceDirectory 'progress.json') -Value ([ordered]@{
+        schemaVersion = 1
+        scenario = $result.scenario
+        attemptId = $attemptId
+        previousAttemptId = $PreviousAttemptId
+        stage = $Stage
+        completedCheckCount = @($result.checks).Count
+        plannedCheckCount = $(if ($Osc99CapabilityProbe) { 1 } else { $Agents.Count * $Modes.Count })
+        updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
+        contentRecorded = $false
+    })
 }
 
 function Get-FullLayout {
@@ -1367,6 +1387,7 @@ try {
 
     if ($Osc99CapabilityProbe) {
         $result.checks += Invoke-Osc99CapabilityProbeCheck
+        Write-AgentCompatibilityProgress -Stage 'osc99-capability-complete'
     } else {
         $missingAuthentication = [Collections.Generic.List[string]]::new()
         foreach ($agent in $Agents) {
@@ -1378,6 +1399,7 @@ try {
                         agent = $agent; mode = $mode; status = 'not-assessed'
                         authentication = 'not-checked'; failure = 'Agent is not installed'
                     }
+                    Write-AgentCompatibilityProgress -Stage "$agent-$mode-not-assessed"
                 }
                 continue
             }
@@ -1388,17 +1410,21 @@ try {
                         agent = $agent; mode = $mode; status = 'not-assessed'
                         authentication = 'missing'; failure = 'Interactive Agent authentication is required'
                     }
+                    Write-AgentCompatibilityProgress -Stage "$agent-$mode-not-assessed"
                 }
                 continue
             }
             foreach ($mode in $Modes) {
+                $modeCheck = $null
                 if ($InteractionOnlyProbe) {
-                    $result.checks += Invoke-AgentInteractionOnlyCheck -Agent $agent -Mode $mode
+                    $modeCheck = Invoke-AgentInteractionOnlyCheck -Agent $agent -Mode $mode
                 } elseif ($ProtocolInteractionProbe) {
-                    $result.checks += Invoke-AgentProtocolInteractionCheck -Agent $agent -Mode $mode
+                    $modeCheck = Invoke-AgentProtocolInteractionCheck -Agent $agent -Mode $mode
                 } else {
-                    $result.checks += Invoke-AgentModeCheck -Agent $agent -Mode $mode
+                    $modeCheck = Invoke-AgentModeCheck -Agent $agent -Mode $mode
                 }
+                $result.checks += $modeCheck
+                Write-AgentCompatibilityProgress -Stage "$agent-$mode-complete"
             }
         }
     }
@@ -1557,11 +1583,11 @@ try {
         $result.status = 'invalid/interrupted'
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
-    [IO.File]::WriteAllText(
-        (Join-Path $EvidenceDirectory 'result.json'),
-        ($result | ConvertTo-Json -Depth 30),
-        [Text.UTF8Encoding]::new($false)
-    )
+    Write-LeanTTYAtomicJson `
+        -Path (Join-Path $EvidenceDirectory 'result.json') `
+        -Value $result `
+        -Depth 30
+    Write-AgentCompatibilityProgress -Stage 'complete'
 }
 
 if ($cleanupFailures.Count -gt 0) {

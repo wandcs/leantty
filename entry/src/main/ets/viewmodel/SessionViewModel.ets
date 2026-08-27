@@ -2250,6 +2250,7 @@ export class SessionViewModel {
     if (!this.pendingKeypush) {
       return
     }
+    this.logger.info('Key installation completed, status=' + status.toString())
     let spec: SshConnectionSpec = this.session.getConnectionSpec()
     let username: string = spec.username
     let hostname: string = spec.host

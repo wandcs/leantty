@@ -6,10 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="7">
+  <meta name="leantty-guide-revision" content="8">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>LeanTTY 1.5.0 使用指南 / User Guide</title>
+  <title>LeanTTY 1.5.1 使用指南 / User Guide</title>
   <style>
     :root {
       color-scheme: dark;
@@ -1062,13 +1062,20 @@ ssh -p 2222 user@example.com
 ssh -i id_work user@example.com</code></pre>
 
         <h3>保存一个短名称</h3>
-        <pre><code>host add work user@example.com:2222
-host set work user@example.com:2222 --connect-timeout 9
+        <pre><code>host add work user@example.com:2222 -i id_work
+host set work user@example.com:2222 -i id_work --connect-timeout 9
+host set work user@example.com:2222 -i none
 host set work user@example.com:2222 --server-alive-interval 30 --server-alive-count-max 3
 ssh work</code></pre>
         <p>
           保存的 Host 写在 <code>~/.ssh/config</code> 中由 LeanTTY 管理的区域。连接前可用
           <code>ssh -G work</code> 查看 LeanTTY 最终会采用哪些配置。
+        </p>
+        <p>
+          <code>-i</code> 把 <code>key list</code> 中的一个 Identity 保存到该 Host；以后
+          <code>ssh</code>、<code>put</code> 和 <code>get</code> 都会复用它。命令自己的
+          <code>-i</code> 仍只覆盖当次操作。<code>-i none</code> 删除保存的绑定；修改其他 Host
+          字段而不写 <code>-i</code> 时，现有绑定保持不变。
         </p>
         <p>
           <code>ServerAliveInterval</code> 接受 0 到 3600 的整数秒，
@@ -1200,6 +1207,10 @@ ssh-keygen -l -f id_work
 ssh-keygen -p -f id_work
 ssh-keygen -c -f id_work
 ssh-copy-id -i id_work user@example.com</code></pre>
+        <p>
+          <code>ssh-copy-id</code> 只安装所选公钥，不会修改保存的 Host。专用 Identity 安装后，
+          使用 <code>host add … -i id_work</code> 或 <code>host set … -i id_work</code> 明确绑定。
+        </p>
         <ul class="feature-list">
           <li>生成 Ed25519 和 RSA-4096 密钥</li>
           <li>导入并使用 OpenSSH Ed25519、RSA 及 ECDSA P-256/P-384/P-521 私钥（包括加密私钥）</li>
@@ -1475,7 +1486,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.5.0</strong> · 离线使用指南 · 修订 7 · 版本日期 2026-08-25</div>
+    <div><strong>LeanTTY 1.5.1</strong> · 离线使用指南 · 修订 8 · 版本日期 2026-08-28</div>
     <div>先核对，再连接；先保留工作，再处理断线。</div>
   </footer>
   </div>
@@ -1649,13 +1660,20 @@ ssh -p 2222 user@example.com
 ssh -i id_work user@example.com</code></pre>
 
         <h3>Save a short name</h3>
-        <pre><code>host add work user@example.com:2222
-host set work user@example.com:2222 --connect-timeout 9
+        <pre><code>host add work user@example.com:2222 -i id_work
+host set work user@example.com:2222 -i id_work --connect-timeout 9
+host set work user@example.com:2222 -i none
 host set work user@example.com:2222 --server-alive-interval 30 --server-alive-count-max 3
 ssh work</code></pre>
         <p>
           Saved hosts use LeanTTY's managed section of <code>~/.ssh/config</code>. Inspect the
           supported effective values before connecting with <code>ssh -G work</code>.
+        </p>
+        <p>
+          <code>-i</code> saves one Identity shown by <code>key list</code> for that Host, so
+          <code>ssh</code>, <code>put</code> and <code>get</code> reuse it. A command-local
+          <code>-i</code> still overrides only that operation. <code>-i none</code> removes the saved
+          binding; changing another Host field without <code>-i</code> preserves it.
         </p>
         <p>
           <code>ServerAliveInterval</code> accepts whole seconds from 0 through 3600 and
@@ -1796,6 +1814,11 @@ ssh-keygen -l -f id_work
 ssh-keygen -p -f id_work
 ssh-keygen -c -f id_work
 ssh-copy-id -i id_work user@example.com</code></pre>
+        <p>
+          <code>ssh-copy-id</code> installs only the selected public key and never changes a saved
+          Host. After installing a dedicated Identity, bind it explicitly with
+          <code>host add … -i id_work</code> or <code>host set … -i id_work</code>.
+        </p>
         <ul class="feature-list">
           <li>Ed25519 and RSA-4096 generation</li>
           <li>OpenSSH Ed25519, RSA and ECDSA P-256/P-384/P-521 import and use, including encrypted keys</li>
@@ -2080,7 +2103,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.5.0</strong> · Offline user guide · Revision 7 · Version date 2026-08-25</div>
+    <div><strong>LeanTTY 1.5.1</strong> · Offline user guide · Revision 8 · Version date 2026-08-28</div>
     <div>Verify first. Keep work durable. Recover deliberately.</div>
   </footer>
   </div>

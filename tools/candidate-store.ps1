@@ -16,19 +16,7 @@ function Get-LeanTTYCandidateRoot {
         [string]$CandidateBasePath = ''
     )
 
-    $commonDirectoryOutput = @(
-        & git -C $RepoRoot rev-parse --git-common-dir 2>&1
-    )
-    if ($LASTEXITCODE -ne 0 -or $commonDirectoryOutput.Count -ne 1) {
-        throw 'Unable to resolve the Git common directory for candidate storage'
-    }
-    $commonDirectory = [string]$commonDirectoryOutput[0]
-    if (-not [IO.Path]::IsPathRooted($commonDirectory)) {
-        $commonDirectory = Join-Path $RepoRoot $commonDirectory
-    }
-    $repositoryIdentity = Get-LeanTTYHashIdentity -Value (
-        [IO.Path]::GetFullPath($commonDirectory).TrimEnd('\').ToUpperInvariant()
-    )
+    $repositoryIdentity = Get-LeanTTYRepositoryIdentity -RepoRoot $RepoRoot
 
     if ([string]::IsNullOrWhiteSpace($CandidateBasePath)) {
         $localAppData = [Environment]::GetFolderPath(
@@ -393,6 +381,30 @@ function Get-LeanTTYLatestVerifiedCandidate {
         throw "Candidate HAP hash mismatch: $($latest.hapPath)"
     }
     return $latest
+}
+
+function Get-LeanTTYRepositoryIdentity {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $originOutput = @(& git -C $RepoRoot remote get-url origin 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $originOutput.Count -ne 1 -or
+        [string]::IsNullOrWhiteSpace([string]$originOutput[0])) {
+        throw 'Unable to resolve the stable origin identity for candidate storage'
+    }
+    $origin = ([string]$originOutput[0]).Trim().Replace('\', '/').ToLowerInvariant()
+    if ($origin -match '^git@(?<host>[^:]+):(?<path>.+)$') {
+        $origin = 'https://' + $Matches.host + '/' + $Matches.path
+    } elseif ($origin -match '^ssh://git@(?<host>[^/]+)/(?<path>.+)$') {
+        $origin = 'https://' + $Matches.host + '/' + $Matches.path
+    }
+    $origin = $origin.TrimEnd('/')
+    if ($origin.EndsWith('.git')) {
+        $origin = $origin.Substring(0, $origin.Length - 4)
+    }
+    if ($origin -notmatch '^https://[^/]+/.+/.+$') {
+        throw "Unsupported origin identity for candidate storage: $origin"
+    }
+    return Get-LeanTTYHashIdentity -Value $origin
 }
 
 function Resolve-LeanTTYRetainedCandidate {

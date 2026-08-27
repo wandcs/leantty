@@ -1,8 +1,8 @@
 # LeanTTY 测试与发布效率改进
 
-> 状态：当前工程流程的原因说明、决策记录与改进候选
+> 状态：当前工程流程的原因说明、已采用决策与后续测量口径
 >
-> 更新日期：2026-08-20
+> 更新日期：2026-08-28
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -18,6 +18,22 @@
 测试范围、候选复用和重跑规则只以 `quality-strategy.md` 为准；正式发布命令和顺序只以
 `release-process.md` 为准；当前是否需要执行发布工作只以 `next-work.md` 为准。本文不
 复制或修改这些权威流程。
+
+## 2026-08-28：1.5.1 已采用实现
+
+1.5.1 将复盘中的四项工程改进落为现有权威流程的可执行入口：
+
+- `test-release-readiness.ps1` 在 C0 前组合聚焦软件门、离线 Agent 规则、release 包 marker、
+  稳定候选命名空间及 production/review 预检；记录明确不可作为发布资格，且模型调用为 0。
+- 候选库按规范化 `origin` 身份命名；显式 HAP 仍必须匹配保留 manifest、源码身份和 SHA-256。
+- SSH 矩阵支持原子检查点和显式恢复；SSH、Agent 与长任务通知记录 attempt 链及无内容进度，
+  候选和 harness 身份分开保存。
+- `prepare-appgallery-release.ps1` 在标签前生成 license ZIP、Release notes、AppGallery 文案、
+  交接清单和附件摘要；`prepare-release-status-update.ps1` 把 GitHub Release 与维护者交接事实
+  合并为一次状态 PR 的输入。
+
+这些工具只减少重复工作，不改变签名、真实设备 smoke、标签、GitHub Release 或 AppGallery
+维护者操作的进入条件。耗时、候选构建次数和恢复时长仍在下一次正式发布中按既定指标实测。
 
 ## 1. 改进目标
 
