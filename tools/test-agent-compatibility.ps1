@@ -385,6 +385,13 @@ try {
         -not $deviceScript.Contains("'claude'") -and
         -not $deviceScript.Contains("'gemini'")
     ) 'Agent device fixture can lose the original failure or raw-free capture summary'
+    $atomicResultWrite = [regex]::Match(
+        $deviceScript,
+        '(?ms)Write-LeanTTYAtomicJson\s+`\r?\n\s+-Path \(Join-Path \$EvidenceDirectory ''result\.json''\)\s+`\r?\n\s+-Value \$result\s+`\r?\n\s+-Depth (?<depth>[0-9]+)'
+    )
+    Assert-True (
+        $atomicResultWrite.Success -and [int]$atomicResultWrite.Groups['depth'].Value -le 20
+    ) 'Agent compatibility result exceeds the atomic JSON writer depth contract'
 } finally {
     if (Test-Path -LiteralPath $temporaryDirectory) {
         Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
