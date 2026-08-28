@@ -1586,7 +1586,7 @@ try {
     Write-LeanTTYAtomicJson `
         -Path (Join-Path $EvidenceDirectory 'result.json') `
         -Value $result `
-        -Depth 30
+        -Depth 20
     Write-AgentCompatibilityProgress -Stage 'complete'
 }
 
