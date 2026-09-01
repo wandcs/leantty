@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "@xmldom/xmldom": "^0.9.10",
+    "@xmldom/xmldom": "^0.9.12",
     "sharp": "^0.35.3"
   }
 }
