@@ -1,8 +1,14 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { SshKeyManager } from '../main/ets/model/ssh/SshKeyManager'
 import {
-  algorithmDisplayName, algorithmFromSshName, algorithmToSshName, KeyAlgorithm
+  algorithmDisplayName, algorithmFromSshName, algorithmToSshName, KeyAlgorithm, KeyPairInfo
 } from '../main/ets/common/types/SshKeyTypes'
+
+function keyNamed(name: string): KeyPairInfo {
+  let key: KeyPairInfo = new KeyPairInfo()
+  key.filePath = '/data/storage/el2/base/files/.ssh/' + name
+  return key
+}
 
 export default function keySafetyTest() {
   describe('KeySafety', () => {
@@ -36,6 +42,20 @@ export default function keySafetyTest() {
       expect(algorithmDisplayName(KeyAlgorithm.ECDSA_P256)).assertEqual('ecdsa-p256')
       expect(algorithmDisplayName(KeyAlgorithm.ECDSA_P384)).assertEqual('ecdsa-p384')
       expect(algorithmDisplayName(KeyAlgorithm.ECDSA_P521)).assertEqual('ecdsa-p521')
+    })
+
+    it('selectsOnlySupportedDefaultIdentitiesInStablePriorityOrder', 0, () => {
+      let ecdsa: KeyPairInfo = keyNamed('id_ecdsa')
+      let rsa: KeyPairInfo = keyNamed('id_rsa')
+      let ed25519: KeyPairInfo = keyNamed('id_ed25519')
+      let securityKey: KeyPairInfo = keyNamed('id_ed25519_sk')
+
+      expect(SshKeyManager.selectDefaultKey([ecdsa, rsa, ed25519])).assertEqual(ed25519)
+      expect(SshKeyManager.selectDefaultKey([ecdsa, rsa])).assertEqual(rsa)
+      expect(SshKeyManager.selectDefaultKey([securityKey, ecdsa])).assertEqual(ecdsa)
+      expect(SshKeyManager.selectDefaultKey([securityKey])).assertEqual(null)
+      expect(SshKeyManager.selectDefaultKey([keyNamed('deploy-prod')])).assertEqual(null)
+      expect(SshKeyManager.selectDefaultKey([])).assertEqual(null)
     })
   })
 }

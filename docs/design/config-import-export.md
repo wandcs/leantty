@@ -31,7 +31,8 @@ directive, `Include`, `Match` and `%h` expansion.
 
 | Class | Input | Contract |
 | --- | --- | --- |
-| Connection-critical and supported | `Host`, `HostName`, `User`, `Port`, `IdentityFile`, `ProxyJump`, `ConnectTimeout`, `ServerAliveInterval`, `ServerAliveCountMax` | Parse with current first-value behavior; malformed values fail before a connection |
+| Connection-critical and supported | `Host`, `HostName`, `User`, `Port`, `ProxyJump`, `ConnectTimeout`, `ServerAliveInterval`, `ServerAliveCountMax` | Parse with current first-value behavior; malformed values fail before a connection |
+| Single selected identity | `IdentityFile` | Resolve exactly one value across matching Host blocks; a second value fails with its directive and line number before a connection |
 | Preserve exactly | Comments, blank lines, indentation, line endings, repeated Host patterns, wildcards and unknown directives | Import/export and later managed `host add|set|rm` retain the source bytes; a matching unknown directive still blocks connection with its name and line number |
 | Reject at import | `Include`, `Match`, supported-value token/environment expansion, quoted supported values, control characters and LeanTTY managed markers | Do not accept source whose effective authority or value cannot be reproduced locally |
 
