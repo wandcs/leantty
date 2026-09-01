@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Audit date: 2026-08-06.
+Audit date: 2026-08-30.
 
 LeanTTY includes or depends on the software listed below. The authoritative
 inputs for this audit are the checked-in Cargo/OHPM/NPM lockfiles and the
@@ -71,10 +71,10 @@ Font License 1.1. The full OFL text and the Nerd Fonts attribution note are in
 
 ## Rust Dependencies (Cargo)
 
-`leantty_ssh/Cargo.lock` resolves 164 registry packages for
-`aarch64-unknown-linux-ohos`; all 164 report a license expression or license
-file through Cargo metadata. The complete versioned inventory is in
-`docs/RUST_DEPENDENCIES.md`.
+`leantty_ssh/Cargo.lock` resolves 181 registry packages and the external Git
+package `mosh-client 0.0.0` for `aarch64-unknown-linux-ohos`; all report a
+license expression or license file through Cargo metadata. The complete
+versioned inventory is in `docs/RUST_DEPENDENCIES.md`.
 
 The license families present are:
 
@@ -85,7 +85,13 @@ The license families present are:
 - ISC;
 - Apache-2.0 AND ISC (`ring`);
 - Unlicense OR MIT;
-- (MIT OR Apache-2.0) AND Unicode-3.0 (`unicode-ident`).
+- (MIT OR Apache-2.0) AND Unicode-3.0 (`unicode-ident`);
+- 0BSD OR MIT OR Apache-2.0 (`adler2`);
+- MIT OR Zlib OR Apache-2.0 (`miniz_oxide`).
+
+`mosh-client` uses `MIT OR Apache-2.0` and is pinned to the complete Git commit
+`e1346b3dfce5c38b95ef43d78cfb3d73529f00e5` from
+`https://github.com/wandcs/mosh-client-rs.git`.
 
 The repository `LICENSE` contains the Apache-2.0 text. Release builds copy each
 available package-specific license, copyright, copying, notice, or unlicense

@@ -9,9 +9,9 @@
 
 > **当前支持范围：** 物理 ARM64 HarmonyOS PC 与键鼠场景。MatePad 和纯触控场景尚未支持。
 >
-> **当前版本状态：** 维护者已确认 1.5.0 于 2026-08-28 通过 AppGallery 审核并正式上架。
+> **当前版本状态：** 维护者于 2026-08-29 确认 1.5.1 已通过 AppGallery 审核并正式上架。
 > 对应源码与不可变发布产物见
-> [GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.5.0)。
+> [GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.5.1)。
 
 ## 为什么选择 LeanTTY
 

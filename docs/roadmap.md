@@ -2,7 +2,7 @@
 
 > 状态：当前版本路线；采用滚动规划
 >
-> 更新日期：2026-08-25
+> 更新日期：2026-08-29
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
@@ -523,7 +523,7 @@ diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent �
 真机门禁、归档生产/审核构建、不可变签名标签和 GitHub Release。维护者于 2026-08-28 确认
 匹配的 production APP 已通过 AppGallery 审核并正式上架。
 
-## 当前 milestone：1.5.1 — Host/Identity 主路径修复与发布工程效率
+## 已发布 milestone：1.5.1 — Host/Identity 主路径修复与发布工程效率
 
 ### 用户结果
 
@@ -550,7 +550,9 @@ diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent �
   后密码回退、恢复绑定及独立清理。
 - 冻结前 readiness drill、稳定候选命名空间、product/harness 双身份、三类长矩阵原子
   checkpoint 与只读恢复、无内容进度、可逆资产预生成和单一发布后状态更新入口已完成并通过
-  聚焦工具门。正式候选和发布仍须在干净 checkout 中按发布规范执行。
+  聚焦工具门。精确候选随后完成正式软件门、物理矩阵、生产签名和归档；不可变签名标签与
+  非草稿 GitHub Release 已于 2026-08-28 发布。维护者于 2026-08-29 确认同版本 production
+  APP 已通过 AppGallery 审核并正式上架；商店结果不改变 1.5.1 的不可变发布身份。
 
 ### 2026-08-28 PATCH 与方案决策
 
@@ -566,19 +568,27 @@ diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent �
   ssh-agent、Identity 列表和其他 OpenSSH 扩展不进入本版本。先完成产品主路径和聚焦真机验收，
   再以改进后的工具准备 1.5.1 正式发布。
 
-## 拟议 milestone：1.6 — Mosh 弱网连接
+## 当前 milestone：1.6 — Mosh 弱网连接
 
 ### 用户结果
 
 用户在 ARM64 HarmonyOS PC 合盖、短暂离线、网络抖动或地址变化后，可以继续一个
 面向交互式终端的会话，而不是只能等待 SSH 超时或重新建立全新远端 shell。
 
+### 已闭合的共享基线
+
+2026-08-29 已闭合 Mosh bootstrap 将复用的 SSH Identity 解析：标准默认顺序、显式覆盖、
+重复 `IdentityFile` 拒绝和各连接入口使用同一结果。聚焦软件门和只授权 `id_ecdsa` 的物理
+OpenSSH 场景均通过；现有 `id_ed25519` 在测试前由产品导出，测试后由产品恢复并完成独立
+清理。该结果只授权进入 Mosh 可行性与用户价值门，不预先授权协议实现。
+
 ### 拟议范围
 
 - 通过 SSH 完成主机校验、认证和远端 `mosh-server` 启动，再使用 Mosh 协议承载一个
   交互式终端 Session。
 - 首版支持 `mosh [user@]host|alias`、固定 UDP port/range、受控 `--server=PATH`、
-  `--predict=auto/always/never`、IPv4/IPv6 选择和 `Ctrl-^ .` 强制断开。
+  `--predict=adaptive/always/never`、IPv4 UDP endpoint 和 `Ctrl-^ .` 强制断开。IPv6 与
+  `-4/-6` 只有在公共客户端库和物理 PC 双栈 fixture 同时成立后重新进入，不属于 1.6 合同。
 - 明确展示 SSH bootstrap、UDP 建连、已连接、网络中断、恢复和不可恢复失败状态。
 - 复用现有 Tab、Pane、Terminal Surface 与用户输入边界，但按 Mosh 的真实生命周期
   建立局部状态，不假装它与 SSH 字节流具有相同语义。
@@ -597,8 +607,8 @@ diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent �
 - 新协议、密码学、Unicode/终端状态同步依赖必须通过许可证、供应链、ARM64 构建、
   安全和长期维护审查；收益不足时取消 milestone。
 
-技术草案：[`design/mosh.md`](design/mosh.md)。该 milestone 未进入 `next-work.md`，
-不授权实现。
+技术草案：[`design/mosh.md`](design/mosh.md)。该 milestone 已进入 `next-work.md`；先执行
+用户价值、目标平台、真实网络和依赖维护性进入门。只有继续决定成立后，才授权产品实现。
 
 ## 阻塞的战略 milestone：2.0 — MatePad 实体键盘双模式
 
