@@ -2,11 +2,13 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
 use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +17,8 @@ use russh::server::{Auth, Handler, Msg, Response, Server, Session};
 use russh::{Channel, ChannelId, ChannelOpenFailure, MethodKind, MethodSet};
 use russh_sftp::protocol::{Attrs, Data, FileAttributes, Handle, OpenFlags, Status, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::process::Command as TokioCommand;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use zeroize::{Zeroize, Zeroizing};
@@ -33,6 +36,28 @@ const USER_KEY_INSTALL: &str = "key-install";
 const USER_NAVIGATION: &str = "navigation";
 const USER_NAVIGATION_TWO: &str = "navigation-two";
 const USER_NAVIGATION_THREE: &str = "navigation-three";
+const USER_MOSH: &str = "mosh";
+const MOSH_BOOTSTRAP_COMMAND_PREFIX: &str = "sh -c '[ -n \"$SSH_CONNECTION\" ] && printf \"\\nMOSH SSH_CONNECTION %s\\n\" \"$SSH_CONNECTION\"; exec ";
+const MOSH_DEFAULT_SERVER: &str = "mosh-server";
+const MOSH_SERVER_ARGUMENTS: &str = " new -s -c 256";
+const MOSH_FIXTURE_NETWORK_TIMEOUT_SECONDS: u64 = 30;
+const MOSH_TERMINAL_SUBCOMMAND: &str = "--mosh-terminal";
+const MOSH_CHECK_COMMAND: &str = "ltty-mosh-check";
+const MOSH_SHELL_COMMAND: &str = "ltty-mosh-shell";
+const MOSH_TMUX_COMMAND: &str = "ltty-mosh-tmux";
+const MOSH_EDITOR_COMMAND: &str = "ltty-mosh-editor";
+const MOSH_RESIZE_COMMAND: &str = "ltty-mosh-resize";
+const MOSH_STREAM_COMMAND: &str = "ltty-mosh-stream";
+const MOSH_UNICODE_COMMAND: &str = "ltty-mosh-unicode";
+const MOSH_SCROLLBACK_COMMAND: &str = "ltty-mosh-scrollback";
+const MOSH_LESS_COMMAND: &str = "ltty-mosh-less";
+const MOSH_ALTERNATE_COMMAND: &str = "ltty-mosh-alternate";
+const MOSH_AGENT_COMMAND: &str = "ltty-mosh-agent";
+const MOSH_STREAM_INPUT_BYTES: usize = 512;
+const MOSH_SCROLLBACK_LINES: usize = 240;
+const MOSH_PREDICTION_RELAY_DELAY: Duration = Duration::from_millis(40);
+const MOSH_PREDICTION_RELAY_PORT_MIN: u16 = 60_000;
+const MOSH_PREDICTION_RELAY_PORT_MAX: u16 = 61_000;
 const PERF_PREPARE_COMMAND: &str = "ltty-perf-prepare";
 const PERF_RUN_COMMAND: &str = "ltty-perf-run";
 const PERF_MAX_CASE_ID_LENGTH: usize = 24;
@@ -142,6 +167,7 @@ enum Scenario {
     ChannelDenied,
     KeyInstall,
     Navigation,
+    Mosh,
 }
 
 impl Scenario {
@@ -158,7 +184,946 @@ impl Scenario {
             USER_CHANNEL_DENIED => Some(Self::ChannelDenied),
             USER_KEY_INSTALL => Some(Self::KeyInstall),
             USER_NAVIGATION | USER_NAVIGATION_TWO | USER_NAVIGATION_THREE => Some(Self::Navigation),
+            USER_MOSH => Some(Self::Mosh),
             _ => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct MoshFixture {
+    server_address: IpAddr,
+    ssh_port: u16,
+    udp_port: Option<u16>,
+    network_timeout_seconds: u64,
+    control_directory: Arc<PathBuf>,
+    executable_path: Arc<PathBuf>,
+    previous_session_key: Arc<Mutex<Option<String>>>,
+    next_session_index: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MoshPortRequest {
+    start: u16,
+    end: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MoshBootstrapRequest {
+    server_path: Option<String>,
+    port: Option<MoshPortRequest>,
+}
+
+impl MoshPortRequest {
+    fn argument(self) -> String {
+        if self.start == self.end {
+            self.start.to_string()
+        } else {
+            format!("{}:{}", self.start, self.end)
+        }
+    }
+
+    fn contains(self, port: u16) -> bool {
+        (self.start..=self.end).contains(&port)
+    }
+}
+
+fn mosh_session_control_name(session_index: u64) -> String {
+    format!("mosh-session-{session_index}")
+}
+
+fn parse_mosh_bootstrap_request(data: &[u8]) -> Option<MoshBootstrapRequest> {
+    let command = std::str::from_utf8(data).ok()?;
+    let suffix = command.strip_prefix(MOSH_BOOTSTRAP_COMMAND_PREFIX)?;
+    let (server, arguments) = suffix.split_once(MOSH_SERVER_ARGUMENTS)?;
+    let server_path = if server == MOSH_DEFAULT_SERVER {
+        None
+    } else if valid_mosh_server_path(server) {
+        Some(server.to_string())
+    } else {
+        return None;
+    };
+    if arguments == "'" {
+        return Some(MoshBootstrapRequest {
+            server_path,
+            port: None,
+        });
+    }
+    let request = arguments.strip_prefix(" -p ")?.strip_suffix('\'')?;
+    let mut fields = request.split(':');
+    let start_text = fields.next()?;
+    let end_text = fields.next();
+    if fields.next().is_some()
+        || start_text.is_empty()
+        || !start_text.bytes().all(|byte| byte.is_ascii_digit())
+        || end_text
+            .is_some_and(|text| text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
+    }
+    let start = start_text.parse::<u16>().ok().filter(|port| *port > 0)?;
+    let end = end_text
+        .map_or(Ok(start), |text| text.parse::<u16>())
+        .ok()
+        .filter(|port| *port > 0)?;
+    (start <= end).then_some(MoshBootstrapRequest {
+        server_path,
+        port: Some(MoshPortRequest { start, end }),
+    })
+}
+
+fn valid_mosh_server_path(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 1024
+        && value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.split('/').skip(1).any(|segment| {
+            segment.is_empty()
+                || segment == "."
+                || segment == ".."
+                || !segment.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-')
+                })
+        })
+}
+
+fn rewrite_mosh_bootstrap_port(
+    stdout: &[u8],
+    server_port: u16,
+    relay_port: u16,
+) -> io::Result<Vec<u8>> {
+    let text = std::str::from_utf8(stdout)
+        .map_err(|_| io::Error::other("mosh-server stdout was not UTF-8"))?;
+    let source = format!("MOSH CONNECT {server_port} ");
+    let replacement = format!("MOSH CONNECT {relay_port} ");
+    if text.matches(&source).count() != 1 {
+        return Err(io::Error::other(
+            "mosh-server bootstrap port could not be rewritten exactly once",
+        ));
+    }
+    Ok(text.replacen(&source, &replacement, 1).into_bytes())
+}
+
+async fn start_mosh_prediction_relay(
+    server_address: IpAddr,
+    server_port: u16,
+    control_directory: &Path,
+) -> io::Result<u16> {
+    let mut socket = None;
+    for port in (MOSH_PREDICTION_RELAY_PORT_MIN..=MOSH_PREDICTION_RELAY_PORT_MAX).rev() {
+        match UdpSocket::bind(SocketAddr::new(server_address, port)).await {
+            Ok(candidate) => {
+                socket = Some((port, candidate));
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let (relay_port, downstream) = socket.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::AddrNotAvailable,
+            "no controlled Mosh prediction relay port was available",
+        )
+    })?;
+    let server_endpoint = SocketAddr::new(server_address, server_port);
+    let upstream = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await?;
+    upstream.connect(server_endpoint).await?;
+    let pause_path = control_directory.join("mosh-prediction-relay-paused");
+    let stats_path = control_directory.join("mosh-prediction-relay-stats");
+    remove_file_if_present(&pause_path)?;
+    fs::write(&stats_path, b"dropped=0\n")?;
+    let downstream = Arc::new(downstream);
+    let upstream = Arc::new(upstream);
+    let client_endpoint = Arc::new(Mutex::new(None));
+    let dropped = Arc::new(AtomicU64::new(0));
+    tokio::spawn(forward_mosh_prediction_client_datagrams(
+        Arc::clone(&downstream),
+        Arc::clone(&upstream),
+        Arc::clone(&client_endpoint),
+        pause_path.clone(),
+        stats_path.clone(),
+        Arc::clone(&dropped),
+    ));
+    tokio::spawn(forward_mosh_prediction_server_datagrams(
+        upstream,
+        downstream,
+        client_endpoint,
+        pause_path,
+        stats_path,
+        dropped,
+    ));
+    Ok(relay_port)
+}
+
+fn record_mosh_prediction_drop(stats_path: &Path, dropped: &AtomicU64) {
+    let value = dropped.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+    let _ = fs::write(stats_path, format!("dropped={value}\n"));
+}
+
+async fn forward_mosh_prediction_client_datagrams(
+    downstream: Arc<UdpSocket>,
+    upstream: Arc<UdpSocket>,
+    client_endpoint: Arc<Mutex<Option<SocketAddr>>>,
+    pause_path: PathBuf,
+    stats_path: PathBuf,
+    dropped: Arc<AtomicU64>,
+) {
+    let mut buffer = vec![0_u8; u16::MAX as usize];
+    while let Ok((length, source)) = downstream.recv_from(&mut buffer).await {
+        *client_endpoint.lock().await = Some(source);
+        if pause_path.is_file() {
+            record_mosh_prediction_drop(&stats_path, &dropped);
+            continue;
+        }
+        tokio::time::sleep(MOSH_PREDICTION_RELAY_DELAY).await;
+        if upstream.send(&buffer[..length]).await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn forward_mosh_prediction_server_datagrams(
+    upstream: Arc<UdpSocket>,
+    downstream: Arc<UdpSocket>,
+    client_endpoint: Arc<Mutex<Option<SocketAddr>>>,
+    pause_path: PathBuf,
+    stats_path: PathBuf,
+    dropped: Arc<AtomicU64>,
+) {
+    let mut buffer = vec![0_u8; u16::MAX as usize];
+    while let Ok(length) = upstream.recv(&mut buffer).await {
+        if pause_path.is_file() {
+            record_mosh_prediction_drop(&stats_path, &dropped);
+            continue;
+        }
+        let Some(client) = *client_endpoint.lock().await else {
+            continue;
+        };
+        tokio::time::sleep(MOSH_PREDICTION_RELAY_DELAY).await;
+        if downstream.send_to(&buffer[..length], client).await.is_err() {
+            break;
+        }
+    }
+}
+
+impl MoshFixture {
+    async fn bootstrap(
+        &self,
+        peer: SocketAddr,
+        request: MoshBootstrapRequest,
+    ) -> io::Result<Vec<u8>> {
+        let connection = format!(
+            "{} {} {} {}",
+            peer.ip(),
+            peer.port(),
+            self.server_address,
+            self.ssh_port
+        );
+        let session_path = self.control_directory.join("mosh-session");
+        let isolation_enabled = self
+            .control_directory
+            .join("mosh-session-isolation")
+            .is_file();
+        let (terminal_control_directory, control_name) = if isolation_enabled {
+            let session_index = self
+                .next_session_index
+                .fetch_add(1, Ordering::SeqCst)
+                .saturating_add(1);
+            let name = mosh_session_control_name(session_index);
+            let directory = self.control_directory.join(&name);
+            fs::create_dir(&directory)?;
+            (directory, Some(name))
+        } else {
+            (self.control_directory.as_ref().clone(), None)
+        };
+        let input_path = terminal_control_directory.join("mosh-input-snapshot");
+        let event_path = terminal_control_directory.join("mosh-event");
+        for path in [&session_path, &input_path, &event_path] {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        let configured_port = self.udp_port.map(|port| MoshPortRequest {
+            start: port,
+            end: port,
+        });
+        let port_request = match (request.port, configured_port) {
+            (Some(requested), Some(configured)) if requested != configured => {
+                return Err(io::Error::other(
+                    "product and fixture Mosh UDP port requests conflict",
+                ));
+            }
+            (Some(requested), _) => Some(requested),
+            (None, configured) => configured,
+        };
+        let server_executable = request
+            .server_path
+            .as_deref()
+            .unwrap_or(MOSH_DEFAULT_SERVER);
+        let mut command = TokioCommand::new(server_executable);
+        command.args(["new", "-i", &self.server_address.to_string()]);
+        let port_argument = port_request.map(MoshPortRequest::argument);
+        if let Some(argument) = port_argument.as_ref() {
+            command.args(["-p", argument]);
+        }
+        let output = command
+            .args(["-c", "256", "--"])
+            .arg(self.executable_path.as_ref())
+            .arg(MOSH_TERMINAL_SUBCOMMAND)
+            .arg(&terminal_control_directory)
+            .env("SSH_CONNECTION", &connection)
+            .env(
+                "MOSH_SERVER_NETWORK_TMOUT",
+                self.network_timeout_seconds.to_string(),
+            )
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(io::Error::other(format!(
+                "mosh-server exited with status {}",
+                output.status
+            )));
+        }
+        let (server_port, pid) = parse_mosh_session_metadata(&output.stdout, &output.stderr)?;
+        let session_key = parse_mosh_session_key(&output.stdout)?;
+        let key_distinct_from_previous = {
+            let mut previous = self.previous_session_key.lock().await;
+            let distinct = previous.as_ref().is_none_or(|value| value != &session_key);
+            *previous = Some(session_key);
+            distinct
+        };
+        if port_request.is_some_and(|requested| !requested.contains(server_port)) {
+            return Err(io::Error::other(
+                "mosh-server returned a port outside the requested range",
+            ));
+        }
+        let relay_enabled = self
+            .control_directory
+            .join("mosh-prediction-relay")
+            .is_file();
+        let (port, bootstrap_stdout) = if relay_enabled {
+            let relay_port = start_mosh_prediction_relay(
+                self.server_address,
+                server_port,
+                self.control_directory.as_ref(),
+            )
+            .await?;
+            (
+                relay_port,
+                rewrite_mosh_bootstrap_port(&output.stdout, server_port, relay_port)?,
+            )
+        } else {
+            (server_port, output.stdout)
+        };
+        let control_metadata = control_name
+            .map(|name| format!("controlName={name}\n"))
+            .unwrap_or_default();
+        fs::write(
+            &session_path,
+            format!(
+                "port={port}\nserverPort={server_port}\npid={pid}\nserver={server_executable}\nkeyDistinctFromPrevious={key_distinct_from_previous}\n{control_metadata}"
+            ),
+        )?;
+        eprintln!(
+            "mosh bootstrap result=ready port={port} serverPort={server_port} pid={pid} relay={relay_enabled}"
+        );
+
+        let mut bootstrap = format!("\nMOSH SSH_CONNECTION {connection}\n").into_bytes();
+        bootstrap.extend_from_slice(&bootstrap_stdout);
+        if bootstrap.len() > 4 * 1024 {
+            return Err(io::Error::other("mosh bootstrap exceeded fixture limit"));
+        }
+        Ok(bootstrap)
+    }
+}
+
+fn parse_mosh_session_key(stdout: &[u8]) -> io::Result<String> {
+    let stdout_text = std::str::from_utf8(stdout)
+        .map_err(|_| io::Error::other("mosh-server stdout was not UTF-8"))?;
+    let mut key = None;
+    for line in stdout_text.lines() {
+        if let Some(rest) = line.strip_prefix("MOSH CONNECT ") {
+            let mut fields = rest.split_ascii_whitespace();
+            let port = fields.next().and_then(|value| value.parse::<u16>().ok());
+            let parsed_key = fields.next();
+            if port.is_none()
+                || parsed_key.is_none_or(|value| value.len() != 22)
+                || fields.next().is_some()
+                || key.replace(parsed_key.unwrap().to_string()).is_some()
+            {
+                return Err(io::Error::other(
+                    "mosh-server returned invalid bootstrap metadata",
+                ));
+            }
+        }
+    }
+    key.ok_or_else(|| io::Error::other("mosh-server metadata was incomplete"))
+}
+
+fn parse_mosh_session_metadata(stdout: &[u8], stderr: &[u8]) -> io::Result<(u16, u32)> {
+    let stdout_text = std::str::from_utf8(stdout)
+        .map_err(|_| io::Error::other("mosh-server stdout was not UTF-8"))?;
+    let stderr_text = std::str::from_utf8(stderr)
+        .map_err(|_| io::Error::other("mosh-server stderr was not UTF-8"))?;
+    let mut port = None;
+    let mut pid = None;
+    for line in stdout_text.lines() {
+        if let Some(rest) = line.strip_prefix("MOSH CONNECT ") {
+            let mut fields = rest.split_ascii_whitespace();
+            let parsed_port = fields.next().and_then(|value| value.parse::<u16>().ok());
+            let key = fields.next();
+            if parsed_port.is_none()
+                || key.is_none_or(|value| value.len() != 22)
+                || fields.next().is_some()
+                || port.replace(parsed_port.unwrap()).is_some()
+            {
+                return Err(io::Error::other(
+                    "mosh-server returned invalid bootstrap metadata",
+                ));
+            }
+        }
+    }
+    for line in stderr_text.lines() {
+        if let Some(rest) = line.split_once("pid = ").map(|(_, rest)| rest) {
+            let value = rest.trim_end_matches(']').trim();
+            let parsed_pid = value.parse::<u32>().ok();
+            if parsed_pid.is_none() || pid.replace(parsed_pid.unwrap()).is_some() {
+                return Err(io::Error::other(
+                    "mosh-server returned invalid process metadata",
+                ));
+            }
+        }
+    }
+    match (port, pid) {
+        (Some(port), Some(pid)) => Ok((port, pid)),
+        _ => Err(io::Error::other("mosh-server metadata was incomplete")),
+    }
+}
+
+fn is_valid_mosh_case_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn persist_mosh_input(path: &Path, input: &[u8]) -> io::Result<()> {
+    fs::write(path, input)
+}
+
+fn remove_file_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn read_mosh_terminal_size() -> io::Result<(u16, u16)> {
+    let output = StdCommand::new("sh")
+        .args(["-c", "stty size < /dev/tty"])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            "unable to read the controlled Mosh PTY size",
+        ));
+    }
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|_| io::Error::other("controlled Mosh PTY size was not UTF-8"))?;
+    let mut fields = text.split_ascii_whitespace();
+    let rows = fields.next().and_then(|value| value.parse::<u16>().ok());
+    let columns = fields.next().and_then(|value| value.parse::<u16>().ok());
+    if fields.next().is_some() || rows.is_none() || columns.is_none() {
+        return Err(io::Error::other("controlled Mosh PTY size was malformed"));
+    }
+    Ok((rows.unwrap(), columns.unwrap()))
+}
+
+fn mosh_terminal_stty_args(kernel_echo: bool) -> Vec<&'static str> {
+    if kernel_echo {
+        Vec::new()
+    } else {
+        vec!["-icanon", "-echo", "min", "1", "time", "0"]
+    }
+}
+
+fn write_mosh_terminal_event(
+    path: &Path,
+    kind: &str,
+    case_id: &str,
+    result: &str,
+    details: &str,
+) -> io::Result<()> {
+    fs::write(
+        path,
+        format!("kind={kind}\ncase={case_id}\nresult={result}\n{details}"),
+    )
+}
+
+fn run_mosh_shell(control_directory: &Path, case_id: &str, in_tmux: bool) -> io::Result<()> {
+    let kind = if in_tmux { "tmux" } else { "shell" };
+    let event_path = control_directory.join(format!("mosh-{kind}-event"));
+    let ready_path = control_directory.join(format!("mosh-{kind}-ready"));
+    let init_path = control_directory.join("mosh-bash-init");
+    remove_file_if_present(&event_path)?;
+    remove_file_if_present(&ready_path)?;
+    fs::write(
+        &init_path,
+        b"PS1='ltty-bash> '\n\
+          PROMPT_COMMAND='printf ready\\n > \"$LTTY_MOSH_READY\"'\n\
+          ltty-shell-check() {\n\
+            if [ \"$1\" = \"$LTTY_MOSH_CASE\" ] && { [ \"$LTTY_MOSH_EXPECT_TMUX\" != 1 ] || [ -n \"$TMUX\" ]; }; then\n\
+              printf '\\r\\nLTTY_MOSH_%s_OK:%s\\r\\n' \"${LTTY_MOSH_KIND^^}\" \"$1\"\n\
+              printf 'kind=%s\\ncase=%s\\nresult=passed\\n' \"$LTTY_MOSH_KIND\" \"$1\" > \"$LTTY_MOSH_EVENT\"\n\
+            else\n\
+              printf 'kind=%s\\ncase=%s\\nresult=failed\\n' \"$LTTY_MOSH_KIND\" \"$1\" > \"$LTTY_MOSH_EVENT\"\n\
+            fi\n\
+          }\n",
+    )?;
+
+    let mut command = if in_tmux {
+        let socket = format!("leantty-mosh-{case_id}");
+        let mut command = StdCommand::new("tmux");
+        command.args([
+            "-L",
+            &socket,
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-s",
+            "mosh",
+            "/bin/bash",
+            "--noprofile",
+            "--init-file",
+        ]);
+        command.arg(&init_path).arg("-i");
+        command
+    } else {
+        let mut command = StdCommand::new("/bin/bash");
+        command
+            .args(["--noprofile", "--init-file"])
+            .arg(&init_path)
+            .arg("-i");
+        command
+    };
+    let status = command
+        .env("LTTY_MOSH_CASE", case_id)
+        .env("LTTY_MOSH_KIND", kind)
+        .env("LTTY_MOSH_EVENT", &event_path)
+        .env("LTTY_MOSH_READY", &ready_path)
+        .env("LTTY_MOSH_EXPECT_TMUX", if in_tmux { "1" } else { "0" })
+        .status()?;
+    if in_tmux {
+        let _ = StdCommand::new("tmux")
+            .args(["-L", &format!("leantty-mosh-{case_id}"), "kill-server"])
+            .output();
+    }
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "controlled {kind} exited unsuccessfully"
+        )));
+    }
+    let mut event = fs::read_to_string(&event_path)
+        .map_err(|_| io::Error::other(format!("controlled {kind} result was missing")))?;
+    event.push_str("closed=true\n");
+    fs::write(event_path, event)
+}
+
+fn run_mosh_editor(control_directory: &Path, case_id: &str) -> io::Result<()> {
+    let event_path = control_directory.join("mosh-editor-event");
+    let ready_path = control_directory.join("mosh-editor-ready");
+    let document_path = control_directory.join("mosh-editor-document");
+    remove_file_if_present(&event_path)?;
+    remove_file_if_present(&ready_path)?;
+    remove_file_if_present(&document_path)?;
+    let status = StdCommand::new("vim")
+        .args(["-Nu", "NONE", "-n", "-i", "NONE"])
+        .args(["-c", "call writefile(['ready'], $LTTY_MOSH_EDITOR_READY)"])
+        .arg(&document_path)
+        .env("LTTY_MOSH_EDITOR_READY", &ready_path)
+        .status()?;
+    let expected = format!("editor_{case_id}");
+    let actual = fs::read_to_string(&document_path).unwrap_or_default();
+    let passed = status.success() && actual.trim_end_matches(['\r', '\n']) == expected;
+    write_mosh_terminal_event(
+        &event_path,
+        "editor",
+        case_id,
+        if passed { "passed" } else { "failed" },
+        "closed=true\n",
+    )
+}
+
+fn run_mosh_unicode(control_directory: &Path, case_id: &str) -> io::Result<String> {
+    let event_path = control_directory.join("mosh-unicode-event");
+    remove_file_if_present(&event_path)?;
+    let output = format!(
+        "LTTY_MOSH_UNICODE:{case_id}\r\nUTF8 | \u{4e2d}\u{6587}\u{5bbd}\u{5b57}\u{7b26} | e\u{301} | END\r\n"
+    );
+    let locale = StdCommand::new("locale").arg("charmap").output()?;
+    let locale_charmap = String::from_utf8_lossy(&locale.stdout).trim().to_string();
+    let passed = locale.status.success() && locale_charmap.eq_ignore_ascii_case("UTF-8");
+    write_mosh_terminal_event(
+        &event_path,
+        "unicode",
+        case_id,
+        if passed { "passed" } else { "failed" },
+        &format!(
+            "localeCharmap={locale_charmap}\nutf8Bytes={}\nwideCharacters=5\ncombiningSequences=1\n",
+            output.len()
+        ),
+    )?;
+    Ok(output)
+}
+
+fn run_mosh_scrollback(
+    control_directory: &Path,
+    case_id: &str,
+    stdout: &mut impl Write,
+) -> io::Result<()> {
+    let event_path = control_directory.join("mosh-scrollback-event");
+    remove_file_if_present(&event_path)?;
+    let mut emitted_bytes = 0_usize;
+    let top = format!("LTTY_MOSH_SCROLL_TOP:{case_id}\r\n");
+    stdout.write_all(top.as_bytes())?;
+    stdout.flush()?;
+    emitted_bytes += top.len();
+    // Let the first state reach the client before it leaves the viewport. The
+    // device scenario records whether Mosh state synchronization retains it;
+    // it does not assume SSH-style byte-stream scrollback.
+    std::thread::sleep(Duration::from_millis(500));
+    for line in 1..=MOSH_SCROLLBACK_LINES {
+        let output = format!(
+            "LTTY_MOSH_SCROLL_LINE_{line:03}:{case_id}:0123456789abcdefghijklmnopqrstuvwxyz\r\n"
+        );
+        stdout.write_all(output.as_bytes())?;
+        emitted_bytes += output.len();
+        if line % 12 == 0 {
+            stdout.flush()?;
+            std::thread::sleep(Duration::from_millis(60));
+        }
+    }
+    let bottom = format!("LTTY_MOSH_SCROLL_BOTTOM:{case_id}\r\n");
+    stdout.write_all(bottom.as_bytes())?;
+    stdout.flush()?;
+    emitted_bytes += bottom.len();
+    write_mosh_terminal_event(
+        &event_path,
+        "scrollback",
+        case_id,
+        "passed",
+        &format!(
+            "emittedLines={}\nemittedBytes={emitted_bytes}\ncontract=paced-terminal-state-output\n",
+            MOSH_SCROLLBACK_LINES + 2
+        ),
+    )
+}
+
+fn run_mosh_less(control_directory: &Path, case_id: &str) -> io::Result<()> {
+    let event_path = control_directory.join("mosh-less-event");
+    let document_path = control_directory.join("mosh-less-document");
+    remove_file_if_present(&event_path)?;
+    remove_file_if_present(&document_path)?;
+    let mut document = String::new();
+    for line in 1..=180 {
+        document.push_str(&format!(
+            "LTTY_MOSH_LESS_LINE_{line:03}:{case_id}:controlled pager content\n"
+        ));
+    }
+    document.push_str(&format!("LTTY_MOSH_LESS_LAST:{case_id}\n"));
+    fs::write(&document_path, document.as_bytes())?;
+    let status = StdCommand::new("less")
+        .args(["-R", "+G"])
+        .arg(&document_path)
+        .env("LESSHISTFILE", "-")
+        .status()?;
+    write_mosh_terminal_event(
+        &event_path,
+        "less",
+        case_id,
+        if status.success() { "passed" } else { "failed" },
+        "documentLines=181\nclosed=true\n",
+    )
+}
+
+fn run_mosh_agent_tool(tool_path: &Path, arguments: &[&str]) -> io::Result<bool> {
+    Ok(StdCommand::new("bash")
+        .arg(tool_path)
+        .args(arguments)
+        .status()?
+        .success())
+}
+
+fn run_mosh_agent(control_directory: &Path, case_id: &str) -> io::Result<()> {
+    let event_path = control_directory.join("mosh-agent-event");
+    let prepared_path = control_directory.join("mosh-agent-prepared");
+    remove_file_if_present(&event_path)?;
+    remove_file_if_present(&prepared_path)?;
+    let tool_path = env::var_os("LEANTTY_MOSH_AGENT_TOOL")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file())
+        .ok_or_else(|| io::Error::other("controlled Agent compatibility tool is unavailable"))?;
+    let run_root = control_directory.join(format!("leantty-agent-compat-{case_id}"));
+    let run_root_text = run_root
+        .to_str()
+        .ok_or_else(|| io::Error::other("controlled Agent run root was not UTF-8"))?;
+    for command in ["prepare", "configure", "inventory"] {
+        if !run_mosh_agent_tool(&tool_path, &[command, run_root_text])? {
+            return Err(io::Error::other(format!(
+                "controlled Agent tool failed during {command}"
+            )));
+        }
+    }
+    fs::write(&prepared_path, b"ready\n")?;
+    let launched = run_mosh_agent_tool(
+        &tool_path,
+        &["launch", run_root_text, "codex", "direct", "interaction"],
+    )?;
+    let capture_path = run_root.join("results/codex-direct-interaction.json");
+    let capture_exists = capture_path.is_file();
+    let _ = run_mosh_agent_tool(&tool_path, &["cleanup", run_root_text]);
+    write_mosh_terminal_event(
+        &event_path,
+        "agent",
+        case_id,
+        if launched && capture_exists {
+            "passed"
+        } else {
+            "failed"
+        },
+        "agent=codex\nmode=direct\nplannedModelRequests=0\nclosed=true\n",
+    )
+}
+
+fn run_mosh_terminal(control_directory: &Path) -> io::Result<()> {
+    if !control_directory.is_absolute() {
+        return Err(io::Error::other(
+            "mosh fixture control directory must be absolute",
+        ));
+    }
+    let kernel_echo = control_directory.join("mosh-kernel-echo").is_file();
+    let stty_args = mosh_terminal_stty_args(kernel_echo);
+    if !stty_args.is_empty() {
+        let stty = StdCommand::new("stty").args(stty_args).status()?;
+        if !stty.success() {
+            return Err(io::Error::other(
+                "unable to configure the controlled Mosh PTY",
+            ));
+        }
+    }
+
+    let input_path = control_directory.join("mosh-input-snapshot");
+    let event_path = control_directory.join("mosh-event");
+    let prediction_event_path = control_directory.join("mosh-prediction-event");
+    let ready_path = control_directory.join("mosh-terminal-ready");
+    let pid_path = control_directory.join("mosh-terminal-pid");
+    let resize_before_path = control_directory.join("mosh-resize-before");
+    persist_mosh_input(&input_path, b"")?;
+    let (initial_rows, initial_columns) = read_mosh_terminal_size()?;
+    fs::write(
+        &resize_before_path,
+        format!("rows={initial_rows}\ncolumns={initial_columns}\n"),
+    )?;
+    fs::write(&pid_path, format!("{}\n", std::process::id()))?;
+    fs::write(&ready_path, b"ready\n")?;
+
+    if kernel_echo {
+        let status = StdCommand::new("/bin/sh")
+            .arg("-i")
+            .env("PS1", "MOSH_SESSION> ")
+            .env("LTTY_MOSH_PREDICTION_EVENT", &prediction_event_path)
+            .status()?;
+        if !status.success() {
+            return Err(io::Error::other(
+                "controlled Mosh prediction shell exited unsuccessfully",
+            ));
+        }
+        return Ok(());
+    }
+
+    let mut stdin = io::stdin().lock();
+    let mut stdout = io::stdout().lock();
+    let mut input = Vec::new();
+    let mut stream_case: Option<String> = None;
+    let mut alternate_case: Option<String> = None;
+    stdout.write_all(b"LTTY_MOSH_FIXTURE_READY\r\nmosh> ")?;
+    stdout.flush()?;
+    loop {
+        let mut byte = [0_u8; 1];
+        if stdin.read(&mut byte)? == 0 {
+            fs::write(&event_path, b"result=eof\n")?;
+            return Ok(());
+        }
+        if let Some(case_id) = alternate_case.take() {
+            stdout.write_all(b"\x1b[?1049l")?;
+            writeln!(stdout, "LTTY_MOSH_ALT_CLOSED:{case_id}\r")?;
+            stdout.write_all(b"mosh> ")?;
+            stdout.flush()?;
+            let alternate_event = control_directory.join("mosh-alternate-event");
+            write_mosh_terminal_event(
+                &alternate_event,
+                "alternate",
+                &case_id,
+                "passed",
+                "entered=true\nclosed=true\n",
+            )?;
+            continue;
+        }
+        if let Some(case_id) = stream_case.clone() {
+            match byte[0] {
+                b'\r' | b'\n' => {
+                    let passed = input.len() == MOSH_STREAM_INPUT_BYTES
+                        && input.iter().all(|value| *value == b'P');
+                    let stream_event = control_directory.join("mosh-stream-event");
+                    write_mosh_terminal_event(
+                        &stream_event,
+                        "stream",
+                        &case_id,
+                        if passed { "passed" } else { "failed" },
+                        &format!(
+                            "inputBytes={}\noutputFrames={}\n",
+                            input.len(),
+                            input.len() / 16
+                        ),
+                    )?;
+                    input.clear();
+                    stream_case = None;
+                    persist_mosh_input(&input_path, &input)?;
+                    if passed {
+                        writeln!(stdout, "\r\nLTTY_MOSH_STREAM_OK:{case_id}\r")?;
+                    } else {
+                        writeln!(stdout, "\r\nLTTY_MOSH_STREAM_FAILED:{case_id}\r")?;
+                    }
+                    stdout.write_all(b"mosh> ")?;
+                    stdout.flush()?;
+                }
+                0x03 => {
+                    input.clear();
+                    stream_case = None;
+                    persist_mosh_input(&input_path, &input)?;
+                    stdout.write_all(b"^C\r\nmosh> ")?;
+                    stdout.flush()?;
+                }
+                b'P' if input.len() < MOSH_STREAM_INPUT_BYTES => {
+                    input.push(byte[0]);
+                    if input.len() % 16 == 0 {
+                        stdout.write_all(b".")?;
+                        stdout.flush()?;
+                    }
+                    persist_mosh_input(&input_path, &input)?;
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match byte[0] {
+            b'\r' | b'\n' => {
+                let command = std::str::from_utf8(&input).unwrap_or("").to_string();
+                let mut fields = command.split_ascii_whitespace();
+                let kind = fields.next().unwrap_or("").to_string();
+                let case_id = fields.next().unwrap_or("");
+                let no_more_fields = fields.next().is_none();
+                let valid_case = no_more_fields && is_valid_mosh_case_id(case_id);
+                let accepted = kind == MOSH_CHECK_COMMAND && valid_case;
+                let case_id = case_id.to_string();
+                input.clear();
+                persist_mosh_input(&input_path, &input)?;
+                if accepted {
+                    fs::write(&event_path, format!("case={case_id}\nresult=passed\n"))?;
+                    writeln!(stdout, "\r\nLTTY_MOSH_CHECK_OK:{case_id}\r")?;
+                } else if valid_case && kind == MOSH_SHELL_COMMAND {
+                    writeln!(stdout, "\r\nLTTY_MOSH_SHELL_START:{case_id}\r")?;
+                    stdout.flush()?;
+                    run_mosh_shell(control_directory, &case_id, false)?;
+                    writeln!(stdout, "\r\nLTTY_MOSH_SHELL_CLOSED:{case_id}\r")?;
+                } else if valid_case && kind == MOSH_TMUX_COMMAND {
+                    writeln!(stdout, "\r\nLTTY_MOSH_TMUX_START:{case_id}\r")?;
+                    stdout.flush()?;
+                    run_mosh_shell(control_directory, &case_id, true)?;
+                    writeln!(stdout, "\r\nLTTY_MOSH_TMUX_CLOSED:{case_id}\r")?;
+                } else if valid_case && kind == MOSH_EDITOR_COMMAND {
+                    writeln!(stdout, "\r\nLTTY_MOSH_EDITOR_START:{case_id}\r")?;
+                    stdout.flush()?;
+                    run_mosh_editor(control_directory, &case_id)?;
+                    writeln!(stdout, "\r\nLTTY_MOSH_EDITOR_CLOSED:{case_id}\r")?;
+                } else if valid_case && kind == MOSH_RESIZE_COMMAND {
+                    let before = fs::read_to_string(&resize_before_path)?;
+                    let (rows, columns) = read_mosh_terminal_size()?;
+                    let after = format!("rows={rows}\ncolumns={columns}\n");
+                    let resize_event = control_directory.join("mosh-resize-event");
+                    write_mosh_terminal_event(
+                        &resize_event,
+                        "resize",
+                        &case_id,
+                        if before != after { "passed" } else { "failed" },
+                        &format!("before={:?}\nafter={:?}\n", before.trim(), after.trim()),
+                    )?;
+                    writeln!(stdout, "\r\nLTTY_MOSH_RESIZE_OK:{case_id}\r")?;
+                } else if valid_case && kind == MOSH_STREAM_COMMAND {
+                    stream_case = Some(case_id.clone());
+                    stdout.write_all(b"\r\nstream> ")?;
+                    stdout.flush()?;
+                    continue;
+                } else if valid_case && kind == MOSH_UNICODE_COMMAND {
+                    let output = run_mosh_unicode(control_directory, &case_id)?;
+                    write!(stdout, "\r\n{output}")?;
+                } else if valid_case && kind == MOSH_SCROLLBACK_COMMAND {
+                    stdout.write_all(b"\r\n")?;
+                    run_mosh_scrollback(control_directory, &case_id, &mut stdout)?;
+                } else if valid_case && kind == MOSH_LESS_COMMAND {
+                    writeln!(stdout, "\r\nLTTY_MOSH_LESS_START:{case_id}\r")?;
+                    stdout.flush()?;
+                    run_mosh_less(control_directory, &case_id)?;
+                    writeln!(stdout, "\r\nLTTY_MOSH_LESS_CLOSED:{case_id}\r")?;
+                } else if valid_case && kind == MOSH_ALTERNATE_COMMAND {
+                    let alternate_event = control_directory.join("mosh-alternate-event");
+                    remove_file_if_present(&alternate_event)?;
+                    stdout.write_all(b"\x1b[?1049h\x1b[2J\x1b[H")?;
+                    writeln!(stdout, "LTTY_MOSH_ALT_ACTIVE:{case_id}\r")?;
+                    writeln!(
+                        stdout,
+                        "Press one controlled key to leave alternate screen.\r"
+                    )?;
+                    stdout.flush()?;
+                    alternate_case = Some(case_id);
+                    continue;
+                } else if valid_case && kind == MOSH_AGENT_COMMAND {
+                    writeln!(stdout, "\r\nLTTY_MOSH_AGENT_START:{case_id}\r")?;
+                    stdout.flush()?;
+                    run_mosh_agent(control_directory, &case_id)?;
+                    writeln!(stdout, "\r\nLTTY_MOSH_AGENT_CLOSED:{case_id}\r")?;
+                } else {
+                    if kernel_echo {
+                        fs::write(
+                            &prediction_event_path,
+                            format!("line={command}\nresult=converged\n"),
+                        )?;
+                    }
+                    writeln!(stdout, "\r\nLTTY_MOSH_COMMAND_REJECTED\r")?;
+                }
+                stdout.write_all(b"mosh> ")?;
+                stdout.flush()?;
+            }
+            0x03 => {
+                input.clear();
+                persist_mosh_input(&input_path, &input)?;
+                stdout.write_all(b"^C\r\nmosh> ")?;
+                stdout.flush()?;
+            }
+            0x08 | 0x7f => {
+                input.pop();
+                persist_mosh_input(&input_path, &input)?;
+            }
+            value if value.is_ascii() && !value.is_ascii_control() && input.len() < 256 => {
+                input.push(value);
+                persist_mosh_input(&input_path, &input)?;
+            }
+            _ => {}
         }
     }
 }
@@ -235,6 +1200,8 @@ struct FixtureServer {
     sftp_delay: Duration,
     sftp_fault: SftpFault,
     direct_tcpip_behavior: DirectTcpipBehavior,
+    mosh_fixture: Option<Arc<MoshFixture>>,
+    peer_address: Option<SocketAddr>,
 }
 
 impl FixtureServer {
@@ -280,7 +1247,13 @@ impl FixtureServer {
             sftp_delay,
             sftp_fault,
             direct_tcpip_behavior,
+            mosh_fixture: None,
+            peer_address: None,
         }
+    }
+
+    fn set_mosh_fixture(&mut self, fixture: MoshFixture) {
+        self.mosh_fixture = Some(Arc::new(fixture));
     }
 
     fn set_input_snapshot_path(&mut self, path: PathBuf) {
@@ -361,7 +1334,10 @@ impl FixtureServer {
 
         eprintln!("auth method=password scenario={scenario:?} result=matched");
         match scenario {
-            Scenario::Password | Scenario::ChannelDenied | Scenario::Navigation => {
+            Scenario::Password
+            | Scenario::ChannelDenied
+            | Scenario::Navigation
+            | Scenario::Mosh => {
                 self.session_scenario = Some(scenario);
                 Auth::Accept
             }
@@ -384,7 +1360,7 @@ impl FixtureServer {
             eprintln!("auth method=publickey scenario=unknown result=reject");
             return Self::reject(&[], false);
         };
-        eprintln!("auth method=publickey scenario={scenario:?} result=verified");
+        eprintln!("auth method=publickey scenario={scenario:?} result=presented");
         match scenario {
             Scenario::PublicKey => Auth::Accept,
             Scenario::PublicKeyPassword => {
@@ -497,7 +1473,8 @@ impl Scenario {
             | Self::PasswordKeyboardInteractive
             | Self::ChannelDenied
             | Self::KeyInstall
-            | Self::Navigation => {
+            | Self::Navigation
+            | Self::Mosh => {
                 if self == Self::KeyInstall {
                     vec![MethodKind::PublicKey, MethodKind::Password]
                 } else {
@@ -535,7 +1512,7 @@ fn interactive_prompt(
 impl Server for FixtureServer {
     type Handler = Self;
 
-    fn new_client(&mut self, _: Option<SocketAddr>) -> Self {
+    fn new_client(&mut self, peer_address: Option<SocketAddr>) -> Self {
         let mut client = Self::with_sftp_root_delay_and_fault(
             Arc::clone(&self.credentials),
             Arc::clone(&self.sftp_root),
@@ -545,6 +1522,8 @@ impl Server for FixtureServer {
         );
         client.input_snapshot_path = self.input_snapshot_path.as_ref().map(Arc::clone);
         client.installed_key_fingerprint = Arc::clone(&self.installed_key_fingerprint);
+        client.mosh_fixture = self.mosh_fixture.as_ref().map(Arc::clone);
+        client.peer_address = peer_address;
         client
     }
 
@@ -768,10 +1747,40 @@ impl Handler for FixtureServer {
     async fn exec_request(
         &mut self,
         channel: ChannelId,
-        _data: &[u8],
+        data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         eprintln!("channel callback=exec scenario={:?}", self.session_scenario);
+        if self.session_scenario == Some(Scenario::Mosh) {
+            let bootstrap_request = parse_mosh_bootstrap_request(data);
+            let bootstrap = match (
+                bootstrap_request,
+                self.mosh_fixture.as_ref(),
+                self.peer_address,
+            ) {
+                (Some(requested), Some(fixture), Some(peer)) => {
+                    fixture.bootstrap(peer, requested).await
+                }
+                _ => Err(io::Error::other(
+                    "invalid controlled Mosh bootstrap request",
+                )),
+            };
+            session.channel_success(channel)?;
+            match bootstrap {
+                Ok(output) => {
+                    session.data(channel, output)?;
+                    session.exit_status_request(channel, 0)?;
+                }
+                Err(error) => {
+                    eprintln!("mosh bootstrap result=failed error={error}");
+                    session.data(channel, b"MOSH FIXTURE ERROR\n".as_slice())?;
+                    session.exit_status_request(channel, 1)?;
+                }
+            }
+            session.eof(channel)?;
+            session.close(channel)?;
+            return Ok(());
+        }
         session.channel_success(channel)?;
         session.data(channel, b"LEANTTY_AUTH_FIXTURE_OK\n".as_slice())?;
         session.exit_status_request(channel, 0)?;
@@ -1404,6 +2413,9 @@ struct Arguments {
     sftp_fault: SftpFault,
     direct_tcpip_behavior: DirectTcpipBehavior,
     server_output_drop_path: Option<PathBuf>,
+    mosh_server_address: Option<IpAddr>,
+    mosh_server_port: Option<u16>,
+    mosh_network_timeout_seconds: u64,
 }
 
 fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Arguments, String> {
@@ -1412,7 +2424,7 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         .unwrap_or_else(|| "ssh-auth-fixture".to_string());
     let usage = || {
         format!(
-            "usage: {executable} <listen-address> <credentials-file> [run-seconds] [ready-file] [sftp-delay-ms] [sftp-fault] [direct-tcpip-target] [server-output-drop-file]"
+            "usage: {executable} <listen-address> <credentials-file> [run-seconds] [ready-file] [sftp-delay-ms] [sftp-fault] [direct-tcpip-target] [server-output-drop-file] [mosh-server-address] [mosh-server-port] [mosh-network-timeout-seconds]"
         )
     };
     let listen = arguments.next().ok_or_else(&usage)?;
@@ -1459,6 +2471,36 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
             Some(PathBuf::from(value))
         }
     });
+    let mosh_server_address = arguments
+        .next()
+        .and_then(|value| (value != "none").then_some(value))
+        .map(|value| {
+            value
+                .parse::<IpAddr>()
+                .map_err(|_| "mosh-server-address must be an IP address".to_string())
+        })
+        .transpose()?;
+    let mosh_server_port = arguments
+        .next()
+        .map(|value| {
+            value
+                .parse::<u16>()
+                .map_err(|_| "mosh-server-port must be an unsigned 16-bit integer".to_string())
+        })
+        .transpose()?
+        .and_then(|value| (value != 0).then_some(value));
+    let mosh_network_timeout_seconds = arguments
+        .next()
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| "mosh-network-timeout-seconds must be an unsigned integer".to_string())
+        })
+        .transpose()?
+        .unwrap_or(MOSH_FIXTURE_NETWORK_TIMEOUT_SECONDS);
+    if !(1..=7200).contains(&mosh_network_timeout_seconds) {
+        return Err("mosh-network-timeout-seconds must be between 1 and 7200".to_string());
+    }
     if arguments.next().is_some() {
         return Err(usage());
     }
@@ -1471,6 +2513,9 @@ fn parse_arguments(mut arguments: impl Iterator<Item = String>) -> Result<Argume
         sftp_fault,
         direct_tcpip_behavior,
         server_output_drop_path,
+        mosh_server_address,
+        mosh_server_port,
+        mosh_network_timeout_seconds,
     })
 }
 
@@ -1522,6 +2567,17 @@ fn spawn_server_output_drop_proxy(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut raw_arguments = env::args();
+    let _executable = raw_arguments.next();
+    if raw_arguments.next().as_deref() == Some(MOSH_TERMINAL_SUBCOMMAND) {
+        let control_directory = raw_arguments
+            .next()
+            .ok_or("mosh terminal control directory is missing")?;
+        if raw_arguments.next().is_some() {
+            return Err("mosh terminal accepts exactly one control directory".into());
+        }
+        return run_mosh_terminal(Path::new(&control_directory)).map_err(Into::into);
+    }
     let arguments = parse_arguments(env::args()).map_err(|error| error.to_string())?;
     let sftp_root = arguments
         .credentials_path
@@ -1569,6 +2625,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arguments.sftp_fault,
         arguments.direct_tcpip_behavior,
     );
+    if let Some(server_address) = arguments.mosh_server_address {
+        if !server_address.is_ipv4() {
+            return Err("controlled Mosh fixture currently requires IPv4".into());
+        }
+        fixture.set_mosh_fixture(MoshFixture {
+            server_address,
+            ssh_port: address.port(),
+            udp_port: arguments.mosh_server_port,
+            network_timeout_seconds: arguments.mosh_network_timeout_seconds,
+            control_directory: Arc::new(
+                arguments
+                    .credentials_path
+                    .parent()
+                    .ok_or("fixture credentials path has no parent")?
+                    .to_path_buf(),
+            ),
+            executable_path: Arc::new(env::current_exe()?),
+            previous_session_key: Arc::new(Mutex::new(None)),
+            next_session_index: Arc::new(AtomicU64::new(0)),
+        });
+    }
     fixture.set_input_snapshot_path(input_snapshot_path);
     fixture.clear_fixture_input()?;
     let running = fixture.run_on_socket(config, &socket);
@@ -1592,7 +2669,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::id()
     );
     println!(
-        "users={USER_PASSWORD},{USER_PUBLICKEY},{USER_PASSWORD_KBDINT},{USER_PUBLICKEY_PASSWORD},{USER_PUBLICKEY_KBDINT},{USER_KBDINT_MULTIROUND},{USER_KBDINT_ZERO},{USER_UNSUPPORTED},{USER_CHANNEL_DENIED},{USER_NAVIGATION},{USER_NAVIGATION_TWO},{USER_NAVIGATION_THREE}"
+        "users={USER_PASSWORD},{USER_PUBLICKEY},{USER_PASSWORD_KBDINT},{USER_PUBLICKEY_PASSWORD},{USER_PUBLICKEY_KBDINT},{USER_KBDINT_MULTIROUND},{USER_KBDINT_ZERO},{USER_UNSUPPORTED},{USER_CHANNEL_DENIED},{USER_NAVIGATION},{USER_NAVIGATION_TWO},{USER_NAVIGATION_THREE},{USER_MOSH}"
     );
     running.await?;
     Ok(())
@@ -1602,6 +2679,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::error::Error;
+
+    #[test]
+    fn prediction_fixture_uses_kernel_echo_without_changing_other_scenarios() {
+        assert_eq!(mosh_terminal_stty_args(true), Vec::<&'static str>::new());
+        assert_eq!(
+            mosh_terminal_stty_args(false),
+            ["-icanon", "-echo", "min", "1", "time", "0"]
+        );
+    }
+
+    #[test]
+    fn names_concurrent_mosh_control_directories_without_session_secrets() {
+        assert_eq!(mosh_session_control_name(1), "mosh-session-1");
+        assert_eq!(mosh_session_control_name(42), "mosh-session-42");
+    }
+
+    #[test]
+    fn prediction_relay_rewrites_only_the_authenticated_bootstrap_port() {
+        let stdout = b"noise\nMOSH CONNECT 60001 4NeCCgvZFe2RnPgrcU1PQw\n";
+        assert_eq!(
+            rewrite_mosh_bootstrap_port(stdout, 60001, 61000).unwrap(),
+            b"noise\nMOSH CONNECT 61000 4NeCCgvZFe2RnPgrcU1PQw\n"
+        );
+        assert!(rewrite_mosh_bootstrap_port(stdout, 60002, 61000).is_err());
+    }
+
+    #[test]
+    fn accepts_only_the_product_mosh_bootstrap_server_and_port_contract() {
+        let default_prefix =
+            format!("{MOSH_BOOTSTRAP_COMMAND_PREFIX}{MOSH_DEFAULT_SERVER}{MOSH_SERVER_ARGUMENTS}");
+        let custom_prefix =
+            format!("{MOSH_BOOTSTRAP_COMMAND_PREFIX}/usr/bin/mosh-server{MOSH_SERVER_ARGUMENTS}");
+        let dynamic = format!("{default_prefix}'");
+        let fixed = format!("{default_prefix} -p 60042'");
+        let range = format!("{custom_prefix} -p 60042:60049'");
+
+        assert_eq!(
+            parse_mosh_bootstrap_request(dynamic.as_bytes()),
+            Some(MoshBootstrapRequest {
+                server_path: None,
+                port: None,
+            })
+        );
+        assert_eq!(
+            parse_mosh_bootstrap_request(fixed.as_bytes()),
+            Some(MoshBootstrapRequest {
+                server_path: None,
+                port: Some(MoshPortRequest {
+                    start: 60042,
+                    end: 60042
+                })
+            })
+        );
+        assert_eq!(
+            parse_mosh_bootstrap_request(range.as_bytes()),
+            Some(MoshBootstrapRequest {
+                server_path: Some("/usr/bin/mosh-server".to_string()),
+                port: Some(MoshPortRequest {
+                    start: 60042,
+                    end: 60049
+                })
+            })
+        );
+        for invalid in [
+            format!("{default_prefix} -p 0'"),
+            format!("{default_prefix} -p 60050:60042'"),
+            format!("{default_prefix} -p 60042 extra'"),
+            format!("{default_prefix} --port 60042'"),
+            format!("{MOSH_BOOTSTRAP_COMMAND_PREFIX}mosh-server;id{MOSH_SERVER_ARGUMENTS}'"),
+            format!("{MOSH_BOOTSTRAP_COMMAND_PREFIX}/opt/../mosh-server{MOSH_SERVER_ARGUMENTS}'"),
+            format!("{custom_prefix} extra'"),
+        ] {
+            assert_eq!(parse_mosh_bootstrap_request(invalid.as_bytes()), None);
+        }
+    }
 
     use russh::client;
     use tokio::io::AsyncReadExt;
@@ -1828,6 +2980,54 @@ mod tests {
             .map(str::to_string),
         );
         assert!(invalid_target.is_err());
+
+        let mosh = parse_arguments(
+            [
+                "fixture",
+                "0.0.0.0:22222",
+                "/tmp/credentials",
+                "900",
+                "/tmp/ready",
+                "0",
+                "none",
+                "none",
+                "none",
+                "192.0.2.10",
+                "60042",
+                "300",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert_eq!(
+            mosh.mosh_server_address,
+            Some("192.0.2.10".parse().unwrap())
+        );
+        assert_eq!(mosh.mosh_server_port, Some(60042));
+        assert_eq!(mosh.mosh_network_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn parses_only_one_complete_mosh_session_record() {
+        let stdout = b"MOSH CONNECT 60042 4NeCCgvZFe2RnPgrcU1PQw\n";
+        let stderr = b"mosh-server (mosh 1.4.0)\n[mosh-server detached, pid = 4242]\n";
+        assert_eq!(
+            parse_mosh_session_metadata(stdout, stderr).unwrap(),
+            (60042, 4242)
+        );
+        assert_eq!(
+            parse_mosh_session_key(stdout).unwrap(),
+            "4NeCCgvZFe2RnPgrcU1PQw"
+        );
+        assert!(parse_mosh_session_metadata(b"MOSH CONNECT 60042 short\n", stderr).is_err());
+        assert!(parse_mosh_session_key(b"MOSH CONNECT 60042 short\n").is_err());
+        assert!(parse_mosh_session_metadata(
+            b"MOSH CONNECT 60042 4NeCCgvZFe2RnPgrcU1PQw\n\
+MOSH CONNECT 60043 4NeCCgvZFe2RnPgrcU1PQw\n",
+            stderr
+        )
+        .is_err());
     }
 
     #[test]
@@ -1878,6 +3078,17 @@ mod tests {
         let mut fixture = FixtureServer::new(credentials());
         assert_accept(fixture.password(USER_CHANNEL_DENIED, "password-value"));
         assert_eq!(fixture.session_scenario, Some(Scenario::ChannelDenied));
+
+        let mut fixture = FixtureServer::new(credentials());
+        assert_reject(
+            fixture.public_key(USER_MOSH),
+            &[MethodKind::Password],
+            false,
+        );
+        assert_eq!(fixture.session_scenario, None);
+        let mut fixture = FixtureServer::new(credentials());
+        assert_accept(fixture.password(USER_MOSH, "password-value"));
+        assert_eq!(fixture.session_scenario, Some(Scenario::Mosh));
     }
 
     #[test]

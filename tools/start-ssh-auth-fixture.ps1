@@ -17,6 +17,9 @@ param(
     [string]$SftpFault = 'none',
     [string]$DirectTcpipTarget = 'none',
     [switch]$EnableServerOutputDrop,
+    [string]$MoshServerAddress = '',
+    [ValidateRange(0, 65535)][int]$MoshServerPort = 0,
+    [ValidateRange(1, 7200)][int]$MoshNetworkTimeoutSeconds = 30,
     [string]$ControlDirectory = '',
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO
 )
@@ -24,6 +27,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+
+if (-not [string]::IsNullOrWhiteSpace($MoshServerAddress)) {
+    $parsedMoshAddress = $null
+    if (-not [Net.IPAddress]::TryParse($MoshServerAddress, [ref]$parsedMoshAddress) -or
+        $parsedMoshAddress.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) {
+        throw 'MoshServerAddress must be one IPv4 address'
+    }
+}
 
 function New-FixtureSecret {
     $bytes = [byte[]]::new(16)
@@ -65,6 +76,9 @@ try {
 
     $wslCredentialsPath = ConvertTo-LeanTTYWslPath -WindowsPath $credentialsPath -Distribution $Distribution
     $wslReadyPath = ConvertTo-LeanTTYWslPath -WindowsPath $readyPath -Distribution $Distribution
+    $wslAgentCompatibilityTool = ConvertTo-LeanTTYWslPath `
+        -WindowsPath (Join-Path $PSScriptRoot 'agent-compatibility-wsl.sh') `
+        -Distribution $Distribution
     $wslServerOutputDropPath = 'none'
     if ($EnableServerOutputDrop) {
         $serverOutputDropPath = Join-Path $fixtureDirectory 'drop-server-output'
@@ -75,15 +89,20 @@ try {
     Write-Host "Temporary fixture directory: $fixtureDirectory" -ForegroundColor Yellow
     Write-Host 'Credentials are available only in server-credentials while this process is running.'
     Write-Host ('Users: password, publickey, key-install, password-kbdint, publickey-password, ' +
-        'publickey-kbdint, kbdint-multiround, kbdint-zero, unsupported, channel-denied')
+        'publickey-kbdint, kbdint-multiround, kbdint-zero, unsupported, channel-denied, mosh')
     Write-Host 'Stop with Ctrl+C; temporary credentials will be removed.'
 
-    Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -Distribution $Distribution -CargoArguments @(
+    Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -Distribution $Distribution `
+        -Environment @{ LEANTTY_MOSH_AGENT_TOOL = $wslAgentCompatibilityTool } `
+        -CargoArguments @(
         'run', '--locked', '--offline', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty-ssh-auth-fixture', '--', $ListenAddress, $wslCredentialsPath,
         $RunSeconds.ToString([Globalization.CultureInfo]::InvariantCulture), $wslReadyPath,
         $SftpDelayMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture),
-        $SftpFault, $DirectTcpipTarget, $wslServerOutputDropPath
+        $SftpFault, $DirectTcpipTarget, $wslServerOutputDropPath,
+        $(if ([string]::IsNullOrWhiteSpace($MoshServerAddress)) { 'none' } else { $MoshServerAddress }),
+        $MoshServerPort.ToString([Globalization.CultureInfo]::InvariantCulture),
+        $MoshNetworkTimeoutSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
     )
 } finally {
     if (Test-Path -LiteralPath $fixtureDirectory) {
