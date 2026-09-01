@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.0] - In development
+
 ## [1.5.1] - 2026-08-28
 
 ### Fixed
