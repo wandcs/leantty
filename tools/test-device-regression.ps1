@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 
@@ -158,6 +159,9 @@ Assert-Throws -Action {
 
 Assert-True (Test-HdcCommandFailure -Output '[E001005] target disconnected') (
     'HDC standard error code was not recognized as a failed command'
+)
+Assert-True (Test-HdcCommandFailure -Output 'Max tag count is 10 [CODE: -42]') (
+    'HarmonyOS command error code was not recognized as a failed command'
 )
 Assert-True (-not (Test-HdcCommandFailure -Output 'Forwardport result:OK')) (
     'Successful HDC output was classified as a failure'
@@ -600,9 +604,50 @@ $deviceRegressionText = Get-Content -LiteralPath (
 $authFixtureLauncherText = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'start-ssh-auth-fixture.ps1'
 ) -Raw
+$authFixtureSourceText = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'leantty_ssh\ssh-auth-fixture\src\main.rs'
+) -Raw
 Assert-True (
     $authFixtureLauncherText.Contains('[ValidateRange(1, 7200)]')
 ) 'SSH authentication fixture does not allow the bounded full acceptance budget'
+Assert-True (
+    $authFixtureLauncherText.Contains('[string]$MoshServerAddress') -and
+    $authFixtureLauncherText.Contains('[int]$MoshServerPort = 0') -and
+    $authFixtureLauncherText.Contains('MoshServerAddress must be one IPv4 address') -and
+    $authFixtureLauncherText.Contains("channel-denied, mosh'")
+) 'SSH authentication fixture launcher lacks the opt-in IPv4 Mosh endpoint contract'
+Assert-True (
+    $authFixtureSourceText.Contains(
+        'const MOSH_FIXTURE_NETWORK_TIMEOUT_SECONDS: u64 = 30;'
+    )
+) 'Controlled Mosh fixture network timeout can no longer distinguish graceful close from fallback cleanup'
+Assert-True (
+    $authFixtureSourceText.Contains('const MOSH_SHELL_COMMAND: &str = "ltty-mosh-shell";') -and
+    $authFixtureSourceText.Contains('const MOSH_TMUX_COMMAND: &str = "ltty-mosh-tmux";') -and
+    $authFixtureSourceText.Contains('const MOSH_EDITOR_COMMAND: &str = "ltty-mosh-editor";') -and
+    $authFixtureSourceText.Contains('const MOSH_RESIZE_COMMAND: &str = "ltty-mosh-resize";') -and
+    $authFixtureSourceText.Contains('const MOSH_STREAM_INPUT_BYTES: usize = 512;') -and
+    $authFixtureSourceText.Contains('parse_mosh_bootstrap_request') -and
+    $authFixtureSourceText.Contains('mosh-server returned a port outside the requested range') -and
+    $authFixtureSourceText.Contains('StdCommand::new("/bin/bash")') -and
+    $authFixtureSourceText.Contains('StdCommand::new("tmux")') -and
+    $authFixtureSourceText.Contains('StdCommand::new("vim")') -and
+    $authFixtureSourceText.Contains('control_directory.join("mosh-terminal-pid")') -and
+    $authFixtureSourceText.Contains('control_directory.join("mosh-kernel-echo")') -and
+    $authFixtureSourceText.Contains('.join("mosh-prediction-relay")') -and
+    $authFixtureSourceText.Contains('.join("mosh-prediction-relay-paused")') -and
+    $authFixtureSourceText.Contains('.join("mosh-prediction-relay-stats")') -and
+    $authFixtureSourceText.Contains('control_directory.join("mosh-prediction-event")') -and
+    $authFixtureSourceText.Contains('StdCommand::new("/bin/sh")') -and
+    $authFixtureSourceText.Contains('.env("PS1", "MOSH_SESSION> ")') -and
+    $authFixtureSourceText.Contains('.env("LTTY_MOSH_PREDICTION_EVENT", &prediction_event_path)') -and
+    $authFixtureSourceText.Contains('rewrite_mosh_bootstrap_port') -and
+    $authFixtureSourceText.Contains('MOSH_PREDICTION_RELAY_DELAY') -and
+    $authFixtureSourceText.Contains('forward_mosh_prediction_client_datagrams') -and
+    $authFixtureSourceText.Contains('forward_mosh_prediction_server_datagrams') -and
+    $authFixtureSourceText.Contains('mosh_terminal_stty_args(kernel_echo)') -and
+    -not $authFixtureSourceText.Contains('if prediction_echo_path.is_file()')
+) 'Controlled Mosh fixture no longer launches the real shell, tmux, editor, resize and stream workloads'
 Assert-True (
     $deviceRegressionText -notmatch 'hilog\s+-x[^\r\n]*\s-z\s'
 ) 'Device log query combines mutually exclusive hilog exit and tail modes'
@@ -702,7 +747,8 @@ $deviceRegressionSource = Get-Content -LiteralPath (
 Assert-True (
     $deviceRegressionSource.Contains(
         '-T SessionViewModel,KeyCommandService,SshClient,FileTransferClient,EntryAbility,Index'
-    )
+    ) -and
+    $deviceRegressionSource.Contains('-T MoshClient')
 ) 'Device application log capture omits authentication or window lifecycle events'
 
 $splitLayout = @'
@@ -777,7 +823,8 @@ foreach ($scriptName in @(
     'verify-background-bell-notification-pc.ps1',
     'verify-background-bell-permission-pc.ps1',
     'verify-long-task-notification-pc.ps1',
-    'verify-proxy-jump-pc.ps1'
+    'verify-proxy-jump-pc.ps1',
+    'verify-mosh-pc.ps1'
 )) {
     $scriptPath = Join-Path $PSScriptRoot $scriptName
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
@@ -1243,6 +1290,280 @@ foreach ($scriptName in @(
     }
 }
 
+$moshParser = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\model\command\CommandParser.ets'
+) -Raw
+$moshClient = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\model\mosh\MoshClient.ets'
+) -Raw
+$moshSessionViewModel = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
+) -Raw
+$moshNativeTypes = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\cpp\types\libleantty_ssh\index.d.ts'
+) -Raw
+$moshNative = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'leantty_ssh\src\lib.rs'
+) -Raw
+$moshManifest = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'leantty_ssh\Cargo.toml'
+) -Raw
+$acceptanceSource = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'tools\acceptance-source.ps1'
+) -Raw
+foreach ($predictionContract in @(
+    @{ Source = $moshParser; Text = 'MoshPredictionMode.ADAPTIVE' },
+    @{ Source = $moshParser; Text = "word.startsWith('--predict=')" },
+    @{ Source = $moshParser; Text = 'Mosh prediction mode must be adaptive, always or never' },
+    @{ Source = $moshClient; Text = 'predictionMode: MoshPredictionMode' },
+    @{ Source = $moshClient; Text = 'predictionMode,' },
+    @{ Source = $moshSessionViewModel; Text = 'predictionMode: MoshPredictionMode = this.moshPredictionMode' },
+    @{ Source = $moshSessionViewModel; Text = 'result.moshServerPath, result.moshPredictionMode' },
+    @{ Source = $moshNativeTypes; Text = 'predictionMode: string' },
+    @{ Source = $moshNative; Text = 'connect_with_prediction_mode' },
+    @{ Source = $moshNative; Text = 'mosh_prediction_mode(&prediction_mode)' },
+    @{ Source = $moshManifest; Text = 'e1346b3dfce5c38b95ef43d78cfb3d73529f00e5' },
+    @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_MOSH_OUTPUT mode=' },
+    @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' }
+)) {
+    Assert-True ($predictionContract.Source.Contains($predictionContract.Text)) (
+        "Mosh prediction pass-through omitted contract: $($predictionContract.Text)"
+    )
+}
+
+$moshVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-mosh-pc.ps1'
+) -Raw
+$moshNetwork = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'configure-mosh-test-network.ps1'
+) -Raw
+foreach ($networkContract in @(
+    "[ValidateSet('Enable', 'Status', 'Disable')]",
+    '[int]$ExternalSshPort = 2223',
+    '[int]$BackendSshPort = 32223',
+    "`$udpPortRange = '60000-61000'",
+    "'LeanTTY-Mosh-Test-SSH-2223'",
+    "'LeanTTY-Mosh-Test-UDP-60000-61000'",
+    "'LeanTTY-Mosh-Test-UDP-60042'",
+    '$migratedLegacy',
+    "'{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'",
+    'Refusing to overwrite drifted Mosh test network state',
+    'netsh interface portproxy add v4tov4',
+    'netsh interface portproxy delete v4tov4',
+    'New-NetFirewallRule',
+    'New-NetFirewallHyperVRule',
+    'existingSsh2222Untouched = $true'
+)) {
+    Assert-True ($moshNetwork.Contains($networkContract)) (
+        "Persistent Mosh test network omitted contract: $networkContract"
+    )
+}
+foreach ($moshContract in @(
+    'real stock',
+    "'start-ssh-auth-fixture.ps1'",
+    "'preflight-device.ps1'",
+    "'dev-pc.ps1'",
+    "'mosh-input-snapshot'",
+    "'mosh-event'",
+    "'server-input-exact-before-enter'",
+    '$moshUdpPortMin = 60000',
+    '$moshUdpPortMax = 61000',
+    'Resolve-MoshRemoteScope',
+    "'configure-mosh-test-network.ps1'",
+    '-Mode Status',
+    '[int]$FixtureBackendPort = 32223',
+    "'-MoshNetworkTimeoutSeconds', `$moshNetworkTimeoutSeconds",
+    'serverNetworkTimeoutSeconds = $moshNetworkTimeoutSeconds',
+    'FixtureBackendPort must differ from the external FixturePort',
+    "[ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'abnormal-exit', 'pane-close', 'session-isolation', 'pause-recovery', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]",
+    "'mosh-session-isolation'",
+    'controlName=',
+    'mosh-session-[1-9][0-9]*',
+    'Clear-MoshLatestSessionMetadata',
+    '-ControlDirectory $leftMoshControlDirectory',
+    '-ControlDirectory $rightMoshControlDirectory',
+    "Submit-MoshChildInput -Text 'ltty-exit' -Name 'ssh-mosh-ssh-exit'",
+    "mutatedByScenario = (`$Scenario -in @('pause-recovery', 'prediction'))",
+    'persistentStateMutatedByScenario = $false',
+    'persistentNetworkPreserved = $networkStateReady',
+    'localPromptReady = $localPromptReady',
+    'uitest uiInput keyEvent 2072 2047 2006',
+    'Assert-MoshTerminalSurfaceFocused',
+    "'mosh-physical-key-focus.json'",
+    '-KeyCode 2044',
+    'Wait-WslProcessAbsent',
+    '-LinuxPid $moshServerPid -TimeoutSeconds 8',
+    'authenticatedGracefulClose = $authenticatedGracefulClose',
+    'gracefulServerExitElapsedMs = $gracefulServerExitElapsedMs',
+    '"stock-default-dynamic-$moshUdpPortMin-$moshUdpPortMax"',
+    'mosh -p $fixedUdpPortStart`:$fixedUdpPortEnd $alias',
+    'endpointMatchesRequest = $udpEndpointMatchesRequest',
+    'controlled-mosh-fixed-udp-range-selected-and-disconnected',
+    'mosh --server=/usr/bin/mosh-server $alias',
+    'serverPathMatchesRequest = $serverPathMatchesRequest',
+    'controlled-mosh-server-path-selected-and-disconnected',
+    'mosh --predict=always $alias',
+    'mosh --predict=never $alias',
+    'alwaysVisibleBeforeAuthority = $predictionAlwaysVisibleBeforeAuthority',
+    'neverHiddenBeforeAuthority = $predictionNeverHiddenBeforeAuthority',
+    'normal-pty-kernel-echo-real-interactive-shell',
+    'predictionRttBaselineMs =',
+    'predictionConfirmationThresholdMs =',
+    'controlledOneWayDelayMs =',
+    'fixture-owned-bidirectional-40ms-udp-relay',
+    'fixture-udp-relay-bidirectional-pause',
+    'mosh-prediction-relay-paused',
+    'mosh-prediction-relay-stats',
+    'mosh-prediction-event',
+    'Wait-MoshPredictionRelayDrop',
+    'Submit-MoshCanonicalCommand',
+    'predictionRelayDroppedPackets =',
+    'predictionVisibleLatencyMs =',
+    'predictionRenderLatencyMs =',
+    'predictionWarmupSamples =',
+    "@('uiInput', 'text', `$Text)",
+    'Prediction measurement was invalidated by a terminal resize',
+    'actual-vt-output-below-measured-rtt',
+    'one-printable-ascii-visible-before-udp-recovery',
+    'bytes=[1-9][0-9]*',
+    'controlled-mosh-prediction-modes-visible-and-isolated',
+    'controlled-mosh-zero-model-real-codex-tui-completed',
+    'representativeAgentTui = $agentCompatibilityPassed',
+    "plannedModelRequests = 0",
+    "'agent-compatibility-wsl.sh'",
+    'codex-direct-interaction.json',
+    'active-mosh-page-survived-arkweb-surface-rebuild-and-restored-the-original-page',
+    'Invoke-MoshSurfaceRebuild',
+    'moshPageRetainedAfterRebuild = $surfaceRebuildPageRetained',
+    'injected-mosh-session-error-restored-the-original-page-and-rejected-session-output',
+    "-Pattern 'ACCEPTANCE_MOSH_ERROR state=injected'",
+    'moshErrorObserved = $abnormalExitObserved',
+    'originalPageRestored = $originalPageRestoredAfterSession',
+    'moshPageDiscarded = $moshPageDiscardedAfterSession',
+    'active-mosh-pane-closed-and-surviving-pane-started-an-isolated-session',
+    'two-mosh-and-ssh-mosh-concurrent-sessions-kept-state-terminal-input-output-and-cleanup-isolated',
+    'twoMoshKeysDistinct = $sessionIsolationKeysDistinct',
+    'twoMoshOutputIsolated = $twoMoshOutputIsolated',
+    'closingOneMoshPreservedTheOther = $twoMoshCloseIsolated',
+    'sshMoshOutputIsolated = $sshMoshOutputIsolated',
+    'closingMoshPreservedSsh = $sshMoshCloseIsolated',
+    'Focus-MoshPane -Side',
+    'Concurrent Mosh Panes reused one bootstrap encryption key',
+    'closedPaneOutputAbsentFromSurvivor = $paneCloseOldOutputAbsent',
+    'survivingPaneCommandPassed = $paneCloseSurvivorCommandPassed',
+    'Close-ActiveMoshPane',
+    'Wait-MoshPaneCount -Count 1',
+    '-Query "LTTY_MOSH_CHECK_OK:$caseId" -ExpectMatch $false',
+    "'pane-close-surviving-session-command-passed'",
+    'selectedUdpPort = $moshServerPort',
+    'realShell = $shellCompatibilityPassed',
+    'tmux = $tmuxCompatibilityPassed',
+    'basicEditor = $editorCompatibilityPassed',
+    'Wait-ControlFile -Path $fixtureShellReady',
+    'Wait-ControlFile -Path $fixtureTmuxReady',
+    'Wait-ControlFile -Path $fixtureEditorReady',
+    'remotePtyResize = $resizeCompatibilityPassed',
+    'sustainedInputOutput = $streamCompatibilityPassed',
+    'utf8WideAndCombiningOutput = $unicodeCompatibilityPassed',
+    'unicodeScreenshotCaptured = (-not [string]::IsNullOrWhiteSpace($unicodeScreenshot))',
+    'interactiveLargeOutputAndScrollback = $scrollbackCompatibilityPassed',
+    'scrollbackBottomObservedInTerminal = $scrollbackBottomObserved',
+    'scrollbackTopAbsentUnderMoshStateSync = $scrollbackTopAbsent',
+    'realLess = $lessCompatibilityPassed',
+    'lessFirstLineObservedAfterHome = $lessFirstLineObserved',
+    'lessLastLineObservedAfterEnd = $lessLastLineObserved',
+    'alternateScreenEnterExit = $alternateScreenCompatibilityPassed',
+    'alternateScreenPriorContentSearchableAfterExit = $alternateScreenHistoryRetained',
+    'mosh-alternate-active.png',
+    'mosh-alternate-closed.png',
+    "largeOutputContract = 'paced-terminal-state-output-with-observed-local-scrollback-boundary'",
+    'bootstrapTextAbsentFromTerminal = $bootstrapTerminalAbsent',
+    'preferencesUnchanged = $preferencesUnchanged',
+    'streamInputBytes = 512',
+    "tc qdisc add dev `$udpImpairmentInterface clsact",
+    "tc qdisc del dev `$udpImpairmentInterface clsact",
+    'flower ip_proto udp dst_port $moshServerPort action drop',
+    'flower ip_proto udp src_port $moshServerPort action drop',
+    '& wsl.exe @prefix --exec kill -KILL $moshServerPid',
+    "-Pattern 'Mosh reachability state=interrupted reason=no_recent_contact'",
+    "-Pattern 'Mosh reachability state=responsive transition=recovered'",
+    "shell 'power-shell suspend'",
+    "shell 'power-shell wakeup'",
+    'sameAppProcessAfterResume = $sameAppProcessAfterResume',
+    'initialAppProcessId = $initialAppProcessId',
+    'resumedAppProcessId = $resumedAppProcessId',
+    'remoteShellAliveAtProcessChange = $remoteShellAliveAtProcessChange',
+    'serverAliveAtProcessChange = $serverAliveAtProcessChange',
+    'recoveryInputMethod = $recoveryInputMethod',
+    'systemSuspendMs = $systemSuspendMs',
+    'resumeCommandElapsedMs = $resumeCommandElapsedMs',
+    'operator-physical-lid-close-open-and-unlock-preserved-the-mosh-session-and-remote-shell',
+    'operator-physical-lid-close-open-then-manual-unlock',
+    'physicalLidExercised =',
+    'UnavailableCountsAsLocked',
+    'Write-LiveStatus -Stage "await-$operatorStage-close"',
+    'Write-LiveStatus -Stage "await-$operatorStage-open-unlock"',
+    "'lid_' + `$attemptId.Substring(0, 10)",
+    "`$recoveryInputMethod = 'harmony-uitest-targeted-inputText'",
+    'operatorLockObserved = $operatorLockObserved',
+    'operatorUnlockObserved = $operatorUnlockObserved',
+    'mosh-retry-interrupt-focus-$attempt.json',
+    'Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $targetId',
+    'interruptionObserved = $interruptionObserved',
+    'interruptionReason = $interruptionReason',
+    'recoveredStatusObserved = $recoveredStatusObserved',
+    'recoveryCommandPassed = $recoveryCommandPassed',
+    'remoteShellAliveAfter = $remoteShellAliveAfter',
+    'userCloseRequired = $userCloseRequired',
+    'localCloseElapsedMs = $localCloseElapsedMs',
+    'impairmentCleanupVerified = $udpImpairmentCleanupVerified',
+    "-Query 'MOSH CONNECT' -ExpectMatch `$false",
+    "'failure-fixture-stderr.log'",
+    "'failure-fixture-stdout.log'",
+    "'failure-device-lifecycle.log'",
+    "hilog -z 30000 | grep -E '`$remotePattern' | ",
+    "grep -E 'Ability on|AppMgr|Process|Kill|Terminate|Fault|APP_CRASH|",
+    'MOSH CONNECT\s+\d+\s+[A-Za-z0-9+/]{22}',
+    'acceptanceEligible = $false',
+    'temporaryDirectoryRemoved'
+)) {
+    Assert-True ($moshVerifier.Contains($moshContract)) (
+        "Mosh physical diagnostic omitted contract: $moshContract"
+    )
+}
+Assert-True (
+    -not $moshVerifier.Contains('pane-output-and-xterm-write-ack-after-four-authoritative-warmup-characters')
+) 'Mosh prediction verifier still treats a fixed warmup count as confirmed prediction evidence'
+Assert-True (
+    -not $moshVerifier.Contains("@('uiInput', 'keyEvent', 2072, 2019)")
+) 'Mosh input retry still uses a UiTest chord that does not reliably clear the remote line'
+Assert-True (
+    -not ($moshSessionViewModel -match 'this\.moshClient\.resize\(this\.lastCols, this\.lastRows\)')
+) 'Mosh connected handling still repeats the initial terminal size and resets the prediction epoch'
+Assert-True (
+    $moshVerifier.Contains('Mosh prediction Ctrl+U injection') -and
+    $moshVerifier.Contains("@('uiInput', 'keyEvent', 2072, 2037)") -and
+    $moshVerifier.Contains('function Submit-MoshShellMarker') -and
+    $moshVerifier.Contains('Submit-MoshCanonicalCommand -Text "touch -- $WslPath"') -and
+    $moshVerifier.Contains("'^/[A-Za-z0-9_./-]+$'") -and
+    $moshVerifier.Contains('Wait-ControlFile -Path $WindowsPath') -and
+    $moshVerifier.Contains('-WslPath "$fixturePredictionEventWsl-main"')
+) 'Mosh prediction verifier no longer reserves a shell-safe authoritative marker for post-recovery convergence'
+Assert-True (
+    $moshVerifier.Contains('controlled-mosh-terminal-compatibility-and-disconnect-completed') -and
+    $moshVerifier.Contains('deviceStateRemoved = $deviceStateCleaned') -and
+    $moshVerifier.Contains('fixtureProcessesAbsent = $fixtureCleaned') -and
+    $moshVerifier.Contains('$script:deviceStateCleaned = $true') -and
+    $moshVerifier.Contains('$script:fixtureCleaned = $true') -and
+    -not $moshVerifier.Contains('New-NetFirewallRule') -and
+    -not $moshVerifier.Contains('Remove-NetFirewallRule') -and
+    -not $moshVerifier.Contains('portproxy add') -and
+    -not $moshVerifier.Contains('portproxy delete') -and
+    -not $moshVerifier.Contains("'-MoshServerPort'") -and
+    -not $moshVerifier.Contains("-Pattern 'ACCEPTANCE_INPUT_SUBMIT'") -and
+    -not $moshVerifier.Contains('MOSH_KEY=')
+) 'Mosh physical diagnostic lacks a content-free verdict or paired cleanup contract'
+
 $sshMatrixPath = Join-Path $PSScriptRoot 'verify-ssh-matrix-pc.ps1'
 Assert-True (Test-Path -LiteralPath $sshMatrixPath -PathType Leaf) (
     'Formal SSH physical matrix orchestrator is missing'
@@ -1283,7 +1604,7 @@ $hostIdentityVerifier = Get-Content -LiteralPath (
 ) -Raw
 foreach ($hostIdentityContract in @(
     'Get-LeanTTYDeviceUnlockPasswordPath',
-    "`$keyName = 'ltty_reg_' + `$runSuffix",
+    "`$keyName = if (`$DefaultEcdsa)",
     "`$fixtureUser = 'key-install'",
     "'start-ssh-auth-fixture.ps1'",
     'Read-LeanTTYFixtureReadiness',
@@ -1323,6 +1644,47 @@ Assert-True (
     -not $hostIdentityVerifier.Contains('/usr/sbin/sshd') -and
     $hostIdentityVerifier.Contains('/.ssh/authorized_keys')
 ) 'Host Identity OpenSSH compatibility mode lacks bounded account setup, proof, or cleanup'
+Assert-True (
+    $hostIdentityVerifier.Contains('[switch]$DefaultEcdsa') -and
+    $hostIdentityVerifier.Contains('-DefaultEcdsa requires -OpenSshCompatibility') -and
+    $hostIdentityVerifier.Contains("`$keyName = if (`$DefaultEcdsa) { 'id_ecdsa' }") -and
+    $hostIdentityVerifier.Contains('key import $ecdsaImportPath $keyName') -and
+    $hostIdentityVerifier.Contains('default-ecdsa-authenticated-before-restart') -and
+    $hostIdentityVerifier.Contains('default-ecdsa-authenticated-after-restart') -and
+    $hostIdentityVerifier.Contains('temporary-account-authorized-only-id-ecdsa') -and
+    $hostIdentityVerifier.Contains('independentEcdsaSourceAbsenceAudit')
+) 'Host Identity verifier lacks the isolated default id_ecdsa compatibility scenario'
+Assert-True (
+    $hostIdentityVerifier.Contains('function Test-HostIdentityDefaultKeyFilesPresent') -and
+    $hostIdentityVerifier.Contains(
+        "`$KeyName -notin @('id_ed25519', 'id_rsa', 'id_ecdsa')"
+    ) -and
+    $hostIdentityVerifier.Contains('Test-HostIdentityDefaultKeyFilesPresent')
+) 'Host Identity default-key inspection bypasses the bounded standard-name guard'
+Assert-True (
+    $hostIdentityVerifier.Contains(
+        "foreach (`$defaultName in @('id_ed25519', 'id_rsa', 'id_ecdsa'))"
+    ) -and
+    $hostIdentityVerifier.Contains(
+        'Default Identity precondition is not isolated: $defaultName exists'
+    )
+) 'Host Identity default-key scenario does not require an isolated standard-name baseline'
+Assert-True (
+    $hostIdentityVerifier.Contains('[switch]$PreserveExistingEd25519') -and
+    $hostIdentityVerifier.Contains('-PreserveExistingEd25519 requires -DefaultEcdsa') -and
+    $hostIdentityVerifier.Contains('key export id_ed25519 $ed25519BackupName') -and
+    $hostIdentityVerifier.Contains('key rm id_ed25519') -and
+    $hostIdentityVerifier.Contains('key import $ed25519BackupPath id_ed25519') -and
+    $hostIdentityVerifier.Contains('__acceptance_key_backup_$Action $ed25519BackupName') -and
+    $hostIdentityVerifier.Contains(
+        "-not (Test-HostIdentityDefaultKeyFilesPresent -KeyName 'id_ed25519')"
+    ) -and
+    $hostIdentityVerifier.Contains('ed25519ExportAttempted') -and
+    $hostIdentityVerifier.Contains('ed25519ExportVerified') -and
+    $hostIdentityVerifier.Contains('restoredEd25519Fingerprint') -and
+    $hostIdentityVerifier.Contains('independentEd25519BackupAbsenceAudit') -and
+    -not $hostIdentityVerifier.Contains('sha256sum $Path')
+) 'Host Identity verifier lacks reversible product-path preservation for an existing id_ed25519'
 
 $deviceRegressionText = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'device-regression.ps1'
@@ -1339,7 +1701,6 @@ Assert-True (
     $deviceRegressionText.Contains('Start-Sleep -Milliseconds 500')
 ) 'Device secret injection is not restricted to stable lowercase input with targeted UiTest delivery'
 
-$repoRoot = Split-Path $PSScriptRoot -Parent
 $sessionViewModel = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
 ) -Raw
@@ -1404,6 +1765,11 @@ Assert-True (
     $acceptanceSource.Contains('ACCEPTANCE_CONFIG state=prepared') -and
     $acceptanceSource.Contains('ACCEPTANCE_CONFIG state=verified,passed=true') -and
     $acceptanceSource.Contains('__acceptance_config_') -and
+    $acceptanceSource.Contains('ACCEPTANCE_KEY_BACKUP state=observed') -and
+    $acceptanceSource.Contains('ACCEPTANCE_KEY_BACKUP state=verified') -and
+    $acceptanceSource.Contains('__acceptance_key_backup_') -and
+    $acceptanceSource.Contains('FileUtils.removeFileRequired(backupPrivate)') -and
+    $acceptanceSource.Contains('FileUtils.removeFileRequired(backupPublic)') -and
     -not $acceptanceSource.Contains('Acceptance: Open Search') -and
     -not $acceptanceSource.Contains('Debug Material') -and
     $acceptanceSource.Contains('pasteClipboardForAcceptance') -and
