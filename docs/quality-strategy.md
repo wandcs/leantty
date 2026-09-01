@@ -249,6 +249,7 @@ Formal release software gate, candidate build and deployment use one command:
 .\tools\verify-ssh-auth-pc.ps1 -DiagnosticHap -HapPath <signed-test-hap> -Only ecdsa-import-encrypted-and-restart
 .\tools\verify-host-identity-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-host-identity-pc.ps1 -HapPath <signed-test-hap> -OpenSshCompatibility
+.\tools\verify-host-identity-pc.ps1 -HapPath <signed-test-hap> -OpenSshCompatibility -DefaultEcdsa -PreserveExistingEd25519
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -Suppression
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -ColdStale
@@ -303,6 +304,20 @@ binding. The scenario is diagnostic evidence for a supplied signed HAP; it
 creates no system user, does not modify the system `sshd` or a real
 `authorized_keys`, and must remove the Host, key, known-host entry, reverse
 mapping, fixture process and screen-timeout lease independently.
+
+The `-OpenSshCompatibility -DefaultEcdsa -PreserveExistingEd25519` variant is
+the bounded 1.6 default-Identity scenario. It requires a test-signed debug HAP
+with the repository's acceptance source enabled. The product first exports the
+existing `id_ed25519`; acceptance-only code compares the active and exported
+private bytes inside the application and returns only booleans. The script then
+removes `id_ed25519` through `key rm`, imports one standard `id_ecdsa`, and uses
+a temporary system-OpenSSH account that authorizes only that public key. It
+proves default and Host-bound authentication before and after restart, removes
+the ECDSA key, source, Host, account, known-host entry and reverse mapping, then
+restores `id_ed25519` through `key import`. The final acceptance check requires
+the restored private bytes and original public fingerprint to match before it
+deletes the run-owned Downloads backup. A failed comparison retains the backup
+and marks the run invalid.
 
 `verify-agent-compatibility-pc.ps1` is the bounded 1.5 native Agent TUI
 compatibility scenario. It uses the desktop user's default WSL distribution,
@@ -977,6 +992,139 @@ Per-change authentication regression uses the controlled repository fixture.
 Representative real OpenSSH/PAM/TOTP servers belong to scheduled compatibility
 or release checkpoints, not every harness edit; their evidence records exact
 server policy and never replaces the deterministic fixture matrix.
+
+Routine Mosh development uses `tools/verify-mosh-pc.ps1` only after the persistent
+`tools/configure-mosh-test-network.ps1` status is `ready`. The named physical diagnostic
+uses stock `mosh-server` and one controlled PTY. The default compatibility scenario uses
+the server's dynamic 60000–61000 endpoint. It runs real Bash, tmux, Vim and `less`; exercises
+remote resize, sustained bidirectional traffic and DEC 1049 alternate-screen entry/exit; and
+checks controlled UTF-8 wide/combining output on a current screenshot. A paced 242-line
+workload must leave its last marker searchable and its first marker absent from local terminal
+history. This records the protocol boundary: Mosh synchronizes terminal state, while SSH
+transports a byte stream. The same scenario must use real `less` to move to the document's
+first and last lines and find both markers. Applications such as `less` or tmux own reliable
+remote history; LeanTTY must not claim transparent SSH-style scrollback. Before connecting, the
+scenario writes one unique marker to the local page. During Mosh, that marker must be absent from
+search while Mosh and controlled DEC 1049 content remain confined to the Session page. After
+physical `Ctrl-^ .`, the original marker must return and all Mosh-only markers must be absent.
+The close verdict waits for page-restoration acknowledgement, then verifies the Preferences
+digest, bootstrap-negative search and paired device/fixture cleanup.
+It never mutates the persistent network and remains
+`acceptanceEligible=false`; formal release coverage must rerun the applicable
+network/lifecycle matrix against the retained candidate.
+
+`-Scenario agent-tui` is the change-scoped Mosh Agent diagnostic. It starts the installed,
+authenticated Codex TUI in `direct interaction` mode and submits no prompt, so
+`plannedModelRequests=0`. The scenario must prove raw PTY mode, one controlled physical English
+marker, a real HarmonyOS resize, clean `/exit`, child exit code zero and a content-free capture
+whose raw input and output were deleted. It records the exact Codex version and observed
+alternate-screen choice. Missing installation or authentication is `external-agent`, not a
+product failure. This scenario still requires baseline Mosh authentication, authenticated
+disconnect, unchanged Preferences, secret audit and paired cleanup.
+
+`-Scenario fixed-endpoint` requests the inclusive UDP range 60042–60044 through the product
+command. It must prove that the exact stock server command was observed, the returned endpoint
+falls inside the requested range, the controlled PTY command succeeds, authenticated close
+restores `ltty>`, Preferences and persistent network state remain unchanged, no secret is
+recorded, and device/fixture cleanup completes. Parser and native tests separately reject
+invalid ranges and a bootstrap endpoint outside the request. This routine diagnostic closes
+the fixed-port feature slice only; it does not replace dynamic, impairment or release coverage.
+
+`-Scenario server-path` requests `/usr/bin/mosh-server` through the product command and must
+prove that the controlled fixture executed that exact stock executable. It then requires one
+exact PTY command, authenticated close, restored `ltty>`, unchanged Preferences and persistent
+network state, no recorded secret, and paired device/fixture cleanup. Parser, native and fixture
+tests separately reject relative paths, empty or traversal segments, shell syntax, duplicate or
+separated options, extra arguments and paths over 1024 ASCII bytes; native bootstrap tests also
+bound combined output to 4 KiB and distinguish missing from non-executable paths. This is a
+routine diagnostic and remains `acceptanceEligible=false`.
+
+`-Scenario prediction` uses normal PTY kernel echo and a real interactive `/bin/sh -i`, matching
+the upstream stock fixture. Its UDP relay owns independent client-to-server and server-to-client
+forwarding tasks with the same bounded one-way delay; one direction must never block the other.
+Before impairment, `Always` must expose actual public VT output below the measured RTT while the
+probe sends printable ASCII only—no Enter, control input, resize or repaint. Only after that proof
+may the relay block both directions and test one more ASCII, `Never`, authority convergence,
+Session isolation, authenticated close and cleanup. Failure to establish the pre-impairment
+prediction stops the scenario and must not be bypassed by an ArkTS timer or renderer overlay.
+Post-recovery convergence and the final real-shell smoke use fresh, shell-safe absolute marker
+paths under the run-owned fixture directory. They submit ordinary `touch -- <path>` commands to
+the same interactive shell and wait for the exact file; fixture-private commands cannot stand in
+for the kernel-echo shell whose prediction behavior is being claimed.
+
+The same routine accepts `-Scenario pause-recovery`, `-Scenario suspend-recovery` and
+`-Scenario server-disappearance`.
+The pause scenario may add one temporary WSL `clsact` only when none already exists, drops
+both directions for the exact dynamically selected UDP port, and must remove and independently
+check that qdisc before success or failure cleanup. It passes only when LeanTTY observes the
+library's `Interrupted(NoRecentContact)` without a Session close/error, then observes
+`Responsive` recovery and executes a new exact command on the same surviving remote terminal
+PID. The disappearance scenario kills only the controlled server PID, requires the same
+interruption warning without an automatic close/error, and uses physical `Ctrl-^ .` to regain
+the local prompt. It must distinguish authenticated peer close from the bounded local close that
+follows an absent peer. The product must not duplicate the library's reachability timer or infer
+server death from silence. These are routine diagnostics, not release acceptance, and WSL PID or
+`tc` observations must never become product behavior.
+
+The suspend scenario invokes the HarmonyOS test PC's `power-shell suspend`, waits five seconds,
+then invokes `power-shell wakeup`. It must retain the same LeanTTY process and controlled remote
+terminal PID, restore the visible terminal, and execute a new exact command before an authenticated
+close. Evidence records suspend and recovery-command time, any reachability transition, unlock
+result, secrets, Preferences and cleanup. This scenario proves controlled system suspend/wake. It
+does not prove a physical lid-close event, an independent lock-screen event or a network switch.
+
+`-Scenario operator-lock-recovery` is an operator-assisted independent lock-screen diagnostic.
+After the baseline remote command, the operator presses `Win+L` and leaves the PC locked until the
+harness observes the platform's locked launch result. The operator then unlocks the PC. The
+scenario must retain the same LeanTTY process, stock Mosh server and controlled remote terminal,
+execute a new exact command, close normally and complete the standard secret and cleanup audits.
+It records the operator action and lock duration; it does not classify the lock as suspend, lid
+close or network loss.
+
+`-Scenario operator-lid-recovery` is the separate operator-assisted physical-lid diagnostic.
+After the baseline command, the operator closes the test PC lid and leaves it closed until the
+harness observes either the platform lock boundary or temporary device unavailability, then opens
+and unlocks it. The scenario must regain an unlocked HDC control boundary, retain the same LeanTTY
+process, stock Mosh server and controlled remote terminal, then execute a new exact command and
+close normally. Its controlled `MOSH_SERVER_NETWORK_TMOUT` is derived from the declared operator
+budget plus cleanup margin; the 30-second close-diagnostic timeout must not terminate a valid
+operator lifecycle run. Evidence records the input method, operator action and whether the closed-lid
+boundary appeared as `locked` or `unavailable`; programmatic suspend and `Win+L` cannot substitute
+for this scenario. Command injection remains automated and is not delegated to the operator.
+
+`-Scenario pane-close` splits the current tab, connects Mosh in the newly active Pane, proves one
+exact controlled PTY command, and closes that active Pane through the visible close button and
+confirmation dialog. As soon as the surviving Pane is observable it must not contain the closed
+Pane's unique terminal marker, and it immediately starts a second real Mosh Session. The second
+controlled PTY command must pass while the first server and PTY exit, and the second server must
+remain alive until its own authenticated close. This scenario pairs the ArkTS current-client owner
+test with device-visible Pane disposal and rejects layout count, click success or log presence as a
+standalone oracle.
+
+`-Scenario session-isolation` first keeps two stock Mosh Sessions concurrently active in the two
+Panes. The fixture must report distinct server and PTY PIDs and must compare consecutive bootstrap
+keys in memory, recording only whether they differ. Each Pane executes its own exact command and
+must find only its own unique terminal marker. The right Pane then closes through the visible close
+button and confirmation dialog. The left Session must
+then execute another exact command while its original server and PTY remain alive.
+The right Pane then starts a real SSH shell while the left Mosh Session remains active. Both sides
+again prove exact input and mutually exclusive output, after which closing Mosh must leave SSH able
+to execute a new command. The scenario finally sends the fixture's controlled SSH exit command,
+restores a local prompt, removes both temporary Hosts and known-host state, and verifies secret,
+Preferences, fixture, process, network
+and temporary-directory cleanup. Different layout nodes, PIDs, logs or key comparison alone are not
+a pass; the primary oracle is the paired per-Pane remote command and terminal result before and
+after opposite-side close. This routine remains `acceptanceEligible=false`.
+
+`-Scenario surface-rebuild` terminates the active Pane's ArkWeb renderer through the
+acceptance-only source transformation. The same Mosh page marker must remain searchable after
+the replacement Surface reports ready, a new exact controlled PTY command must succeed, and the
+original local page must still be restored after authenticated close. `-Scenario abnormal-exit`
+injects one acceptance-only `MoshError` into the active `SessionViewModel`; it must traverse the
+ordinary error handler, wait for page-replacement acknowledgement, restore the original marker,
+discard the Mosh command from search and regain the local input boundary. The transformation must
+restore production source in `finally`; neither trigger may exist in a production HAP. Both
+scenarios retain the standard Preferences, secret, process, fixture and temporary-directory audits.
 
 ## Performance and reliability measurement
 

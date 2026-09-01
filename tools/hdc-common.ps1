@@ -67,7 +67,10 @@ function Test-HdcCommandFailure {
     param([string]$Output)
 
     if ([string]::IsNullOrWhiteSpace($Output)) { return $false }
-    return $Output -match '(?im)\[E[0-9A-F]{6}\]|^\s*\[Fail\]|Forwardport result:(?!OK)|Mutlti commands can''t be used'
+    return $Output -match (
+        '(?im)\[E[0-9A-F]{6}\]|\[CODE:\s*-\d+\]|^\s*\[Fail\]|' +
+        'Forwardport result:(?!OK)|Mutlti commands can''t be used'
+    )
 }
 
 function Assert-HdcTargetReady {
@@ -103,7 +106,11 @@ function Invoke-HdcChecked {
     $exitCode = $LASTEXITCODE
     $text = $output -join "`n"
     if ($exitCode -ne 0 -or (Test-HdcCommandFailure -Output $text)) {
-        $codeMatch = [regex]::Match($text, '\[(?<code>E[0-9A-F]{6})\]', 'IgnoreCase')
+        $codeMatch = [regex]::Match(
+            $text,
+            '\[(?<code>E[0-9A-F]{6}|CODE:\s*-\d+)\]',
+            'IgnoreCase'
+        )
         $code = if ($codeMatch.Success) { ", hdcCode=$($codeMatch.Groups['code'].Value)" } else { '' }
         throw "[$FailureDomain] $Operation failed (exitCode=$exitCode$code)"
     }
