@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::net::Ipv4Addr;
 use std::os::fd::BorrowedFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -10,7 +11,7 @@ use napi_derive_ohos::napi;
 use napi_ohos::bindgen_prelude::{spawn, Function, Uint8Array};
 use napi_ohos::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_ohos::{Error, Result, Status};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 mod transfer;
 
@@ -21,6 +22,12 @@ use leantty_ssh_core::authentication::{
 use leantty_ssh_core::keygen::{self};
 use leantty_ssh_core::known_hosts::{find_known_host_entries, remove_known_host_entries};
 use leantty_ssh_core::AuthMethod;
+use mosh_client::{
+    Bootstrap as MoshBootstrap, PredictionMode as MoshPredictionMode,
+    Session as MoshProtocolSession, SessionExit as MoshSessionExit,
+    SessionInterruption as MoshSessionInterruption, SessionReachability as MoshSessionReachability,
+    SessionState as MoshProtocolState,
+};
 
 static NEXT_SESSION_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -221,6 +228,13 @@ impl TransportEvent {
 
     fn diagnostic_failure(layer: ConnectionLayer, stage: &str, reason: &str) -> Self {
         let mut event = Self::diagnostic(layer, stage, "failed");
+        event.reason = reason.to_string();
+        event
+    }
+
+    fn mosh_reachability(status: &str, reason: &str) -> Self {
+        let mut event = Self::diagnostic(ConnectionLayer::Target, "mosh_udp", status);
+        event.kind = "reachability".to_string();
         event.reason = reason.to_string();
         event
     }
@@ -514,6 +528,16 @@ struct ShellSession {
     output_pause_tx: OutputPauseSender,
 }
 
+struct MoshSession {
+    generation: u32,
+    write_tx: WriteSender,
+    resize_tx: ResizeSender,
+    disconnect_tx: DisconnectSender,
+    auth_tx: AuthSender,
+    host_key_tx: tokio::sync::mpsc::Sender<HostKeyDecision>,
+    output_pause_tx: OutputPauseSender,
+}
+
 struct FileTransferSession {
     generation: u32,
     disconnect_tx: DisconnectSender,
@@ -526,6 +550,14 @@ type SessionMap = Arc<Mutex<HashMap<u32, ShellSession>>>;
 fn get_sessions() -> &'static SessionMap {
     use once_cell::sync::Lazy;
     static SESSIONS: Lazy<SessionMap> = Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+    &SESSIONS
+}
+
+type MoshSessionMap = Arc<Mutex<HashMap<u32, MoshSession>>>;
+
+fn get_mosh_sessions() -> &'static MoshSessionMap {
+    use once_cell::sync::Lazy;
+    static SESSIONS: Lazy<MoshSessionMap> = Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
     &SESSIONS
 }
 
@@ -553,6 +585,16 @@ struct SessionCleanupGuard(u32);
 impl Drop for SessionCleanupGuard {
     fn drop(&mut self) {
         remove_session(self.0);
+    }
+}
+
+struct MoshSessionCleanupGuard(u32);
+
+impl Drop for MoshSessionCleanupGuard {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = get_mosh_sessions().lock() {
+            sessions.remove(&self.0);
+        }
     }
 }
 
@@ -617,6 +659,18 @@ fn try_send_transport_data(callback: &JsTransportCallback, value: Vec<u8>) -> St
     status
 }
 
+fn send_transport_data_blocking(callback: &JsTransportCallback, value: Vec<u8>) -> bool {
+    let status = callback.call(
+        TransportEvent::data(value),
+        ThreadsafeFunctionCallMode::Blocking,
+    );
+    if status != Status::Ok {
+        eprintln!("[LTTY_MOSH] callback=transport_data status={}", status);
+        return false;
+    }
+    true
+}
+
 fn send_transport_close(
     callback: &JsTransportCallback,
     exit_code: i32,
@@ -667,6 +721,40 @@ fn send_transport_failure_diagnostic(
     if status != Status::Ok {
         eprintln!("[LTTY_SSH] callback=transport_diagnostic status={}", status);
     }
+}
+
+fn mosh_reachability_fields(
+    reachability: MoshSessionReachability,
+) -> Option<(&'static str, &'static str)> {
+    match reachability {
+        MoshSessionReachability::AwaitingPeer => Some(("awaiting_peer", "")),
+        MoshSessionReachability::Responsive => Some(("responsive", "")),
+        MoshSessionReachability::Interrupted {
+            reason: MoshSessionInterruption::NoRecentContact,
+        } => Some(("interrupted", "no_recent_contact")),
+        MoshSessionReachability::Interrupted {
+            reason: MoshSessionInterruption::NoRecentReply,
+        } => Some(("interrupted", "no_recent_reply")),
+        _ => None,
+    }
+}
+
+fn send_mosh_reachability(
+    callback: &JsTransportCallback,
+    reachability: MoshSessionReachability,
+) -> bool {
+    let Some((status, reason)) = mosh_reachability_fields(reachability) else {
+        return true;
+    };
+    let result = callback.call(
+        TransportEvent::mosh_reachability(status, reason),
+        ThreadsafeFunctionCallMode::Blocking,
+    );
+    if result != Status::Ok {
+        eprintln!("[LTTY_MOSH] callback=reachability status={result}");
+        return false;
+    }
+    true
 }
 
 fn connect_failure_reason(error: &russh::Error, can_resolve_name: bool) -> &'static str {
@@ -2415,6 +2503,639 @@ async fn run_connected_session(
         None => SessionClose::normal(exit_code),
     }
 }
+const MOSH_BOOTSTRAP_COMMAND_PREFIX: &str =
+    "sh -c '[ -n \"$SSH_CONNECTION\" ] && printf \"\\nMOSH SSH_CONNECTION %s\\n\" \"$SSH_CONNECTION\"; exec ";
+const MOSH_DEFAULT_SERVER: &str = "mosh-server";
+const MOSH_SERVER_ARGUMENTS: &str = " new -s -c 256";
+const MOSH_BOOTSTRAP_MAX_BYTES: usize = 4 * 1024;
+const MOSH_SERVER_PATH_MAX_BYTES: usize = 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MoshUdpPortRange {
+    start: u16,
+    end: u16,
+}
+
+impl MoshUdpPortRange {
+    fn argument(self) -> String {
+        if self.start == self.end {
+            self.start.to_string()
+        } else {
+            format!("{}:{}", self.start, self.end)
+        }
+    }
+
+    fn contains(self, port: u16) -> bool {
+        (self.start..=self.end).contains(&port)
+    }
+}
+
+fn mosh_udp_port_range(
+    start: u32,
+    end: u32,
+) -> std::result::Result<Option<MoshUdpPortRange>, &'static str> {
+    if start == 0 && end == 0 {
+        return Ok(None);
+    }
+    if start == 0 || end == 0 || start > u16::MAX as u32 || end > u16::MAX as u32 {
+        return Err("Mosh UDP port bounds must both be zero or between 1 and 65535");
+    }
+    if start > end {
+        return Err("Mosh UDP port range start must not exceed its end");
+    }
+    Ok(Some(MoshUdpPortRange {
+        start: start as u16,
+        end: end as u16,
+    }))
+}
+
+fn mosh_prediction_mode(value: &str) -> std::result::Result<MoshPredictionMode, &'static str> {
+    match value {
+        "adaptive" => Ok(MoshPredictionMode::Adaptive),
+        "always" => Ok(MoshPredictionMode::Always),
+        "never" => Ok(MoshPredictionMode::Never),
+        _ => Err("Mosh prediction mode must be adaptive, always or never"),
+    }
+}
+
+fn mosh_server_path(value: &str) -> std::result::Result<Option<&str>, &'static str> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.len() > MOSH_SERVER_PATH_MAX_BYTES || !value.starts_with('/') || value.ends_with('/') {
+        return Err("Mosh server path must be an absolute POSIX path of at most 1024 bytes");
+    }
+    if value.split('/').skip(1).any(|segment| {
+        segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || !segment.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-')
+            })
+    }) {
+        return Err("Mosh server path contains an empty, relative or unsupported path segment");
+    }
+    Ok(Some(value))
+}
+
+fn mosh_bootstrap_command(
+    server_path: Option<&str>,
+    port_range: Option<MoshUdpPortRange>,
+) -> String {
+    let executable = server_path.unwrap_or(MOSH_DEFAULT_SERVER);
+    let mut command = format!("{MOSH_BOOTSTRAP_COMMAND_PREFIX}{executable}{MOSH_SERVER_ARGUMENTS}");
+    if let Some(port_range) = port_range {
+        command.push_str(" -p ");
+        command.push_str(&port_range.argument());
+    }
+    command.push('\'');
+    command
+}
+
+fn append_mosh_bootstrap_output(
+    output: &mut Vec<u8>,
+    data: &[u8],
+) -> std::result::Result<(), &'static str> {
+    if output.len().saturating_add(data.len()) > MOSH_BOOTSTRAP_MAX_BYTES {
+        return Err("mosh-server bootstrap output exceeded 4 KiB");
+    }
+    output.extend_from_slice(data);
+    Ok(())
+}
+
+fn mosh_bootstrap_exit_error(exit_status: u32) -> Option<&'static str> {
+    match exit_status {
+        0 => None,
+        126 => Some("configured mosh-server path is not executable"),
+        127 => Some("configured mosh-server path does not exist"),
+        _ => Some("mosh-server exited before creating a Session"),
+    }
+}
+
+fn validate_mosh_server_port(
+    server_port: u16,
+    port_range: Option<MoshUdpPortRange>,
+) -> std::result::Result<(), &'static str> {
+    if port_range.is_some_and(|requested| !requested.contains(server_port)) {
+        return Err("mosh-server returned a UDP port outside the requested range");
+    }
+    Ok(())
+}
+
+fn mosh_server_ipv4(output: &[u8]) -> std::result::Result<Ipv4Addr, &'static str> {
+    let mut address = None;
+    for raw_line in output.split_inclusive(|byte| *byte == b'\n') {
+        let line = raw_line.strip_suffix(b"\n").unwrap_or(raw_line);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Ok(text) = std::str::from_utf8(line) else {
+            continue;
+        };
+        let fields: Vec<&str> = text.split(' ').collect();
+        if fields.first() != Some(&"MOSH") || fields.get(1) != Some(&"SSH_CONNECTION") {
+            continue;
+        }
+        if fields.len() != 6 || address.is_some() {
+            return Err("invalid or ambiguous MOSH SSH_CONNECTION record");
+        }
+        address = Some(
+            fields[4]
+                .parse::<Ipv4Addr>()
+                .map_err(|_| "Mosh bootstrap requires an IPv4 SSH server address")?,
+        );
+    }
+    address.ok_or("Mosh bootstrap did not report the SSH server address")
+}
+
+async fn start_mosh_server(
+    context: &SessionPhaseContext,
+    route: &mut SessionRoute,
+    connect_timeout: Duration,
+    server_path: Option<&str>,
+    port_range: Option<MoshUdpPortRange>,
+    disconnect_rx: &mut tokio::sync::mpsc::Receiver<()>,
+) -> SessionPhaseResult<MoshBootstrap> {
+    let ssh = route.target.as_mut().expect("target session must exist");
+    send_transport_diagnostic(
+        &context.transport_callback,
+        true,
+        ConnectionLayer::Target,
+        "mosh_bootstrap",
+        "started",
+    );
+    let mut channel =
+        match wait_for_auth_exchange(ssh.channel_open_session(), connect_timeout, disconnect_rx)
+            .await
+        {
+            AuthExchangeResult::Completed(channel) => channel,
+            AuthExchangeResult::Failed(error) => {
+                return Err(SessionPhaseStop::Failed(SessionPhaseFailure::failed(
+                    ConnectionLayer::Target,
+                    "mosh_bootstrap",
+                    "channel",
+                    format!("Mosh bootstrap channel failed: {error}"),
+                )));
+            }
+            AuthExchangeResult::TimedOut => {
+                return Err(SessionPhaseStop::Failed(SessionPhaseFailure::timed_out(
+                    ConnectionLayer::Target,
+                    "mosh_bootstrap",
+                    "network",
+                    "Mosh bootstrap channel timed out".to_string(),
+                )));
+            }
+            AuthExchangeResult::Cancelled => return Err(SessionPhaseStop::Cancelled),
+        };
+    let bootstrap_command = mosh_bootstrap_command(server_path, port_range);
+    match wait_for_auth_exchange(
+        channel.exec(true, bootstrap_command),
+        connect_timeout,
+        disconnect_rx,
+    )
+    .await
+    {
+        AuthExchangeResult::Completed(()) => {}
+        AuthExchangeResult::Failed(error) => {
+            return Err(SessionPhaseStop::Failed(SessionPhaseFailure::failed(
+                ConnectionLayer::Target,
+                "mosh_bootstrap",
+                "server",
+                format!("mosh-server could not start: {error}"),
+            )));
+        }
+        AuthExchangeResult::TimedOut => {
+            return Err(SessionPhaseStop::Failed(SessionPhaseFailure::timed_out(
+                ConnectionLayer::Target,
+                "mosh_bootstrap",
+                "network",
+                "mosh-server start timed out".to_string(),
+            )));
+        }
+        AuthExchangeResult::Cancelled => return Err(SessionPhaseStop::Cancelled),
+    }
+
+    let mut output = Zeroizing::new(Vec::new());
+    let mut exit_status = None;
+    let deadline = tokio::time::sleep(connect_timeout);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            message = channel.wait() => match message {
+                Some(russh::ChannelMsg::Data { data }) |
+                Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
+                    if let Err(detail) = append_mosh_bootstrap_output(&mut output, &data) {
+                        return Err(SessionPhaseStop::Failed(SessionPhaseFailure::failed(
+                            ConnectionLayer::Target,
+                            "mosh_bootstrap",
+                            "protocol",
+                            detail.to_string(),
+                        )));
+                    }
+                }
+                Some(russh::ChannelMsg::ExitStatus { exit_status: status }) => {
+                    exit_status = Some(status);
+                }
+                Some(russh::ChannelMsg::Close) | None => break,
+                Some(_) => {}
+            },
+            _ = disconnect_rx.recv() => return Err(SessionPhaseStop::Cancelled),
+            _ = &mut deadline => {
+                return Err(SessionPhaseStop::Failed(SessionPhaseFailure::timed_out(
+                    ConnectionLayer::Target,
+                    "mosh_bootstrap",
+                    "network",
+                    "mosh-server bootstrap timed out".to_string(),
+                )));
+            }
+        }
+    }
+    if let Some(detail) = exit_status.and_then(mosh_bootstrap_exit_error) {
+        return Err(SessionPhaseStop::Failed(SessionPhaseFailure::failed(
+            ConnectionLayer::Target,
+            "mosh_bootstrap",
+            "server",
+            detail.to_string(),
+        )));
+    }
+    let server_address = mosh_server_ipv4(output.as_slice()).map_err(|detail| {
+        SessionPhaseStop::Failed(SessionPhaseFailure::failed(
+            ConnectionLayer::Target,
+            "mosh_bootstrap",
+            "protocol",
+            detail.to_string(),
+        ))
+    })?;
+    let bootstrap = MoshBootstrap::parse(server_address, output.as_slice()).map_err(|error| {
+        SessionPhaseStop::Failed(SessionPhaseFailure::failed(
+            ConnectionLayer::Target,
+            "mosh_bootstrap",
+            "protocol",
+            format!("invalid mosh-server bootstrap: {error}"),
+        ))
+    })?;
+    validate_mosh_server_port(bootstrap.server_addr().port(), port_range).map_err(|detail| {
+        SessionPhaseStop::Failed(SessionPhaseFailure::failed(
+            ConnectionLayer::Target,
+            "mosh_bootstrap",
+            "protocol",
+            detail.to_string(),
+        ))
+    })?;
+    send_transport_diagnostic(
+        &context.transport_callback,
+        true,
+        ConnectionLayer::Target,
+        "mosh_bootstrap",
+        "succeeded",
+    );
+    Ok(bootstrap)
+}
+
+fn mosh_session_error_code(error: &mosh_client::SessionError) -> &'static str {
+    match error {
+        mosh_client::SessionError::Io(_) => "network",
+        mosh_client::SessionError::InvalidTerminalSize => "terminal_size",
+        mosh_client::SessionError::ConnectionTimeout => "connection_timeout",
+        mosh_client::SessionError::Protocol => "protocol",
+        mosh_client::SessionError::ResourceLimit => "resource_limit",
+        mosh_client::SessionError::StateExhausted => "state_exhausted",
+        mosh_client::SessionError::InternalState => "internal",
+        _ => "internal",
+    }
+}
+
+fn mosh_session_exit_failure(exit: MoshSessionExit) -> Option<(&'static str, &'static str)> {
+    match exit {
+        MoshSessionExit::LocalClosed | MoshSessionExit::RemoteClosed => None,
+        MoshSessionExit::Cancelled => Some((
+            "cancelled",
+            "Mosh protocol task stopped without a graceful close",
+        )),
+        MoshSessionExit::OwnerDropped => {
+            Some(("internal", "Mosh protocol session owner was dropped"))
+        }
+        _ => Some((
+            "internal",
+            "Mosh protocol task returned an unknown exit reason",
+        )),
+    }
+}
+
+fn record_mosh_task_result(
+    result: std::result::Result<
+        std::result::Result<MoshSessionExit, mosh_client::SessionError>,
+        tokio::task::JoinError,
+    >,
+    close_code: &mut String,
+    close_detail: &mut String,
+) {
+    match result {
+        Ok(Ok(exit)) => {
+            if let Some((code, detail)) = mosh_session_exit_failure(exit) {
+                *close_code = code.to_string();
+                *close_detail = detail.to_string();
+            }
+        }
+        Ok(Err(error)) => {
+            *close_code = mosh_session_error_code(&error).to_string();
+            *close_detail = error.to_string();
+        }
+        Err(_) => {
+            *close_code = "internal".to_string();
+            *close_detail = "Mosh protocol task failed".to_string();
+        }
+    }
+}
+
+async fn run_mosh_protocol(
+    context: &SessionPhaseContext,
+    bootstrap: MoshBootstrap,
+    prediction_mode: MoshPredictionMode,
+    columns: u32,
+    rows: u32,
+    mut receivers: SessionReceivers,
+) {
+    send_transport_diagnostic(
+        &context.transport_callback,
+        true,
+        ConnectionLayer::Target,
+        "mosh_udp",
+        "started",
+    );
+    let (mut session, task) = match MoshProtocolSession::connect_with_prediction_mode(
+        bootstrap,
+        columns,
+        rows,
+        prediction_mode,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            send_control_error(
+                &context.control_callback,
+                context.session_id,
+                context.generation,
+                ConnectionLayer::Target,
+                "mosh_udp",
+                mosh_session_error_code(&error),
+                &error.to_string(),
+            );
+            let _ = send_transport_close(
+                &context.transport_callback,
+                -1,
+                ConnectionLayer::Target.as_str().to_string(),
+                mosh_session_error_code(&error).to_string(),
+                error.to_string(),
+            );
+            return;
+        }
+    };
+    let mut reachability = session.subscribe_reachability();
+    let initial_reachability = reachability.current();
+    let mut task = tokio::spawn(task.run());
+    let mut state_tick = tokio::time::interval(Duration::from_millis(100));
+    state_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut connected_reported = false;
+    let mut output_paused = false;
+    let mut close_code = String::new();
+    let mut close_detail = String::new();
+    let mut task_finished = false;
+    let mut graceful_close_requested = false;
+    let mut reachability_open = true;
+
+    if !send_mosh_reachability(&context.transport_callback, initial_reachability) {
+        close_code = "callback".to_string();
+        close_detail = "Mosh reachability callback failed".to_string();
+    }
+
+    while close_code.is_empty() {
+        tokio::select! {
+            _ = state_tick.tick() => {
+                if !connected_reported && session.state() == MoshProtocolState::Active {
+                    connected_reported = true;
+                    let _ = send_control(
+                        &context.control_callback,
+                        ControlEvent::connected(context.session_id, context.generation),
+                    );
+                    send_transport_diagnostic(
+                        &context.transport_callback,
+                        true,
+                        ConnectionLayer::Target,
+                        "mosh_udp",
+                        "succeeded",
+                    );
+                }
+            }
+            output = session.next_output(), if !output_paused => match output {
+                Some(output) => {
+                    if !send_transport_data_blocking(&context.transport_callback, output) {
+                        close_code = "callback".to_string();
+                        close_detail = "Mosh terminal output callback failed".to_string();
+                        break;
+                    }
+                }
+                None => {
+                    task_finished = true;
+                    record_mosh_task_result(
+                        (&mut task).await,
+                        &mut close_code,
+                        &mut close_detail,
+                    );
+                    break;
+                }
+            },
+            observation = reachability.changed(), if reachability_open => match observation {
+                Some(observation) => {
+                    if !send_mosh_reachability(&context.transport_callback, observation) {
+                        close_code = "callback".to_string();
+                        close_detail = "Mosh reachability callback failed".to_string();
+                        break;
+                    }
+                }
+                None => reachability_open = false,
+            },
+            input = receivers.write_rx.recv(), if !graceful_close_requested => match input {
+                Some(input) => {
+                    if let Err(error) = session.send_input(input).await {
+                        close_code = "input".to_string();
+                        close_detail = error.to_string();
+                        break;
+                    }
+                }
+                None => break,
+            },
+            size = receivers.resize_rx.recv(), if !graceful_close_requested => match size {
+                Some((columns, rows)) => {
+                    if let Err(error) = session.resize(columns, rows).await {
+                        close_code = "terminal_size".to_string();
+                        close_detail = error.to_string();
+                        break;
+                    }
+                }
+                None => break,
+            },
+            paused = receivers.output_pause_rx.recv(), if !graceful_close_requested => {
+                let was_paused = output_paused;
+                output_paused = paused.unwrap_or(false);
+                if was_paused && !output_paused {
+                    if let Err(error) = session.request_repaint().await {
+                        close_code = "repaint".to_string();
+                        close_detail = error.to_string();
+                        break;
+                    }
+                }
+            },
+            _ = receivers.disconnect_rx.recv(), if !graceful_close_requested => {
+                while let Ok(input) = receivers.write_rx.try_recv() {
+                    if let Err(error) = session.send_input(input).await {
+                        close_code = "input".to_string();
+                        close_detail = error.to_string();
+                        break;
+                    }
+                }
+                if !close_code.is_empty() {
+                    break;
+                }
+                output_paused = false;
+                graceful_close_requested = true;
+                session.close();
+            },
+            result = &mut task => {
+                task_finished = true;
+                record_mosh_task_result(result, &mut close_code, &mut close_detail);
+                break;
+            }
+        }
+    }
+    if !task_finished {
+        session.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(1), &mut task).await;
+    } else {
+        while let Some(output) = session.next_output().await {
+            if !send_transport_data_blocking(&context.transport_callback, output) {
+                close_code = "callback".to_string();
+                close_detail = "Mosh terminal output callback failed".to_string();
+                break;
+            }
+        }
+    }
+    if !close_code.is_empty() {
+        send_control_error(
+            &context.control_callback,
+            context.session_id,
+            context.generation,
+            ConnectionLayer::Target,
+            "mosh_udp",
+            &close_code,
+            &close_detail,
+        );
+    }
+    send_transport_diagnostic(
+        &context.transport_callback,
+        true,
+        ConnectionLayer::Target,
+        "mosh_udp",
+        if close_code.is_empty() {
+            "closed"
+        } else {
+            "failed"
+        },
+    );
+    let _ = send_transport_close(
+        &context.transport_callback,
+        if close_code.is_empty() { 0 } else { -1 },
+        ConnectionLayer::Target.as_str().to_string(),
+        close_code,
+        close_detail,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_mosh_session(
+    session_id: u32,
+    generation: u32,
+    host: String,
+    port: u16,
+    user: String,
+    private_key_path: String,
+    private_key_requires_passphrase: bool,
+    known_hosts_path: String,
+    connect_timeout: Duration,
+    server_alive_interval_seconds: u32,
+    server_alive_count_max: u32,
+    server_path: Option<String>,
+    udp_port_range: Option<MoshUdpPortRange>,
+    prediction_mode: MoshPredictionMode,
+    columns: u32,
+    rows: u32,
+    transport_callback: JsTransportCallback,
+    control_callback: JsControlCallback,
+    auth_callback: JsAuthCallback,
+    mut receivers: SessionReceivers,
+) {
+    let _cleanup_guard = MoshSessionCleanupGuard(session_id);
+    let host_key_rx = Arc::new(tokio::sync::Mutex::new(
+        receivers
+            .host_key_rx
+            .take()
+            .expect("host key receiver must exist"),
+    ));
+    let context = SessionPhaseContext {
+        session_id,
+        generation,
+        verbose: false,
+        known_hosts_path: PathBuf::from(known_hosts_path),
+        host_key_rx,
+        transport_callback,
+        control_callback,
+        auth_callback,
+    };
+    let target_endpoint = SessionEndpoint {
+        layer: ConnectionLayer::Target,
+        host,
+        port,
+        user,
+        private_key_path,
+        private_key_requires_passphrase,
+        connect_timeout,
+        server_alive_interval_seconds,
+        server_alive_count_max,
+    };
+    let mut route = SessionRoute::default();
+    if let Err(stop) =
+        establish_target_session(&context, &target_endpoint, &mut route, &mut receivers).await
+    {
+        finish_session_phase_stop(&context, &mut route, stop).await;
+        return;
+    }
+    let bootstrap = match start_mosh_server(
+        &context,
+        &mut route,
+        target_endpoint.connect_timeout,
+        server_path.as_deref(),
+        udp_port_range,
+        &mut receivers.disconnect_rx,
+    )
+    .await
+    {
+        Ok(bootstrap) => bootstrap,
+        Err(stop) => {
+            finish_session_phase_stop(&context, &mut route, stop).await;
+            return;
+        }
+    };
+    route.disconnect().await;
+    run_mosh_protocol(
+        &context,
+        bootstrap,
+        prediction_mode,
+        columns,
+        rows,
+        receivers,
+    )
+    .await;
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_session(
     session_id: u32,
@@ -3015,6 +3736,136 @@ pub fn ssh_connect(
 
 #[napi]
 #[allow(clippy::too_many_arguments)]
+pub fn mosh_connect(
+    host: String,
+    port: u32,
+    user: String,
+    private_key_path: String,
+    private_key_requires_passphrase: bool,
+    known_hosts_path: String,
+    connect_timeout_ms: u32,
+    server_alive_interval_seconds: u32,
+    server_alive_count_max: u32,
+    server_path: String,
+    udp_port_start: u32,
+    udp_port_end: u32,
+    prediction_mode: String,
+    columns: u32,
+    rows: u32,
+    generation: u32,
+    on_transport: Function<'_, TransportEvent, ()>,
+    on_control: Function<'_, ControlEvent, ()>,
+    on_auth: Function<'_, AuthEvent, ()>,
+) -> Result<String> {
+    if host.trim().is_empty() {
+        return Err(napi_error("host must not be empty"));
+    }
+    if port == 0 || port > u16::MAX as u32 {
+        return Err(napi_error("port must be between 1 and 65535"));
+    }
+    if user.trim().is_empty() {
+        return Err(napi_error("user must not be empty"));
+    }
+    if known_hosts_path.trim().is_empty() {
+        return Err(napi_error("known_hosts path must not be empty"));
+    }
+    if connect_timeout_ms == 0 {
+        return Err(napi_error("connect timeout must be positive"));
+    }
+    validate_keepalive(
+        server_alive_interval_seconds,
+        server_alive_count_max,
+        "Mosh bootstrap target",
+    )?;
+    let server_path = mosh_server_path(&server_path)
+        .map_err(napi_error)?
+        .map(str::to_owned);
+    let udp_port_range = mosh_udp_port_range(udp_port_start, udp_port_end).map_err(napi_error)?;
+    let prediction_mode = mosh_prediction_mode(&prediction_mode).map_err(napi_error)?;
+    if columns == 0 || columns > 500 || rows == 0 || rows > 200 {
+        return Err(napi_error(
+            "Mosh terminal size must be between 1x1 and 500x200",
+        ));
+    }
+    if generation == 0 {
+        return Err(napi_error("generation must be positive"));
+    }
+
+    let transport_callback = Arc::new(
+        on_transport
+            .build_threadsafe_function::<TransportEvent>()
+            .max_queue_size::<64>()
+            .build()?,
+    );
+    let control_callback = Arc::new(
+        on_control
+            .build_threadsafe_function::<ControlEvent>()
+            .max_queue_size::<64>()
+            .build()?,
+    );
+    let auth_callback = Arc::new(
+        on_auth
+            .build_threadsafe_function::<AuthEvent>()
+            .max_queue_size::<64>()
+            .build()?,
+    );
+    let (write_tx, write_rx) = tokio::sync::mpsc::channel(64);
+    let (resize_tx, resize_rx) = tokio::sync::mpsc::channel(8);
+    let (disconnect_tx, disconnect_rx) = tokio::sync::mpsc::channel(1);
+    let (auth_tx, auth_rx) = tokio::sync::mpsc::channel(1);
+    let (host_key_tx, host_key_rx) = tokio::sync::mpsc::channel(1);
+    let (output_pause_tx, output_pause_rx) = tokio::sync::mpsc::channel(8);
+    let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+    get_mosh_sessions()
+        .lock()
+        .map_err(|_| napi_error("Mosh session map lock poisoned"))?
+        .insert(
+            session_id,
+            MoshSession {
+                generation,
+                write_tx,
+                resize_tx,
+                disconnect_tx,
+                auth_tx,
+                host_key_tx,
+                output_pause_tx,
+            },
+        );
+    let receivers = SessionReceivers {
+        write_rx,
+        resize_rx,
+        disconnect_rx,
+        auth_rx,
+        host_key_rx: Some(host_key_rx),
+        output_pause_rx,
+    };
+    spawn(run_mosh_session(
+        session_id,
+        generation,
+        host,
+        port as u16,
+        user,
+        private_key_path,
+        private_key_requires_passphrase,
+        known_hosts_path,
+        Duration::from_millis(connect_timeout_ms as u64),
+        server_alive_interval_seconds,
+        server_alive_count_max,
+        server_path,
+        udp_port_range,
+        prediction_mode,
+        columns,
+        rows,
+        transport_callback,
+        control_callback,
+        auth_callback,
+        receivers,
+    ));
+    Ok(session_id.to_string())
+}
+
+#[napi]
+#[allow(clippy::too_many_arguments)]
 pub fn ssh_start_file_transfer(
     direction: String,
     host: String,
@@ -3189,6 +4040,18 @@ fn find_auth_session_channels(id: u32) -> Result<AuthSessionChannels> {
             disconnect_tx: session.disconnect_tx.clone(),
         });
     }
+    if let Some(session) = get_mosh_sessions()
+        .lock()
+        .map_err(|_| napi_error("Mosh session map lock poisoned"))?
+        .get(&id)
+    {
+        return Ok(AuthSessionChannels {
+            generation: session.generation,
+            auth_tx: session.auth_tx.clone(),
+            host_key_tx: session.host_key_tx.clone(),
+            disconnect_tx: session.disconnect_tx.clone(),
+        });
+    }
     let sessions = get_file_transfer_sessions()
         .lock()
         .map_err(|_| napi_error("file transfer session map lock poisoned"))?;
@@ -3354,6 +4217,71 @@ pub fn ssh_disconnect(session_id: String) -> Result<()> {
 }
 
 #[napi]
+pub fn mosh_write(session_id: String, data: String) -> Result<()> {
+    let id = parse_session_id(&session_id)?;
+    let sessions = get_mosh_sessions()
+        .lock()
+        .map_err(|_| napi_error("Mosh session map lock poisoned"))?;
+    let session = sessions
+        .get(&id)
+        .ok_or_else(|| napi_error("Mosh session not found"))?;
+    session
+        .write_tx
+        .try_send(data.into_bytes())
+        .map_err(|error| napi_error(&format!("send failed: {error}")))
+}
+
+#[napi]
+pub fn mosh_resize(session_id: String, columns: u32, rows: u32) -> Result<()> {
+    if columns == 0 || columns > 500 || rows == 0 || rows > 200 {
+        return Err(napi_error(
+            "Mosh terminal size must be between 1x1 and 500x200",
+        ));
+    }
+    let id = parse_session_id(&session_id)?;
+    let sessions = get_mosh_sessions()
+        .lock()
+        .map_err(|_| napi_error("Mosh session map lock poisoned"))?;
+    let session = sessions
+        .get(&id)
+        .ok_or_else(|| napi_error("Mosh session not found"))?;
+    session
+        .resize_tx
+        .try_send((columns, rows))
+        .map_err(|error| napi_error(&format!("send failed: {error}")))
+}
+
+#[napi]
+pub fn mosh_set_output_paused(session_id: String, paused: bool) -> Result<()> {
+    let id = parse_session_id(&session_id)?;
+    let sessions = get_mosh_sessions()
+        .lock()
+        .map_err(|_| napi_error("Mosh session map lock poisoned"))?;
+    let session = sessions
+        .get(&id)
+        .ok_or_else(|| napi_error("Mosh session not found"))?;
+    session
+        .output_pause_tx
+        .try_send(paused)
+        .map_err(|error| napi_error(&format!("send failed: {error}")))
+}
+
+#[napi]
+pub fn mosh_disconnect(session_id: String) -> Result<()> {
+    let id = parse_session_id(&session_id)?;
+    let sessions = get_mosh_sessions()
+        .lock()
+        .map_err(|_| napi_error("Mosh session map lock poisoned"))?;
+    let session = sessions
+        .get(&id)
+        .ok_or_else(|| napi_error("Mosh session not found"))?;
+    session
+        .disconnect_tx
+        .try_send(())
+        .map_err(|error| napi_error(&format!("send failed: {error}")))
+}
+
+#[napi]
 pub async fn ssh_generate_key_pair(
     algorithm: String,
     passphrase: String,
@@ -3488,14 +4416,18 @@ pub fn ssh_protect_private_key(key_path: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_client_config, channel_writer_exit_message, is_current_auth_generation,
-        run_channel_writer_core, send_scheduled_input, should_flush_immediately, transfer,
-        validate_keepalive, wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
-        wait_for_file_transfer, wait_for_host_key_decision, AuthExchangeResult, AuthMethod,
-        AuthWaitResult, ChangedHostKeyControl, ConnectProgress, ConnectWaitResult, ConnectionLayer,
-        ControlEvent, FileTransferEvent, FileTransferWaitResult, HostKeyDecision,
-        LayeredAuthMethod, OutputDeliveryMetrics, SessionClose, SessionPhaseFailure,
-        TransportEvent, AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
+        append_mosh_bootstrap_output, build_client_config, channel_writer_exit_message,
+        is_current_auth_generation, mosh_bootstrap_command, mosh_bootstrap_exit_error,
+        mosh_prediction_mode, mosh_server_ipv4, mosh_server_path, mosh_session_exit_failure,
+        mosh_udp_port_range, run_channel_writer_core, send_scheduled_input,
+        should_flush_immediately, transfer, validate_keepalive, validate_mosh_server_port,
+        wait_for_auth_command, wait_for_auth_exchange, wait_for_connect, wait_for_file_transfer,
+        wait_for_host_key_decision, AuthExchangeResult, AuthMethod, AuthWaitResult,
+        ChangedHostKeyControl, ConnectProgress, ConnectWaitResult, ConnectionLayer, ControlEvent,
+        FileTransferEvent, FileTransferWaitResult, HostKeyDecision, LayeredAuthMethod,
+        MoshSessionExit, MoshSessionInterruption, MoshSessionReachability, OutputDeliveryMetrics,
+        SessionClose, SessionPhaseFailure, TransportEvent, AUTH_EXCHANGE_TIMEOUT,
+        AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
     };
     use napi_ohos::Status;
     use russh::client;
@@ -3513,6 +4445,176 @@ mod tests {
     const ACTOR_TEST_WINDOW_BYTES: usize = 16 * 1024;
 
     #[test]
+    fn mosh_prediction_mode_maps_only_the_standard_public_values() {
+        assert_eq!(
+            mosh_prediction_mode("adaptive"),
+            Ok(mosh_client::PredictionMode::Adaptive)
+        );
+        assert_eq!(
+            mosh_prediction_mode("always"),
+            Ok(mosh_client::PredictionMode::Always)
+        );
+        assert_eq!(
+            mosh_prediction_mode("never"),
+            Ok(mosh_client::PredictionMode::Never)
+        );
+        for invalid in ["", "auto", "ALWAYS", "adaptive ", "always,never"] {
+            assert_eq!(
+                mosh_prediction_mode(invalid),
+                Err("Mosh prediction mode must be adaptive, always or never")
+            );
+        }
+    }
+
+    #[test]
+    fn mosh_udp_port_range_builds_only_valid_stock_server_arguments() {
+        let dynamic = mosh_udp_port_range(0, 0).unwrap();
+        let fixed = mosh_udp_port_range(60042, 60042).unwrap();
+        let range = mosh_udp_port_range(60042, 60049).unwrap();
+
+        assert_eq!(dynamic, None);
+        assert_eq!(fixed.unwrap().argument(), "60042");
+        assert_eq!(range.unwrap().argument(), "60042:60049");
+        assert_eq!(
+            mosh_bootstrap_command(None, dynamic),
+            "sh -c '[ -n \"$SSH_CONNECTION\" ] && printf \"\\nMOSH SSH_CONNECTION %s\\n\" \"$SSH_CONNECTION\"; exec mosh-server new -s -c 256'"
+        );
+        assert!(mosh_bootstrap_command(None, fixed).ends_with(" -p 60042'"));
+        assert!(mosh_bootstrap_command(None, range).ends_with(" -p 60042:60049'"));
+    }
+
+    #[test]
+    fn mosh_server_path_builds_one_executable_without_shell_fragments() {
+        let path = mosh_server_path("/home/deploy/.local/bin/mosh-server").unwrap();
+        assert_eq!(mosh_server_path(""), Ok(None));
+        assert_eq!(
+            mosh_bootstrap_command(path, None),
+            "sh -c '[ -n \"$SSH_CONNECTION\" ] && printf \"\\nMOSH SSH_CONNECTION %s\\n\" \"$SSH_CONNECTION\"; exec /home/deploy/.local/bin/mosh-server new -s -c 256'"
+        );
+        for invalid in [
+            "mosh-server",
+            "~/bin/mosh-server",
+            "/opt//mosh-server",
+            "/opt/../bin/mosh-server",
+            "/opt/mosh-server;id",
+            "/opt/mosh server",
+            "/opt/$server",
+        ] {
+            assert!(mosh_server_path(invalid).is_err(), "accepted {invalid}");
+        }
+        let overlong = format!("/{}", "a".repeat(1024));
+        assert!(mosh_server_path(&overlong).is_err());
+    }
+
+    #[test]
+    fn mosh_bootstrap_distinguishes_server_start_failures_and_bounds_output() {
+        assert_eq!(mosh_bootstrap_exit_error(0), None);
+        assert_eq!(
+            mosh_bootstrap_exit_error(126),
+            Some("configured mosh-server path is not executable")
+        );
+        assert_eq!(
+            mosh_bootstrap_exit_error(127),
+            Some("configured mosh-server path does not exist")
+        );
+        assert_eq!(
+            mosh_bootstrap_exit_error(1),
+            Some("mosh-server exited before creating a Session")
+        );
+        let mut output = Vec::new();
+        assert_eq!(
+            append_mosh_bootstrap_output(&mut output, &[0; 4096]),
+            Ok(())
+        );
+        assert_eq!(
+            append_mosh_bootstrap_output(&mut output, &[1]),
+            Err("mosh-server bootstrap output exceeded 4 KiB")
+        );
+    }
+
+    #[test]
+    fn mosh_udp_port_range_rejects_dynamic_fixed_and_order_conflicts() {
+        assert!(mosh_udp_port_range(0, 60042).is_err());
+        assert!(mosh_udp_port_range(60042, 0).is_err());
+        assert!(mosh_udp_port_range(65536, 65536).is_err());
+        assert!(mosh_udp_port_range(60050, 60042).is_err());
+
+        let requested = mosh_udp_port_range(60042, 60049).unwrap();
+        assert_eq!(validate_mosh_server_port(60042, requested), Ok(()));
+        assert_eq!(validate_mosh_server_port(60049, requested), Ok(()));
+        assert_eq!(
+            validate_mosh_server_port(60050, requested),
+            Err("mosh-server returned a UDP port outside the requested range")
+        );
+        assert_eq!(validate_mosh_server_port(60050, None), Ok(()));
+    }
+
+    #[test]
+    fn mosh_graceful_close_exits_are_normal_and_hard_stops_are_failures() {
+        assert_eq!(
+            mosh_session_exit_failure(MoshSessionExit::LocalClosed),
+            None
+        );
+        assert_eq!(
+            mosh_session_exit_failure(MoshSessionExit::RemoteClosed),
+            None
+        );
+        assert_eq!(
+            mosh_session_exit_failure(MoshSessionExit::Cancelled),
+            Some((
+                "cancelled",
+                "Mosh protocol task stopped without a graceful close"
+            ))
+        );
+        assert_eq!(
+            mosh_session_exit_failure(MoshSessionExit::OwnerDropped),
+            Some(("internal", "Mosh protocol session owner was dropped"))
+        );
+    }
+
+    #[test]
+    fn mosh_bootstrap_uses_the_server_side_ipv4_from_ssh_connection() {
+        let output = b"notice\r\nMOSH SSH_CONNECTION 192.0.2.10 50000 198.51.100.7 22\r\n\
+MOSH CONNECT 60001 4NeCCgvZFe2RnPgrcU1PQw\r\n";
+
+        assert_eq!(
+            mosh_server_ipv4(output).unwrap(),
+            "198.51.100.7".parse::<std::net::Ipv4Addr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn mosh_bootstrap_rejects_missing_ambiguous_or_ipv6_server_addresses() {
+        assert_eq!(
+            mosh_server_ipv4(b"MOSH CONNECT 60001 4NeCCgvZFe2RnPgrcU1PQw\n"),
+            Err("Mosh bootstrap did not report the SSH server address")
+        );
+        assert_eq!(
+            mosh_server_ipv4(
+                b"MOSH SSH_CONNECTION 192.0.2.10 50000 198.51.100.7 22\n\
+MOSH SSH_CONNECTION 192.0.2.10 50000 198.51.100.8 22\n"
+            ),
+            Err("invalid or ambiguous MOSH SSH_CONNECTION record")
+        );
+        assert_eq!(
+            mosh_server_ipv4(b"MOSH SSH_CONNECTION 2001:db8::1 50000 2001:db8::2 22\n"),
+            Err("Mosh bootstrap requires an IPv4 SSH server address")
+        );
+    }
+
+    #[test]
+    fn mosh_bootstrap_rejects_noncanonical_ssh_connection_records() {
+        assert_eq!(
+            mosh_server_ipv4(b" MOSH SSH_CONNECTION 192.0.2.10 50000 198.51.100.7 22\n"),
+            Err("Mosh bootstrap did not report the SSH server address")
+        );
+        assert_eq!(
+            mosh_server_ipv4(b"MOSH  SSH_CONNECTION 192.0.2.10 50000 198.51.100.7 22\n"),
+            Err("Mosh bootstrap did not report the SSH server address")
+        );
+    }
+
+    #[test]
     fn diagnostic_transport_events_contain_only_fixed_metadata_fields() {
         let event =
             TransportEvent::diagnostic(ConnectionLayer::Target, "authentication", "waiting");
@@ -3522,6 +4624,41 @@ mod tests {
         assert_eq!(event.status, "waiting");
         assert!(event.reason.is_empty());
         assert!(event.result.is_empty());
+    }
+
+    #[test]
+    fn mosh_reachability_uses_only_fixed_status_and_reason_fields() {
+        let awaiting = TransportEvent::mosh_reachability("awaiting_peer", "");
+        assert_eq!(awaiting.kind, "reachability");
+        assert_eq!(awaiting.layer, "target");
+        assert_eq!(awaiting.stage, "mosh_udp");
+        assert_eq!(awaiting.status, "awaiting_peer");
+        assert!(awaiting.reason.is_empty());
+
+        assert_eq!(
+            super::mosh_reachability_fields(MoshSessionReachability::Responsive),
+            Some(("responsive", ""))
+        );
+        assert_eq!(
+            super::mosh_reachability_fields(MoshSessionReachability::Interrupted {
+                reason: MoshSessionInterruption::NoRecentContact,
+            }),
+            Some(("interrupted", "no_recent_contact"))
+        );
+        assert_eq!(
+            super::mosh_reachability_fields(MoshSessionReachability::Interrupted {
+                reason: MoshSessionInterruption::NoRecentReply,
+            }),
+            Some(("interrupted", "no_recent_reply"))
+        );
+    }
+
+    #[test]
+    fn mosh_initial_attachment_timeout_is_a_connection_failure() {
+        assert_eq!(
+            super::mosh_session_error_code(&mosh_client::SessionError::ConnectionTimeout),
+            "connection_timeout"
+        );
     }
 
     #[test]
