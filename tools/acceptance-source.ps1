@@ -873,6 +873,12 @@ function Add-LeanTTYAcceptanceSource {
     $text.bridge = Set-LeanTTYAcceptanceSourceText $text.bridge `
         '  private postTerminalPacket(data: Uint8Array): number {' `
         ($bridgeMethod + '  private postTerminalPacket(data: Uint8Array): number {')
+    $text.bridge = Set-LeanTTYAcceptanceSourceText $text.bridge `
+        '        this.inFlightSequences.shift()' `
+        ("        if (ACCEPTANCE_TESTS) {`n" +
+            "          this.logger.info('ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' + acknowledged.toString())`n" +
+            "        }`n" +
+            "        this.inFlightSequences.shift()")
     $text.surface = Set-LeanTTYAcceptanceSourceText $text.surface `
         "import util from '@ohos.util'" `
         "import util from '@ohos.util'`nimport { ACCEPTANCE_TESTS } from 'BuildProfile'"
@@ -948,6 +954,59 @@ function Add-LeanTTYAcceptanceSource {
     $text.session = Set-LeanTTYAcceptanceSourceText `
         $text.session $preparationAnchor $preparationReplacement
     $configAcceptanceMethod = @'
+  private acceptanceKeyBackupHash(path: string): string {
+    if (!FileUtils.fileExists(path)) { return 'missing' }
+    return DurableAssetFormat.sha256(DurableAssetFormat.encodeText(FileUtils.readTextFile(path)))
+  }
+
+  private async runKeyBackupAcceptance(action: string, name: string): Promise<void> {
+    if (!ACCEPTANCE_TESTS || this.context === null) { return }
+    if (!/^leantty-id-ed25519-backup-[0-9a-f]{10}$/.test(name)) {
+      this.logger.error('ACCEPTANCE_KEY_BACKUP state=failed,error=invalid-name')
+      return
+    }
+    let root: string = Environment.getUserDownloadDir().replace(/\/+$/, '')
+    let sshRoot: string = FileUtils.getSshDir(this.context)
+    let activePrivate: string = sshRoot + '/id_ed25519'
+    let activePublic: string = activePrivate + '.pub'
+    let backupPrivate: string = root + '/' + name
+    let backupPublic: string = backupPrivate + '.pub'
+    let privateMatch: boolean = false
+    let publicMatch: boolean = false
+    try {
+      await DownloadsAccessManager.ensure(this.context)
+      let backupPrivatePresent: boolean = FileUtils.fileExists(backupPrivate)
+      let backupPublicPresent: boolean = FileUtils.fileExists(backupPublic)
+      if (action === 'observe' && !backupPrivatePresent && !backupPublicPresent) {
+        this.logger.info('ACCEPTANCE_KEY_BACKUP state=absent,name=' + name + ',cleanupComplete=true')
+        return
+      }
+      privateMatch = this.acceptanceKeyBackupHash(activePrivate) !== 'missing' &&
+        this.acceptanceKeyBackupHash(activePrivate) === this.acceptanceKeyBackupHash(backupPrivate)
+      publicMatch = this.acceptanceKeyBackupHash(activePublic) !== 'missing' &&
+        this.acceptanceKeyBackupHash(activePublic) === this.acceptanceKeyBackupHash(backupPublic)
+      if (!privateMatch || (action === 'observe' && !publicMatch)) {
+        throw new Error('active and exported key pairs do not match')
+      }
+      if (action === 'observe') {
+        this.logger.info('ACCEPTANCE_KEY_BACKUP state=observed,name=' + name +
+          ',sourcePath=' + backupPrivate + ',privateMatch=true,publicMatch=true')
+        return
+      }
+      if (action !== 'verify') { throw new Error('unknown action') }
+      FileUtils.removeFileRequired(backupPrivate)
+      FileUtils.removeFileRequired(backupPublic)
+      let cleanupComplete: boolean = !FileUtils.fileExists(backupPrivate) && !FileUtils.fileExists(backupPublic)
+      if (!cleanupComplete) { throw new Error('backup cleanup failed') }
+      this.logger.info('ACCEPTANCE_KEY_BACKUP state=verified,name=' + name +
+        ',privateMatch=true,publicBytesMatch=' + publicMatch.toString() + ',cleanupComplete=true')
+    } catch (e) {
+      this.logger.error('ACCEPTANCE_KEY_BACKUP state=failed,name=' + name +
+        ',privateMatch=' + privateMatch.toString() + ',publicBytesMatch=' + publicMatch.toString() +
+        ',cleanupComplete=false,error=' + e)
+    }
+  }
+
   private acceptanceConfigFileNames(): string[] {
     return [
       'leantty-config-acceptance-import.conf',
@@ -1081,6 +1140,16 @@ function Add-LeanTTYAcceptanceSource {
     this.commandBarVm.addToHistory(cmd)
 '@
     $configCommandReplacement = @'
+    if (ACCEPTANCE_TESTS && cmd.startsWith('__acceptance_key_backup_')) {
+      let keyBackupSeparator: number = cmd.indexOf(' ')
+      if (keyBackupSeparator > '__acceptance_key_backup_'.length) {
+        await this.runKeyBackupAcceptance(
+          cmd.substring('__acceptance_key_backup_'.length, keyBackupSeparator),
+          cmd.substring(keyBackupSeparator + 1))
+      }
+      this.writePrompt()
+      return
+    }
     if (ACCEPTANCE_TESTS && cmd.startsWith('__acceptance_config_')) {
       await this.runConfigMigrationAcceptance(cmd.substring('__acceptance_config_'.length))
       this.writePrompt()

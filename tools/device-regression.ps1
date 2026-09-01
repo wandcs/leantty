@@ -924,7 +924,7 @@ function Get-LeanTTYAppLogs {
         [Parameter(Mandatory = $true)][string]$ProcessId
     )
 
-    return Invoke-HdcChecked `
+    $primary = Invoke-HdcChecked `
         -Hdc $Hdc `
         -Target $Target `
         -Arguments @(
@@ -936,6 +936,12 @@ function Get-LeanTTYAppLogs {
             )
         ) `
         -Operation 'HarmonyOS application log query'
+    $mosh = Invoke-HdcChecked `
+        -Hdc $Hdc `
+        -Target $Target `
+        -Arguments @('shell', "hilog -z 500 -t app -P $ProcessId -T MoshClient") `
+        -Operation 'HarmonyOS Mosh application log query'
+    return $primary + "`n" + $mosh
 }
 
 function Wait-LeanTTYAppLog {
