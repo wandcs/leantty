@@ -11,7 +11,7 @@ import { DownloadsAccessManager } from '../transfer/DownloadsAccessManager'
 import sshNative from 'libleantty_ssh.so'
 
 const logger: Logger = new Logger('SshKeyManager')
-const DEFAULT_ALGOS: string[] = ['id_ed25519', 'id_ed25519_sk', 'id_rsa']
+const DEFAULT_ALGOS: string[] = ['id_ed25519', 'id_rsa', 'id_ecdsa']
 const VALID_KEY_NAME: RegExp = /^[A-Za-z0-9._-]+$/
 const RESERVED_SSH_FILES: string[] = ['config', 'known_hosts', 'authorized_keys', 'rc', 'environment', 'moduli']
 
@@ -292,6 +292,10 @@ export class SshKeyManager {
 
   static findDefaultKey(context: common.Context): KeyPairInfo | null {
     let keys: KeyPairInfo[] = SshKeyManager.listKeys(context)
+    return SshKeyManager.selectDefaultKey(keys)
+  }
+
+  static selectDefaultKey(keys: KeyPairInfo[]): KeyPairInfo | null {
     for (let algoIndex = 0; algoIndex < DEFAULT_ALGOS.length; algoIndex++) {
       let algoName: string = DEFAULT_ALGOS[algoIndex]
       for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {

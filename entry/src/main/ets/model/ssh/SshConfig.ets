@@ -560,6 +560,11 @@ export class SshConfig {
         }
         resolved.identityFile = value
         identitySet = true
+      } else if (lowerName === 'identityfile') {
+        if (resolved.errorMessage.length === 0) {
+          resolved.errorMessage = this.configError(alias, name, i + 1,
+            'appears more than once for matching Host')
+        }
       } else if (lowerName === 'proxyjump' && !proxyJumpSet) {
         if (value.length === 0) {
           if (resolved.errorMessage.length === 0) {
