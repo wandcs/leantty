@@ -85,6 +85,23 @@ export declare function sshWrite(sessionId: string, data: string): void
 export declare function sshResize(sessionId: string, cols: number, rows: number): void
 export declare function sshSetOutputPaused(sessionId: string, paused: boolean): void
 export declare function sshDisconnect(sessionId: string): void
+export declare function moshConnect(
+  host: string, port: number, user: string,
+  privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
+  knownHostsPath: string, connectTimeoutMs: number,
+  serverAliveIntervalSeconds: number, serverAliveCountMax: number,
+  serverPath: string,
+  udpPortStart: number, udpPortEnd: number,
+  predictionMode: string,
+  columns: number, rows: number, generation: number,
+  onTransport: (event: TransportEvent) => void,
+  onControl: (event: ControlEvent) => void,
+  onAuth: (event: AuthEvent) => void
+): string
+export declare function moshWrite(sessionId: string, data: string): void
+export declare function moshResize(sessionId: string, columns: number, rows: number): void
+export declare function moshSetOutputPaused(sessionId: string, paused: boolean): void
+export declare function moshDisconnect(sessionId: string): void
 export declare function sshStartFileTransfer(
   direction: string, host: string, port: number, user: string,
   privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
