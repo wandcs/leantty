@@ -35,6 +35,9 @@ export class TerminalBridge {
   private sessionOutputAnchorSent: boolean = false
   private sessionResetViewportCompletion: ((completed: boolean) => void) | null = null
   private sessionResetViewportSent: boolean = false
+  private terminalPageReplacementSnapshot: string = ''
+  private terminalPageReplacementCompletion: ((completed: boolean) => void) | null = null
+  private terminalPageReplacementSent: boolean = false
   private readyHandlerNotified: boolean = false
   private inFlightBytes: number = 0
   private inFlightMessages: number = 0
@@ -84,6 +87,8 @@ export class TerminalBridge {
       this.sessionOutputAnchorCompletion
     let interruptedViewportCompletion: ((completed: boolean) => void) | null =
       this.sessionResetViewportCompletion
+    let interruptedPageCompletion: ((completed: boolean) => void) | null =
+      this.terminalPageReplacementCompletion
     if (this.msgPort !== null) {
       try {
         this.msgPort.close()
@@ -111,6 +116,9 @@ export class TerminalBridge {
     this.sessionOutputAnchorSent = false
     this.sessionResetViewportCompletion = null
     this.sessionResetViewportSent = false
+    this.terminalPageReplacementSnapshot = ''
+    this.terminalPageReplacementCompletion = null
+    this.terminalPageReplacementSent = false
     this.readyHandlerNotified = false
     this.inFlightBytes = 0
     this.inFlightMessages = 0
@@ -129,6 +137,9 @@ export class TerminalBridge {
     }
     if (interruptedAnchorCompletion !== null) {
       interruptedAnchorCompletion(false)
+    }
+    if (interruptedPageCompletion !== null) {
+      interruptedPageCompletion(false)
     }
   }
 
@@ -159,6 +170,12 @@ export class TerminalBridge {
   }
 
   write(data: Uint8Array, onWritten: ((written: boolean) => void) | null = null): void {
+    if (!BridgeProtocol.canQueueTerminalPayload(data.byteLength)) {
+      if (onWritten !== null) {
+        onWritten(true)
+      }
+      return
+    }
     this.receivedBytes += data.byteLength
     if (onWritten === null && this.pendingBytes + data.byteLength > TerminalBridge.MAX_PENDING_BYTES) {
       this.droppedBytes += data.byteLength
@@ -170,6 +187,9 @@ export class TerminalBridge {
     this.queueData(new PendingTerminalWrite(data, onWritten))
     this.updateBackpressure()
     this.pumpPendingData()
+    if (onWritten !== null) {
+      this.logMetrics('completion-write-queued')
+    }
   }
 
   sendTheme(themeJson: string): void {
@@ -272,22 +292,40 @@ export class TerminalBridge {
 
   restoreSessionViewport(onComplete: (completed: boolean) => void): void {
     if (!this.ready || this.sessionResetViewportCompletion !== null) {
+      this.logMetrics('session-reset-viewport-rejected')
       onComplete(false)
       return
     }
     this.sessionResetViewportCompletion = onComplete
     this.sessionResetViewportSent = false
+    this.logMetrics('session-reset-viewport-queued')
     this.pumpSessionResetViewport()
   }
 
   positionSessionOutput(onComplete: (completed: boolean) => void): void {
     if (this.sessionOutputAnchorCompletion !== null) {
+      this.logMetrics('session-output-anchor-rejected')
       onComplete(false)
       return
     }
     this.sessionOutputAnchorCompletion = onComplete
     this.sessionOutputAnchorSent = false
+    this.logMetrics('session-output-anchor-queued')
     this.pumpSessionOutputAnchor()
+  }
+
+  replaceTerminalPage(snapshot: string, onComplete: (completed: boolean) => void): void {
+    if (snapshot.length > BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH ||
+      this.terminalPageReplacementCompletion !== null) {
+      this.logMetrics('terminal-page-replace-rejected')
+      onComplete(false)
+      return
+    }
+    this.terminalPageReplacementSnapshot = snapshot
+    this.terminalPageReplacementCompletion = onComplete
+    this.terminalPageReplacementSent = false
+    this.logMetrics('terminal-page-replace-queued')
+    this.pumpTerminalPageReplacement()
   }
 
   private postTerminalPacket(data: Uint8Array): number {
@@ -372,6 +410,7 @@ export class TerminalBridge {
           completedWrite.onWritten(true)
         }
         this.pumpPendingData()
+        this.pumpTerminalPageReplacement()
         this.pumpSessionOutputAnchor()
         this.pumpSessionResetViewport()
         this.pumpSnapshotRequests()
@@ -406,6 +445,7 @@ export class TerminalBridge {
         this.pendingRestoreSnapshot = ''
       }
       this.pumpPendingData()
+      this.pumpTerminalPageReplacement()
       this.pumpSessionOutputAnchor()
       this.pumpSessionResetViewport()
       this.pumpSnapshotRequests()
@@ -421,6 +461,7 @@ export class TerminalBridge {
         this.awaitingRestoreComplete = false
         this.pumpSessionOutputAnchor()
         this.pumpSessionResetViewport()
+        this.pumpTerminalPageReplacement()
         this.pumpSnapshotRequests()
         this.pumpSearchOpen()
         this.notifyReadyHandler()
@@ -428,7 +469,24 @@ export class TerminalBridge {
       return
     }
     if (msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE_COMPLETE) {
+      this.logMetrics('terminal-page-replace-complete')
+      let completion: ((completed: boolean) => void) | null = this.terminalPageReplacementCompletion
+      this.terminalPageReplacementSnapshot = ''
+      this.terminalPageReplacementCompletion = null
+      this.terminalPageReplacementSent = false
+      if (completion !== null) {
+        completion(true)
+      }
+      this.pumpSessionOutputAnchor()
+      this.pumpSessionResetViewport()
+      this.pumpSnapshotRequests()
+      this.pumpSearchOpen()
+      return
+    }
+    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
       msg.kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR_COMPLETE) {
+      this.logMetrics('session-output-anchor-complete')
       let completion: ((completed: boolean) => void) | null = this.sessionOutputAnchorCompletion
       this.sessionOutputAnchorCompletion = null
       this.sessionOutputAnchorSent = false
@@ -439,6 +497,7 @@ export class TerminalBridge {
     }
     if (msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
       msg.kind === BridgeProtocol.KIND_SESSION_RESET_COMPLETE) {
+      this.logMetrics('session-reset-viewport-complete')
       let completion: ((completed: boolean) => void) | null = this.sessionResetViewportCompletion
       this.sessionResetViewportCompletion = null
       this.sessionResetViewportSent = false
@@ -467,7 +526,7 @@ export class TerminalBridge {
   }
 
   private pumpSnapshotRequests(): void {
-    if (!this.ready || this.awaitingRestoreComplete ||
+    if (!this.ready || this.awaitingRestoreComplete || this.terminalPageReplacementCompletion !== null ||
       this.pendingDataHead < this.pendingData.length || this.inFlightMessages > 0) {
       return
     }
@@ -479,7 +538,8 @@ export class TerminalBridge {
 
   private pumpSessionResetViewport(): void {
     if (this.sessionResetViewportCompletion === null || this.sessionResetViewportSent || !this.ready ||
-      this.awaitingRestoreComplete || this.pendingDataHead < this.pendingData.length || this.inFlightMessages > 0) {
+      this.awaitingRestoreComplete || this.terminalPageReplacementCompletion !== null ||
+      this.pendingDataHead < this.pendingData.length || this.inFlightMessages > 0) {
       return
     }
     this.sessionResetViewportSent = this.send(BridgeProtocol.sessionResetViewport())
@@ -494,7 +554,8 @@ export class TerminalBridge {
 
   private pumpSessionOutputAnchor(): void {
     if (this.sessionOutputAnchorCompletion === null || this.sessionOutputAnchorSent || !this.ready ||
-      this.awaitingRestoreComplete || this.pendingDataHead < this.pendingData.length || this.inFlightMessages > 0) {
+      this.awaitingRestoreComplete || this.terminalPageReplacementCompletion !== null ||
+      this.pendingDataHead < this.pendingData.length || this.inFlightMessages > 0) {
       return
     }
     this.sessionOutputAnchorSent = this.send(BridgeProtocol.sessionOutputAnchor())
@@ -508,11 +569,29 @@ export class TerminalBridge {
   }
 
   private pumpSearchOpen(): void {
-    if (!this.pendingSearchOpen || !this.ready || this.awaitingRestoreComplete) {
+    if (!this.pendingSearchOpen || !this.ready || this.awaitingRestoreComplete ||
+      this.terminalPageReplacementCompletion !== null) {
       return
     }
     if (this.send(BridgeProtocol.searchOpen())) {
       this.pendingSearchOpen = false
+    }
+  }
+
+  private pumpTerminalPageReplacement(): void {
+    if (this.terminalPageReplacementCompletion === null || this.terminalPageReplacementSent || !this.ready ||
+      this.awaitingRestoreComplete || this.pendingDataHead < this.pendingData.length || this.inFlightMessages > 0) {
+      return
+    }
+    this.terminalPageReplacementSent = this.send(
+      BridgeProtocol.terminalPageReplace(this.terminalPageReplacementSnapshot))
+    if (!this.terminalPageReplacementSent) {
+      let completion: ((completed: boolean) => void) | null = this.terminalPageReplacementCompletion
+      this.terminalPageReplacementSnapshot = ''
+      this.terminalPageReplacementCompletion = null
+      if (completion !== null) {
+        completion(false)
+      }
     }
   }
 
@@ -578,8 +657,11 @@ export class TerminalBridge {
     this.logger.info('PERF bridge reason=' + reason +
       ',received=' + this.receivedBytes.toString() +
       ',queued=' + this.pendingBytes.toString() +
+      ',queuedMessages=' + (this.pendingData.length - this.pendingDataHead).toString() +
       ',inFlight=' + this.inFlightBytes.toString() +
       ',inFlightMessages=' + this.inFlightMessages.toString() +
+      ',ready=' + this.ready.toString() +
+      ',restoring=' + this.awaitingRestoreComplete.toString() +
       ',acked=' + this.acknowledgedBytes.toString() +
       ',dropped=' + this.droppedBytes.toString())
   }

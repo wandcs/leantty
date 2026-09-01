@@ -4,7 +4,62 @@
 
 ## [1.6.0] - In development
 
+### Added
+
+- Add the initial `mosh [user@]host|alias` interactive-session path with existing
+  Host, Identity, host-key and authentication policy, an isolated Pane-owned UDP
+  IPv4 session, strict bootstrap parsing and local `Ctrl-^` disconnect/help escapes.
+  The protocol dependency is pinned to an exact public `wandcs/mosh-client-rs`
+  Git revision; remaining options and weak-network acceptance remain in development.
+- Add `mosh -p <port>` and `mosh -p <low>:<high>` for a fixed Mosh UDP endpoint,
+  with strict pre-network validation and rejection when the stock server returns
+  an endpoint outside the requested range. SSH Host `Port` remains bootstrap-only.
+- Add `mosh --server=<absolute-path>` for a Mosh server installed outside the
+  remote `PATH`. LeanTTY accepts one audited POSIX executable path, rejects shell
+  fragments and extra arguments before networking, and reports missing or
+  non-executable paths without exposing bootstrap output.
+- Show a temporary interrupted status for an established Mosh Session when the
+  authenticated reachability observer reports stale contact or reply progress,
+  and restore the connected status when the same Session becomes responsive.
+  The warning does not close the Pane; an initial 15-second attachment timeout is
+  reported as a connection failure.
+- Add strict `mosh --predict=adaptive|always|never` parsing and pass the selected
+  per-Pane mode to the pinned Mosh client. `adaptive` remains the default; the
+  library retains prediction authority and Session isolation.
+
+### Fixed
+
+- Isolate every Mosh Session in a temporary terminal page. LeanTTY seals the original
+  page before the first Mosh output, keeps all state-sync repaints out of local history,
+  and restores the original page after final output on close, cancellation, error or
+  Pane disposal without guessing Vim or `less` lifecycle sequences.
+- Route physical `Ctrl+Shift+6` through the native keyboard boundary so the
+  documented Mosh `Ctrl-^` escape reaches the Pane instead of depending on
+  ArkWeb to synthesize the control character.
+- Treat empty terminal output as a successful no-op at the ordered ArkWeb
+  bridge boundary, preventing Mosh repaint output from filling the ACK queue
+  and blocking the local prompt after `Ctrl-^ .` disconnects a Session.
+- Close Mosh Sessions with the authenticated stock-compatible handshake while
+  continuing to drain final terminal output; immediate failure teardown remains
+  a separate hard cancellation path.
+- Reject event, output and connection-start callbacks from a retired Mosh client
+  after reconnect, cancellation or Pane disposal. Closing an active Mosh Pane now
+  detaches its callback ownership before native shutdown, while the surviving Pane
+  can immediately start and retain an independent Session.
+- Keep concurrent Mosh/Mosh and SSH/Mosh Pane owners isolated across bootstrap
+  keys, native handles, input, terminal output and cleanup. Closing one Session
+  leaves the opposite Pane able to complete a new remote command.
+- Prefer supported default OpenSSH identities in the stable order Ed25519, RSA,
+  then ECDSA; unsupported security-key names are no longer considered.
+- Reject a second `IdentityFile` across matching Host blocks with its source
+  directive and line number instead of silently keeping the first value.
+- Reject `put/get` for Hosts that require ProxyJump before any connection starts,
+  instead of dropping the jump route and connecting directly to the target.
+
 ## [1.5.1] - 2026-08-28
+
+**AppGallery review approved and released to users; maintainer confirmation
+recorded on 2026-08-29.**
 
 ### Fixed
 

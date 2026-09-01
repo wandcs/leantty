@@ -237,3 +237,44 @@ export async function runTerminalSessionResetTests(TerminalCtor, SerializeAddonC
   await exerciseSessionBoundary(TerminalCtor, SerializeAddonCtor, sessionOutputAnchorRow, true);
   console.log('terminal session-boundary reset matrix tests passed');
 }
+
+export async function runTerminalMoshPageTests(TerminalCtor, SerializeAddonCtor, SearchAddonCtor) {
+  const terminal = new TerminalCtor({ cols: 40, rows: 8, scrollback: 40, allowProposedApi: true });
+  const serializer = new SerializeAddonCtor();
+  const search = new SearchAddonCtor({ highlightLimit: 1000 });
+  terminal.loadAddon(serializer);
+  terminal.loadAddon(search);
+  terminal.select = () => {};
+  terminal.getSelectionPosition = () => null;
+  terminal.clearSelection = () => {};
+
+  await write(terminal, 'original-history-marker\r\noriginal-visible-marker');
+  const originalSnapshot = serializer.serialize({ scrollback: 40 });
+  terminal.reset();
+  await write(terminal, 'mosh-private-marker\u001b[?1049hvim-private-marker\u001b[?1049l');
+  const moshSnapshot = serializer.serialize({ scrollback: 40 });
+  assert.doesNotMatch(normalBufferText(terminal), /original-history-marker/,
+    'the isolated Mosh page must not expose original history');
+
+  const rebuilt = new TerminalCtor({ cols: 40, rows: 8, scrollback: 40 });
+  rebuilt.loadAddon(new SerializeAddonCtor());
+  await write(rebuilt, moshSnapshot);
+  assert.match(normalBufferText(rebuilt), /mosh-private-marker/,
+    'a replacement Surface must recover the Mosh page independently');
+  rebuilt.reset();
+  await write(rebuilt, originalSnapshot);
+  assert.match(normalBufferText(rebuilt), /original-history-marker/,
+    'ending Mosh after a Surface rebuild must restore the original page');
+  assert.doesNotMatch(normalBufferText(rebuilt), /mosh-private-marker|vim-private-marker/,
+    'restoring the original page must discard all Mosh and remote alternate-buffer history');
+
+  terminal.reset();
+  await write(terminal, originalSnapshot);
+  assert.equal(search.findNext('mosh-private-marker'), false,
+    'search must not retain content from the discarded Mosh page');
+  assert.equal(search.findNext('original-history-marker'), true,
+    'search must continue to find the restored original history');
+  terminal.dispose();
+  rebuilt.dispose();
+  console.log('terminal Mosh page isolation matrix tests passed');
+}

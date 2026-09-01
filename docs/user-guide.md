@@ -2,11 +2,12 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-25
+> Last updated: 2026-08-31
 >
-> Applies to: the 1.5.0 release source. Version 1.4.0 is the preceding
-> AppGallery baseline; check the matching GitHub Release and AppGallery entry
-> before relying on 1.5.0 behavior in an installed build.
+> Applies to: the current 1.6.0 development source. The 1.5.1 GitHub release is
+> the preceding published source; AppGallery availability is confirmed through
+> 1.5.1. Check the matching GitHub Release and AppGallery entry before relying
+> on later behavior in an installed build.
 
 LeanTTY is a keyboard-first SSH terminal for a physical ARM64 HarmonyOS PC. It
 provides the TTY entry point; the shell, tmux, editor and Agent TUI continue to
@@ -16,8 +17,8 @@ run in the selected execution environment.
 
 - The application starts at a lowercase `ltty>` prompt in the theme's green.
 - A tab owns one or two panes.
-- Each pane owns one independent SSH session and terminal surface.
-- Closing a connected pane disconnects its SSH session.
+- Each pane owns one independent SSH or Mosh session and terminal surface.
+- Closing a connected pane disconnects its current session.
 - Closing the application with active sessions asks for confirmation and then
   disconnects those sessions.
 - LeanTTY does not provide a local shell, Linux distribution, package manager,
@@ -50,6 +51,48 @@ Current source authentication supports direct password, unencrypted and
 encrypted private keys, SSH `keyboard-interactive`, authentication banners and
 multi-method authentication. Check the matching release before relying on a
 development capability in an installed build.
+
+## Mosh connection
+
+When the remote host has a compatible `mosh-server`, start a recoverable UDP
+terminal through the same saved Host, host-key and authentication policy:
+
+```text
+mosh work
+mosh user@example.com
+mosh -p 60042 work
+mosh -p 60042:60044 user@example.com
+mosh --server=/home/user/.local/bin/mosh-server work
+mosh --predict=always work
+mosh --predict=never work
+```
+
+Without `-p`, the server selects its default UDP endpoint. With `-p`, the value
+must be one decimal port from 1 through 65535 or an inclusive ascending range.
+The saved Host `Port` is only the SSH bootstrap port; it never selects the Mosh
+UDP port. Your server, firewall and NAT must allow the selected UDP endpoint.
+LeanTTY does not create firewall rules or tunnel Mosh UDP through ProxyJump.
+
+Use `--server=<absolute-path>` when `mosh-server` is installed outside the
+remote `PATH`. The value must be one absolute POSIX executable path of at most
+1024 ASCII bytes. LeanTTY rejects spaces, shell syntax, `~`, relative paths and
+extra server arguments before connecting. Omitting the option keeps the normal
+remote `PATH` lookup.
+
+Local prediction defaults to `adaptive`. Use `always` to show eligible confirmed-epoch ASCII
+predictions on every link, or `never` to wait for authenticated server state. Prediction does not
+cover paste, control sequences or arbitrary Unicode, and it never changes remote terminal authority.
+
+This development version supports IPv4 Mosh targets only. It rejects `-4`, `-6`,
+`--family` and IPv6 literals rather than accepting an address-family option that
+has not passed the physical IPv6 path. Host names may still be used when their
+SSH connection and reported server endpoint resolve to IPv4.
+
+During a temporary interruption, the pane shows a warning and keeps the Mosh
+session open. A responsive server restores the connected state automatically.
+Use `Ctrl-^ .` to close the current Mosh session or `Ctrl-^ ?` for escape help.
+Keep durable work in remote tmux or screen: Mosh
+does not preserve a session after you close the pane or app.
 
 ## Working with Agent TUIs
 
@@ -137,10 +180,13 @@ The current documented `ssh_config` subset is:
 | `ServerAliveInterval` | Uses 0–3600 whole seconds; `0` disables probes |
 | `ServerAliveCountMax` | Uses 1–100 unanswered probes |
 
-OpenSSH first-value behavior is preserved for these fields. An unknown or
-unsupported directive in a matching Host block causes `ssh` and `ssh -G` to
-fail with the directive and line number before a connection starts. Because
-LeanTTY does not yet evaluate `Match` conditions, any `Match` block is rejected
+OpenSSH first-value behavior is preserved for the other fields. `IdentityFile`
+is multi-valued upstream, but LeanTTY intentionally selects one key. A second
+`IdentityFile` across matching Host blocks therefore fails with the directive
+and line number instead of being ignored or tried. An unknown or unsupported
+directive in a matching Host block also causes `ssh` and `ssh -G` to fail before
+a connection starts. LeanTTY does not yet evaluate `Match` conditions, so any
+`Match` block is rejected
 instead of being silently ignored. Unsupported directives in unrelated Host
 blocks do not block the selected Host, and LeanTTY preserves their source text
 when it edits its own managed Host section.
@@ -331,7 +377,9 @@ get work:/reports/latest.csv reports/
 `put` and `get` reuse the same Host, port, Identity, host-key and authentication
 rules as `ssh`. A command-local `-p` or `-i` applies only to that transfer. The
 remote endpoint must provide SFTP; LeanTTY does not expose an interactive SFTP
-shell.
+shell. File transfer does not support ProxyJump. If a saved Host uses ProxyJump,
+`put` and `get` stop before connecting; use a Host that the device can reach
+directly.
 
 Local paths are relative to Downloads. Existing subdirectories are allowed,
 but LeanTTY does not create directories, recurse, expand wildcards or transfer

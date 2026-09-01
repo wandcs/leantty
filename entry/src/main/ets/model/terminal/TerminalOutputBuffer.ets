@@ -6,6 +6,8 @@ export class TerminalOutputBuffer {
   private attached: boolean = false
   private snapshot: string = ''
   private snapshotStateSuffix: string = ''
+  private sessionPageActive: boolean = false
+  private sessionPageBaseSnapshot: string = ''
   private readonly hiddenHighWaterBytes: number
 
   constructor(hiddenHighWaterBytes: number = 768 * 1024) {
@@ -70,6 +72,40 @@ export class TerminalOutputBuffer {
   replaceSnapshot(snapshot: string): void {
     this.snapshot = snapshot
     this.snapshotStateSuffix = ''
+  }
+
+  beginSessionPage(): boolean {
+    if (this.sessionPageActive) {
+      return false
+    }
+    this.sessionPageBaseSnapshot = this.getSnapshot()
+    this.sessionPageActive = true
+    this.snapshot = ''
+    this.snapshotStateSuffix = ''
+    return true
+  }
+
+  isSessionPageActive(): boolean {
+    return this.sessionPageActive
+  }
+
+  getSessionPageBaseSnapshot(): string {
+    return this.sessionPageBaseSnapshot
+  }
+
+  endSessionPage(): string {
+    if (!this.sessionPageActive) {
+      return this.getSnapshot()
+    }
+    let originalSnapshot: string = this.sessionPageBaseSnapshot
+    this.sessionPageActive = false
+    this.sessionPageBaseSnapshot = ''
+    this.snapshot = originalSnapshot
+    this.snapshotStateSuffix = ''
+    this.detachedChunks = []
+    this.detachedBytes = 0
+    this.detachedBackpressured = false
+    return originalSnapshot
   }
 
   markSessionReset(resetSequence: string): void {

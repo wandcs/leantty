@@ -10,18 +10,34 @@ import {
   MAX_SSH_SERVER_ALIVE_COUNT_MAX,
   SshConnectionSpec
 } from '../../common/types/SshTypes'
+import { MoshPredictionMode } from '../mosh/MoshPredictionMode'
 
 export class CommandParseResult extends SshConnectionSpec {
   isValid: boolean
   isAlias: boolean
   errorMessage: string
+  protocol: ConnectionCommandProtocol
+  moshUdpPortStart: number
+  moshUdpPortEnd: number
+  moshServerPath: string
+  moshPredictionMode: MoshPredictionMode
 
   constructor() {
     super()
     this.isValid = false
     this.isAlias = false
     this.errorMessage = ''
+    this.protocol = ConnectionCommandProtocol.SSH
+    this.moshUdpPortStart = 0
+    this.moshUdpPortEnd = 0
+    this.moshServerPath = ''
+    this.moshPredictionMode = MoshPredictionMode.ADAPTIVE
   }
+}
+
+export enum ConnectionCommandProtocol {
+  SSH = 0,
+  MOSH = 1
 }
 
 export enum KeyCommandKind {
@@ -194,6 +210,9 @@ export class CommandParser {
     }
     if (words[0] === 'scp') {
       return new TransferCommandResult(TransferDirection.SCP_HINT)
+    }
+    if (words[0] === 'mosh') {
+      return CommandParser.parseMoshCommand(trimmed, sshConfig)
     }
     if (trimmed.startsWith('ssh ') || trimmed.startsWith('ssh@') || trimmed.length === 0) {
       return CommandParser.parseCommand(trimmed, sshConfig)
@@ -372,6 +391,164 @@ export class CommandParser {
       if (result.errorMessage.length > 0) { result.isValid = false }
     }
     return result
+  }
+
+  static parseMoshCommand(input: string, sshConfig: SshConfig): CommandParseResult {
+    let result: CommandParseResult = new CommandParseResult()
+    result.protocol = ConnectionCommandProtocol.MOSH
+    let words: string[] = input.trim().split(/\s+/)
+    let target: string = ''
+    let portSpecified: boolean = false
+    let serverSpecified: boolean = false
+    let predictionSpecified: boolean = false
+    for (let index: number = 1; index < words.length; index++) {
+      let word: string = words[index]
+      if (target.length > 0) {
+        result.errorMessage = 'Mosh accepts exactly one connection target'
+        return result
+      }
+      if (word === '-p') {
+        if (portSpecified) {
+          result.errorMessage = 'Mosh option -p may be specified only once'
+          return result
+        }
+        if (index + 1 >= words.length || words[index + 1].startsWith('-')) {
+          result.errorMessage = 'Mosh option -p requires a UDP port or range'
+          return result
+        }
+        portSpecified = true
+        index++
+        if (!CommandParser.parseMoshUdpPortRange(words[index], result)) { return result }
+        continue
+      }
+      if (word === '--server') {
+        result.errorMessage = 'Mosh option --server requires an absolute path in --server=PATH form'
+        return result
+      }
+      if (word.startsWith('--server=')) {
+        if (serverSpecified) {
+          result.errorMessage = 'Mosh option --server may be specified only once'
+          return result
+        }
+        serverSpecified = true
+        if (!CommandParser.parseMoshServerPath(word.substring('--server='.length), result)) {
+          return result
+        }
+        continue
+      }
+      if (word === '--predict') {
+        result.errorMessage = 'Mosh option --predict requires adaptive, always or never in --predict=MODE form'
+        return result
+      }
+      if (word.startsWith('--predict=')) {
+        if (predictionSpecified) {
+          result.errorMessage = 'Mosh option --predict may be specified only once'
+          return result
+        }
+        predictionSpecified = true
+        let mode: string = word.substring('--predict='.length)
+        if (mode === MoshPredictionMode.ADAPTIVE) {
+          result.moshPredictionMode = MoshPredictionMode.ADAPTIVE
+        } else if (mode === MoshPredictionMode.ALWAYS) {
+          result.moshPredictionMode = MoshPredictionMode.ALWAYS
+        } else if (mode === MoshPredictionMode.NEVER) {
+          result.moshPredictionMode = MoshPredictionMode.NEVER
+        } else {
+          result.errorMessage = 'Mosh prediction mode must be adaptive, always or never'
+          return result
+        }
+        continue
+      }
+      if (word === '-4' || word === '-6' || word === '--family' || word.startsWith('--family=')) {
+        result.errorMessage = 'Mosh address-family options are not supported; this version supports IPv4 targets only'
+        return result
+      }
+      if (word.startsWith('-')) {
+        result.errorMessage = 'Unsupported Mosh option: ' + word
+        return result
+      }
+      target = word
+    }
+    if (target.length === 0) {
+      result.errorMessage = 'Usage: mosh [-p <udp-port>[:<udp-port>]] [--server=<absolute-path>] [--predict=<adaptive|always|never>] <user>@<host> or mosh [-p <udp-port>[:<udp-port>]] [--server=<absolute-path>] [--predict=<adaptive|always|never>] <host-name>'
+      return result
+    }
+    let explicitUser: string = ''
+    let hostName: string = target
+    let atIndex: number = target.lastIndexOf('@')
+    if (atIndex >= 0) {
+      if (atIndex === 0 || atIndex === target.length - 1 ||
+        target.substring(0, atIndex).includes('@')) {
+        result.errorMessage = 'Invalid Mosh target'
+        return result
+      }
+      explicitUser = target.substring(0, atIndex)
+      hostName = target.substring(atIndex + 1)
+    }
+    let alias: SshConfigHost | null = sshConfig.findHost(hostName)
+    let parsed: CommandParseResult = CommandParser.parseCommand(
+      'ssh ' + (alias === null ? target : hostName), sshConfig)
+    parsed.protocol = ConnectionCommandProtocol.MOSH
+    parsed.moshUdpPortStart = result.moshUdpPortStart
+    parsed.moshUdpPortEnd = result.moshUdpPortEnd
+    parsed.moshServerPath = result.moshServerPath
+    parsed.moshPredictionMode = result.moshPredictionMode
+    if (alias !== null && explicitUser.length > 0 && parsed.isValid) {
+      parsed.username = explicitUser
+    }
+    if (parsed.jumpHost.length > 0) {
+      parsed.isValid = false
+      parsed.errorMessage = 'Mosh does not support ProxyJump; use a directly reachable host'
+    }
+    if (parsed.isValid && parsed.host.includes(':')) {
+      parsed.isValid = false
+      parsed.errorMessage = 'Mosh currently supports IPv4 targets only'
+    }
+    return parsed
+  }
+
+  private static parseMoshUdpPortRange(value: string, result: CommandParseResult): boolean {
+    let bounds: string[] = value.split(':')
+    if (bounds.length < 1 || bounds.length > 2) {
+      result.errorMessage = 'Mosh UDP port range must use <low>:<high>'
+      return false
+    }
+    for (let bound of bounds) {
+      if (!/^\d{1,5}$/.test(bound)) {
+        result.errorMessage = 'Mosh UDP ports must be decimal numbers between 1 and 65535'
+        return false
+      }
+    }
+    let start: number = parseInt(bounds[0], 10)
+    let end: number = bounds.length === 1 ? start : parseInt(bounds[1], 10)
+    if (start < 1 || start > 65535 || end < 1 || end > 65535) {
+      result.errorMessage = 'Mosh UDP ports must be decimal numbers between 1 and 65535'
+      return false
+    }
+    if (start > end) {
+      result.errorMessage = 'Mosh UDP port range start must not exceed its end'
+      return false
+    }
+    result.moshUdpPortStart = start
+    result.moshUdpPortEnd = end
+    return true
+  }
+
+  private static parseMoshServerPath(value: string, result: CommandParseResult): boolean {
+    if (value.length < 2 || value.length > 1024 || !value.startsWith('/') || value.endsWith('/')) {
+      result.errorMessage = 'Mosh server path must be an absolute POSIX path of at most 1024 characters'
+      return false
+    }
+    let segments: string[] = value.substring(1).split('/')
+    for (let segment of segments) {
+      if (segment.length === 0 || segment === '.' || segment === '..' ||
+        !/^[A-Za-z0-9._+-]+$/.test(segment)) {
+        result.errorMessage = 'Mosh server path accepts only letters, digits, /, ., _, + and - without . or .. segments'
+        return false
+      }
+    }
+    result.moshServerPath = value
+    return true
   }
 
   private static applyProxyJump(spec: string, sshConfig: SshConfig, result: CommandParseResult): void {
@@ -566,6 +743,11 @@ export class CommandParser {
     let connection: CommandParseResult = CommandParser.parseCommand(sshCommand, sshConfig)
     if (!connection.isValid) {
       result.errorMessage = command + ': ' + connection.errorMessage
+      return result
+    }
+    if (connection.jumpHost.length > 0) {
+      result.errorMessage = command +
+        ': ProxyJump is not supported for file transfer; use a Host reachable without ProxyJump'
       return result
     }
     result.host = connection.host
