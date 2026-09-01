@@ -22,6 +22,7 @@
 | Crate | Version | Purpose |
 |---|---|---|
 | russh | 0.62.5 | SSH client/server (ring backend) |
+| mosh-client | 0.0.0 / `e1346b3` | Pinned Git Mosh client dependency |
 | tokio | 1.52 | Async runtime |
 | napi-ohos | 1.2.0 | N-API bindings |
 | xterm.js | 6.0.0 | Terminal emulator |

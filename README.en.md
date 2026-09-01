@@ -12,11 +12,10 @@ and coding-agent work.**
 > **Current device scope:** Physical ARM64 HarmonyOS PCs with a keyboard and
 > mouse. MatePad and touch-first use are not supported yet.
 >
-> **Current release status:** AppGallery availability is confirmed through
-> 1.4.0. Version 1.5.0 was submitted for AppGallery review on August 26, 2026
-> and is not yet confirmed as available. Its source and immutable public
-> artifacts are available from the
-> [GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.5.0).
+> **Current release status:** On August 29, 2026, the maintainer confirmed that
+> 1.5.1 passed AppGallery review and became available. Its source and immutable
+> public artifacts are available from the
+> [GitHub Release](https://github.com/wandcs/leantty/releases/tag/v1.5.1).
 
 ## Why LeanTTY
 
