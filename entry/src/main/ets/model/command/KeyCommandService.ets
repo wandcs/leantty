@@ -16,6 +16,7 @@ const HELP_TEXT: string =
   'Connection\r\n' +
   '  ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <user>@<host>\r\n' +
   '  ssh [-v] [-p <port>] [-i <identity>] [-J <jump>] <host-name>\r\n' +
+  '  mosh [-p <udp-port>[:<udp-port>]] [--server=<path>] [--predict=<adaptive|always|never>] <target>\r\n' +
   '\r\n' +
   'File transfer\r\n' +
   '  put [-p <port>] [-i <identity>] [--] <local-file> <host>:<remote-path>\r\n' +
@@ -61,6 +62,17 @@ const SSH_HELP: string = '\r\nUsage: ssh [-v] [-p <port>] [-i <identity>] [-J <j
   '-v shows fixed, redacted connection stages in this pane for this attempt only.\r\n' +
   'ProxyCommand and multi-hop chains are not supported.\r\n' +
   'While connected, enter ~? after a newline to list supported SSH escapes.\r\n'
+const MOSH_HELP: string = '\r\nUsage: mosh [-p <udp-port>[:<udp-port>]] [--server=<absolute-path>] [--predict=<adaptive|always|never>] <user>@<host>\r\n' +
+  '       mosh [-p <udp-port>[:<udp-port>]] [--server=<absolute-path>] [--predict=<adaptive|always|never>] <host-name>\r\n\r\n' +
+  'Mosh uses SSH for host verification and authentication, then switches to UDP.\r\n' +
+  'HostName, Port, User, IdentityFile, ConnectTimeout and ServerAlive come from ~/.ssh/config.\r\n' +
+  'An explicit user overrides a saved Host user. SSH Port never selects the UDP port.\r\n' +
+  '-p requests one fixed UDP port or an inclusive low:high range on mosh-server.\r\n' +
+  '--server selects one absolute POSIX executable path; shell commands and extra arguments are rejected.\r\n' +
+  '--predict controls local echo: adaptive is the default, always forces eligible prediction, and never disables it.\r\n' +
+  'Allow that UDP port or range through the server firewall before connecting. Port 0 is not accepted.\r\n' +
+  'This version supports IPv4 Mosh targets only; -4, -6 and --family are rejected.\r\n' +
+  'ProxyJump, remote commands and additional options are not supported yet.\r\n'
 const KEYGEN_HELP: string = '\r\nUsage: ssh-keygen [-t <ed25519|rsa>] [-f <key-name>] [-C <comment>]\r\n' +
   '       ssh-keygen -y -f <identity>\r\n       ssh-keygen -l -f <identity>[.pub]\r\n' +
   '       ssh-keygen -p -f <identity>\r\n' +
@@ -165,6 +177,7 @@ export class KeyCommandService {
     let topic: string = result.keyName.toLowerCase()
     if (topic.length === 0) { ctx.showTopLevelHelp(HELP_TEXT); return }
     if (topic === 'ssh') { ctx.writeOutput(SSH_HELP + LocalCommandOutput.prompt()); return }
+    if (topic === 'mosh') { ctx.writeOutput(MOSH_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'ssh-keygen') { ctx.writeOutput(KEYGEN_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'ssh-copy-id') { ctx.writeOutput(COPY_ID_HELP + LocalCommandOutput.prompt()); return }
     if (topic === 'key') { ctx.writeOutput(KEY_HELP + LocalCommandOutput.prompt()); return }

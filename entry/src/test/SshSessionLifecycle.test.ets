@@ -6,6 +6,8 @@ import {
   SshClientMessage
 } from '../main/ets/model/ssh/SshClient'
 import { SshSession, SshSessionState } from '../main/ets/model/ssh/SshSession'
+import { MoshClient } from '../main/ets/model/mosh/MoshClient'
+import { SessionViewModel } from '../main/ets/viewmodel/SessionViewModel'
 
 export default function sshSessionLifecycleTest() {
   describe('SshSessionLifecycle', () => {
@@ -49,6 +51,15 @@ export default function sshSessionLifecycleTest() {
       expect(session.getErrorMessage()).assertEqual('')
     })
 
+    it('acceptsMoshCallbacksOnlyFromTheCurrentPaneOwner', 0, () => {
+      let currentClient: MoshClient = new MoshClient()
+      let staleClient: MoshClient = new MoshClient()
+
+      expect(SessionViewModel.isCurrentMoshClient(currentClient, currentClient)).assertEqual(true)
+      expect(SessionViewModel.isCurrentMoshClient(currentClient, staleClient)).assertEqual(false)
+      expect(SessionViewModel.isCurrentMoshClient(null, currentClient)).assertEqual(false)
+    })
+
     it('mapsHostKeyAndTransportFailuresIntoTheSession', 0, () => {
       let session: SshSession = new SshSession()
       let changed: HostKeyChangedInfo = new HostKeyChangedInfo()
@@ -86,6 +97,24 @@ export default function sshSessionLifecycleTest() {
       expect(session.handleClientMessage(
         SshClientMessage.simple(SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT))).assertEqual(true)
       expect(session.markDisconnected()).assertEqual(true)
+      expect(session.getState()).assertEqual(SshSessionState.DISCONNECTED)
+    })
+
+    it('keepsMoshInterruptionSeparateFromSessionCompletion', 0, () => {
+      let session: SshSession = new SshSession()
+      session.beginConnection()
+      session.handleClientMessage(SshClientMessage.simple(SshClientEvent.CONNECTED))
+
+      expect(session.markInterrupted()).assertEqual(true)
+      expect(session.getState()).assertEqual(SshSessionState.INTERRUPTED)
+      expect(session.isActive()).assertEqual(true)
+      expect(session.isConnected()).assertEqual(true)
+      expect(session.markInterrupted()).assertEqual(true)
+      expect(session.markResponsive()).assertEqual(true)
+      expect(session.getState()).assertEqual(SshSessionState.CONNECTED)
+
+      expect(session.markInterrupted()).assertEqual(true)
+      expect(session.markDisconnected(0)).assertEqual(true)
       expect(session.getState()).assertEqual(SshSessionState.DISCONNECTED)
     })
 

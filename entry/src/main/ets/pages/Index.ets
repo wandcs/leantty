@@ -266,7 +266,8 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundBlurStyle(this.backgroundMaterial, {
-      policy: BlurStyleActivePolicy.FOLLOWS_WINDOW_ACTIVE_STATE
+      policy: BlurStyleActivePolicy.FOLLOWS_WINDOW_ACTIVE_STATE,
+      inactiveColor: '#FF1E1E2E'
     })
   }
 
@@ -714,6 +715,15 @@ struct Index {
       ctrlKey = (event.metaKey & 1) !== 0
     }
     if (InteractionPolicy.isTerminalTabKey(event.keyCode, ctrlKey, altKey, shiftKey)) {
+      let runtime: PaneRuntime | null = activeRuntime
+      if (runtime !== null) {
+        runtime.viewModel.handleTerminalInput(KeyCodeMap.toAnsi(
+          event.keyCode, ctrlKey, altKey, shiftKey))
+        return true
+      }
+    }
+
+    if (InteractionPolicy.isTerminalControlCaretKey(event.keyCode, ctrlKey, altKey, shiftKey)) {
       let runtime: PaneRuntime | null = activeRuntime
       if (runtime !== null) {
         runtime.viewModel.handleTerminalInput(KeyCodeMap.toAnsi(

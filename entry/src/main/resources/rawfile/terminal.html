@@ -480,6 +480,7 @@
         kind === 'fit' || kind === 'fontSize' || kind === 'copySelection' ||
         kind === 'secondaryAction' || (kind === 'copyOrInterrupt' && payload.length === 0) ||
         kind === 'snapshotRequest' || kind === 'restoreSnapshot' ||
+        (kind === 'terminalPageReplace' && payload.length <= MAX_SNAPSHOT_PAYLOAD_LENGTH) ||
         (kind === 'sessionOutputAnchor' && payload.length === 0) ||
         (kind === 'sessionResetViewport' && payload.length === 0) ||
         (kind === 'inputSecurity' && (payload === 'plain' || payload === 'masked')) ||
@@ -735,6 +736,29 @@
       } catch (ex) {
         pendingSnapshotRequestIds = [];
         snapshotCapturePending = false;
+      }
+    }
+
+    function replaceTerminalPage(snapshot, onComplete) {
+      if (!term) {
+        onComplete();
+        return;
+      }
+      closeSearch(false);
+      if (searchAddon) searchAddon.clearDecorations();
+      term.clearSelection();
+      restoringSnapshot = true;
+      var completeReplacement = function() {
+        restoringSnapshot = false;
+        onComplete();
+        reportResize(true);
+        reportInteractiveReadyAfterPaint();
+      };
+      try {
+        term.reset();
+        term.write(snapshot, completeReplacement);
+      } catch (ex) {
+        completeReplacement();
       }
     }
 
@@ -1365,6 +1389,13 @@
                   completeRestore();
                 }
               }
+              break;
+            case 'terminalPageReplace':
+              if (message.channel !== BRIDGE_CONTROL ||
+                  message.payload.length > MAX_SNAPSHOT_PAYLOAD_LENGTH) break;
+              replaceTerminalPage(message.payload, function() {
+                sendBridgeControl('terminalPageReplaceComplete', '');
+              });
               break;
             case 'sessionResetViewport':
               if (message.channel !== BRIDGE_CONTROL || message.payload.length !== 0) break;

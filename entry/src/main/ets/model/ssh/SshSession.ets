@@ -51,6 +51,7 @@ export class SshSession {
       SshSessionState.HOST_VERIFICATION_REQUIRED,
       SshSessionState.AUTHENTICATING,
       SshSessionState.CONNECTED,
+      SshSessionState.INTERRUPTED,
       SshSessionState.RECONNECTING,
       SshSessionState.FAILED
     ], SshSessionState.DISCONNECTED)) {
@@ -67,6 +68,7 @@ export class SshSession {
       SshSessionState.HOST_VERIFICATION_REQUIRED,
       SshSessionState.AUTHENTICATING,
       SshSessionState.CONNECTED,
+      SshSessionState.INTERRUPTED,
       SshSessionState.RECONNECTING
     ], SshSessionState.FAILED)) {
       return false
@@ -82,6 +84,16 @@ export class SshSession {
       return true
     }
     return this.markFailed(message)
+  }
+
+  markInterrupted(): boolean {
+    if (this.state === SshSessionState.INTERRUPTED) { return true }
+    return this.transitionFrom([SshSessionState.CONNECTED], SshSessionState.INTERRUPTED)
+  }
+
+  markResponsive(): boolean {
+    if (this.state === SshSessionState.CONNECTED) { return true }
+    return this.transitionFrom([SshSessionState.INTERRUPTED], SshSessionState.CONNECTED)
   }
 
   handleClientMessage(message: SshClientMessage): boolean {
@@ -167,14 +179,15 @@ export class SshSession {
   }
 
   isConnected(): boolean {
-    return this.state === SshSessionState.CONNECTED
+    return this.state === SshSessionState.CONNECTED || this.state === SshSessionState.INTERRUPTED
   }
 
   isActive(): boolean {
     return this.state === SshSessionState.CONNECTING ||
       this.state === SshSessionState.HOST_VERIFICATION_REQUIRED ||
       this.state === SshSessionState.AUTHENTICATING ||
-      this.state === SshSessionState.CONNECTED
+      this.state === SshSessionState.CONNECTED ||
+      this.state === SshSessionState.INTERRUPTED
   }
 
   reset(): void {

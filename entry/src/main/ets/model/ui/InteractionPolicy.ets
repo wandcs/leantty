@@ -37,6 +37,11 @@ export class InteractionPolicy {
     return keyCode === 2019 && ctrlKey && !altKey
   }
 
+  static isTerminalControlCaretKey(keyCode: number, ctrlKey: boolean,
+    altKey: boolean, shiftKey: boolean): boolean {
+    return keyCode === 2006 && ctrlKey && !altKey && shiftKey
+  }
+
   static transparencyShortcutDirection(keyCode: number, ctrlKey: boolean,
     altKey: boolean): number {
     if (!ctrlKey || !altKey) {

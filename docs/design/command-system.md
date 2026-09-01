@@ -207,6 +207,8 @@ milestone 前仍不是活动任务；“待证实”只能保留 WIP 和重新�
   `ssh/put/get -i` 继续只覆盖当次操作。
 - `host add|set -i` 只接受 `key list` 中的已验证 key。不得按最近复制、最近连接、文件名或
   key 数量猜测绑定，也不得新增全局默认 Identity 或第二份 Host 状态。
+- 一个匹配 Host 只能解析出一个 `IdentityFile`；跨匹配 Host block 出现第二个时，必须以该
+  指令和行号失败，不静默保留第一个，也不尝试多个 Identity。
 - 查看有效 Host 使用 `ssh -G`；查找和删除主机信任使用 `ssh-keygen -F/-R`，不增加
   平行的 `host show-known-key` 命令。
 - 1.5 可增加受控 config import/export，但不得导入后静默忽略关键 directive。
@@ -248,6 +250,31 @@ UiTest 输入合同，并通过 HDC 反向端口映射连接仓库内受控的 r
 - [OpenHarmony arkXtest shell 操作](https://gitee.com/openharmony/testfwk_arkxtest/blob/master/README_zh.md)
 - [OpenHarmony dumpLayout 文档修正](https://gitee.com/openharmony/testfwk_arkxtest/issues/I9KTGC)
 
+### 7.5 1.6 默认 Identity 闭合（2026-08-29）
+
+默认 Identity 只选择一个有效标准名称，顺序为 `id_ed25519`、`id_rsa`、`id_ecdsa`。
+命令级 `-i` 和 Host `IdentityFile` 明确覆盖默认值；匹配 Host block 中出现第二个
+`IdentityFile` 时，解析以指令和行号失败。`ssh`、`ssh-copy-id`、`put/get`、直连和
+ProxyJump 共用该结果，不各自猜测 key。
+
+软件门覆盖标准名称、缺失或无效 key、显式覆盖、重复 `IdentityFile` 和各连接入口。
+物理场景使用同一 test-signed HAP 和只授权 `id_ecdsa` 的临时系统 OpenSSH 账户，证明默认
+认证、Host 绑定和应用重启。测试前，产品命令把现有 `id_ed25519` 导出到 Downloads；受限
+acceptance 代码只在应用内比较私钥字节，并向 harness 返回布尔值。测试后，产品命令导入
+备份；只有私钥字节和原公钥指纹都匹配，acceptance 代码才删除本轮备份。导入会从私钥重新
+生成 `.pub`，因此 `.pub` 文本的注释或换行规范化不作为私钥恢复失败。
+
+2026-08-29 的最终物理证据为
+`build/verification/device-host-identity-20260828T172538568Z/device-host-identity.json`；HAP
+SHA-256 为 `EE4C6E6F0722A2D60B66E9E369491CD4443329FB13B7720A4BFC54192E53F3EB`。11 项业务与恢复
+检查通过；`id_ed25519`、config 和公钥指纹恢复，`id_ecdsa`、导入源、临时 Host、OpenSSH
+账户、反向映射和 Downloads 备份均已清理。该证据是 1.6 聚焦诊断，不代替正式候选验收。
+
+补充依据：
+
+- [HarmonyOS `OH_Environment_GetUserDownloadDir`](https://developer.huawei.com/consumer/en/doc/harmonyos-references-V13/oh__environment_8h-V13)
+- [OpenSSH ssh_config(5)](https://github.com/openssh/openssh-portable/blob/master/ssh_config.5)
+
 ## 八、文件、agent、采集、helper 与 server
 
 | 上游能力 | 决策 | 理由与去向 |
@@ -276,10 +303,10 @@ Mosh 的产品方向通过前五道决策门：它直接改善合盖、短断网
 | `mosh [user@]host|alias` | 必须做 | 唯一用户入口；复用 SSH Host/User/Identity |
 | SSH bootstrap | 必须做 | 复用主机校验、全部认证、取消和错误；启动远端 server 后结束 SSH |
 | UDP Session | 必须做 | 独立、明确的建连、中断、恢复和不可恢复状态 |
-| `-p` UDP port/range | 必须做 | 固定端口是 NAT/firewall 下的可用性前提；与 SSH Port 明确区分 |
-| `--server=PATH` | 应该做 | 支持用户目录安装；只接受远端路径，不接受 shell 片段 |
-| `--predict=auto/always/never` | 应该做 | 默认 auto；长 option 作为高级入口，反馈必须可理解 |
-| IPv4/IPv6 family | 应该做 | 与真实 UDP 地址选择一致，不复制无效 option |
+| `-p` UDP port/range | 已交付，1.6 | 接受 1–65535 的单端口或包含两端的升序范围；与 SSH Port 明确区分 |
+| `--server=PATH` | 已交付，1.6 | 支持 PATH 外安装；只接受一个绝对 POSIX 可执行路径，不接受 shell 片段或参数 |
+| `--predict=adaptive/always/never` | 已交付，1.6 | 默认 adaptive；库拥有预测语义，LeanTTY 只透传严格枚举；全丢包 stock/真机证据见 MCRS-006 |
+| IPv4/IPv6 family | IPv4 已交付；IPv6 从 1.6 裁剪 | 测试 PC 无全局 IPv6/默认路由，固定客户端 API 仅接受 IPv4；`-4/-6` 和 `--family` 明确拒绝，不复制无效 option |
 | `Ctrl-^ .` | 必须做 | 标准强制断开；与 Pane 关闭、取消和迟到事件统一 |
 | UTF-8、server、UDP 诊断 | 必须做 | 明确区分 SSH 成功、server 启动、UDP 建连和网络恢复 |
 | `mosh host -- command` | 待证实 | 依赖远端命令 quoting、PTY 和生命周期模型 |
@@ -295,6 +322,14 @@ Mosh 的产品方向通过前五道决策门：它直接改善合盖、短断网
 
 ProxyJump 最多帮助 Mosh 的 SSH bootstrap；它不转发 UDP。只有目标 UDP 能从 LeanTTY
 直接到达时二者才可组合，产品不得把“SSH 经跳板成功”描述为“Mosh 一定可用”。
+
+当前用户语法为
+`mosh [-p <port>[:<port>]] [--server=<absolute-path>] [user@]host|alias`。省略 `-p` 使用
+stock server 默认动态范围；显式值只传给远端 `mosh-server`，Host 的 `Port` 仍只用于 SSH
+bootstrap。LeanTTY 在联网前拒绝 0、越界、反向或非十进制范围，并在 bootstrap 后确认 server
+返回端点落在请求范围内。`--server` 只接受一个最多 1024 ASCII 字节的绝对 POSIX 路径；空段、
+`.`、`..`、空白、引号、`~`、shell 元字符和附加参数均被拒绝。省略它才使用远端 `PATH` 查找
+`mosh-server`。防火墙必须允许所选 UDP 端口；LeanTTY 不自动修改网络规则。
 
 ## 十、统一命令设计与交付规则
 
@@ -335,7 +370,7 @@ ProxyJump 最多帮助 Mosh 的 SSH bootstrap；它不转发 UDP。只有目标 
 | 1.3 | 已采纳 `put/get`；SFTP 只作内部 subsystem，不开放 `scp/sftp` |
 | 1.4 | 启动性能；`ProxyJump` 配置与标准 `-J`，首版单跳并保持 jump/target 双重信任与认证。HSL 专用入口因公开发现门禁失败而裁剪，手工 HSL Host 仍复用现有 SSH 命令、认证和主机信任 |
 | 1.5 | `ConnectTimeout`、基本 SSH escape、`ServerAliveInterval/ServerAliveCountMax`、安全 `ssh -v`、受控 config import/export、`ssh-keygen -c` 与现有 ECDSA P-256/P-384/P-521 Identity 导入/认证已闭合；`-4/-6` / `AddressFamily` 因真机 IPv6 fixture 门禁暂缓；UpdateHostKeys 因 russh 0.62.5 缺少完整 proof 公开 API 而裁剪；长任务注意力与返回路径不为版本号强行增加命令能力。ECDSA 不包含生成入口 |
-| 1.6 | Mosh 首版：SSH bootstrap、UDP port、server path、prediction、地址族、escape、弱网生命周期 |
+| 1.6 | Mosh 首版：SSH bootstrap、IPv4 UDP port、server path、prediction、escape、弱网生命周期；IPv6 地址族等待公共库与真机双栈 fixture 后重入 |
 
 路线图分配不等于实现授权。每个后续 milestone 确认并把第一段可执行工作写入
 `next-work.md` 后才能开始实现；1.2 不为“每版都加命令”而混入无关范围。

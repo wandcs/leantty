@@ -17,10 +17,28 @@ import { BridgeProtocol, BridgeMessage } from '../model/bridge/BridgeProtocol'
 import { CommandBarViewModel, CommandParseResult, KeyCommandResult } from './CommandBarViewModel'
 import {
   CommandParser,
+  ConnectionCommandProtocol,
   KeyCommandKind,
   TransferCommandResult,
   TransferDirection
 } from '../model/command/CommandParser'
+import {
+  MoshClient,
+  MoshClientEvent,
+  MoshClientMessage,
+  MoshError,
+  MoshErrorCode,
+  MoshReachability,
+  MoshReachabilityInfo,
+  MoshStatusInfo
+} from '../model/mosh/MoshClient'
+import {
+  MoshEscapeEvent,
+  MoshEscapeEventKind,
+  MoshEscapeParser,
+  MoshEscapeResult
+} from '../model/mosh/MoshEscapeParser'
+import { MoshPredictionMode } from '../model/mosh/MoshPredictionMode'
 import { KeyCommandService, KeyCommandContext } from '../model/command/KeyCommandService'
 import { Logger } from '../common/logger/Logger'
 import { FileUtils } from '../common/utils/FileUtils'
@@ -79,6 +97,13 @@ enum KeyCommentChangeStage {
 export class SessionViewModel {
   private session: SshSession = new SshSession()
   private sshClient: SshClient = new SshClient()
+  private moshClient: MoshClient | null = null
+  private moshReachability: MoshReachability = MoshReachability.AWAITING_PEER
+  private moshUdpPortStart: number = 0
+  private moshUdpPortEnd: number = 0
+  private moshServerPath: string = ''
+  private moshPredictionMode: MoshPredictionMode = MoshPredictionMode.ADAPTIVE
+  private connectionProtocol: ConnectionCommandProtocol = ConnectionCommandProtocol.SSH
   private terminalSurface: TerminalSurfaceController | null = null
   private lastCols: number = 80
   private lastRows: number = 24
@@ -92,6 +117,7 @@ export class SessionViewModel {
 
   private mode: TerminalMode = TerminalMode.IDLE
   private sshEscapeParser: SshEscapeParser = new SshEscapeParser()
+  private moshEscapeParser: MoshEscapeParser = new MoshEscapeParser()
   private commandLine: LocalCommandLine = new LocalCommandLine()
   private passwordBuffer: string = ''
   private hostKeyBuffer: string = ''
@@ -154,9 +180,10 @@ export class SessionViewModel {
   private sshEnvironmentPreparation: Promise<void> | null = null
   private sshEnvironmentReady: boolean = false
   private sshEnvironmentCommandPending: boolean = false
-  private acceptingSshOutput: boolean = false
+  private acceptingSessionOutput: boolean = false
   private terminalResetPending: boolean = false
   private terminalBoundaryGeneration: number = 0
+  private terminalResetWaiters: (() => void)[] = []
 
   getSession(): SshSession {
     return this.session
@@ -269,9 +296,15 @@ export class SessionViewModel {
   }
 
   private async connectResolved(spec: SshConnectionSpec): Promise<void> {
+    let previousMoshClient: MoshClient | null = this.moshClient
+    if (previousMoshClient !== null) {
+      this.releaseMoshClient(previousMoshClient)
+      await previousMoshClient.disconnect()
+    }
+    this.connectionProtocol = ConnectionCommandProtocol.SSH
     this.terminalBoundaryGeneration++
     this.terminalResetPending = false
-    this.acceptingSshOutput = true
+    this.acceptingSessionOutput = true
     this.clearAuthChallenge()
     this.setMode(TerminalMode.CONNECTING)
     this.session.beginConnection()
@@ -284,7 +317,7 @@ export class SessionViewModel {
       })
       this.outputObserverDecoder = util.TextDecoder.create('utf-8')
       this.sshClient.onData((data: Uint8Array) => {
-        this.onSshData(data)
+        this.onSessionData(data)
       })
       let opts: SshConnectOptions = SshConnectOptions.fromConnectionSpec(spec, this.knownHostsPath)
       if (!this.pendingKeypush) {
@@ -307,9 +340,80 @@ export class SessionViewModel {
       this.session.markFailed('' + e)
       this.setMode(TerminalMode.IDLE)
       this.logger.warn('SSH connection start failed')
-      this.finishSshTerminalOwnership(() => {
+      this.finishSessionTerminalOwnership(() => {
         this.writeError('The SSH connection could not start.',
           'Check the Host, network and credentials, then try again.')
+      })
+      this.notifyStateChange()
+    }
+  }
+
+  private async connectMoshResolved(spec: SshConnectionSpec,
+    udpPortStart: number = this.moshUdpPortStart,
+    udpPortEnd: number = this.moshUdpPortEnd,
+    serverPath: string = this.moshServerPath,
+    predictionMode: MoshPredictionMode = this.moshPredictionMode): Promise<void> {
+    let previousMoshClient: MoshClient | null = this.moshClient
+    if (previousMoshClient !== null) {
+      this.releaseMoshClient(previousMoshClient)
+      await previousMoshClient.disconnect()
+    }
+    this.connectionProtocol = ConnectionCommandProtocol.MOSH
+    this.moshUdpPortStart = udpPortStart
+    this.moshUdpPortEnd = udpPortEnd
+    this.moshServerPath = serverPath
+    this.moshPredictionMode = predictionMode
+    this.resetMoshReachability()
+    this.terminalBoundaryGeneration++
+    this.terminalResetPending = false
+    this.acceptingSessionOutput = true
+    this.clearAuthChallenge()
+    this.setMode(TerminalMode.CONNECTING)
+    this.session.beginConnection()
+    this.session.setConnectionSpec(spec)
+    this.notifyStateChange()
+    let client: MoshClient = new MoshClient()
+    this.moshClient = client
+
+    try {
+      client.onEvent((message: MoshClientMessage) => {
+        if (!SessionViewModel.isCurrentMoshClient(this.moshClient, client)) {
+          this.logger.info('Ignored stale Mosh event')
+          return
+        }
+        this.onMoshEvent(message)
+      })
+      client.onData((data: Uint8Array) => {
+        if (!SessionViewModel.isCurrentMoshClient(this.moshClient, client)) {
+          this.logger.info('Ignored stale Mosh output')
+          return
+        }
+        this.onMoshData(data)
+      })
+      let opts: SshConnectOptions = SshConnectOptions.fromConnectionSpec(spec, this.knownHostsPath)
+      let key: KeyPairInfo | null = this.resolvePrivateKey(spec.identityFile)
+      if (key !== null) {
+        opts.privateKeyPath = key.filePath
+        opts.privateKeyRequiresPassphrase = key.hasPassphrase
+      }
+      await client.connect(opts, serverPath, udpPortStart, udpPortEnd, predictionMode,
+        this.lastCols, this.lastRows)
+      this.logger.info('Mosh connect initiated udpPortPolicy=' +
+        (udpPortStart === 0 ? 'dynamic' : (udpPortStart === udpPortEnd ? 'fixed' : 'range')) +
+        ' serverPolicy=' + (serverPath.length === 0 ? 'default' : 'custom') +
+        ' predictionMode=' + predictionMode)
+    } catch (e) {
+      if (!SessionViewModel.isCurrentMoshClient(this.moshClient, client)) {
+        this.logger.info('Ignored stale Mosh connection start failure')
+        return
+      }
+      this.releaseMoshClient(client)
+      this.session.markFailed('' + e)
+      this.setMode(TerminalMode.IDLE)
+      this.logger.warn('Mosh connection start failed')
+      this.finishMoshTerminalOwnership(() => {
+        this.writeError('The Mosh connection could not start.',
+          'Check the Host, network, credentials and mosh-server, then try again.')
       })
       this.notifyStateChange()
     }
@@ -322,10 +426,24 @@ export class SessionViewModel {
         await this.transferCompletion
       }
     }
-    if (this.sshClient.hasActiveSession()) {
+    let moshClient: MoshClient | null = this.moshClient
+    if (moshClient !== null) {
+      if (moshClient.hasActiveSession()) {
+        await moshClient.disconnect()
+      }
+      if (SessionViewModel.isCurrentMoshClient(this.moshClient, moshClient)) {
+        this.releaseMoshClient(moshClient)
+        this.session.markDisconnected()
+        this.setMode(TerminalMode.IDLE)
+        this.finishMoshTerminalOwnership(() => {})
+        this.notifyStateChange()
+      }
+      await this.waitForTerminalReset()
+      return
+    } else if (this.sshClient.hasActiveSession()) {
       await this.sshClient.disconnect()
     }
-    this.acceptingSshOutput = false
+    this.acceptingSessionOutput = false
     this.terminalResetPending = false
     this.terminalBoundaryGeneration++
     this.session.markDisconnected()
@@ -348,12 +466,18 @@ export class SessionViewModel {
 
   async reconnect(): Promise<void> {
     let spec: SshConnectionSpec = this.session.getConnectionSpec()
+    if (this.connectionProtocol === ConnectionCommandProtocol.MOSH) {
+      await this.disconnect()
+      this.session.beginReconnect()
+      await this.connectMoshResolved(spec)
+      return
+    }
     let previousClient: SshClient = this.sshClient
     previousClient.onEvent(() => {})
     previousClient.onData(() => {})
     await previousClient.disconnect()
     await new Promise<void>((resolve: () => void) => {
-      this.finishSshTerminalOwnership(resolve)
+      this.finishSessionTerminalOwnership(resolve)
     })
     this.sshClient = new SshClient()
     this.session.beginReconnect()
@@ -372,7 +496,14 @@ export class SessionViewModel {
       this.writeTerminal('^C\r\n' + LocalCommandOutput.status('Cancelling', 'file transfer...'))
       return
     }
-    this.sshClient.disconnect()
+    let moshClient: MoshClient | null = this.moshClient
+    let cancellingMosh: boolean = moshClient !== null
+    if (moshClient !== null) {
+      this.releaseMoshClient(moshClient)
+      moshClient.disconnect()
+    } else {
+      this.sshClient.disconnect()
+    }
     this.passwordBuffer = ''
     this.hostKeyBuffer = ''
     this.pendingKeyPassphrase = ''
@@ -380,10 +511,15 @@ export class SessionViewModel {
     this.clearKeypushState()
     this.session.markDisconnected()
     this.setMode(TerminalMode.IDLE)
-    this.finishSshTerminalOwnership(() => {
+    let writeCancellation: () => void = () => {
       this.writeTerminal('^C')
       this.writePrompt()
-    })
+    }
+    if (cancellingMosh) {
+      this.finishMoshTerminalOwnership(writeCancellation)
+    } else {
+      this.finishSessionTerminalOwnership(writeCancellation)
+    }
     this.notifyStateChange()
   }
 
@@ -430,6 +566,7 @@ export class SessionViewModel {
     if (this.mode !== newMode && (this.mode === TerminalMode.CONNECTED ||
       newMode === TerminalMode.CONNECTED)) {
       this.sshEscapeParser.reset()
+      this.moshEscapeParser.reset()
     }
     this.mode = newMode
     if (this.terminalSurface !== null) {
@@ -519,6 +656,146 @@ export class SessionViewModel {
     }
   }
 
+  private onMoshEvent(message: MoshClientMessage): void {
+    if (message.kind === MoshClientEvent.STATUS) {
+      if (message.status !== null) { this.onMoshStatus(message.status) }
+      return
+    }
+    if (message.kind === MoshClientEvent.REACHABILITY) {
+      if (message.reachability !== null) { this.onMoshReachability(message.reachability) }
+      return
+    }
+    let lifecycleMessage: SshClientMessage = SessionViewModel.moshLifecycleMessage(message)
+    let previousState: SshSessionState = this.session.getState()
+    if (!this.session.handleClientMessage(lifecycleMessage)) {
+      if (message.kind === MoshClientEvent.CLOSE) { this.onMoshClose(message.exitCode) }
+      return
+    }
+    if (this.session.getState() !== previousState) { this.notifyStateChange() }
+    switch (message.kind) {
+      case MoshClientEvent.PASSWORD_PROMPT:
+        this.setMode(TerminalMode.PASSWORD_INPUT)
+        this.passwordBuffer = ''
+        this.writeTerminal(SessionViewModel.formatPasswordPrompt('target', false))
+        break
+      case MoshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT:
+        this.pendingKeyPassphrase = ''
+        this.setMode(TerminalMode.KEY_PASSPHRASE_INPUT)
+        this.writeTerminal(SessionViewModel.formatPrivateKeyPassphrasePrompt(message.text, 'target', false))
+        break
+      case MoshClientEvent.AUTH_BANNER:
+        this.writeAuthenticationText(message.text)
+        break
+      case MoshClientEvent.AUTH_CHALLENGE:
+        this.beginAuthChallenge()
+        break
+      case MoshClientEvent.HOST_KEY_PROMPT:
+        this.hostKeyBuffer = ''
+        this.setMode(TerminalMode.HOST_KEY_INPUT)
+        this.writeTerminal(SessionViewModel.formatHostKeyPrompt(message.text, 'target', false))
+        break
+      case MoshClientEvent.HOST_KEY_CHANGED:
+        if (message.hostKeyChanged !== null) { this.onMoshHostKeyChanged(message.hostKeyChanged) }
+        break
+      case MoshClientEvent.CONNECTED:
+        this.clearAuthChallenge()
+        this.setMode(TerminalMode.CONNECTED)
+        this.onMoshConnected()
+        break
+      case MoshClientEvent.CLOSE:
+        this.onMoshClose(message.exitCode)
+        break
+      case MoshClientEvent.ERROR:
+        if (message.error !== null) { this.onMoshError(message.error) }
+        break
+    }
+  }
+
+  private static moshLifecycleMessage(message: MoshClientMessage): SshClientMessage {
+    if (message.kind === MoshClientEvent.PASSWORD_PROMPT) {
+      return SshClientMessage.simple(SshClientEvent.PASSWORD_PROMPT)
+    }
+    if (message.kind === MoshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT) {
+      return SshClientMessage.withText(SshClientEvent.PRIVATE_KEY_PASSPHRASE_PROMPT, message.text)
+    }
+    if (message.kind === MoshClientEvent.AUTH_BANNER) {
+      return SshClientMessage.withText(SshClientEvent.AUTH_BANNER, message.text)
+    }
+    if (message.kind === MoshClientEvent.AUTH_CHALLENGE) {
+      return SshClientMessage.simple(SshClientEvent.AUTH_CHALLENGE)
+    }
+    if (message.kind === MoshClientEvent.HOST_KEY_PROMPT) {
+      return SshClientMessage.withText(SshClientEvent.HOST_KEY_PROMPT, message.text)
+    }
+    if (message.kind === MoshClientEvent.HOST_KEY_CHANGED && message.hostKeyChanged !== null) {
+      return SshClientMessage.withHostKeyChanged(message.hostKeyChanged)
+    }
+    if (message.kind === MoshClientEvent.CONNECTED) {
+      return SshClientMessage.simple(SshClientEvent.CONNECTED)
+    }
+    if (message.kind === MoshClientEvent.CLOSE) {
+      return SshClientMessage.close(message.exitCode)
+    }
+    return SshClientMessage.withError(new SshError(
+      SshErrorCode.Internal, 'Mosh session failed', '', 'target'))
+  }
+
+  private onMoshStatus(info: MoshStatusInfo): void {
+    if (this.mode !== TerminalMode.CONNECTING || info.status !== 'started') { return }
+    if (info.stage === 'mosh_bootstrap') {
+      this.writeTerminal(LocalCommandOutput.status('Mosh', 'Starting mosh-server...') + '\r\n')
+    } else if (info.stage === 'mosh_udp') {
+      this.writeTerminal(LocalCommandOutput.status('Mosh', 'Connecting UDP Session...') + '\r\n')
+    }
+  }
+
+  private onMoshReachability(info: MoshReachabilityInfo): void {
+    if (!this.acceptingSessionOutput || this.moshClient === null) { return }
+    let previousReachability: MoshReachability = this.moshReachability
+    this.moshReachability = info.state
+    if (info.state === MoshReachability.AWAITING_PEER) {
+      this.logger.info('Mosh reachability state=awaiting_peer')
+      return
+    }
+    if (info.state === MoshReachability.INTERRUPTED) {
+      let previousState: SshSessionState = this.session.getState()
+      if (!this.session.markInterrupted()) {
+        this.logger.info('Ignored Mosh reachability state=interrupted sessionState=' +
+          previousState.toString())
+        return
+      }
+      if (this.session.getState() !== previousState) { this.notifyStateChange() }
+      this.logger.warn('Mosh reachability state=interrupted reason=' + info.reason)
+      return
+    }
+    if (previousReachability === MoshReachability.INTERRUPTED) {
+      let previousState: SshSessionState = this.session.getState()
+      if (this.session.markResponsive() && this.session.getState() !== previousState) {
+        this.notifyStateChange()
+      }
+      this.logger.info('Mosh reachability state=responsive transition=recovered')
+      return
+    }
+    this.logger.info('Mosh reachability state=responsive')
+  }
+
+  private resetMoshReachability(): void {
+    this.moshReachability = MoshReachability.AWAITING_PEER
+  }
+
+  private onMoshConnected(): void {
+    let connectedTitle: string = this.session.getConnectionTitle()
+    this.notifyTitleChange(connectedTitle)
+    if (this.moshClient !== null) {
+      this.moshClient.setOutputPaused(
+        this.terminalSurface !== null && this.terminalSurface.isOutputPaused())
+    }
+    if (this.terminalSurface !== null) {
+      this.terminalSurface.beginMoshSessionPage()
+    }
+    this.logger.info('Mosh Session connected')
+  }
+
   private onSshConnected(): void {
     if (this.pendingKeypush) {
       this.executeKeypushCommand()
@@ -551,8 +828,38 @@ export class SessionViewModel {
     }
   }
 
-  private finishSshTerminalOwnership(onReset: () => void): void {
-    this.acceptingSshOutput = false
+  private finishSessionTerminalOwnership(onReset: () => void): void {
+    this.acceptingSessionOutput = false
+    this.releaseDisconnectedFlowControl()
+    this.terminalBoundaryGeneration++
+    let boundaryGeneration: number = this.terminalBoundaryGeneration
+    this.terminalResetPending = true
+    this.logger.info('SESSION_RESET stage=started generation=' + boundaryGeneration.toString())
+    let completeReset: () => void = () => {
+      if (boundaryGeneration !== this.terminalBoundaryGeneration) {
+        this.logger.info('SESSION_RESET stage=ignored generation=' + boundaryGeneration.toString())
+        return
+      }
+      this.terminalResetPending = false
+      this.completeTerminalResetWaiters()
+      this.logger.info('SESSION_RESET stage=completed generation=' + boundaryGeneration.toString())
+    }
+    if (this.terminalSurface === null) {
+      this.logger.info('SESSION_RESET stage=surface-absent generation=' + boundaryGeneration.toString())
+      onReset()
+      completeReset()
+      return
+    }
+    this.terminalSurface.resetSessionState(() => {
+      if (boundaryGeneration === this.terminalBoundaryGeneration) {
+        this.logger.info('SESSION_RESET stage=local-output generation=' + boundaryGeneration.toString())
+        onReset()
+      }
+    }, completeReset)
+  }
+
+  private finishMoshTerminalOwnership(onReset: () => void): void {
+    this.acceptingSessionOutput = false
     this.releaseDisconnectedFlowControl()
     this.terminalBoundaryGeneration++
     let boundaryGeneration: number = this.terminalBoundaryGeneration
@@ -562,31 +869,70 @@ export class SessionViewModel {
         return
       }
       this.terminalResetPending = false
+      this.completeTerminalResetWaiters()
+      this.logger.info('MOSH_PAGE stage=ownership-released generation=' + boundaryGeneration.toString())
     }
     if (this.terminalSurface === null) {
       onReset()
       completeReset()
       return
     }
-    this.terminalSurface.resetSessionState(() => {
+    this.terminalSurface.endMoshSessionPage(() => {
       if (boundaryGeneration === this.terminalBoundaryGeneration) {
         onReset()
       }
     }, completeReset)
   }
 
-  private applyOutputPause(paused: boolean): void {
-    this.sshClient.setOutputPaused(paused)
+  private waitForTerminalReset(): Promise<void> {
+    if (!this.terminalResetPending) {
+      return Promise.resolve()
+    }
+    return new Promise<void>((resolve: () => void) => {
+      this.terminalResetWaiters.push(resolve)
+    })
   }
 
-  private onSshData(data: Uint8Array): void {
-    if (!this.acceptingSshOutput) {
+  private completeTerminalResetWaiters(): void {
+    let waiters: (() => void)[] = this.terminalResetWaiters
+    this.terminalResetWaiters = []
+    for (let i = 0; i < waiters.length; i++) {
+      waiters[i]()
+    }
+  }
+
+  private applyOutputPause(paused: boolean): void {
+    if (this.moshClient !== null) {
+      this.moshClient.setOutputPaused(paused)
+    } else {
+      this.sshClient.setOutputPaused(paused)
+    }
+  }
+
+  private onSessionData(data: Uint8Array): void {
+    if (!this.acceptingSessionOutput) {
       return
     }
+    this.observeSessionOutput(data, true)
+    this.writeTerminalBytes(data)
+  }
+
+  private onMoshData(data: Uint8Array): void {
+    if (!this.acceptingSessionOutput) {
+      return
+    }
+    this.observeSessionOutput(data, false)
+    if (this.terminalSurface !== null) {
+      this.terminalSurface.writeMoshBytes(data)
+    }
+  }
+
+  private observeSessionOutput(data: Uint8Array, includeKeypush: boolean): void {
     let observedText: string = this.outputObserverDecoder.decodeToString(data, { stream: true })
     this.observePerfOutput(observedText)
-    this.observeKeypushOutput(observedText)
-    this.writeTerminalBytes(data)
+    if (includeKeypush) {
+      this.observeKeypushOutput(observedText)
+    }
   }
 
   private observePerfOutput(data: string): void {
@@ -620,7 +966,7 @@ export class SessionViewModel {
   }
 
   private onSshClose(exitCode: number): void {
-    if (!this.acceptingSshOutput) {
+    if (!this.acceptingSessionOutput) {
       this.logger.info('SSH closed, exitCode=' + exitCode.toString() +
         ', terminal ownership already released')
       return
@@ -633,7 +979,7 @@ export class SessionViewModel {
     this.pendingKeypush = false
     this.keypushPublicKey = ''
     this.setMode(TerminalMode.IDLE)
-    this.finishSshTerminalOwnership(() => {
+    this.finishSessionTerminalOwnership(() => {
       this.writeTerminal('\r\n' + ConnectionControl.describeClose(exitCode))
       this.writePrompt()
       if (this.terminalSurface !== null) {
@@ -643,13 +989,48 @@ export class SessionViewModel {
     this.logger.info('SSH closed, exitCode=' + exitCode.toString())
   }
 
-  private onInternalSshError(detail: string): void {
-    this.onSshEvent(SshClientMessage.withError(
-      new SshError(SshErrorCode.Internal, detail, detail, 'client')))
+  private onMoshClose(exitCode: number): void {
+    if (!this.acceptingSessionOutput) { return }
+    this.clearAuthChallenge()
+    let client: MoshClient | null = this.moshClient
+    if (client !== null) { this.releaseMoshClient(client) }
+    this.setMode(TerminalMode.IDLE)
+    this.finishMoshTerminalOwnership(() => {
+      this.writeTerminal('\r\n' + LocalCommandOutput.status('Mosh',
+        exitCode === 0 ? 'Session closed.' : 'Session ended unexpectedly.'))
+      this.writePrompt()
+      if (this.terminalSurface !== null) { this.terminalSurface.captureSnapshot() }
+    })
+    this.logger.info('Mosh Session closed')
+  }
+
+  private onMoshError(error: MoshError): void {
+    if (!this.acceptingSessionOutput) { return }
+    this.clearAuthChallenge()
+    let client: MoshClient | null = this.moshClient
+    if (client !== null) { this.releaseMoshClient(client) }
+    this.setMode(TerminalMode.IDLE)
+    this.logger.warn('Mosh error stage=' +
+      (['authentication', 'mosh_bootstrap', 'mosh_udp', 'client'].indexOf(error.stage) >= 0 ?
+        error.stage : 'rejected'))
+    this.finishMoshTerminalOwnership(() => {
+      this.writeError('The Mosh connection failed.',
+        'Check the Host, network, credentials and mosh-server, then try again.')
+      if (this.terminalSurface !== null) { this.terminalSurface.captureSnapshot() }
+    })
+  }
+
+  private onInternalSessionError(detail: string): void {
+    if (this.moshClient !== null) {
+      this.onMoshError(new MoshError(MoshErrorCode.INTERNAL, detail, detail, 'client'))
+    } else {
+      this.onSshEvent(SshClientMessage.withError(
+        new SshError(SshErrorCode.Internal, detail, detail, 'client')))
+    }
   }
 
   private onSshError(error: SshError): void {
-    if (!this.acceptingSshOutput) {
+    if (!this.acceptingSessionOutput) {
       return
     }
     this.clearAuthChallenge()
@@ -662,7 +1043,7 @@ export class SessionViewModel {
     this.keypushPublicKey = ''
     this.setMode(TerminalMode.IDLE)
     this.logger.warn(SessionViewModel.safeSshErrorLogLabel(error))
-    this.finishSshTerminalOwnership(() => {
+    this.finishSessionTerminalOwnership(() => {
       this.writeError(SessionViewModel.sshFailureTitle(error.layer),
         'Check the Host, network and credentials, then try again.')
       if (this.terminalSurface !== null) {
@@ -678,11 +1059,37 @@ export class SessionViewModel {
     rejectedClient.onData(() => {})
     this.sshClient = new SshClient()
     this.setMode(TerminalMode.IDLE)
-    this.finishSshTerminalOwnership(() => {
+    this.finishSessionTerminalOwnership(() => {
       this.writeError(SessionViewModel.buildHostKeyChangedWarning(
         info.host, info.port, info.algorithm, info.oldFingerprint, info.newFingerprint,
         this.session.getConnectionSpec().jumpHost.length > 0 ? info.layer : ''))
     })
+  }
+
+  private onMoshHostKeyChanged(info: HostKeyChangedInfo): void {
+    let rejectedClient: MoshClient | null = this.moshClient
+    if (rejectedClient !== null) {
+      this.releaseMoshClient(rejectedClient)
+      rejectedClient.disconnect()
+    }
+    this.setMode(TerminalMode.IDLE)
+    this.finishMoshTerminalOwnership(() => {
+      this.writeError(SessionViewModel.buildHostKeyChangedWarning(
+        info.host, info.port, info.algorithm, info.oldFingerprint, info.newFingerprint))
+    })
+  }
+
+  private releaseMoshClient(client: MoshClient): void {
+    client.onEvent(() => {})
+    client.onData(() => {})
+    if (SessionViewModel.isCurrentMoshClient(this.moshClient, client)) {
+      this.moshClient = null
+      this.resetMoshReachability()
+    }
+  }
+
+  static isCurrentMoshClient(currentClient: MoshClient | null, sourceClient: MoshClient): boolean {
+    return currentClient === sourceClient
   }
 
   static buildHostKeyChangedWarning(host: string, port: number, algorithm: string,
@@ -776,7 +1183,10 @@ export class SessionViewModel {
           if (this.mode === TerminalMode.IDLE && this.completionEngine.isActive()) {
             this.redrawLocalCommandLine()
           }
-          if (this.sshClient.isConnected()) {
+          if (this.moshClient !== null && this.moshClient.isConnected()) {
+            this.moshClient.resize(dims[0], dims[1])
+            this.logger.info('Mosh terminal resized: ' + dims[0].toString() + 'x' + dims[1].toString())
+          } else if (this.sshClient.isConnected()) {
             this.sshClient.resize(dims[0], dims[1])
             this.logger.info('Terminal resized: ' + dims[0].toString() + 'x' + dims[1].toString())
           }
@@ -856,6 +1266,25 @@ export class SessionViewModel {
   }
 
   private handleConnectedInput(data: string): void {
+    if (this.moshClient !== null) {
+      let result: MoshEscapeResult = this.moshEscapeParser.consume(data)
+      for (let index: number = 0; index < result.events.length; index++) {
+        let event: MoshEscapeEvent = result.events[index]
+        if (event.kind === MoshEscapeEventKind.REMOTE_DATA) {
+          this.moshClient.write(event.data)
+        } else if (event.kind === MoshEscapeEventKind.DISCONNECT) {
+          this.logger.info('Mosh escape action=disconnect')
+          this.moshClient.disconnect()
+          return
+        } else if (event.kind === MoshEscapeEventKind.HELP) {
+          this.writeTerminal('\r\nSupported Mosh escapes:\r\n' +
+            '  Ctrl-^ .  Disconnect\r\n' +
+            '  Ctrl-^ ?  Show this help\r\n' +
+            '  Ctrl-^ Ctrl-^  Send a literal Ctrl-^\r\n')
+        }
+      }
+      return
+    }
     let result: SshEscapeResult = this.sshEscapeParser.consume(data)
     for (let index = 0; index < result.events.length; index++) {
       let event: SshEscapeEvent = result.events[index]
@@ -1006,7 +1435,7 @@ export class SessionViewModel {
 
   private handleAuthChallengeInput(data: string): void {
     if (this.authChallenge === null || this.authPromptIndex >= this.authChallenge.prompts.length) {
-      this.onInternalSshError('Invalid keyboard-interactive prompt state')
+      this.onInternalSessionError('Invalid keyboard-interactive prompt state')
       return
     }
     let prompt: AuthPromptInfo = this.authChallenge.prompts[this.authPromptIndex]
@@ -1102,6 +1531,7 @@ export class SessionViewModel {
     }
     let accepted: boolean = answer === 'yes'
     let transferClient: FileTransferClient | null = this.activeFileTransferClient()
+    let moshClient: MoshClient | null = transferClient === null ? this.moshClient : null
     if (transferClient !== null && !accepted) {
       this.transferControlFailureCode = 'HOST_KEY_REJECTED'
     }
@@ -1111,24 +1541,33 @@ export class SessionViewModel {
           this.transferControlFailureCode = 'HOST_KEY_ERROR'
           transferClient.verifyHostKey(false)
           transferClient.cancel()
+        } else if (moshClient !== null) {
+          moshClient.verifyHostKey(false)
+          this.onMoshError(new MoshError(
+            MoshErrorCode.INTERNAL, 'Host key could not be retained', '', 'client'))
         } else {
           this.sshClient.verifyHostKey(false)
-          this.onInternalSshError(
+          this.onInternalSessionError(
             'Host key could not be retained because the application context is unavailable')
         }
         return
       }
       try {
         DurableStateManager.commitKnownHostLine(this.context, transferClient !== null ?
-          transferClient.getPendingKnownHostLine() : this.sshClient.getPendingKnownHostLine())
+          transferClient.getPendingKnownHostLine() : (moshClient !== null ?
+            moshClient.getPendingKnownHostLine() : this.sshClient.getPendingKnownHostLine()))
       } catch (e) {
         if (transferClient !== null) {
           this.transferControlFailureCode = 'HOST_KEY_ERROR'
           transferClient.verifyHostKey(false)
           transferClient.cancel()
+        } else if (moshClient !== null) {
+          moshClient.verifyHostKey(false)
+          this.onMoshError(new MoshError(
+            MoshErrorCode.INTERNAL, 'Host key could not be retained', '', 'client'))
         } else {
           this.sshClient.verifyHostKey(false)
-          this.onInternalSshError('Host key could not be retained: ' + e)
+          this.onInternalSessionError('Host key could not be retained: ' + e)
         }
         return
       }
@@ -1137,6 +1576,24 @@ export class SessionViewModel {
       if (transferClient.verifyHostKey(accepted)) {
         this.setMode(TerminalMode.TRANSFERRING)
         this.session.resumeConnection()
+        this.notifyStateChange()
+      }
+      return
+    }
+    if (moshClient !== null) {
+      if (moshClient.verifyHostKey(accepted) && accepted) {
+        this.setMode(TerminalMode.CONNECTING)
+        this.session.resumeConnection()
+        this.notifyStateChange()
+        return
+      }
+      if (!accepted) {
+        this.session.markFailed('The host key was not trusted.')
+        this.setMode(TerminalMode.IDLE)
+        this.finishMoshTerminalOwnership(() => {
+          this.writeError('The host key was not trusted.',
+            'Reconnect when you are ready to verify the fingerprint.')
+        })
         this.notifyStateChange()
       }
       return
@@ -1150,7 +1607,7 @@ export class SessionViewModel {
     if (!accepted) {
       this.session.markFailed('The host key was not trusted.')
       this.setMode(TerminalMode.IDLE)
-      this.finishSshTerminalOwnership(() => {
+      this.finishSessionTerminalOwnership(() => {
         this.writeError('The host key was not trusted.',
           'Reconnect when you are ready to verify the fingerprint.')
       })
@@ -1196,7 +1653,7 @@ export class SessionViewModel {
     if (parsed === null) {
       let summary: string = cmd.length > 80 ? cmd.substring(0, 80) + '...' : cmd
       this.writeError('Unknown command "' + summary + '".',
-        'Try: help, or ssh user@host to connect.')
+        'Try: help, ssh user@host, or mosh user@host.')
       return
     }
     if (parsed instanceof TransferCommandResult) {
@@ -1227,7 +1684,8 @@ export class SessionViewModel {
     let result: CommandParseResult = parsed
     if (!result.isValid) {
       this.writeError(result.errorMessage,
-        result.errorMessage.startsWith('Usage: ') ? '' : 'Try: help ssh')
+        result.errorMessage.startsWith('Usage: ') ? '' :
+          'Try: help ' + (result.protocol === ConnectionCommandProtocol.MOSH ? 'mosh' : 'ssh'))
       return
     }
 
@@ -1236,7 +1694,12 @@ export class SessionViewModel {
     let username: string = result.username
     this.pendingKeyPath = result.identityFile
     this.pendingKeyPassphrase = ''
-    this.connectResolved(result)
+    if (result.protocol === ConnectionCommandProtocol.MOSH) {
+      this.connectMoshResolved(result, result.moshUdpPortStart, result.moshUdpPortEnd,
+        result.moshServerPath, result.moshPredictionMode)
+    } else {
+      this.connectResolved(result)
+    }
   }
 
   private beginSshEnvironmentPreparation(): void {
@@ -1788,7 +2251,8 @@ export class SessionViewModel {
     this.passwordBuffer = ''
     let transferClient: FileTransferClient | null = this.activeFileTransferClient()
     let accepted: boolean = transferClient !== null ?
-      transferClient.authPassword(pw) : this.sshClient.authPassword(pw)
+      transferClient.authPassword(pw) : (this.moshClient !== null ?
+        this.moshClient.authPassword(pw) : this.sshClient.authPassword(pw))
     if (accepted) {
       this.setMode(transferClient !== null ? TerminalMode.TRANSFERRING : TerminalMode.CONNECTING)
       this.session.resumeConnection()
@@ -2267,7 +2731,7 @@ export class SessionViewModel {
       this.session.markFailed('Remote key installation did not complete successfully')
     }
     this.setMode(TerminalMode.IDLE)
-    this.finishSshTerminalOwnership(() => {
+    this.finishSessionTerminalOwnership(() => {
       if (status === 0) {
         this.writeTerminal('\r\n' + LocalCommandOutput.success('Key installed.') + '\r\n' +
           '  Verify with: ssh ' + SessionViewModel.terminalSafeText(username) + '@' +
@@ -2288,7 +2752,7 @@ export class SessionViewModel {
     this.clearKeypushState()
     this.session.markOperationFailed(message)
     this.setMode(TerminalMode.IDLE)
-    this.finishSshTerminalOwnership(() => {
+    this.finishSessionTerminalOwnership(() => {
       this.writeError(message)
     })
     this.notifyStateChange()
@@ -2330,12 +2794,16 @@ export class SessionViewModel {
   private beginAuthChallenge(): void {
     let transferClient: FileTransferClient | null = this.activeFileTransferClient()
     let challenge: AuthChallengeInfo | null = transferClient !== null ?
-      transferClient.takePendingAuthChallenge() : this.sshClient.takePendingAuthChallenge()
+      transferClient.takePendingAuthChallenge() : (this.moshClient !== null ?
+        this.moshClient.takePendingAuthChallenge() : this.sshClient.takePendingAuthChallenge())
     if (challenge === null) {
       if (transferClient !== null) {
         transferClient.cancel()
+      } else if (this.moshClient !== null) {
+        this.onMoshError(new MoshError(
+          MoshErrorCode.INTERNAL, 'Missing keyboard-interactive challenge', '', 'client'))
       } else {
-        this.onInternalSshError('Missing keyboard-interactive challenge')
+        this.onInternalSessionError('Missing keyboard-interactive challenge')
       }
       return
     }
@@ -2358,7 +2826,7 @@ export class SessionViewModel {
 
   private submitAuthChallengeResponse(): void {
     if (this.authChallenge === null || this.authPromptIndex >= this.authChallenge.prompts.length) {
-      this.onInternalSshError('Invalid keyboard-interactive response state')
+      this.onInternalSessionError('Invalid keyboard-interactive response state')
       return
     }
     this.authResponses.push(this.authResponseBuffer)
@@ -2374,7 +2842,7 @@ export class SessionViewModel {
 
   private submitCompletedAuthChallenge(): void {
     if (this.authChallenge === null) {
-      this.onInternalSshError('Missing keyboard-interactive response context')
+      this.onInternalSessionError('Missing keyboard-interactive response context')
       return
     }
     let roundId: number = this.authChallenge.roundId
@@ -2386,7 +2854,9 @@ export class SessionViewModel {
     let transferClient: FileTransferClient | null = this.activeFileTransferClient()
     let submitted: boolean = transferClient !== null ?
       transferClient.authKeyboardInteractiveResponses(roundId, responses) :
-      this.sshClient.authKeyboardInteractiveResponses(roundId, responses)
+      (this.moshClient !== null ?
+        this.moshClient.authKeyboardInteractiveResponses(roundId, responses) :
+        this.sshClient.authKeyboardInteractiveResponses(roundId, responses))
     for (let i = 0; i < responses.length; i++) {
       responses[i] = ''
     }
@@ -2416,7 +2886,9 @@ export class SessionViewModel {
     this.pendingKeyPassphrase = ''
     let transferClient: FileTransferClient | null = this.activeFileTransferClient()
     let accepted: boolean = transferClient !== null ?
-      transferClient.authPrivateKeyPassphrase(pass) : this.sshClient.authPrivateKeyPassphrase(pass)
+      transferClient.authPrivateKeyPassphrase(pass) : (this.moshClient !== null ?
+        this.moshClient.authPrivateKeyPassphrase(pass) :
+        this.sshClient.authPrivateKeyPassphrase(pass))
     if (accepted) {
       this.setMode(transferClient !== null ? TerminalMode.TRANSFERRING : TerminalMode.CONNECTING)
       this.notifyStateChange()
@@ -2432,7 +2904,8 @@ export class SessionViewModel {
 
   private pendingAuthenticationLayer(): string {
     let transferClient: FileTransferClient | null = this.activeFileTransferClient()
-    return transferClient !== null ? transferClient.getPendingLayer() : this.sshClient.getPendingLayer()
+    return transferClient !== null ? transferClient.getPendingLayer() : (this.moshClient !== null ?
+      this.moshClient.getPendingLayer() : this.sshClient.getPendingLayer())
   }
 
   static formatPasswordPrompt(layer: string, hasJump: boolean): string {

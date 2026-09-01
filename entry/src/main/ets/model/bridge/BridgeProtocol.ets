@@ -42,6 +42,8 @@ export class BridgeProtocol {
   static readonly KIND_SESSION_OUTPUT_ANCHOR_COMPLETE: string = 'sessionOutputAnchorComplete'
   static readonly KIND_SESSION_RESET_VIEWPORT: string = 'sessionResetViewport'
   static readonly KIND_SESSION_RESET_COMPLETE: string = 'sessionResetComplete'
+  static readonly KIND_TERMINAL_PAGE_REPLACE: string = 'terminalPageReplace'
+  static readonly KIND_TERMINAL_PAGE_REPLACE_COMPLETE: string = 'terminalPageReplaceComplete'
   static readonly KIND_SEARCH_OPEN: string = 'searchOpen'
   static readonly KIND_SEARCH_CLOSE: string = 'searchClose'
   static readonly KIND_SEARCH_STATE: string = 'searchState'
@@ -103,7 +105,8 @@ export class BridgeProtocol {
       kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR ||
       kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR_COMPLETE ||
       kind === BridgeProtocol.KIND_SESSION_RESET_VIEWPORT ||
-      kind === BridgeProtocol.KIND_SESSION_RESET_COMPLETE) && payload.length > 0) {
+      kind === BridgeProtocol.KIND_SESSION_RESET_COMPLETE ||
+      kind === BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE_COMPLETE) && payload.length > 0) {
       return null
     }
     if (kind === BridgeProtocol.KIND_SEARCH_OPEN && payload.length > 0) {
@@ -122,7 +125,8 @@ export class BridgeProtocol {
     if (kind === BridgeProtocol.KIND_COPY_OR_INTERRUPT && payload.length > 0) {
       return null
     }
-    if ((kind === BridgeProtocol.KIND_RESTORE_SNAPSHOT || kind === BridgeProtocol.KIND_SNAPSHOT) &&
+    if ((kind === BridgeProtocol.KIND_RESTORE_SNAPSHOT || kind === BridgeProtocol.KIND_SNAPSHOT ||
+      kind === BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE) &&
       payload.length > BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH) {
       return null
     }
@@ -205,6 +209,10 @@ export class BridgeProtocol {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR)
   }
 
+  static terminalPageReplace(snapshot: string): BridgeMessage {
+    return BridgeProtocol.nativeControl(BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE, snapshot)
+  }
+
   static searchOpen(): BridgeMessage {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SEARCH_OPEN)
   }
@@ -232,6 +240,10 @@ export class BridgeProtocol {
     let rows: number = parseInt(parts[1], 10)
     if (isNaN(cols) || isNaN(rows) || cols < 1 || rows < 1) { return [80, 24] }
     return [cols, rows]
+  }
+
+  static canQueueTerminalPayload(byteLength: number): boolean {
+    return Number.isInteger(byteLength) && byteLength > 0
   }
 
   private static isDirection(direction: string): boolean {
@@ -267,6 +279,7 @@ export class BridgeProtocol {
         kind === BridgeProtocol.KIND_COPY_OR_INTERRUPT ||
         kind === BridgeProtocol.KIND_SNAPSHOT_REQUEST ||
         kind === BridgeProtocol.KIND_RESTORE_SNAPSHOT ||
+        kind === BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE ||
         kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR ||
         kind === BridgeProtocol.KIND_SESSION_RESET_VIEWPORT ||
         kind === BridgeProtocol.KIND_SEARCH_OPEN ||
@@ -286,6 +299,7 @@ export class BridgeProtocol {
       kind === BridgeProtocol.KIND_RENDERER_STATE ||
       kind === BridgeProtocol.KIND_OPEN_URL ||
       kind === BridgeProtocol.KIND_RESTORE_COMPLETE ||
+      kind === BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE_COMPLETE ||
       kind === BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR_COMPLETE ||
       kind === BridgeProtocol.KIND_SESSION_RESET_COMPLETE ||
       kind === BridgeProtocol.KIND_SEARCH_STATE ||

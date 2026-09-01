@@ -394,10 +394,32 @@ export default function terminalInteractionTest() {
         'x'.repeat(BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH + 1))).assertEqual(null)
     })
 
+    it('allowsOnlyBoundedTerminalPageReplacementControls', 0, () => {
+      expect(BridgeProtocol.terminalPageReplace('').serialize())
+        .assertEqual('H2|N2W|CONTROL|terminalPageReplace|')
+      expect(BridgeProtocol.terminalPageReplace('\u001b[32moriginal').serialize())
+        .assertEqual('H2|N2W|CONTROL|terminalPageReplace|\u001b[32moriginal')
+      expect(BridgeProtocol.parse('H2|W2N|CONTROL|terminalPageReplaceComplete|') !== null)
+        .assertEqual(true)
+      expect(BridgeProtocol.parse('H2|W2N|CONTROL|terminalPageReplaceComplete|unexpected'))
+        .assertEqual(null)
+      expect(BridgeProtocol.parse('H2|W2N|CONTROL|terminalPageReplace|original')).assertEqual(null)
+      expect(BridgeProtocol.parse('H2|N2W|CONTROL|terminalPageReplace|' +
+        'x'.repeat(BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH + 1))).assertEqual(null)
+    })
+
     it('encodesShiftedDigitsAndAltPunctuation', 0, () => {
       expect(KeyCodeMap.toAnsi(KeyCodeMap.NUM_1, false, false, true)).assertEqual('!')
       expect(KeyCodeMap.toAnsi(KeyCodeMap.NUM_0, false, false, true)).assertEqual(')')
       expect(KeyCodeMap.toAnsi(2057, false, true, false)).assertEqual('\u001b-')
+    })
+
+    it('routesPhysicalControlCaretThroughTheNativeKeyBoundary', 0, () => {
+      expect(InteractionPolicy.isTerminalControlCaretKey(2006, true, false, true)).assertEqual(true)
+      expect(InteractionPolicy.isTerminalControlCaretKey(2006, false, false, true)).assertEqual(false)
+      expect(InteractionPolicy.isTerminalControlCaretKey(2006, true, true, true)).assertEqual(false)
+      expect(InteractionPolicy.isTerminalControlCaretKey(2006, true, false, false)).assertEqual(false)
+      expect(KeyCodeMap.toAnsi(2006, true, false, true)).assertEqual('\u001e')
     })
 
     it('encodesCursorKeysForTerminalModeAndModifiers', 0, () => {
@@ -431,6 +453,13 @@ export default function terminalInteractionTest() {
       expect(output.takeDetachedChunks()[0][1]).assertEqual(14)
     })
 
+    it('keepsEmptyTerminalOutputOutOfTheOrderedAckQueue', 0, () => {
+      expect(BridgeProtocol.canQueueTerminalPayload(0)).assertEqual(false)
+      expect(BridgeProtocol.canQueueTerminalPayload(-1)).assertEqual(false)
+      expect(BridgeProtocol.canQueueTerminalPayload(1)).assertEqual(true)
+      expect(BridgeProtocol.canQueueTerminalPayload(4096)).assertEqual(true)
+    })
+
     it('keepsTheLatestTerminalSnapshotAcrossSurfaceReplacement', 0, () => {
       let output: TerminalOutputBuffer = new TerminalOutputBuffer(16)
       expect(output.getSnapshot()).assertEqual('')
@@ -448,6 +477,39 @@ export default function terminalInteractionTest() {
       expect(output.getSnapshot()).assertEqual('\u001b[32mnew')
       output.replaceSnapshot('')
       expect(output.getSnapshot()).assertEqual('')
+    })
+
+    it('isolatesOneMoshPageFromTheOriginalSnapshotAndOtherPanes', 0, () => {
+      let firstPane: TerminalOutputBuffer = new TerminalOutputBuffer(16)
+      let secondPane: TerminalOutputBuffer = new TerminalOutputBuffer(16)
+      firstPane.replaceSnapshot('original-first')
+      secondPane.replaceSnapshot('original-second')
+
+      expect(firstPane.beginSessionPage()).assertEqual(true)
+      expect(firstPane.isSessionPageActive()).assertEqual(true)
+      expect(firstPane.getSessionPageBaseSnapshot()).assertEqual('original-first')
+      expect(firstPane.getSnapshot()).assertEqual('')
+      firstPane.replaceSnapshot('mosh-current-screen')
+
+      expect(firstPane.getSnapshot()).assertEqual('mosh-current-screen')
+      expect(secondPane.getSnapshot()).assertEqual('original-second')
+      expect(secondPane.isSessionPageActive()).assertEqual(false)
+      expect(firstPane.endSessionPage()).assertEqual('original-first')
+      expect(firstPane.isSessionPageActive()).assertEqual(false)
+      expect(firstPane.getSnapshot()).assertEqual('original-first')
+    })
+
+    it('keepsBothMoshAndOriginalSnapshotsAcrossSurfaceReplacement', 0, () => {
+      let output: TerminalOutputBuffer = new TerminalOutputBuffer(16)
+      output.replaceSnapshot('original-history')
+      output.beginSessionPage()
+      output.replaceSnapshot('mosh-repaint')
+      output.markDetached()
+
+      expect(output.getSnapshot()).assertEqual('mosh-repaint')
+      expect(output.getSessionPageBaseSnapshot()).assertEqual('original-history')
+      expect(output.endSessionPage()).assertEqual('original-history')
+      expect(output.getSnapshot()).assertEqual('original-history')
     })
   })
 }

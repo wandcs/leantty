@@ -1,14 +1,191 @@
 import { describe, it, expect } from '@ohos/hypium'
-import { CommandParser, CommandParseResult, KeyCommandKind, KeyCommandResult, TransferCommandResult } from '../main/ets/model/command/CommandParser'
+import {
+  CommandParser,
+  CommandParseResult,
+  ConnectionCommandProtocol,
+  KeyCommandKind,
+  KeyCommandResult,
+  TransferCommandResult
+} from '../main/ets/model/command/CommandParser'
 import { SshConfig } from '../main/ets/model/ssh/SshConfig'
 import { SshClient, SshDiagnosticInfo } from '../main/ets/model/ssh/SshClient'
 import { SshError, SshErrorCode } from '../main/ets/common/types/SshTypes'
 import { SshEscapeEvent, SshEscapeEventKind, SshEscapeParser, SshEscapeResult } from '../main/ets/model/ssh/SshEscapeParser'
+import {
+  MoshEscapeEventKind,
+  MoshEscapeParser,
+  MoshEscapeResult
+} from '../main/ets/model/mosh/MoshEscapeParser'
+import { MoshPredictionMode } from '../main/ets/model/mosh/MoshPredictionMode'
 import { TerminalInputAction, TerminalInputParser } from '../main/ets/model/terminal/TerminalInputParser'
 import { SessionViewModel } from '../main/ets/viewmodel/SessionViewModel'
 
 export default function sshBehaviorTest() {
   describe('SshBehavior', () => {
+    it('parsesStandardMoshPredictionModesAndDefaultsToAdaptive', 0, () => {
+      let config: SshConfig = new SshConfig()
+      let adaptive: CommandParseResult = CommandParser.parseMoshCommand(
+        'mosh user@192.0.2.8', config)
+      let always: CommandParseResult = CommandParser.parseMoshCommand(
+        'mosh --predict=always -p 60042 user@192.0.2.8', config)
+      let never: CommandParseResult = CommandParser.parseMoshCommand(
+        'mosh --server=/usr/bin/mosh-server --predict=never user@192.0.2.8', config)
+
+      expect(adaptive.isValid).assertEqual(true)
+      expect(adaptive.moshPredictionMode).assertEqual(MoshPredictionMode.ADAPTIVE)
+      expect(always.isValid).assertEqual(true)
+      expect(always.moshPredictionMode).assertEqual(MoshPredictionMode.ALWAYS)
+      expect(always.moshUdpPortStart).assertEqual(60042)
+      expect(never.isValid).assertEqual(true)
+      expect(never.moshPredictionMode).assertEqual(MoshPredictionMode.NEVER)
+      expect(never.moshServerPath).assertEqual('/usr/bin/mosh-server')
+    })
+
+    it('rejectsNonstandardOrAmbiguousMoshPredictionModes', 0, () => {
+      let config: SshConfig = new SshConfig()
+      let invalidCommands: string[] = [
+        'mosh --predict host',
+        'mosh --predict= host',
+        'mosh --predict=auto host',
+        'mosh --predict=ALWAYS host',
+        'mosh --predict=always --predict=never host',
+        'mosh host --predict=always'
+      ]
+      for (let command of invalidCommands) {
+        let parsed: CommandParseResult = CommandParser.parseMoshCommand(command, config)
+        expect(parsed.isValid).assertEqual(false)
+        expect(parsed.errorMessage.length > 0).assertEqual(true)
+      }
+    })
+
+    it('parsesMoshUdpPortAndRangeWithoutChangingTheSshPort', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName 192.0.2.8\n  User deploy\n  Port 2222\n' +
+        '  IdentityFile ~/.ssh/prod\n  ConnectTimeout 9\n')
+      let saved: CommandParseResult = CommandParser.parseMoshCommand('mosh prod', config)
+      let overridden: CommandParseResult = CommandParser.parseMoshCommand('mosh admin@prod', config)
+      let fixed: CommandParseResult = CommandParser.parseMoshCommand('mosh -p 60042 prod', config)
+      let range: CommandParseResult = CommandParser.parseMoshCommand(
+        'mosh -p 60042:60049 admin@prod', config)
+      let customServer: CommandParseResult = CommandParser.parseMoshCommand(
+        'mosh --server=/home/deploy/.local/bin/mosh-server -p 60042 prod', config)
+
+      expect(saved.isValid).assertEqual(true)
+      expect(saved.protocol).assertEqual(ConnectionCommandProtocol.MOSH)
+      expect(saved.host).assertEqual('192.0.2.8')
+      expect(saved.username).assertEqual('deploy')
+      expect(saved.port).assertEqual(2222)
+      expect(saved.connectTimeoutMs).assertEqual(9000)
+      expect(saved.moshUdpPortStart).assertEqual(0)
+      expect(saved.moshUdpPortEnd).assertEqual(0)
+      expect(overridden.isValid).assertEqual(true)
+      expect(overridden.username).assertEqual('admin')
+      expect(fixed.isValid).assertEqual(true)
+      expect(fixed.port).assertEqual(2222)
+      expect(fixed.moshUdpPortStart).assertEqual(60042)
+      expect(fixed.moshUdpPortEnd).assertEqual(60042)
+      expect(range.isValid).assertEqual(true)
+      expect(range.username).assertEqual('admin')
+      expect(range.port).assertEqual(2222)
+      expect(range.moshUdpPortStart).assertEqual(60042)
+      expect(range.moshUdpPortEnd).assertEqual(60049)
+      expect(saved.moshServerPath).assertEqual('')
+      expect(customServer.isValid).assertEqual(true)
+      expect(customServer.moshServerPath).assertEqual('/home/deploy/.local/bin/mosh-server')
+      expect(customServer.moshUdpPortStart).assertEqual(60042)
+    })
+
+    it('rejectsInvalidMoshUdpPortShapesBeforeConnection', 0, () => {
+      let config: SshConfig = new SshConfig()
+      let invalidCommands: string[] = [
+        'mosh -p host',
+        'mosh -p 0 host',
+        'mosh -p 65536 host',
+        'mosh -p +60042 host',
+        'mosh -p 60042: host',
+        'mosh -p :60042 host',
+        'mosh -p 60050:60042 host',
+        'mosh -p 60042 -p 60043 host',
+        'mosh host uptime'
+      ]
+      for (let command of invalidCommands) {
+        let parsed: CommandParseResult = CommandParser.parseMoshCommand(command, config)
+        expect(parsed.isValid).assertEqual(false)
+        expect(parsed.errorMessage.length > 0).assertEqual(true)
+      }
+      let unsupported: CommandParseResult = CommandParser.parseMoshCommand('mosh --port 60042 host', config)
+      expect(unsupported.errorMessage).assertEqual('Unsupported Mosh option: --port')
+    })
+
+    it('rejectsMoshServerCommandsAndUnsafePathsBeforeConnection', 0, () => {
+      let config: SshConfig = new SshConfig()
+      let invalidCommands: string[] = [
+        'mosh --server host',
+        'mosh --server= host',
+        'mosh --server=mosh-server host',
+        'mosh --server=~/bin/mosh-server host',
+        'mosh --server=/opt//mosh-server host',
+        'mosh --server=/opt/../bin/mosh-server host',
+        'mosh --server=/opt/mosh-server;id host',
+        'mosh --server=/opt/mosh-server --server=/usr/bin/mosh-server host',
+        'mosh --server=/opt/mosh-server extra host'
+      ]
+      for (let command of invalidCommands) {
+        let parsed: CommandParseResult = CommandParser.parseMoshCommand(command, config)
+        expect(parsed.isValid).assertEqual(false)
+        expect(parsed.errorMessage.length > 0).assertEqual(true)
+      }
+      let overlongPath: string = '/' + 'a'.repeat(1024)
+      let overlong: CommandParseResult = CommandParser.parseMoshCommand(
+        'mosh --server=' + overlongPath + ' host', config)
+      expect(overlong.isValid).assertEqual(false)
+    })
+
+    it('rejectsMoshProxyJumpAndIpv6BeforeConnection', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host jumped\n  HostName 192.0.2.9\n  User deploy\n  ProxyJump jump\n' +
+        'Host jump\n  HostName 192.0.2.10\n  User gateway\n')
+      let jumped: CommandParseResult = CommandParser.parseMoshCommand('mosh jumped', config)
+      let ipv6: CommandParseResult = CommandParser.parseMoshCommand('mosh deploy@[2001:db8::1]', config)
+
+      expect(jumped.isValid).assertEqual(false)
+      expect(jumped.errorMessage.includes('ProxyJump')).assertEqual(true)
+      expect(ipv6.isValid).assertEqual(false)
+      expect(ipv6.errorMessage.includes('IPv4')).assertEqual(true)
+    })
+
+    it('rejectsMoshAddressFamilyOptionsWhileTheProductIsIpv4Only', 0, () => {
+      let config: SshConfig = new SshConfig()
+      for (let command of [
+        'mosh -4 host',
+        'mosh -6 host',
+        'mosh --family host',
+        'mosh --family=inet host',
+        'mosh --family=inet6 host'
+      ]) {
+        let parsed: CommandParseResult = CommandParser.parseMoshCommand(command, config)
+        expect(parsed.isValid).assertEqual(false)
+        expect(parsed.errorMessage).assertEqual(
+          'Mosh address-family options are not supported; this version supports IPv4 targets only')
+      }
+    })
+
+    it('keepsMoshEscapeOwnershipAcrossInputFrames', 0, () => {
+      let parser: MoshEscapeParser = new MoshEscapeParser()
+      let first: MoshEscapeResult = parser.consume('echo ok\r\u001e')
+      let disconnect: MoshEscapeResult = parser.consume('.')
+      let literal: MoshEscapeResult = parser.consume('\u001e\u001e')
+
+      expect(first.events.length).assertEqual(1)
+      expect(first.events[0].kind).assertEqual(MoshEscapeEventKind.REMOTE_DATA)
+      expect(first.events[0].data).assertEqual('echo ok\r')
+      expect(disconnect.events.length).assertEqual(1)
+      expect(disconnect.events[0].kind).assertEqual(MoshEscapeEventKind.DISCONNECT)
+      expect(literal.events.length).assertEqual(1)
+      expect(literal.events[0].kind).assertEqual(MoshEscapeEventKind.REMOTE_DATA)
+      expect(literal.events[0].data).assertEqual('\u001e')
+    })
+
     it('acceptsAuthEventsOnlyForTheCurrentSessionGeneration', 0, () => {
       expect(SshClient.isCurrentAuthEvent('41', 7, '41', 7)).assertEqual(true)
       expect(SshClient.isCurrentAuthEvent('41', 7, '42', 7)).assertEqual(false)
@@ -174,7 +351,9 @@ export default function sshBehaviorTest() {
         '  Port 2222\n  IdentityFile jump-key\n  ConnectTimeout 4\n' +
         '  ServerAliveInterval 17\n  ServerAliveCountMax 6\n')
       let parsed = CommandParser.parseInput('ssh prod', config)
+      let overridden = CommandParser.parseInput('ssh -i one-shot-target-key prod', config)
       expect(parsed instanceof CommandParseResult).assertEqual(true)
+      expect(overridden instanceof CommandParseResult).assertEqual(true)
       if (parsed instanceof CommandParseResult) {
         expect(parsed.isValid).assertEqual(true)
         expect(parsed.host).assertEqual('target.example.com')
@@ -191,6 +370,11 @@ export default function sshBehaviorTest() {
         expect(parsed.serverAliveCountMax).assertEqual(2)
         expect(parsed.jumpServerAliveIntervalSeconds).assertEqual(17)
         expect(parsed.jumpServerAliveCountMax).assertEqual(6)
+      }
+      if (overridden instanceof CommandParseResult) {
+        expect(overridden.isValid).assertEqual(true)
+        expect(overridden.identityFile).assertEqual('one-shot-target-key')
+        expect(overridden.jumpIdentityFile).assertEqual('jump-key')
       }
     })
 
@@ -277,7 +461,7 @@ export default function sshBehaviorTest() {
         '  Port 2200\n  ConnectTimeout 25')).assertEqual(true)
     })
 
-    it('resolvesOpenSshFirstValueAndIdentityFile', 0, () => {
+    it('resolvesOpenSshFirstValuesAndOneIdentityFile', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName prod.example.com\n  IdentityFile ~/.ssh/deploy\n\n' +
         'Host *\n  User deploy\n  Port 2200\n')
@@ -290,6 +474,30 @@ export default function sshBehaviorTest() {
         expect(result.username).assertEqual('deploy')
         expect(result.port).assertEqual(2200)
         expect(result.identityFile).assertEqual('~/.ssh/deploy')
+      }
+    })
+
+    it('rejectsASecondIdentityFileOnlyForTheMatchingHost', 0, () => {
+      let duplicate: SshConfig = new SshConfig()
+      duplicate.loadFromText('Host prod\n  HostName prod.example.com\n  IdentityFile first-key\n\n' +
+        'Host *\n  User deploy\n  IdentityFile second-key\n')
+      let duplicateResult = CommandParser.parseInput('ssh prod', duplicate)
+      expect(duplicateResult instanceof CommandParseResult).assertEqual(true)
+      if (duplicateResult instanceof CommandParseResult) {
+        expect(duplicateResult.isValid).assertEqual(false)
+        expect(duplicateResult.errorMessage.includes('IdentityFile')).assertEqual(true)
+        expect(duplicateResult.errorMessage.includes('line 7')).assertEqual(true)
+        expect(duplicateResult.errorMessage.includes('appears more than once')).assertEqual(true)
+      }
+
+      let unrelated: SshConfig = new SshConfig()
+      unrelated.loadFromText('Host other\n  IdentityFile first-key\n  IdentityFile second-key\n\n' +
+        'Host prod\n  User deploy\n  IdentityFile prod-key\n')
+      let unrelatedResult = CommandParser.parseInput('ssh prod', unrelated)
+      expect(unrelatedResult instanceof CommandParseResult).assertEqual(true)
+      if (unrelatedResult instanceof CommandParseResult) {
+        expect(unrelatedResult.isValid).assertEqual(true)
+        expect(unrelatedResult.identityFile).assertEqual('prod-key')
       }
     })
 

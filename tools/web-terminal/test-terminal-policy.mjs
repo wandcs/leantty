@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import './test-font-cell-width.mjs';
 import { runTerminalSearchTests } from './test-terminal-search.mjs';
 import {
+  runTerminalMoshPageTests,
   runTerminalSessionResetTests,
   SESSION_BOUNDARY_RESET_SEQUENCE
 } from './test-terminal-session-reset.mjs';
@@ -486,8 +487,10 @@ assert.match(terminalHtml,
 assert.match(terminalHtml,
   /term\.onData\(function\(data\)[\s\S]*?if \(!restoringSnapshot\)[\s\S]*?sendBridgeData\('terminal', data\)/,
   'checkpoint mode restoration must not inject generated input into SSH');
-assert.doesNotMatch(terminalHtml, /releaseBuffers|term\.clear\(\)|term\.reset\(\)/,
-  'normal disconnect cleanup must not clear the current xterm screen or scrollback');
+assert.doesNotMatch(terminalHtml, /releaseBuffers|term\.clear\(\)/,
+  'normal disconnect cleanup must not expose a generic terminal clearing command');
+assert.equal((terminalHtml.match(/term\.reset\(\)/g) ?? []).length, 1,
+  'only the explicit whole-page Mosh replacement may reset xterm');
 assert.match(terminalHtml, /term\.onBell\s*\(/,
   'xterm must remain the semantic source for terminal bell events');
 assert.match(terminalHtml,
@@ -704,6 +707,8 @@ assert.doesNotThrow(() => {
 await runTerminalSearchTests(globalThis.Terminal, globalThis.SearchAddon.SearchAddon);
 await runTerminalSessionResetTests(globalThis.Terminal, globalThis.SerializeAddon.SerializeAddon,
   policy.sessionOutputAnchorRow);
+await runTerminalMoshPageTests(globalThis.Terminal, globalThis.SerializeAddon.SerializeAddon,
+  globalThis.SearchAddon.SearchAddon);
 
 const terminalBridge = readFileSync(
   new URL('../../entry/src/main/ets/model/bridge/TerminalBridge.ets', import.meta.url), 'utf8');
@@ -746,6 +751,12 @@ assert.match(terminalBridge,
 assert.match(terminalBridge,
   /private pumpSnapshotRequests[\s\S]*?pendingDataHead < this\.pendingData\.length \|\| this\.inFlightMessages > 0/,
   'a checkpoint request must wait until all earlier terminal output is acknowledged');
+assert.match(terminalBridge,
+  /replaceTerminalPage\(snapshot: string, onComplete:[\s\S]*?terminalPageReplacementCompletion = onComplete[\s\S]*?pumpTerminalPageReplacement\(\)[\s\S]*?KIND_TERMINAL_PAGE_REPLACE_COMPLETE[\s\S]*?completion\(true\)/,
+  'one page replacement must retain a bounded completion until ArkWeb acknowledges it');
+assert.match(terminalBridge,
+  /private pumpTerminalPageReplacement[\s\S]*?pendingDataHead < this\.pendingData\.length \|\| this\.inFlightMessages > 0[\s\S]*?BridgeProtocol\.terminalPageReplace/,
+  'page replacement must wait until every earlier terminal write is acknowledged');
 assert.match(terminalBridge, /postMessageEvent\(packet\.buffer\)/,
   'terminal output must use one raw binary WebMessagePort push path');
 assert.match(terminalBridge, /BINARY_HEADER_BYTES:\s*number = 12/,
@@ -801,6 +812,9 @@ assert.match(bridgeProtocol,
   /KIND_SESSION_OUTPUT_ANCHOR:\s*string = 'sessionOutputAnchor'[\s\S]*KIND_SESSION_OUTPUT_ANCHOR_COMPLETE:\s*string = 'sessionOutputAnchorComplete'[\s\S]*KIND_SESSION_OUTPUT_ANCHOR[\s\S]*payload\.length > 0/,
   'Session local-output positioning and completion must use empty-payload typed controls');
 assert.match(bridgeProtocol,
+  /KIND_TERMINAL_PAGE_REPLACE:\s*string = 'terminalPageReplace'[\s\S]*KIND_TERMINAL_PAGE_REPLACE_COMPLETE:\s*string = 'terminalPageReplaceComplete'[\s\S]*KIND_TERMINAL_PAGE_REPLACE_COMPLETE[\s\S]*payload\.length > 0/,
+  'terminal page replacement and its acknowledgement must use typed bridge controls');
+assert.match(bridgeProtocol,
   /KIND_COPY_OR_INTERRUPT:\s*string = 'copyOrInterrupt'[\s\S]*KIND_COPY_OR_INTERRUPT && payload\.length > 0[\s\S]*copyOrInterrupt\(\): BridgeMessage/,
   'copy-or-interrupt must be a typed empty-payload native-to-web control');
 
@@ -809,17 +823,34 @@ const sessionViewModel = readFileSync(
 assert.doesNotMatch(sessionViewModel, /KIND_BELL_ATTENTION|case BridgeProtocol\.KIND_(?:BELL|TITLE)\b/,
   'bell attention belongs to the terminal surface and app shell, not the SSH session');
 assert.match(sessionViewModel,
-  /private onSshClose[\s\S]*?finishSshTerminalOwnership\(\(\) => \{[\s\S]*?writeTerminal\([\s\S]*?writePrompt\(\)/,
+  /private onSshClose[\s\S]*?finishSessionTerminalOwnership\(\(\) => \{[\s\S]*?writeTerminal\([\s\S]*?writePrompt\(\)/,
   'disconnect cleanup must complete the shared Session boundary before appending local close output');
 assert.match(sessionViewModel,
-  /private finishSshTerminalOwnership[\s\S]*?acceptingSshOutput = false[\s\S]*?releaseDisconnectedFlowControl\(\)[\s\S]*?resetSessionState\(\(\) => \{[\s\S]*?onReset\(\)[\s\S]*?\}, completeReset\)/,
+  /private finishSessionTerminalOwnership[\s\S]*?acceptingSessionOutput = false[\s\S]*?releaseDisconnectedFlowControl\(\)[\s\S]*?resetSessionState\(\(\) => \{[\s\S]*?onReset\(\)[\s\S]*?\}, completeReset\)/,
   'the Session boundary must stop remote ownership and release flow control before requesting reset');
 assert.match(sessionViewModel,
-  /private onSshData[\s\S]*?if \(!this\.acceptingSshOutput\)[\s\S]*?return/,
+  /private onSessionData[\s\S]*?if \(!this\.acceptingSessionOutput\)[\s\S]*?return/,
   'late remote bytes must be rejected once Session terminal ownership ends');
 assert.match(sessionViewModel,
-  /private onSshClose[\s\S]*?if \(!this\.acceptingSshOutput\)[\s\S]*?SSH closed, exitCode=[\s\S]*?terminal ownership already released[\s\S]*?return/,
+  /private onSshClose[\s\S]*?if \(!this\.acceptingSessionOutput\)[\s\S]*?SSH closed, exitCode=[\s\S]*?terminal ownership already released[\s\S]*?return/,
   'a locally released Session must keep native close observable without reclaiming terminal ownership');
+assert.match(sessionViewModel,
+  /client\.onData\(\(data: Uint8Array\)[\s\S]*?isCurrentMoshClient[\s\S]*?onMoshData\(data\)[\s\S]*?private onMoshData[\s\S]*?writeMoshBytes\(data\)/,
+  'current-owner Mosh bytes must use the isolated page output path');
+assert.match(sessionViewModel,
+  /private onMoshConnected[\s\S]*?beginMoshSessionPage\(\)/,
+  'a connected Mosh Session must request its page before ordinary output');
+assert.match(sessionViewModel,
+  /private finishMoshTerminalOwnership[\s\S]*?acceptingSessionOutput = false[\s\S]*?endMoshSessionPage\(\(\) => \{[\s\S]*?onReset\(\)/,
+  'every Mosh exit path must stop new callbacks and restore the original page before local output');
+assert.match(sessionViewModel,
+  /private onMoshClose[\s\S]*?finishMoshTerminalOwnership\(\(\) => \{/,
+  'a remote or local Mosh close must restore the original page');
+assert.match(sessionViewModel,
+  /private onMoshError[\s\S]*?finishMoshTerminalOwnership\(\(\) => \{/,
+  'an abnormal Mosh error must restore the original page');
+assert.doesNotMatch(sessionViewModel, /failMoshForAcceptance|ACCEPTANCE_MOSH_ERROR/,
+  'production Session source must exclude the acceptance-only Mosh failure trigger');
 assert.match(sessionViewModel,
   /handleTerminalInput\(data: string\): void \{[\s\S]*?if \(this\.terminalResetPending\)[\s\S]*?return/,
   'local input must wait until Session reset completion');
@@ -827,7 +858,7 @@ assert.match(sessionViewModel,
   /private setMode\(newMode: TerminalMode\): void \{[\s\S]*?let returningToLocalPrompt: boolean = this\.mode !== TerminalMode\.IDLE &&[\s\S]*?newMode === TerminalMode\.IDLE[\s\S]*?if \(returningToLocalPrompt\) \{[\s\S]*?this\.notifyTitleChange\('ltty'\)/,
   'every remote, failed or cancelled flow that returns to the local prompt must restore the local Tab title');
 assert.match(sessionViewModel,
-  /if \(parsed === null\) \{[\s\S]*?this\.writeError\('Unknown command "' \+ summary \+ '"\.',\s*'Try: help, or ssh user@host to connect\.'\)/,
+  /if \(parsed === null\) \{[\s\S]*?this\.writeError\('Unknown command "' \+ summary \+ '"\.',\s*'Try: help, ssh user@host, or mosh user@host\.'\)/,
   'unknown idle commands must identify a bounded input and put both next steps on a second line');
 assert.match(sessionViewModel,
   /writeError\(msg: string, guidance: string = ''\)[\s\S]*?LocalCommandOutput\.error\([\s\S]*?terminalSafeMultilineText\(msg\)/,
@@ -900,6 +931,15 @@ assert.match(terminalSurfaceController,
 assert.match(terminalSurfaceController,
   /msg\.kind === BridgeProtocol\.KIND_SNAPSHOT[\s\S]*?requestIdText[\s\S]*?lastCommittedSnapshotRequestId[\s\S]*?replaceSnapshot/,
   'only a sequenced current-bridge checkpoint may replace the session recovery snapshot');
+assert.match(terminalSurfaceController,
+  /beginMoshSessionPage\(\): void[\s\S]*?captureSnapshot[\s\S]*?beginSessionPage[\s\S]*?replaceMoshTerminalPage/,
+  'the Mosh page must capture and seal the original page before replacing the terminal');
+assert.match(terminalSurfaceController,
+  /writeMoshBytes\(data: Uint8Array\): void[\s\S]*?pendingMoshOutput[\s\S]*?beginMoshSessionPage/,
+  'the first Mosh bytes must wait until the isolated page is ready');
+assert.match(terminalSurfaceController,
+  /endMoshSessionPage\(writeLocalOutput:[\s\S]*?replaceMoshTerminalPage[\s\S]*?endSessionPage[\s\S]*?writeLocalOutput\(\)/,
+  'Mosh close output must follow acknowledged restoration of the original page');
 assert.match(terminalSurfaceController, /takeDetachedChunks/,
   'a new terminal surface must take only output produced while no surface was attached');
 assert.doesNotMatch(terminalSurfaceController, /releaseBuffers|term\.clear|term\.reset/,
@@ -909,6 +949,9 @@ assert.doesNotMatch(terminalSurfaceController, /terminateRendererForAcceptance|A
 assert.match(terminalHtml,
   /function positionSessionOutput[\s\S]*?sessionOutputAnchorRow\(term\.buffer\.active, term\.rows\)[\s\S]*?term\.write\([\s\S]*?anchorRow\.toString\(\)[\s\S]*?case 'sessionOutputAnchor':[\s\S]*?sessionOutputAnchorComplete/,
   'ArkWeb must position local close output after the last visible normal-buffer content before acknowledging');
+assert.match(terminalHtml,
+  /function replaceTerminalPage\(snapshot, onComplete\)[\s\S]*?closeSearch\(false\)[\s\S]*?term\.reset\(\)[\s\S]*?term\.write\(snapshot, completeReplacement\)[\s\S]*?case 'terminalPageReplace':[\s\S]*?terminalPageReplaceComplete/,
+  'ArkWeb must clear search and replace the whole xterm page before acknowledging');
 
 const indexPage = readFileSync(
   new URL('../../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
@@ -940,8 +983,8 @@ assert.match(entryAbility,
 assert.match(entryModule, /"name": "ohos\.permission\.SET_WINDOW_TRANSPARENT"/,
   'the normal system-grant permission for transparent 2in1 containers must be declared');
 assert.match(indexPage,
-  /\.backgroundBlurStyle\(this\.backgroundMaterial,[\s\S]*FOLLOWS_WINDOW_ACTIVE_STATE/,
-  'one window-root material plane must follow the active window state');
+  /\.backgroundBlurStyle\(this\.backgroundMaterial,[\s\S]*FOLLOWS_WINDOW_ACTIVE_STATE[\s\S]*inactiveColor:\s*'#FF1E1E2E'/,
+  'one window-root material plane must stay opaque when the window becomes inactive');
 assert.match(indexPage,
   /backgroundMaterial = this\.windowTransparencyAvailable[\s\S]*TransparencyMode\.OFF[\s\S]*BlurStyle\.BACKGROUND_REGULAR : BlurStyle\.NONE/,
   'the fixed Regular material must apply only when platform transparency is active');
@@ -1042,6 +1085,9 @@ assert.doesNotMatch(acceptanceSource, /Debug Material|Acceptance: Open Search|BA
   'debug builds must reuse production material and Search controls');
 assert.match(acceptanceSource, /terminateRendererForAcceptance/,
   'debug build transformation must own the renderer termination trigger');
+assert.match(acceptanceSource,
+  /ctrlKey && altKey && shiftKey && event\.keyCode === 2034[\s\S]*?failMoshForAcceptance[\s\S]*?ACCEPTANCE_MOSH_ERROR state=injected[\s\S]*?onMoshError/,
+  'debug builds must expose one bounded abnormal Mosh exit without a production entry');
 assert.match(acceptanceSource,
   /ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event\.keyCode === 2034[\s\S]*?reconnectForAcceptance\(\)[\s\S]*?runtime\.viewModel\.reconnect\(\)/,
   'debug build transformation must expose the production Session reconnect path without a release entry');

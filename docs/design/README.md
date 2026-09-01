@@ -48,7 +48,7 @@
 | 后台 BEL 通知与返回 | Verified / 1.5 | 1.5 | [`background-bell-notification.md`](background-bell-notification.md) |
 | 产品语言边界与中英文界面 | Verified / 1.5 | 1.5 | [`product-language.md`](product-language.md) |
 | Agent CLI/TUI 原生兼容 | Implementing / Codex 普通 SSH 与 tmux 已验证，其余三种待认证 | 1.5 | [`agent-tui-compatibility.md`](agent-tui-compatibility.md) |
-| Mosh 弱网连接 | WIP / 未授权实现 | 拟议 1.6 | [`mosh.md`](mosh.md) |
+| Mosh 弱网连接 | Implementing / 最小纵向切片与弱网状态已验证 | 1.6 | [`mosh.md`](mosh.md)；[`mosh-client-rs` 接入问题](mosh-client-rs-integration-issues.md) |
 
 ## 最小文档结构
 

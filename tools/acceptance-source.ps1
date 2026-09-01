@@ -120,6 +120,13 @@ function Add-LeanTTYAcceptanceSource {
       this.reconnectForAcceptance()
       return true
     }
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && shiftKey && event.keyCode === 2034) {
+      let runtime: PaneRuntime | null = this.activePaneRuntime()
+      if (runtime !== null) {
+        runtime.viewModel.failMoshForAcceptance()
+      }
+      return true
+    }
     if (ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event.keyCode === 2038) {
       this.pasteClipboardForAcceptance()
       return true
@@ -901,6 +908,28 @@ function Add-LeanTTYAcceptanceSource {
             "  private acceptanceInputSequence: number = 0`n" +
             "  private acceptanceBackpressureStalled: boolean = false`n" +
             "  private acceptanceBackpressureProgressCallbacks: number = 0")
+    $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
+        '    this.observePerfOutput(observedText)' `
+        ("    this.observePerfOutput(observedText)`n" +
+            "    if (ACCEPTANCE_TESTS && this.moshClient !== null) {`n" +
+            "      this.logger.info('ACCEPTANCE_MOSH_OUTPUT mode=' + this.moshPredictionMode +`n" +
+            "        ',bytes=' + data.byteLength.toString())`n" +
+            "    }")
+    $moshFailureMethod = @'
+  failMoshForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS || this.moshClient === null || !this.acceptingSessionOutput) {
+      this.logger.warn('ACCEPTANCE_MOSH_ERROR state=ignored')
+      return
+    }
+    this.logger.warn('ACCEPTANCE_MOSH_ERROR state=injected')
+    this.onMoshError(new MoshError(
+      MoshErrorCode.INTERNAL, 'Acceptance Mosh failure', '', 'client'))
+  }
+
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
+        '  private onMoshError(error: MoshError): void {' `
+        ($moshFailureMethod + '  private onMoshError(error: MoshError): void {')
     $preparationAnchor = @'
     let prepared: TransferLocalFile | null = null
     try {

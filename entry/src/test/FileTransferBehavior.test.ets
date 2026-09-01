@@ -235,6 +235,27 @@ export default function fileTransferBehaviorTest() {
       expect(config.previewConfigText()).assertEqual(originalConfig)
     })
 
+    it('rejectsProxyJumpTransfersInsteadOfConnectingDirectly', 0, () => {
+      let config: SshConfig = new SshConfig()
+      config.loadFromText('Host prod\n  HostName private.example.com\n  User deploy\n' +
+        '  IdentityFile target-key\n  ProxyJump jump\n\n' +
+        'Host jump\n  HostName jump.example.com\n  User gateway\n  IdentityFile jump-key\n')
+      let ssh = CommandParser.parseInput('ssh prod', config)
+      let put = CommandParser.parseInput('put report.txt prod:/report.txt', config)
+      let get = CommandParser.parseInput('get prod:/report.txt', config)
+      expect(ssh instanceof CommandParseResult && ssh.isValid).assertEqual(true)
+      expect(put instanceof TransferCommandResult).assertEqual(true)
+      expect(get instanceof TransferCommandResult).assertEqual(true)
+      if (put instanceof TransferCommandResult && get instanceof TransferCommandResult) {
+        expect(put.isValid).assertEqual(false)
+        expect(get.isValid).assertEqual(false)
+        expect(put.errorMessage).assertEqual(
+          'put: ProxyJump is not supported for file transfer; use a Host reachable without ProxyJump')
+        expect(get.errorMessage).assertEqual(
+          'get: ProxyJump is not supported for file transfer; use a Host reachable without ProxyJump')
+      }
+    })
+
     it('keepsHostManagementAndLocalCommandParsingIndependentFromTransfers', 0, () => {
       let config: SshConfig = new SshConfig()
       config.loadFromText('Host prod\n  HostName files.example.com\n  User deploy\n')

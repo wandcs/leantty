@@ -191,6 +191,7 @@ struct ChromeTab {
       return this.chromeColors.statusConnected
     }
     if (sessionState === SshSessionState.CONNECTING || sessionState === SshSessionState.RECONNECTING ||
+      sessionState === SshSessionState.INTERRUPTED ||
       sessionState === SshSessionState.AUTHENTICATING || sessionState === SshSessionState.HOST_VERIFICATION_REQUIRED) {
       return this.chromeColors.statusConnecting
     }

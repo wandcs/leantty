@@ -176,6 +176,10 @@ Host prod
 
 不存在 Transfer Identity、SFTP Host、传输凭据或单独的服务器列表。
 
+文件传输不承诺 ProxyJump。`put/get` 解析到带 `ProxyJump` 的 Host 时必须在连接前明确失败，
+不能丢弃跳板路由后直接连接目标。支持 SFTP over ProxyJump 需要复用分层主机校验、认证、取消和
+清理状态机，不能通过增加几个原生参数隐式扩展。
+
 1.3 文件传输不扩展 Host 管理命令：
 
 - 不为 `host add` 或 `host set` 增加 `-i`、`--no-identity`。

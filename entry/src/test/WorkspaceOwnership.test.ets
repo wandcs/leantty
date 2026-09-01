@@ -28,6 +28,21 @@ export default function workspaceOwnershipTest() {
       }
     })
 
+    it('keepsEachPaneSessionAndTransportOwnerIndependent', 0, () => {
+      let workspace: AppViewModel = createWorkspace()
+      let tab: TabInfo = workspace.addTab('one')
+      let rightPane: PaneInfo | null = workspace.splitPane(tab.id)
+      let leftRuntime: PaneRuntime | null = workspace.getPaneRuntime(tab.panes[0].id)
+      let rightRuntime: PaneRuntime | null = rightPane === null ? null : workspace.getPaneRuntime(rightPane.id)
+
+      expect(leftRuntime !== null).assertEqual(true)
+      expect(rightRuntime !== null).assertEqual(true)
+      expect(leftRuntime?.viewModel === rightRuntime?.viewModel).assertEqual(false)
+      expect(leftRuntime?.viewModel.getSession() === rightRuntime?.viewModel.getSession()).assertEqual(false)
+      expect(leftRuntime?.viewModel.getSshClient() === rightRuntime?.viewModel.getSshClient()).assertEqual(false)
+      expect(leftRuntime?.surface === rightRuntime?.surface).assertEqual(false)
+    })
+
     it('removingAPaneUnlinksAndDisposesItsRuntimeTogether', 0, () => {
       let workspace: AppViewModel = createWorkspace()
       let tab: TabInfo = workspace.addTab('one')

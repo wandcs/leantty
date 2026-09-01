@@ -39,7 +39,19 @@ export class TerminalSurfaceController {
   private localizationJson: string = ''
   private snapshotCompletions: SnapshotCompletion[] = []
   private pendingSessionOutputAnchorCompletion: (() => void) | null = null
+  private moshPageRequested: boolean = false
+  private moshPageReady: boolean = false
+  private moshPageEnding: boolean = false
+  private moshPageCapturePending: boolean = false
+  private moshPageReplacePending: boolean = false
+  private moshPageGeneration: number = 0
+  private pendingMoshOutput: Uint8Array[] = []
+  private pendingMoshBytes: number = 0
+  private pendingMoshEndLocalOutput: (() => void) | null = null
+  private pendingMoshEndCompletion: (() => void) | null = null
+  private pendingBridgeReadyCompletion: (() => void) | null = null
   private static readonly SNAPSHOT_COMPLETION_TIMEOUT_MS: number = 2000
+  private static readonly MOSH_PAGE_HIGH_WATER_BYTES: number = 768 * 1024
   private static readonly SESSION_BOUNDARY_RESET_SEQUENCE: string = '\u001b[?1049l\u001b[?1047l\u001b[?47l\u001b[0m\u001b[?25h\u001b[5 q\u001b[?1l\u001b[?66l\u001b>\u001b[?2004l\u001b[?1004l\u001b[?9l\u001b[?1000l\u001b[?1002l\u001b[?1003l\u001b[?1005l\u001b[?1006l\u001b[?1015l\u001b[?1016l\u001b[4l\u001b[?6l\u001b[?7h\u001b[?45l\u001b[?5l\u001b[?69l\u001b[20l\u001b[r\u001b[?2026l\u001b(B\u001b)B\u001b]104\u0007\u001b]110\u0007\u001b]111\u0007\u001b]112\u0007\u001b[999;1H'
 
   setOnMessage(handler: (msg: BridgeMessage) => void): void {
@@ -78,12 +90,15 @@ export class TerminalSurfaceController {
       this.handleBridgeMessage(bridge, msg)
     })
     bridge.setOnReady(() => {
-      if (this.onReadyHandler !== null) {
-        this.onReadyHandler(recoveredOutput)
+      this.pendingBridgeReadyCompletion = () => {
+        if (this.onReadyHandler !== null) {
+          this.onReadyHandler(recoveredOutput)
+        }
       }
+      this.resumeMoshPageTransition()
     })
     bridge.setOnBackpressure((paused: boolean) => {
-      let previousPaused: boolean = this.outputBuffer.isOutputPaused()
+      let previousPaused: boolean = this.isOutputPaused()
       this.outputBuffer.setBridgeBackpressured(paused)
       this.notifyOutputPauseChange(previousPaused)
     })
@@ -99,7 +114,7 @@ export class TerminalSurfaceController {
     }
     let detachedChunks: Uint8Array[] = this.outputBuffer.takeDetachedChunks()
     recoveredOutput = recoveredOutput || detachedChunks.length > 0
-    let previousPaused: boolean = this.outputBuffer.isOutputPaused()
+    let previousPaused: boolean = this.isOutputPaused()
     this.outputBuffer.markAttached()
     for (let i = 0; i < detachedChunks.length; i++) {
       bridge.write(detachedChunks[i])
@@ -110,12 +125,13 @@ export class TerminalSurfaceController {
   }
 
   detach(): void {
-    let previousPaused: boolean = this.outputBuffer.isOutputPaused()
+    let previousPaused: boolean = this.isOutputPaused()
     this.clearSnapshotCompletions()
     let detachedBridge: TerminalBridge | null = this.bridge
     this.bridge = null
     this.searchOpen = false
     this.searchComposing = false
+    this.pendingBridgeReadyCompletion = null
     this.outputBuffer.markDetached()
     if (detachedBridge !== null) {
       detachedBridge.destroy()
@@ -132,12 +148,197 @@ export class TerminalSurfaceController {
   }
 
   writeBytes(data: Uint8Array): void {
-    let previousPaused: boolean = this.outputBuffer.isOutputPaused()
+    let previousPaused: boolean = this.isOutputPaused()
     this.outputBuffer.append(data)
     if (this.bridge !== null) {
       this.bridge.write(data)
     }
     this.notifyOutputPauseChange(previousPaused)
+  }
+
+  beginMoshSessionPage(): void {
+    if (this.moshPageRequested || this.outputBuffer.isSessionPageActive()) {
+      return
+    }
+    this.moshPageRequested = true
+    this.moshPageReady = false
+    this.moshPageEnding = false
+    this.moshPageGeneration++
+    this.closeSearch()
+    this.logger.info('MOSH_PAGE stage=begin generation=' + this.moshPageGeneration.toString())
+    this.resumeMoshPageTransition()
+  }
+
+  writeMoshBytes(data: Uint8Array): void {
+    if (data.byteLength === 0 || this.moshPageEnding) {
+      return
+    }
+    if (this.moshPageReady && this.outputBuffer.isSessionPageActive()) {
+      this.writeBytes(data)
+      return
+    }
+    let previousPaused: boolean = this.isOutputPaused()
+    this.pendingMoshOutput.push(data)
+    this.pendingMoshBytes += data.byteLength
+    this.beginMoshSessionPage()
+    this.notifyOutputPauseChange(previousPaused)
+  }
+
+  endMoshSessionPage(writeLocalOutput: () => void, onComplete: () => void): void {
+    if (this.moshPageEnding) {
+      return
+    }
+    if (!this.moshPageRequested && !this.outputBuffer.isSessionPageActive()) {
+      writeLocalOutput()
+      onComplete()
+      return
+    }
+    this.moshPageEnding = true
+    this.pendingMoshEndLocalOutput = writeLocalOutput
+    this.pendingMoshEndCompletion = onComplete
+    this.snapshotCommitFloor = this.nextSnapshotRequestId
+    this.logger.info('MOSH_PAGE stage=end generation=' + this.moshPageGeneration.toString() +
+      ' attached=' + (this.bridge !== null).toString())
+    this.resumeMoshPageTransition()
+  }
+
+  private resumeMoshPageTransition(): void {
+    if (this.moshPageEnding && this.bridge === null) {
+      this.completeMoshPageEnd()
+      return
+    }
+    if (!this.moshPageRequested && !this.outputBuffer.isSessionPageActive()) {
+      this.notifyBridgeReadyAfterPageTransition()
+      return
+    }
+    if (!this.moshPageReady) {
+      this.resumeMoshPageBegin()
+      return
+    }
+    if (this.moshPageEnding) {
+      this.restoreOriginalMoshPage()
+      return
+    }
+    this.notifyBridgeReadyAfterPageTransition()
+  }
+
+  private resumeMoshPageBegin(): void {
+    if (this.bridge === null || this.moshPageCapturePending || this.moshPageReplacePending) {
+      return
+    }
+    let generation: number = this.moshPageGeneration
+    if (this.outputBuffer.isSessionPageActive()) {
+      this.replaceMoshTerminalPage('', generation, () => {
+        this.completeMoshPageBegin(generation)
+      })
+      return
+    }
+    this.moshPageCapturePending = true
+    this.captureSnapshot((captured: boolean) => {
+      this.moshPageCapturePending = false
+      if (generation !== this.moshPageGeneration || !this.moshPageRequested) {
+        return
+      }
+      if (!captured) {
+        this.resumeMoshPageTransition()
+        return
+      }
+      this.outputBuffer.beginSessionPage()
+      this.replaceMoshTerminalPage('', generation, () => {
+        this.completeMoshPageBegin(generation)
+      })
+    })
+  }
+
+  private completeMoshPageBegin(generation: number): void {
+    if (generation !== this.moshPageGeneration || !this.outputBuffer.isSessionPageActive()) {
+      return
+    }
+    this.moshPageReady = true
+    let previousPaused: boolean = this.isOutputPaused()
+    let output: Uint8Array[] = this.pendingMoshOutput
+    this.pendingMoshOutput = []
+    this.pendingMoshBytes = 0
+    for (let i = 0; i < output.length; i++) {
+      this.writeBytes(output[i])
+    }
+    this.notifyOutputPauseChange(previousPaused)
+    this.logger.info('MOSH_PAGE stage=ready generation=' + generation.toString())
+    this.resumeMoshPageTransition()
+  }
+
+  private restoreOriginalMoshPage(): void {
+    if (this.moshPageReplacePending) {
+      return
+    }
+    let generation: number = this.moshPageGeneration
+    let originalSnapshot: string = this.outputBuffer.getSessionPageBaseSnapshot()
+    this.replaceMoshTerminalPage(originalSnapshot, generation, () => {
+      if (generation !== this.moshPageGeneration) {
+        return
+      }
+      this.completeMoshPageEnd()
+    })
+  }
+
+  private replaceMoshTerminalPage(snapshot: string, generation: number, onReplaced: () => void): void {
+    let sourceBridge: TerminalBridge | null = this.bridge
+    if (sourceBridge === null) {
+      this.resumeMoshPageTransition()
+      return
+    }
+    this.moshPageReplacePending = true
+    let activeBridge: TerminalBridge = sourceBridge
+    activeBridge.replaceTerminalPage(snapshot, (replaced: boolean) => {
+      this.moshPageReplacePending = false
+      if (generation !== this.moshPageGeneration) {
+        return
+      }
+      if (replaced && this.bridge === activeBridge) {
+        onReplaced()
+        return
+      }
+      this.resumeMoshPageTransition()
+    })
+  }
+
+  private completeMoshPageEnd(): void {
+    let previousPaused: boolean = this.isOutputPaused()
+    this.outputBuffer.endSessionPage()
+    this.pendingMoshOutput = []
+    this.pendingMoshBytes = 0
+    this.moshPageRequested = false
+    this.moshPageReady = false
+    this.moshPageEnding = false
+    this.moshPageCapturePending = false
+    this.moshPageReplacePending = false
+    let writeLocalOutput: (() => void) | null = this.pendingMoshEndLocalOutput
+    let completion: (() => void) | null = this.pendingMoshEndCompletion
+    this.pendingMoshEndLocalOutput = null
+    this.pendingMoshEndCompletion = null
+    if (writeLocalOutput !== null) {
+      writeLocalOutput()
+    }
+    this.notifyOutputPauseChange(previousPaused)
+    this.logger.info('MOSH_PAGE stage=restored generation=' + this.moshPageGeneration.toString())
+    this.restoreSessionViewport(() => {
+      if (completion !== null) {
+        completion()
+      }
+      this.notifyBridgeReadyAfterPageTransition()
+    })
+  }
+
+  private notifyBridgeReadyAfterPageTransition(): void {
+    if (this.moshPageCapturePending || this.moshPageReplacePending || this.moshPageEnding ||
+      (this.moshPageRequested && !this.moshPageReady)) {
+      return
+    }
+    let completion: (() => void) | null = this.pendingBridgeReadyCompletion
+    this.pendingBridgeReadyCompletion = null
+    if (completion !== null) {
+      completion()
+    }
   }
 
   sendTheme(themeJson: string): void {
@@ -153,7 +354,7 @@ export class TerminalSurfaceController {
   }
 
   releaseDisconnectedFlowControl(): void {
-    let previousPaused: boolean = this.outputBuffer.isOutputPaused()
+    let previousPaused: boolean = this.isOutputPaused()
     this.outputBuffer.releaseDisconnectedFlowControl()
     this.notifyOutputPauseChange(previousPaused)
   }
@@ -161,12 +362,18 @@ export class TerminalSurfaceController {
   resetSessionState(writeLocalOutput: () => void, onComplete: () => void): void {
     let resetBytes: Uint8Array = this.textEncoder.encodeInto(
       TerminalSurfaceController.SESSION_BOUNDARY_RESET_SEQUENCE)
+    this.logger.info('SESSION_RESET stage=surface-start attached=' + (this.bridge !== null).toString())
     this.snapshotCommitFloor = this.nextSnapshotRequestId
     this.outputBuffer.markSessionReset(TerminalSurfaceController.SESSION_BOUNDARY_RESET_SEQUENCE)
     this.writeSessionReset(resetBytes, () => {
+      this.logger.info('SESSION_RESET stage=reset-written')
       this.positionSessionOutput(() => {
+        this.logger.info('SESSION_RESET stage=output-positioned')
         writeLocalOutput()
-        this.restoreSessionViewport(onComplete)
+        this.restoreSessionViewport(() => {
+          this.logger.info('SESSION_RESET stage=viewport-restored')
+          onComplete()
+        })
       })
     })
   }
@@ -237,7 +444,8 @@ export class TerminalSurfaceController {
   }
 
   isOutputPaused(): boolean {
-    return this.outputBuffer.isOutputPaused()
+    return this.outputBuffer.isOutputPaused() ||
+      this.pendingMoshBytes >= TerminalSurfaceController.MOSH_PAGE_HIGH_WATER_BYTES
   }
 
   focus(): void {
@@ -452,7 +660,7 @@ export class TerminalSurfaceController {
   }
 
   private notifyOutputPauseChange(previousPaused: boolean): void {
-    let paused: boolean = this.outputBuffer.isOutputPaused()
+    let paused: boolean = this.isOutputPaused()
     if (previousPaused === paused) {
       return
     }

@@ -20,7 +20,8 @@ export enum SshSessionState {
   CONNECTED = 4,
   FAILED = 5,
   DISCONNECTED = 6,
-  RECONNECTING = 7
+  RECONNECTING = 7,
+  INTERRUPTED = 8
 }
 
 export class PaneInfo {
