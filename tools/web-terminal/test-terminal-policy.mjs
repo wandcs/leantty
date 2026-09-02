@@ -1070,8 +1070,9 @@ assert.doesNotMatch(indexPage, /requestCopySelection|['"]Copy['"]/,
   'the tool menu must not keep a standalone Copy action');
 assert.match(indexPage, /const MENU_ACTION_COUNT: number = 6/,
   'the production menu count must exclude acceptance-only actions');
-assert.doesNotMatch(indexPage, /Acceptance: Rebuild Renderer|ACCEPTANCE_TESTS|rebuildRendererForAcceptance/,
-  'production Index source must exclude the acceptance-only renderer trigger');
+assert.doesNotMatch(indexPage,
+  /Acceptance: Rebuild Renderer|ACCEPTANCE_TESTS|rebuildRendererForAcceptance|rebuildPageForAcceptance/,
+  'production Index source must exclude acceptance-only renderer and page rebuild triggers');
 const acceptanceSource = readFileSync(
   new URL('../acceptance-source.ps1', import.meta.url), 'utf8');
 assert.match(acceptanceSource, /Invoke-WithLeanTTYAcceptanceSource/,
@@ -1091,6 +1092,9 @@ assert.match(acceptanceSource,
 assert.match(acceptanceSource,
   /ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event\.keyCode === 2034[\s\S]*?reconnectForAcceptance\(\)[\s\S]*?runtime\.viewModel\.reconnect\(\)/,
   'debug build transformation must expose the production Session reconnect path without a release entry');
+assert.match(acceptanceSource,
+  /ctrlKey && altKey && shiftKey && event\.keyCode === 2036[\s\S]*?rebuildPageForAcceptance\(\)[\s\S]*?getRouter\(\)\.replaceUrl\(\{ url: 'pages\/Index' \}\)/,
+  'debug build transformation must expose one bounded current-page replacement without a release entry');
 assert.match(acceptanceSource,
   /event\.keyCode === 2033[\s\S]*?interruptSessionResetForAcceptance\(\)[\s\S]*?surface\.resetSessionState\([\s\S]*?localWrites\+\+[\s\S]*?completions\+\+[\s\S]*?terminateRendererForAcceptance\(\)/,
   'debug build transformation must exercise an interrupted production reset without a release entry');

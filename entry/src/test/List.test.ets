@@ -16,6 +16,7 @@ import keyPairDeletionTest from './KeyPairDeletion.test';
 import sshControlEventTest from './SshControlEvent.test';
 import sshSessionLifecycleTest from './SshSessionLifecycle.test';
 import workspaceOwnershipTest from './WorkspaceOwnership.test';
+import unexpectedExitRecoveryTest from './UnexpectedExitRecovery.test';
 
 export default function testsuite() {
   paneModelTest();
@@ -36,4 +37,5 @@ export default function testsuite() {
   sshControlEventTest();
   sshSessionLifecycleTest();
   workspaceOwnershipTest();
+  unexpectedExitRecoveryTest();
 }

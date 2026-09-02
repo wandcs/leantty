@@ -2,7 +2,7 @@
 
 > Status: current implementation baseline
 >
-> Last updated: 2026-08-24
+> Last updated: 2026-09-02
 >
 > Governing rules: [`project-principles.md`](project-principles.md)
 
@@ -15,18 +15,19 @@ Feature-specific future designs live in [`design/`](design/README.md), and only
 
 ```text
 HarmonyOS UIAbility / App Shell
-  └─ AppViewModel
-      └─ Tab
-          └─ one or two Pane objects
-              └─ PaneRuntime
-                  ├─ SessionViewModel
-                  │   ├─ local ltty command line and interaction mode
-                  │   ├─ SshSession lifecycle
-                  │   └─ SshClient
-                  │       └─ N-API → Rust/russh → SSH server
-                  └─ TerminalSurfaceController
-                      ├─ TerminalOutputBuffer
-                      └─ TerminalBridge → ArkWeb/xterm.js
+  └─ ApplicationWorkspace (process scope)
+      └─ AppViewModel
+          └─ Tab
+              └─ one or two Pane objects
+                  └─ PaneRuntime
+                      ├─ SessionViewModel
+                      │   ├─ local ltty command line and interaction mode
+                      │   ├─ SshSession lifecycle
+                      │   └─ SshClient
+                      │       └─ N-API → Rust/russh → SSH server
+                      └─ TerminalSurfaceController
+                          ├─ TerminalOutputBuffer
+                          └─ TerminalBridge → ArkWeb/xterm.js
 
 System services
   ├─ HarmonyOS Asset Store and Preferences
@@ -44,7 +45,8 @@ Session.
 
 | Component | Source | Owns | Must not own |
 | --- | --- | --- | --- |
-| UIAbility and page | `entryability/EntryAbility.ets`, `pages/Index.ets` | Application/window lifecycle, rendering the workspace, active focus and system integration | SSH protocol rules or terminal byte interpretation |
+| UIAbility and page | `entryability/EntryAbility.ets`, `pages/Index.ets` | Application/window lifecycle, rendering the process workspace, active focus, UI callback binding and system integration | Workspace or Session ownership, SSH protocol rules or terminal byte interpretation |
+| ApplicationWorkspace | `viewmodel/ApplicationWorkspace.ets` | The one process-scoped AppViewModel and stable split ratio across WindowStage/Page recreation | Persistence across process termination, protocol state or terminal rendering policy |
 | AppViewModel | `viewmodel/AppViewModel.ets` | Stable Tab/Pane identifiers, active Tab/Pane, the Pane/runtime registry and ordered runtime disposal | SSH protocol state, terminal rendering policy or system focus adaptation |
 | PaneRuntime | `viewmodel/PaneRuntime.ets` | The pairing and lifecycle of one Pane identity, SessionViewModel and TerminalSurfaceController | Cross-pane state or workspace ordering |
 | SessionViewModel | `viewmodel/SessionViewModel.ets` | Local command/prompt interaction, terminal presentation and routing user actions to the owning Session | SSH lifecycle transitions, global Tab ordering or Web rendering internals |
@@ -69,14 +71,21 @@ Session.
   owner, so switching or closing cannot reuse another Pane's SSH or terminal
   state.
 
+`ApplicationWorkspace` owns one `AppViewModel` for the lifetime of the process.
+HarmonyOS may rebuild the WindowStage and `Index` page while leaving that process
+and its active Sessions alive, so page destruction only detaches surfaces and
+UI callbacks. A replacement page reuses the same workspace, rebinds callbacks
+and attaches new surfaces; it must not create or restore a second model.
+
 `Index.ets` keeps `tabs` and `activeTabIndex` only as ArkUI rendering
 projections. Existence, active identity, runtime lookup and destruction always
-delegate back to `AppViewModel`. The `@State appVm` annotation is required to
-preserve ArkUI callback and focus-routing identity; it does not create a second
-workspace model. The page routes focus and system events and retains only the
-surfaces required by the current tab, a short warm-tab policy or an active
-connected session. The workspace model and all runtimes are disposed together
-when the page is destroyed and do not persist across application termination.
+delegate back to the process-owned `AppViewModel`. The page routes focus and
+system events and retains only the surfaces required by the current tab, a short
+warm-tab policy or an active connected session. Explicit controlled application
+close disconnects all runtimes before marking the durable generation clean.
+Process termination releases the in-memory workspace; a later process
+reconstructs only the bounded durable structure described below and never
+restores a Session or terminal contents.
 
 ## Connection event chain
 
@@ -268,6 +277,16 @@ second native terminal parser to bypass that lifecycle; durable remote work
 still belongs in tmux or screen, and system notification is best effort.
 
 ## Persistent state
+
+`UnexpectedExitRecoveryStore` owns one bounded, versioned Preferences record for
+the current installation. At startup it classifies the previous generation as
+clean or unclean, then marks the new generation running before UI content loads.
+An unclean record restores only Tab order, one or two Panes per Tab, active
+positions and split ratio. `AppViewModel` reconstructs fresh generation-scoped
+Tab/Pane identities; all Panes start as local `ltty`, `IDLE`, without attention.
+Normal application close marks the generation clean only after Pane runtimes
+disconnect. Host data, titles, terminal contents, commands, credentials and
+Session state never enter this record.
 
 The HarmonyOS Asset Store is the long-term authority for:
 

@@ -95,6 +95,7 @@ enum KeyCommentChangeStage {
 }
 
 export class SessionViewModel {
+  private initialRecoveryNoticePending: boolean = false
   private session: SshSession = new SshSession()
   private sshClient: SshClient = new SshClient()
   private moshClient: MoshClient | null = null
@@ -260,7 +261,15 @@ export class SessionViewModel {
 
   private onBridgeReady(recoveredOutput: boolean): void {
     if (this.mode === TerminalMode.IDLE && !recoveredOutput) {
-      this.writePrompt()
+      if (this.initialRecoveryNoticePending) {
+        this.initialRecoveryNoticePending = false
+        this.writeTerminal('\u001b[0m\r\n' + LocalCommandOutput.warning(
+          'Previous LeanTTY process ended unexpectedly. Workspace layout was recovered; ' +
+          'the remote session and terminal contents were not restored.') +
+          '\r\n' + LocalCommandOutput.prompt())
+      } else {
+        this.writePrompt()
+      }
     }
     this.requestTerminalFit()
     this.applyTerminalFocus()
@@ -276,6 +285,10 @@ export class SessionViewModel {
     this.completionEngine.finishEditing()
     this.completionRenderer.reset()
     this.writeTerminal('\u001b[0m\r\n' + LocalCommandOutput.prompt())
+  }
+
+  setInitialRecoveryNotice(): void {
+    this.initialRecoveryNoticePending = true
   }
 
   writeError(msg: string, guidance: string = ''): void {

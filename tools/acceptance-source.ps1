@@ -145,6 +145,10 @@ function Add-LeanTTYAcceptanceSource {
       }
       return true
     }
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && shiftKey && event.keyCode === 2036) {
+      this.rebuildPageForAcceptance()
+      return true
+    }
     let navigationAction: WorkspaceNavigationAction = InteractionPolicy.workspaceNavigationAction(
 '@
     $text.index = Set-LeanTTYAcceptanceSourceText `
@@ -188,6 +192,16 @@ function Add-LeanTTYAcceptanceSource {
       logger.info('Acceptance Session reconnect completed=true,pane=' + paneId)
     }).catch((error: Error) => {
       logger.error('Acceptance Session reconnect completed=false,pane=' + paneId + ',error=' + error.message)
+    })
+  }
+
+  private rebuildPageForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    logger.info('Acceptance page rebuild requested=true')
+    this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' }).catch((error: Error) => {
+      logger.error('Acceptance page rebuild completed=false,error=' + error.message)
     })
   }
 

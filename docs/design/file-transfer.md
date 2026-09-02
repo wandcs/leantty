@@ -1297,11 +1297,13 @@ LeanTTY 不按前缀认领、删除或恢复任何跨重启对象。
   系统挂起导致 I/O 失败时进入统一失败清理。1.3 不增加后台服务、断点续传或恢复队列。
 - 强制终止不能保证清理；依靠 8.2.3 的临时对象规则保证半文件不暴露为最终名称。
 
-2026-08-12 的实现中，普通 Pane 关闭继续 `await SessionViewModel.disconnect()`；应用关闭由
-`EntryAbility.onPrepareToTerminateAsync()` 等待页面注册的 single-flight 准备 Promise，该 Promise
-并行等待所有 Pane 的同一个 `disconnect()` 完成路径。若准备或最终 `terminateSelf()` 失败会清除
-本次准备状态，下一次显式关闭可重试。页面析构仍只作为已完成受控准备后的兜底，不把系统强制
-终止宣称为可等待的清理路径。
+2026-08-12 的实现中，普通 Pane 关闭继续 `await SessionViewModel.disconnect()`；应用关闭使用
+页面注册的 single-flight 准备 Promise，并行等待所有 Pane 的同一个 `disconnect()` 完成路径。
+2026-09-02 的 HAD-W32 证据进一步证明，应用内调用 `UIAbilityContext.terminateSelf()` 不会可靠
+触发 `EntryAbility.onPrepareToTerminateAsync()`；因此页面在 `terminateSelf()` 前显式等待同一个
+`ApplicationCloseCoordinator.prepareTermination()`，Ability 钩子继续处理系统发起的终止。若准备
+或最终 `terminateSelf()` 失败会清除本次准备状态，下一次显式关闭可重试。页面析构仍只作为已
+完成受控准备后的兜底，不把系统强制终止宣称为可等待的清理路径。
 
 #### 8.2.6 路径语义
 

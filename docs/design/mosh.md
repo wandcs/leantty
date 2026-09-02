@@ -211,6 +211,12 @@ recovery，同一远端 PTY 执行新命令成功；证据为
 前置 oracle。tooling 红绿测试已通过。最终通过场景没有触发重试，因此不把它声称为物理重试
 稳定性证据。
 
+2026-09-02 新增的真实 `wifi-pause-recovery` 关闭 HAD-W32 的 `wlan0` 后没有进入上述静默恢复
+路径，而是使当前固定库返回致命本地 UDP I/O error；App 进程和远端 PTY 在错误点仍存活。
+这命中并升级了 [`MCRS-003`](mosh-client-rs-integration-issues.md#mcrs-003部分本地-udp-发送错误会终止-session)
+为阻塞项。LeanTTY 不在调用侧重建协议状态或伪装 Session 恢复；等待库仓库修复并固定新 rev 后，
+重跑同一真实 WLAN 场景，再进入网络切换比较。
+
 常用命令：
 
 ```powershell
@@ -223,6 +229,7 @@ recovery，同一远端 PTY 执行新命令成功；证据为
 .\tools\verify-mosh-pc.ps1 -Scenario fixed-endpoint
 .\tools\verify-mosh-pc.ps1 -Scenario server-path
 .\tools\verify-mosh-pc.ps1 -Scenario pause-recovery
+.\tools\verify-mosh-pc.ps1 -Scenario wifi-pause-recovery
 .\tools\verify-mosh-pc.ps1 -Scenario server-disappearance
 
 # 不再需要该环境时（管理员）
@@ -617,12 +624,12 @@ Rust fixture 测试与 tooling 回归通过。修正后证据
 第三方应用进程，而 Mosh 的 UDP/SSP 恢复不能跨越本地进程死亡。
 
 官方 [`backgroundTaskManager.startBackgroundRunning()`](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/api/js-apis-resourceschedule-backgroundtaskmanager)
-支持 PC，并要求 `ohos.permission.KEEP_BACKGROUND_RUNNING`。长时任务会产生用户可见通知；
-[后台任务使用规范](https://developer.huawei.com/consumer/cn/doc/doccenter-architecture/standard-background-task)
-还要求用户可主动开始/停止，并在应用市场功能说明中声明原定用途。为活动远端 Session 申请长时任务可能是
-唯一直接保留进程的系统路径，但它会新增权限、通知、生命周期状态、取消处理和上架声明，不能
-作为测试 workaround 或默认常驻能力静默加入。维护者确认该产品取舍前，物理合盖保持未通过，
-Wi-Fi 暂断和网络切换不越过当前顺序门。
+支持 PC，但 2026-09-02 的 HAD-W32 门禁证明：`dataTransfer` Live View 在空闲 SSH 仍连接且
+LeanTTY PID 不变时，会因超过 10 分钟没有真实传输进度更新而被系统撤销。交互式 SSH/Mosh 没有
+可诚实更新的有限总量和进度；定时改进度或发送流量属于伪造保活。因此项目已删除
+`ohos.permission.KEEP_BACKGROUND_RUNNING`、后台 mode、平台封装和 UI，不再把长时任务作为
+合盖方案。物理合盖继续按“进程可能被系统回收”的真实边界验收，由异常工作区与窗口恢复降低
+损失；Wi-Fi 暂断和网络切换仍等待该恢复门闭合。
 
 ### ARM64 HarmonyOS PC 与真实服务器
 

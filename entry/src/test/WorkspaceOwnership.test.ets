@@ -3,6 +3,7 @@ import { PaneInfo, TabInfo } from '../main/ets/common/types/TerminalTypes'
 import { AppViewModel } from '../main/ets/viewmodel/AppViewModel'
 import { PaneRuntime } from '../main/ets/viewmodel/PaneRuntime'
 import { SessionViewModel } from '../main/ets/viewmodel/SessionViewModel'
+import { ApplicationWorkspace } from '../main/ets/viewmodel/ApplicationWorkspace'
 
 function createWorkspace(): AppViewModel {
   let workspace: AppViewModel = new AppViewModel()
@@ -14,6 +15,27 @@ function createWorkspace(): AppViewModel {
 
 export default function workspaceOwnershipTest() {
   describe('WorkspaceOwnership', () => {
+    it('keepsOneProcessScopedWorkspaceAcrossPageOwners', 0, () => {
+      let first: ApplicationWorkspace = ApplicationWorkspace.getInstance()
+      let second: ApplicationWorkspace = ApplicationWorkspace.getInstance()
+
+      expect(first === second).assertEqual(true)
+      expect(first.getViewModel() === second.getViewModel()).assertEqual(true)
+    })
+
+    it('initializesProcessScopedGeometryOnlyOnce', 0, () => {
+      let applicationWorkspace: ApplicationWorkspace = new ApplicationWorkspace()
+
+      expect(applicationWorkspace.isInitialized()).assertEqual(false)
+      applicationWorkspace.initialize(0.63)
+      applicationWorkspace.initialize(0.44)
+
+      expect(applicationWorkspace.isInitialized()).assertEqual(true)
+      expect(applicationWorkspace.getSplitRatio()).assertEqual(0.63)
+      applicationWorkspace.setSplitRatio(0.57)
+      expect(applicationWorkspace.getSplitRatio()).assertEqual(0.57)
+    })
+
     it('createsEachPaneAndRuntimeUnderOneOwner', 0, () => {
       let workspace: AppViewModel = createWorkspace()
       let tab: TabInfo = workspace.addTab('one')
@@ -119,7 +141,7 @@ export default function workspaceOwnershipTest() {
       expect(runtime?.isDisposed()).assertEqual(false)
     })
 
-    it('disposingWorkspaceClearsModelAndRuntimeBeforePageRebuild', 0, async () => {
+    it('explicitWorkspaceDisposalClearsModelAndRuntimeForTermination', 0, async () => {
       let workspace: AppViewModel = createWorkspace()
       let tab: TabInfo = workspace.addTab('one')
       workspace.splitPane(tab.id)

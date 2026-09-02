@@ -2,7 +2,7 @@
 
 > 状态：唯一有效的项目 TODO；1.5.1 已通过 AppGallery 审核并上架，进入 1.6.0 开发
 >
-> 更新日期：2026-09-01
+> 更新日期：2026-09-02
 >
 > 当前 milestone：[`1.6 — Mosh 弱网连接`](roadmap.md)
 >
@@ -40,6 +40,35 @@ manifest、附件和哈希保持不变。
   应用级临时屏幕不再由 LeanTTY 推断，统一包含在整段 Mosh Session 页面内。
 - [x] 用零模型请求启动真实 Codex TUI，覆盖 raw mode、物理输入、resize、退出和 content-free
   清理；复用现有 Agent capture，没有新增假 TUI、模型请求或第二套隐私协议。
+- [x] 按 [`design/unexpected-process-recovery.md`](design/unexpected-process-recovery.md) 先闭合应用
+  异常回收防护与恢复，再继续剩余网络矩阵。实现顺序固定如下，前一项失败时先按方案停止条件
+  裁剪，不得用保活 workaround 绕过平台合同：
+  - [x] 后台能力门已按停止条件闭合。HAD-W32 在屏幕保持点亮和解锁、SSH 仍连接且 PID 不变时，
+    因 Live View 超过 10 分钟未更新传输进度撤销 `dataTransfer` 长时任务。交互式 SSH/Mosh 没有
+    可诚实更新的有限传输进度，因此删除权限、后台模式、平台封装和 UI，不发送虚假进度或流量，
+    也不再执行通知移除、Mosh、合盖或 AppGallery 后台用途门。
+  - [x] 已闭合单一版本化异常退出记录和 clean/unclean generation。HAD-W32 上受控终止后恢复
+    了两 Tab、每 Tab 双 Pane、活动位置和非默认 split ratio；所有 Pane 使用新 generation-scoped
+    runtime ID，以 `IDLE`、本地 `ltty` 和明确的“远端 Session/终端内容未恢复”提示开始。正常
+    关闭重新启动为默认单 Pane且无误报，未来版本记录整条降级；Preferences/hilog 审计未发现
+    Host、标题、终端内容、命令、凭据、secret、attention 或 Session state。
+  - [x] 窗口几何兜底已按停止条件裁剪。HAD-W32 证明应用在 `loadContent` 前写入自由窗口矩形
+    会被内容加载重置；即使使用平台受控 Starting Window，移除启动页时仍回到系统最近一次正常
+    保存的矩形。继续在内容加载后修正必然重引入可见跳动，因此删除应用几何记录、策略、启动页
+    控制和运行期回写，保留 `setWindowRectAutoSave(true)` 为所有启动的唯一窗口权威。
+  - [x] 活动 stock Mosh Session 的受控进程终止已闭合状态机和故障定位。HAD-W32 上 LeanTTY
+    PID 被替换时远端 server/PTY 仍存活；新进程只恢复本地工作区和明确提示，旧远端命令不可见，
+    本地命令可用，且没有创建或伪恢复 Mosh Session。临时 HDC reverse、fixture 和目录清理通过。
+  - [x] 正常关闭、物理合盖、活动与无活动 Session、多 Tab/Pane、非默认 split ratio、未来版本
+    损坏记录、页面/Surface 重建和窗口系统权威均已有独立真机证据；相关 Preferences/hilog
+    secret 审计通过。系统选择进程替换时只恢复本地结构；只重建 Page 时保留进程级工作区与
+    Mosh Session，且重新绑定 Surface 后仍可继续远端输入。
+  - [x] 旧通知跨进程隔离已通过：强制停止前发布的 BEL 通知在新 PID 冷启动后仍可被点击，但
+    旧 Pane Want 因 source 不再 pending 被拒绝，不改变默认单 Pane 工作区；通知 payload 通用，
+    可见生命周期取消通知并完成清理。
+  - [x] 普通卸载重装清理门已通过：卸载前存在两 Tab/活动 Tab 双 Pane 的异常记录；不保留
+    应用私有数据地卸载并重装同一 HAP 后，以 generation 1、无异常恢复、默认单 Tab/Pane 启动。
+    测试未读取、删除或迁移用于长期保留 SSH key/config 的独立 Durable Asset Store。
 - [ ] 在同一物理 PC 上完成正常网络、合盖、锁屏、Wi-Fi 暂断、网络切换、UDP 阻断和恢复矩阵，
   对比 SSH 的恢复时间、会话保留和用户操作，并审计 hilog、Preferences、终端与崩溃信息无 secret。
   - [x] 当前 test HAP 已通过正常网络基线和精确端口双向 UDP 阻断/恢复；Mosh 在
@@ -48,12 +77,22 @@ manifest、附件和哈希保持不变。
     会话和恢复后输入，因此短暂系统挂起本身不构成 Mosh 相对 SSH 的优势证据。
   - [x] 独立 `Win+L` 锁屏/解锁保留同一 App 进程、Mosh Session、stock server 与远端 PTY，
     恢复命令和认证关闭通过，Preferences、secret、fixture、设备状态和临时目录清理通过。
-  - [ ] 物理合盖当前阻塞后续网络场景：同一 test HAP 已重复观察到 HarmonyOS 在解锁前替换
-    LeanTTY 进程，Mosh Session 与远端 PTY 因本地进程死亡而结束。受控 server 超时已按操作员
-    预算延长后仍复现，排除 30 秒 fixture 超时。下一步必须先决定是否只在活动远端 Session 期间
-    申请带用户可见通知和商店声明的 `KEEP_BACKGROUND_RUNNING` 长时任务；未确认前不引入常驻后台。
-  - [ ] 物理合盖决策闭合后，再按 Wi-Fi 暂断、网络切换顺序执行，分别记录 Mosh 与 SSH 的
-    恢复时间、会话状态和必要用户操作。
+  - [x] 物理合盖已在 HAD-W32 上闭合“进程替换”分支：解锁后 LeanTTY 恢复本地工作区并显示
+    明确提示，旧远端输出不可见且没有伪恢复 Mosh Session；stock server 与远端 PTY 在进程替换
+    时仍存活，随后由 fixture 清理。测试进程身份改用 PID 加 `/proc` start time，避免 PID 复用
+    被误判为同一进程；不再期待长时任务保留进程。
+  - [x] 同一物理场景也证明 HarmonyOS 可能保留相同 PID 与 `/proc` start time、但重建
+    WindowStage/Page；页面析构曾错误释放 Mosh Session。工作区所有权已提升到进程级，新页面只
+    重绑 UI callback。当前 HAP 的再次合盖选择了进程替换分支并通过；为避免反复碰系统分支，新增
+    编译期裁剪的确定性页面替换场景，在同一 PID/start time 下证明 Mosh 页面、Session、server、
+    PTY、后续远端命令和认证关闭全部保留，且 Preferences、secret、fixture 与临时映射清理通过。
+  - [ ] 真实 Wi-Fi 暂断已命中
+    [`MCRS-003`](design/mosh-client-rs-integration-issues.md#mcrs-003部分本地-udp-发送错误会终止-session)：
+    HAD-W32 关闭 `wlan0` 后当前固定库返回致命本地 UDP I/O error，没有进入 `Interrupted`；App
+    进程与远端 PTY 在错误点仍存活。等待库仓库以有界临时错误重试修复并提供新 rev 后，固定依赖
+    并重跑同一场景；LeanTTY 不在调用侧复制 UDP/SSP 状态或伪恢复 Session。
+  - [ ] Wi-Fi 暂断通过后再执行网络切换，并分别记录 Mosh 与 SSH 的恢复时间、会话状态和必要
+    用户操作；不能用已有的精确端口丢包结果代替真实接口/路由变化。
   - [ ] 汇总全部场景后审计 hilog、Preferences、终端、fixture、临时目录和崩溃信息；任何
     secret、状态污染或清理不确定均使本项保持未完成。
 

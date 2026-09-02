@@ -17,6 +17,9 @@ import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordin
 import { KeyCodeMap } from '../common/constants/KeyCodeMap'
 import { BackgroundBellNotification } from '../model/ui/BackgroundBellNotification'
 import { UiText } from '../model/ui/UiText'
+import { RecoveryWorkspaceSnapshot } from '../model/persistence/UnexpectedExitRecoveryRecord'
+import { UnexpectedExitRecoveryStore } from '../model/persistence/UnexpectedExitRecoveryStore'
+import { ApplicationWorkspace } from '../viewmodel/ApplicationWorkspace'
 
 const logger: Logger = new Logger('IndexPage')
 const WARM_TAB_RETENTION_MS: number = 30000
@@ -25,7 +28,8 @@ const MENU_ACTION_COUNT: number = 6
 @Entry
 @Component
 struct Index {
-  @State appVm: AppViewModel = new AppViewModel()
+  private applicationWorkspace: ApplicationWorkspace = ApplicationWorkspace.getInstance()
+  @State appVm: AppViewModel = ApplicationWorkspace.getInstance().getViewModel()
   @State tabs: TabInfo[] = []
   @State activeTabIndex: number = 0
   @State paneRuntimeRevision: number = 0
@@ -64,27 +68,46 @@ struct Index {
   private themeChangeHandler: () => void = () => { this.applyTheme() }
   private applicationCloseHandler: () => Promise<void> = async (): Promise<void> => {
     await this.appVm.disconnectAllPaneRuntimes()
+    UnexpectedExitRecoveryStore.markClean(this.appVm.createRecoverySnapshot(this.splitRatio))
   }
   private consumedBackgroundBellReturnToken: number = 0
+  private restoringUnexpectedWorkspace: boolean = false
 
   aboutToAppear(): void {
     this.fontSize = InteractionPolicy.clampFontSize(this.fontSize)
     this.appVm.setPaneRuntimeFactory((pane: PaneInfo): PaneRuntime => this.createPaneRuntime(pane))
-    this.appVm.addTab('ltty')
+    let reusedWorkspace: boolean = this.applicationWorkspace.isInitialized()
+    if (reusedWorkspace) {
+      this.splitRatio = this.applicationWorkspace.getSplitRatio()
+      this.rebindPaneRuntimes()
+    } else {
+      this.appVm.setIdentityGeneration(UnexpectedExitRecoveryStore.currentGeneration())
+      let recovery: RecoveryWorkspaceSnapshot | null =
+        UnexpectedExitRecoveryStore.consumeUnexpectedWorkspace()
+      this.restoringUnexpectedWorkspace = recovery !== null
+      if (recovery === null || !this.appVm.restoreRecoverySnapshot(recovery)) {
+        this.restoringUnexpectedWorkspace = false
+        this.appVm.addTab('ltty')
+      } else {
+        this.splitRatio = recovery.splitRatio
+      }
+      this.restoringUnexpectedWorkspace = false
+      this.applicationWorkspace.initialize(this.splitRatio)
+    }
     this.syncWorkspace()
+    this.checkpointWorkspace()
     this.applyTheme()
     ThemeManager.getInstance().onThemeChange(this.themeChangeHandler)
     ApplicationCloseCoordinator.register(this.applicationCloseHandler)
     this.onBackgroundBellReturnRequested()
-    logger.info('Index page initialized')
+    logger.info('Index page initialized workspace=' + (reusedWorkspace ? 'reused' : 'new'))
   }
 
   aboutToDisappear(): void {
     ApplicationCloseCoordinator.unregister(this.applicationCloseHandler)
     ThemeManager.getInstance().removeThemeChange(this.themeChangeHandler)
     this.clearWarmTabEvictionTimer()
-    AppStorage.setOrCreate('hasActiveSshSession', false)
-    this.appVm.disposeWorkspace()
+    logger.info('Index page destroyed; application workspace retained')
   }
 
   build() {
@@ -208,9 +231,11 @@ struct Index {
                   let direction: number = event.keyCode === 2014 ? -0.05 : 0.05
                   this.splitRatio = InteractionPolicy.clampSplitRatio(this.splitRatio + direction)
                   this.requestActiveTabFit()
+                  this.checkpointWorkspace()
                 } else if (event.keyCode === 2054) {
                   this.splitRatio = 0.5
                   this.requestActiveTabFit()
+                  this.checkpointWorkspace()
                 }
                 return true
               })
@@ -229,6 +254,7 @@ struct Index {
                   .onActionEnd(() => {
                     this.splitDragging = false
                     this.requestActiveTabFit()
+                    this.checkpointWorkspace()
                     this.restoreActivePaneFocus()
                   })
                   .onActionCancel(() => {
@@ -422,12 +448,41 @@ struct Index {
     }
     this.appVm.addTab('ltty')
     this.syncWorkspace()
+    this.checkpointWorkspace()
     this.restoreActivePaneFocus()
   }
 
   private createPaneRuntime(pane: PaneInfo): PaneRuntime {
     let vm: SessionViewModel = new SessionViewModel()
+    if (this.restoringUnexpectedWorkspace) {
+      vm.setInitialRecoveryNotice()
+    }
     vm.setPaneIdentity(pane.id)
+    let runtime: PaneRuntime = new PaneRuntime(pane.id, vm)
+    this.bindPaneRuntime(pane, runtime)
+    try {
+      let ctx: common.Context | undefined = this.getUIContext().getHostContext()
+      if (ctx !== undefined) {
+        vm.loadSshConfig(ctx)
+      }
+    } catch (e) {
+      logger.warn('loadSshConfig failed: ' + e)
+    }
+    return runtime
+  }
+
+  private rebindPaneRuntimes(): void {
+    let runtimes: PaneRuntime[] = this.appVm.getPaneRuntimes()
+    for (let i = 0; i < runtimes.length; i++) {
+      let pane: PaneInfo | null = this.appVm.getPane(runtimes[i].id)
+      if (pane !== null) {
+        this.bindPaneRuntime(pane, runtimes[i])
+      }
+    }
+  }
+
+  private bindPaneRuntime(pane: PaneInfo, runtime: PaneRuntime): void {
+    let vm: SessionViewModel = runtime.viewModel
     vm.setOnStateChange((state: SshSessionState) => {
       this.updatePaneState(pane.id, state)
     })
@@ -442,15 +497,6 @@ struct Index {
       onConfirm: () => void, onCancel: () => void) => {
       this.requestKeyDelete(name, fingerprint, onConfirm, onCancel)
     })
-    try {
-      let ctx: common.Context | undefined = this.getUIContext().getHostContext()
-      if (ctx !== undefined) {
-        vm.loadSshConfig(ctx)
-      }
-    } catch (e) {
-      logger.warn('loadSshConfig failed: ' + e)
-    }
-    let runtime: PaneRuntime = new PaneRuntime(pane.id, vm)
     runtime.surface.setOnCopyResult((success: boolean) => {
       this.showTransientFeedback(this.text(success ? 'feedback_copied' : 'feedback_copy_failed'))
     })
@@ -463,7 +509,6 @@ struct Index {
     runtime.surface.setOnOpenUrl((url: string) => {
       this.openUrlForPane(pane.id, runtime.generation, url)
     })
-    return runtime
   }
 
   private recyclePaneWebView(paneId: string): void {
@@ -492,6 +537,7 @@ struct Index {
     this.appVm.setActiveTab(index)
     this.clearPaneAttention(tabs[index].activePaneId)
     this.syncWorkspace()
+    this.checkpointWorkspace()
     this.restoreActivePaneFocus()
   }
 
@@ -618,6 +664,7 @@ struct Index {
     }
     this.appVm.removeTab(index)
     this.syncWorkspace()
+    this.checkpointWorkspace()
     let activeAfterClose: TabInfo | null = this.activeTab()
     if (activeAfterClose !== null && activeAfterClose.id === this.warmTabId) {
       this.clearWarmTabEvictionTimer()
@@ -952,6 +999,7 @@ struct Index {
     let pane: PaneInfo | null = this.appVm.splitPane(tab.id)
     if (pane !== null) {
       this.syncWorkspace()
+      this.checkpointWorkspace()
       this.restoreActivePaneFocus()
     }
   }
@@ -960,6 +1008,11 @@ struct Index {
     this.tabs = this.appVm.getTabs().slice()
     this.activeTabIndex = this.appVm.getActiveTabIndex()
     AppStorage.setOrCreate('hasActiveSshSession', this.workspaceHasActiveSession())
+  }
+
+  private checkpointWorkspace(): void {
+    this.applicationWorkspace.setSplitRatio(this.splitRatio)
+    UnexpectedExitRecoveryStore.checkpoint(this.appVm.createRecoverySnapshot(this.splitRatio))
   }
 
   private focusPane(paneId: string, userInitiated: boolean): void {
@@ -972,6 +1025,7 @@ struct Index {
       this.clearPaneAttention(paneId)
     }
     this.syncWorkspace()
+    this.checkpointWorkspace()
     this.restoreActivePaneFocus()
   }
 
@@ -999,6 +1053,7 @@ struct Index {
     }
     BackgroundBellNotification.cancelIfTarget(removedPane.id)
     this.syncWorkspace()
+    this.checkpointWorkspace()
     this.restoreActivePaneFocus()
     await this.appVm.waitForPendingRuntimeDisposals()
   }
@@ -1033,6 +1088,7 @@ struct Index {
     AppStorage.setOrCreate('skipNextTerminateConfirmation', true)
     try {
       let context = this.getUIContext().getHostContext() as common.UIAbilityContext
+      await ApplicationCloseCoordinator.prepareTermination()
       await context.terminateSelf()
     } catch (e) {
       ApplicationCloseCoordinator.resetPreparation()
