@@ -3,7 +3,7 @@
 > 状态：Open；LeanTTY 只记录和规避问题，不直接修改 `wandcs/mosh-client-rs`
 >
 > 审计基线：[`wandcs/mosh-client-rs`](https://github.com/wandcs/mosh-client-rs)
-> `e1346b3dfce5c38b95ef43d78cfb3d73529f00e5`（2026-08-31）
+> `94f13225aba535c6645a9179e0ce9f00b156629e`（2026-09-03）
 
 本文只记录会阻断或改变 LeanTTY 集成合同的问题。`mosh-client-rs` 的实现缺陷应在其仓库中
 独立修复和验证；LeanTTY 不维护协议 fork，也不复制协议实现。
@@ -88,9 +88,23 @@ Session 状态，以有界、无忙循环的方式继续调度；reachability �
 修复应在库仓库内覆盖已验证的错误类别和丢包/恢复/关闭/隔离回归；LeanTTY 只升级完整 Git rev
 并重跑同一 HAD-W32 场景。
 
-**状态与关闭条件。** Open；当前已阻塞 Wi-Fi 暂断和网络切换门。`mosh-client-rs` 用明确白名单、
-有界重试和回归测试处理已验证的临时错误后，LeanTTY 固定新 rev，并用同一物理场景证明上述
-验收合同，才可关闭。
+**解决证据。** 修订 `94f13225aba535c6645a9179e0ce9f00b156629e` 将已建立 Session 的
+`NetworkDown`、`NetworkUnreachable`、`HostUnreachable` 与 `AddrNotAvailable` 发送错误改为
+按既有重传超时有界延后，不提交未完整发送的 SSP 状态；永久或含混错误仍失败。库侧回归覆盖
+无忙循环重试、首次连接仍显式失败、即时 `cancel()`、4 秒 `close()` 上限、分片重试和双 Session
+隔离，公共 API 与 reachability 合同未改变。
+
+LeanTTY 固定该完整 rev 后重建 ARM64 原生库 SHA-256
+`ac1f154d42ff275e351006c26fa593460d5998affa710932ae30ef4029e666c7` 与 test-signed HAP SHA-256
+`9e2fa750b2a8ca5f5a83a595382aed3076b753ea6c733f33a0df0a73ce9e8287`。2026-09-03 在 HAD-W32
+重跑同一 `wifi-pause-recovery`：关闭真实 `wlan0` 约 9.7 秒期间没有 automatic close/error，
+同一 Session 报告 `Interrupted(NoRecentContact)`；恢复 WLAN 后报告 `Responsive`，在同一受控
+远端 PTY（PID 12575）执行新命令成功，认证关闭 ACK 为真。Preferences、secret、fixture、HDC
+reverse、持久网络、临时目录和 WLAN 恢复后置条件全部通过。证据位于
+`build/verification/device-mosh-wifi-pause-recovery-20260903-94f1322/device-mosh.json`。
+
+**状态。** Resolved。LeanTTY 没有加入调用侧重建、重试计时器或错误字符串判断。该场景没有
+再次失败，因此没有新的 `ErrorKind` 需要记录；下一顺序门是网络切换比较。
 
 ## MCRS-004：网络静默与 server 消失没有可信终止信号（Resolved as non-goal）
 
@@ -144,8 +158,8 @@ LeanTTY 的 `Ctrl-^ .` 已触发本地 `Session::cancel()`、关闭 UI Session�
 secret 审计和 fixture 清理。证据为
 `build/verification/device-mosh-20260830T082437253Z/device-mosh.json`。
 
-**状态。** 关闭条件已满足。后续修订 `cbc069c` 已独立关闭 MCRS-002；MCRS-003 仍保持
-证据触发，也不把网络静默解释成断开。
+**状态。** 关闭条件已满足。后续修订 `cbc069c` 已独立关闭 MCRS-002；`94f1322` 又按真机证据
+关闭 MCRS-003，但仍不把网络静默解释成断开。
 
 ## MCRS-006：ARM64 公共 Session 没有产生 prediction 输出
 

@@ -217,6 +217,13 @@ recovery，同一远端 PTY 执行新命令成功；证据为
 为阻塞项。LeanTTY 不在调用侧重建协议状态或伪装 Session 恢复；等待库仓库修复并固定新 rev 后，
 重跑同一真实 WLAN 场景，再进入网络切换比较。
 
+2026-09-03 固定 `mosh-client-rs` 修订 `94f13225aba535c6645a9179e0ce9f00b156629e` 后，同一
+HAD-W32 场景通过：`wlan0` 关闭约 9.7 秒时，既有 Session 保持活动并报告
+`Interrupted(NoRecentContact)`；恢复后回到 `Responsive`，在同一远端 PTY 执行新命令并完成
+认证关闭。库侧保留 SSP/crypto/socket 状态并有界重试，LeanTTY 没有新增重试计时器或重建逻辑。
+HAP SHA-256 为 `9e2fa750b2a8ca5f5a83a595382aed3076b753ea6c733f33a0df0a73ce9e8287`，机器证据为
+`build/verification/device-mosh-wifi-pause-recovery-20260903-94f1322/device-mosh.json`。
+
 常用命令：
 
 ```powershell
@@ -240,7 +247,7 @@ recovery，同一远端 PTY 执行新命令成功；证据为
 
 LeanTTY 选择 [`wandcs/mosh-client-rs`](https://github.com/wandcs/mosh-client-rs) 的
 `mosh-client` crate。依赖通过完整 Git `rev`
-`e1346b3dfce5c38b95ef43d78cfb3d73529f00e5` 固定，包版本 `0.0.0`，许可证为
+`94f13225aba535c6645a9179e0ce9f00b156629e` 固定，包版本 `0.0.0`，许可证为
 `MIT OR Apache-2.0`。LeanTTY 不直接修改该仓库，也不维护协议 fork；发现的问题记录在
 [`mosh-client-rs-integration-issues.md`](mosh-client-rs-integration-issues.md)，由库仓库独立修复、
 验证和升级。

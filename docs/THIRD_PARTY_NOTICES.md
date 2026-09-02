@@ -90,7 +90,7 @@ The license families present are:
 - MIT OR Zlib OR Apache-2.0 (`miniz_oxide`).
 
 `mosh-client` uses `MIT OR Apache-2.0` and is pinned to the complete Git commit
-`e1346b3dfce5c38b95ef43d78cfb3d73529f00e5` from
+`94f13225aba535c6645a9179e0ce9f00b156629e` from
 `https://github.com/wandcs/mosh-client-rs.git`.
 
 The repository `LICENSE` contains the Apache-2.0 text. Release builds copy each

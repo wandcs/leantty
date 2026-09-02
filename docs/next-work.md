@@ -2,7 +2,7 @@
 
 > 状态：唯一有效的项目 TODO；1.5.1 已通过 AppGallery 审核并上架，进入 1.6.0 开发
 >
-> 更新日期：2026-09-02
+> 更新日期：2026-09-03
 >
 > 当前 milestone：[`1.6 — Mosh 弱网连接`](roadmap.md)
 >
@@ -86,11 +86,13 @@ manifest、附件和哈希保持不变。
     重绑 UI callback。当前 HAP 的再次合盖选择了进程替换分支并通过；为避免反复碰系统分支，新增
     编译期裁剪的确定性页面替换场景，在同一 PID/start time 下证明 Mosh 页面、Session、server、
     PTY、后续远端命令和认证关闭全部保留，且 Preferences、secret、fixture 与临时映射清理通过。
-  - [ ] 真实 Wi-Fi 暂断已命中
+  - [x] 真实 Wi-Fi 暂断已闭合
     [`MCRS-003`](design/mosh-client-rs-integration-issues.md#mcrs-003部分本地-udp-发送错误会终止-session)：
-    HAD-W32 关闭 `wlan0` 后当前固定库返回致命本地 UDP I/O error，没有进入 `Interrupted`；App
-    进程与远端 PTY 在错误点仍存活。等待库仓库以有界临时错误重试修复并提供新 rev 后，固定依赖
-    并重跑同一场景；LeanTTY 不在调用侧复制 UDP/SSP 状态或伪恢复 Session。
+    固定 `mosh-client-rs` 修订 `94f13225aba535c6645a9179e0ce9f00b156629e` 后，HAD-W32 关闭
+    `wlan0` 约 9.7 秒时，同一 Session 保持活动并报告 `Interrupted(NoRecentContact)`；恢复 WLAN
+    后回到 `Responsive`，在同一远端 PTY（PID 12575）执行新命令，随后认证关闭。没有自动
+    close/error；Preferences、secret、fixture、映射、持久网络和 WLAN 恢复清理均通过。证据为
+    `build/verification/device-mosh-wifi-pause-recovery-20260903-94f1322/device-mosh.json`。
   - [ ] Wi-Fi 暂断通过后再执行网络切换，并分别记录 Mosh 与 SSH 的恢复时间、会话状态和必要
     用户操作；不能用已有的精确端口丢包结果代替真实接口/路由变化。
   - [ ] 汇总全部场景后审计 hilog、Preferences、终端、fixture、临时目录和崩溃信息；任何
