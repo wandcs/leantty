@@ -257,6 +257,7 @@ Formal release software gate, candidate build and deployment use one command:
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -LateDestroyed
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -ManualDismiss
 .\tools\verify-background-bell-permission-pc.ps1 -HapPath <signed-test-hap>
+.\tools\verify-unexpected-recovery-uninstall-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-long-task-notification-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-agent-compatibility-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-ssh-matrix-pc.ps1
@@ -993,9 +994,13 @@ Representative real OpenSSH/PAM/TOTP servers belong to scheduled compatibility
 or release checkpoints, not every harness edit; their evidence records exact
 server policy and never replaces the deterministic fixture matrix.
 
-Routine Mosh development uses `tools/verify-mosh-pc.ps1` only after the persistent
-`tools/configure-mosh-test-network.ps1` status is `ready`. The named physical diagnostic
-uses stock `mosh-server` and one controlled PTY. The default compatibility scenario uses
+Routine Mosh development uses `tools/verify-mosh-pc.ps1` after the persistent Windows and
+Hyper-V UDP firewall components reported by `tools/configure-mosh-test-network.ps1` are
+`ready`. SSH bootstrap uses a run-scoped HDC reverse mapping from device port 2223 to the
+loopback WSL fixture on port 32223, so routine runs do not depend on a Windows TCP portproxy
+or require UAC. The mapping is rejected if its device port is already owned and must be
+absent after cleanup. The named physical diagnostic uses stock `mosh-server` and one
+controlled PTY. The default compatibility scenario uses
 the server's dynamic 60000–61000 endpoint. It runs real Bash, tmux, Vim and `less`; exercises
 remote resize, sustained bidirectional traffic and DEC 1049 alternate-screen entry/exit; and
 checks controlled UTF-8 wide/combining output on a current screenshot. A paced 242-line
@@ -1052,8 +1057,8 @@ paths under the run-owned fixture directory. They submit ordinary `touch -- <pat
 the same interactive shell and wait for the exact file; fixture-private commands cannot stand in
 for the kernel-echo shell whose prediction behavior is being claimed.
 
-The same routine accepts `-Scenario pause-recovery`, `-Scenario suspend-recovery` and
-`-Scenario server-disappearance`.
+The same routine accepts `-Scenario pause-recovery`, `-Scenario wifi-pause-recovery`,
+`-Scenario suspend-recovery` and `-Scenario server-disappearance`.
 The pause scenario may add one temporary WSL `clsact` only when none already exists, drops
 both directions for the exact dynamically selected UDP port, and must remove and independently
 check that qdisc before success or failure cleanup. It passes only when LeanTTY observes the
@@ -1065,6 +1070,12 @@ the local prompt. It must distinguish authenticated peer close from the bounded 
 follows an absent peer. The product must not duplicate the library's reachability timer or infer
 server death from silence. These are routine diagnostics, not release acceptance, and WSL PID or
 `tc` observations must never become product behavior.
+
+The Wi-Fi pause scenario opens the HarmonyOS status-bar WLAN panel through current semantic UI
+nodes, disables the actual `wlan0` interface, verifies both the toggle and IPv4 loss, then restores
+Wi-Fi and verifies both before sending a recovery command. USB HDC remains only the control and
+observation channel. Failure cleanup must re-enable Wi-Fi; it must not retain SSIDs, addresses or
+other network identities in evidence.
 
 The suspend scenario invokes the HarmonyOS test PC's `power-shell suspend`, waits five seconds,
 then invokes `power-shell wakeup`. It must retain the same LeanTTY process and controlled remote
@@ -1084,13 +1095,18 @@ close or network loss.
 `-Scenario operator-lid-recovery` is the separate operator-assisted physical-lid diagnostic.
 After the baseline command, the operator closes the test PC lid and leaves it closed until the
 harness observes either the platform lock boundary or temporary device unavailability, then opens
-and unlocks it. The scenario must regain an unlocked HDC control boundary, retain the same LeanTTY
-process, stock Mosh server and controlled remote terminal, then execute a new exact command and
-close normally. Its controlled `MOSH_SERVER_NETWORK_TMOUT` is derived from the declared operator
-budget plus cleanup margin; the 30-second close-diagnostic timeout must not terminate a valid
-operator lifecycle run. Evidence records the input method, operator action and whether the closed-lid
-boundary appeared as `locked` or `unavailable`; programmatic suspend and `Win+L` cannot substitute
-for this scenario. Command injection remains automated and is not delegated to the operator.
+and unlocks it. The scenario must regain an unlocked HDC control boundary and accept exactly one of
+two product outcomes. If LeanTTY retains the same process, the stock Mosh server and controlled
+remote terminal must survive, execute a new exact command and close normally. If HarmonyOS replaces
+the process, LeanTTY must relaunch into the recovered local workspace, show the recovery warning,
+exclude the prior remote command and create no replacement Mosh Session; a local command must remain
+usable. Its controlled `MOSH_SERVER_NETWORK_TMOUT` is derived from the declared operator budget plus
+cleanup margin; the 30-second close-diagnostic timeout must not terminate a valid operator lifecycle
+run. Process continuity is identified by both PID and Linux `/proc/<pid>/stat` start time, because a
+restarted process may reuse the same numeric PID. Evidence records both values, server/PTY state at
+replacement, input method, operator action and whether the closed-lid boundary appeared as `locked`
+or `unavailable`; programmatic suspend and `Win+L` cannot substitute for this scenario. Command
+injection remains automated and is not delegated to the operator.
 
 `-Scenario pane-close` splits the current tab, connects Mosh in the newly active Pane, proves one
 exact controlled PTY command, and closes that active Pane through the visible close button and
@@ -1119,12 +1135,25 @@ after opposite-side close. This routine remains `acceptanceEligible=false`.
 `-Scenario surface-rebuild` terminates the active Pane's ArkWeb renderer through the
 acceptance-only source transformation. The same Mosh page marker must remain searchable after
 the replacement Surface reports ready, a new exact controlled PTY command must succeed, and the
-original local page must still be restored after authenticated close. `-Scenario abnormal-exit`
+original local page must still be restored after authenticated close. `-Scenario page-rebuild`
+uses the UI-context router to destroy and replace the current `Index` page while the application
+process remains alive. PID plus `/proc` start time must remain equal, the replacement page must log
+that it reused the process workspace, the Mosh page must remain searchable, and a new exact remote
+command plus authenticated close must succeed. This deterministically covers the page lifecycle
+boundary when physical lid behavior selects the process-replacement branch. `-Scenario abnormal-exit`
 injects one acceptance-only `MoshError` into the active `SessionViewModel`; it must traverse the
 ordinary error handler, wait for page-replacement acknowledgement, restore the original marker,
 discard the Mosh command from search and regain the local input boundary. The transformation must
 restore production source in `finally`; neither trigger may exist in a production HAP. Both
-scenarios retain the standard Preferences, secret, process, fixture and temporary-directory audits.
+page/renderer triggers and the abnormal-exit scenario retain the standard Preferences, secret,
+process, fixture and temporary-directory audits.
+
+`-Scenario process-recovery` force-stops the LeanTTY application process while one controlled stock
+Mosh Session is active, then relaunches the same installed test package. It must observe a new PID,
+find the explicit workspace-recovered warning, prove the old remote command is absent from terminal
+search, and execute a local `ltty>` command without reconnecting Mosh. The old server or PTY may still
+be alive briefly and is fixture cleanup state, not a recovered product Session. This controlled
+scenario must pass before the operator-assisted physical-lid scenario is interpreted.
 
 ## Performance and reliability measurement
 

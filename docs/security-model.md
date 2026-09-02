@@ -2,7 +2,7 @@
 
 > Status: current security architecture baseline
 >
-> Last updated: 2026-08-24
+> Last updated: 2026-09-02
 >
 > Public reporting policy: [`../SECURITY.md`](../SECURITY.md)
 >
@@ -160,6 +160,14 @@ must not be hidden behind ordinary uninstall wording.
 | URL open | Requires user activation; only normalized credential-free HTTP(S) is handed to the system browser |
 | Bell/OSC attention | BEL plus bounded OSC 9, well-formed `OSC 777;notify;title;body`, and complete receive-only OSC 99 title/body frames become the same empty-payload UI attention. OSC 99 notification frames permit only `i/p/e/d` metadata and do not retain IDs or chunks. A bounded `i=<id>:p=?;` query receives only `p=title,body` with the same validated ID through normal TTY input; the ID is not logged or persisted. Activation, close, alive and other capability operations are never answered. OSC content is rejected or discarded inside the Web boundary; only a hidden whole window can attempt one generic system notification per background episode, containing a fixed source marker and internal Pane ID, never remote title, command, output, host data or Agent response. All other notification operations and protocols have no local system effect |
 | Terminal checkpoint | Serializes framebuffer state but excludes title, clipboard and bell side effects |
+
+## Unexpected-exit recovery record
+
+The app-private recovery record contains only a schema version, run generation,
+clean/running marker, Tab and Pane counts, active positions and split ratio. It
+contains no Host, remote title, terminal bytes, command or input history,
+credential, secret, attention flag or Session state. Restored Panes receive new
+generation-scoped identities and start offline at local `ltty>`.
 
 ## Downloads and file-transfer boundary
 

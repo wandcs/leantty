@@ -1372,10 +1372,16 @@ foreach ($moshContract in @(
     "'configure-mosh-test-network.ps1'",
     '-Mode Status',
     '[int]$FixtureBackendPort = 32223',
+    "`$fixtureSshAddress = '127.0.0.1'",
+    "rport `"tcp:`$FixturePort`" `"tcp:`$FixtureBackendPort`"",
+    "fport rm `"tcp:`$FixturePort`" `"tcp:`$FixtureBackendPort`"",
+    "sshBootstrapTransport = 'run-scoped-hdc-reverse'",
+    "requiredPersistentBoundary = 'windows-and-hyper-v-udp-firewall'",
+    'fixtureReverseMappingRemoved = $fixtureMappingRemoved',
     "'-MoshNetworkTimeoutSeconds', `$moshNetworkTimeoutSeconds",
     'serverNetworkTimeoutSeconds = $moshNetworkTimeoutSeconds',
     'FixtureBackendPort must differ from the external FixturePort',
-    "[ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'abnormal-exit', 'pane-close', 'session-isolation', 'pause-recovery', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]",
+    "[ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]",
     "'mosh-session-isolation'",
     'controlName=',
     'mosh-session-[1-9][0-9]*',
@@ -1383,7 +1389,7 @@ foreach ($moshContract in @(
     '-ControlDirectory $leftMoshControlDirectory',
     '-ControlDirectory $rightMoshControlDirectory',
     "Submit-MoshChildInput -Text 'ltty-exit' -Name 'ssh-mosh-ssh-exit'",
-    "mutatedByScenario = (`$Scenario -in @('pause-recovery', 'prediction'))",
+    "mutatedByScenario = (`$Scenario -in @('pause-recovery', 'wifi-pause-recovery', 'prediction'))",
     'persistentStateMutatedByScenario = $false',
     'persistentNetworkPreserved = $networkStateReady',
     'localPromptReady = $localPromptReady',
@@ -1440,6 +1446,10 @@ foreach ($moshContract in @(
     'moshErrorObserved = $abnormalExitObserved',
     'originalPageRestored = $originalPageRestoredAfterSession',
     'moshPageDiscarded = $moshPageDiscardedAfterSession',
+    'forced-client-process-exit-restored-only-the-local-workspace-without-session-content',
+    "-Query 'Workspace layout was recovered' -ExpectMatch `$true",
+    'remoteContentAbsent = $processRecoveryRemoteContentAbsent',
+    'sessionNotRestored = $processRecoverySessionNotRestored',
     'active-mosh-pane-closed-and-surviving-pane-started-an-isolated-session',
     'two-mosh-and-ssh-mosh-concurrent-sessions-kept-state-terminal-input-output-and-cleanup-isolated',
     'twoMoshKeysDistinct = $sessionIsolationKeysDistinct',
@@ -1484,12 +1494,28 @@ foreach ($moshContract in @(
     "tc qdisc del dev `$udpImpairmentInterface clsact",
     'flower ip_proto udp dst_port $moshServerPort action drop',
     'flower ip_proto udp src_port $moshServerPort action drop',
+    "'PluginRootComponent_Stack_status_bar_wifi_panel'",
+    "'entry_toggle_wifi_switch'",
+    'Set-MoshDeviceWifi -Enabled $false',
+    'Set-MoshDeviceWifi -Enabled $true',
+    "'harmony-status-bar-wlan-toggle'",
+    'wifiControlCleanupVerified = $wifiControlCleanupVerified',
+    'physical-wifi-pause-reported-interrupted-then-recovered-with-remote-shell-preserved',
     '& wsl.exe @prefix --exec kill -KILL $moshServerPid',
     "-Pattern 'Mosh reachability state=interrupted reason=no_recent_contact'",
     "-Pattern 'Mosh reachability state=responsive transition=recovered'",
     "shell 'power-shell suspend'",
     "shell 'power-shell wakeup'",
     'sameAppProcessAfterResume = $sameAppProcessAfterResume',
+    "processIdentityMethod = 'pid-plus-proc-stat-starttime'",
+    'cat /proc/$processId/stat',
+    'initialAppProcessStartTimeTicks = $initialAppProcessStartTimeTicks',
+    'resumedAppProcessStartTimeTicks = $resumedAppProcessStartTimeTicks',
+    "recoveryOutcome = `$operatorRecoveryOutcome",
+    "`$operatorRecoveryOutcome = 'client-process-replaced-workspace-only'",
+    "`$operatorRecoveryOutcome = 'client-process-and-session-preserved'",
+    "`$workspaceOnlyLidRecovery =",
+    "'operator-lid-client-process-replaced-workspace-only-recovered'",
     'initialAppProcessId = $initialAppProcessId',
     'resumedAppProcessId = $resumedAppProcessId',
     'remoteShellAliveAtProcessChange = $remoteShellAliveAtProcessChange',
@@ -1497,7 +1523,7 @@ foreach ($moshContract in @(
     'recoveryInputMethod = $recoveryInputMethod',
     'systemSuspendMs = $systemSuspendMs',
     'resumeCommandElapsedMs = $resumeCommandElapsedMs',
-    'operator-physical-lid-close-open-and-unlock-preserved-the-mosh-session-and-remote-shell',
+    'operator-physical-lid-close-open-produced-session-preservation-or-workspace-only-recovery',
     'operator-physical-lid-close-open-then-manual-unlock',
     'physicalLidExercised =',
     'UnavailableCountsAsLocked',
@@ -1514,6 +1540,12 @@ foreach ($moshContract in @(
     'recoveredStatusObserved = $recoveredStatusObserved',
     'recoveryCommandPassed = $recoveryCommandPassed',
     'remoteShellAliveAfter = $remoteShellAliveAfter',
+    "'acceptance-only-ui-context-router-current-page-replacement'",
+    'pageRebuildProcessPreserved =',
+    'pageRebuildWorkspaceReused =',
+    'pageRebuildPageRetained =',
+    'pageRebuildCommandPassed =',
+    "'page-rebuilt-with-process-session-and-command-preserved'",
     'userCloseRequired = $userCloseRequired',
     'localCloseElapsedMs = $localCloseElapsedMs',
     'impairmentCleanupVerified = $udpImpairmentCleanupVerified',
@@ -1537,6 +1569,10 @@ Assert-True (
 Assert-True (
     -not $moshVerifier.Contains("@('uiInput', 'keyEvent', 2072, 2019)")
 ) 'Mosh input retry still uses a UiTest chord that does not reliably clear the remote line'
+Assert-True (
+    $moshVerifier.Contains('[string]$resumedProcessIdentity.key -ceq') -and
+    -not $moshVerifier.Contains('$resumedPid -ceq $appPid')
+) 'Mosh lifecycle verifier still treats a reusable numeric PID as process identity'
 Assert-True (
     -not ($moshSessionViewModel -match 'this\.moshClient\.resize\(this\.lastCols, this\.lastRows\)')
 ) 'Mosh connected handling still repeats the initial terminal size and resets the prediction epoch'
@@ -1898,6 +1934,11 @@ Assert-True (
     $indexPage.Contains('ApplicationCloseCoordinator.register(this.applicationCloseHandler)') -and
     $indexPage.Contains('ApplicationCloseCoordinator.unregister(this.applicationCloseHandler)') -and
     $entryAbility.Contains('await ApplicationCloseCoordinator.prepareTermination()') -and
+    $indexPage -match (
+        'private async terminateApplication[\s\S]*?' +
+        'await ApplicationCloseCoordinator\.prepareTermination\(\)[\s\S]*?' +
+        'await context\.terminateSelf\(\)'
+    ) -and
     $entryAbility.Contains('ApplicationCloseCoordinator.resetPreparation()') -and
     $indexPage.Contains('ApplicationCloseCoordinator.resetPreparation()') -and
     $entryAbility.Contains('Application close preparation failed')
@@ -2023,5 +2064,19 @@ Assert-True (
     -not $backgroundBellPermissionVerifier.Contains('bm clean') -and
     -not $backgroundBellPermissionVerifier.Contains('uninstall')
 ) 'Background BEL permission scenario lacks disabled, enabled, return, or restoration oracles'
+
+$unexpectedRecoveryUninstallVerifier = Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'verify-unexpected-recovery-uninstall-pc.ps1'
+) -Raw
+Assert-True (
+    $unexpectedRecoveryUninstallVerifier.Contains("@('uninstall', 'com.leantty.app')") -and
+    -not $unexpectedRecoveryUninstallVerifier.Contains("@('uninstall', '-k'") -and
+    $unexpectedRecoveryUninstallVerifier.Contains('Wait-WorkspaceState -TabCount 1 -PaneCount 1') -and
+    $unexpectedRecoveryUninstallVerifier.Contains('-TabCount 2 -PaneCount 2') -and
+    $unexpectedRecoveryUninstallVerifier.Contains(
+        'Recovery run started: generation=1, unexpected=false') -and
+    $unexpectedRecoveryUninstallVerifier.Contains('durableAssetStoreReadOrMutated = $false') -and
+    $unexpectedRecoveryUninstallVerifier.Contains('exactCandidateReinstalled = $true')
+) 'Unexpected-recovery uninstall scenario lost its fresh-install or durable-asset boundary'
 
 Write-Host 'Device regression helper tests passed.' -ForegroundColor Green

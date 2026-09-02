@@ -2,21 +2,22 @@
 .SYNOPSIS
   Verify one LeanTTY Mosh compatibility or network-lifecycle scenario on a physical HarmonyOS PC.
 .DESCRIPTION
-  Runs the repository SSH fixture over the wired LAN, starts a real stock
-  mosh-server with a controlled PTY. The default proves an exact command, real
+  Runs the repository SSH fixture through a run-scoped HDC reverse mapping,
+  then uses the wired LAN for a real stock mosh-server with a controlled PTY.
+  The default proves an exact command, real
   Bash, tmux, Vim, less, UTF-8/wide text, alternate screen, interactive
   scrollback, resize and sustained I/O. Named scenarios prove a requested
   fixed UDP range, one absolute server path, prediction modes, active-Pane
   disposal, concurrent Session isolation, exact-port UDP pause/recovery,
   system suspend/recovery or controlled server disappearance.
   Every scenario checks secret boundaries and Ctrl-^ . cleanup.
-  The persistent Windows network boundary must first be
-  enabled once with configure-mosh-test-network.ps1. This routine runs without
-  elevation and never changes firewall or portproxy state.
+  The persistent Windows UDP firewall boundary must first be enabled once with
+  configure-mosh-test-network.ps1. This routine runs without elevation, owns
+  only its temporary HDC mapping and never changes firewall or portproxy state.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'abnormal-exit', 'pane-close', 'session-isolation', 'pause-recovery', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]
+    [ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]
     [string]$Scenario = 'compatibility',
     [string]$Target = '',
     [string]$HapPath = '',
@@ -108,6 +109,7 @@ New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 
 $alias = '__ltty_mosh'
 $sshAlias = '__ltty_mosh_ssh'
+$fixtureSshAddress = '127.0.0.1'
 $caseId = 'shell_' + $attemptId.Substring(0, 12)
 $agentToolWsl = ConvertTo-LeanTTYWslPath `
     -WindowsPath (Join-Path $PSScriptRoot 'agent-compatibility-wsl.sh') `
@@ -121,6 +123,8 @@ $fixtureAgentCapture = Join-Path $fixtureAgentRoot 'results\codex-direct-interac
 $commandObservations = [Collections.Generic.List[object]]::new()
 $connectedInputObservations = [Collections.Generic.List[object]]::new()
 $fixtureProcess = $null
+$fixtureMappingActive = $false
+$fixtureMappingRemoved = $true
 $fixtureLinuxPid = 0
 $moshServerPid = 0
 $moshServerPort = 0
@@ -154,6 +158,8 @@ $resumeCommandElapsedMs = -1
 $sameAppProcessAfterResume = $false
 $initialAppProcessId = ''
 $resumedAppProcessId = ''
+$initialAppProcessStartTimeTicks = ''
+$resumedAppProcessStartTimeTicks = ''
 $remoteShellAliveAtProcessChange = $false
 $serverAliveAtProcessChange = $false
 $recoveryInputMethod = 'not-run'
@@ -162,6 +168,10 @@ $operatorLockObserved = $false
 $operatorUnlockObserved = $false
 $operatorLockDurationMs = -1
 $operatorDeviceInactiveState = 'not-observed'
+$operatorRecoveryOutcome = 'not-run'
+$processRecoveryWorkspaceRestored = $false
+$processRecoveryRemoteContentAbsent = $false
+$processRecoverySessionNotRestored = $false
 $moshNetworkTimeoutSeconds = if ($Scenario -in @(
     'operator-lock-recovery', 'operator-lid-recovery'
 )) {
@@ -180,6 +190,8 @@ $udpImpairmentInterface = 'eth0'
 $udpImpairmentPreference = 49152
 $udpImpairmentOwnsQdisc = $false
 $udpImpairmentCleanupVerified = $true
+$wifiDisabledByScenario = $false
+$wifiControlCleanupVerified = $true
 $windowToggled = $false
 $shellCompatibilityPassed = $false
 $tmuxCompatibilityPassed = $false
@@ -244,6 +256,11 @@ $sessionIsolationKeysDistinct = $false
 $surfaceRebuildRequested = $false
 $surfaceRebuildPageRetained = $false
 $surfaceRebuildCommandPassed = $false
+$pageRebuildRequested = $false
+$pageRebuildProcessPreserved = $false
+$pageRebuildWorkspaceReused = $false
+$pageRebuildPageRetained = $false
+$pageRebuildCommandPassed = $false
 $abnormalExitInjected = $false
 $abnormalExitObserved = $false
 $activeMoshControlDirectory = $fixtureControl
@@ -322,17 +339,54 @@ function Assert-MoshTestNetworkReady {
         -RemoteScope $resolvedRemoteScope `
         -OutputPath $networkStatusPath | Out-Null
     $state = Get-Content -LiteralPath $networkStatusPath -Raw | ConvertFrom-Json
-    if (-not $state.ready) {
-        $notReady = @($state.components.psobject.Properties |
-            Where-Object { $_.Value -ne 'ready' } | ForEach-Object Name)
-        $notReady += @($state.legacy.psobject.Properties |
+    $requiredUdpComponents = @('windowsUdpFirewall', 'hyperVUdpFirewall')
+    $notReady = @($requiredUdpComponents | Where-Object {
+        $state.components.$_ -ne 'ready'
+    })
+    $notReady += @($state.legacy.psobject.Properties |
             Where-Object { $_.Value -notin @('missing', 'unavailable') } |
             ForEach-Object { 'legacy.' + $_.Name })
+    if ($notReady.Count -gt 0) {
         throw ('[infrastructure] Persistent Mosh test network is not ready: ' +
             ($notReady -join ', ') +
             '. Run configure-mosh-test-network.ps1 -Mode Enable once as Administrator.')
     }
     $script:networkStateReady = $true
+}
+
+function New-MoshFixtureMapping {
+    $existing = @(& $hdc -t $targetId fport ls 2>&1) -join "`n"
+    if ($LASTEXITCODE -ne 0) {
+        throw '[infrastructure] Unable to inspect existing HDC port mappings'
+    }
+    if ($existing -match "(?m)tcp:$FixturePort\s+tcp:\d+\s+\[Reverse\]") {
+        throw "[infrastructure] HDC reverse mapping already uses device port $FixturePort"
+    }
+    $output = @(
+        & $hdc -t $targetId rport "tcp:$FixturePort" "tcp:$FixtureBackendPort" 2>&1
+    ) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Forwardport result:OK') {
+        throw "[infrastructure] Unable to create Mosh HDC reverse mapping: $output"
+    }
+    $script:fixtureMappingActive = $true
+    $script:fixtureMappingRemoved = $false
+}
+
+function Remove-MoshFixtureMapping {
+    if (-not $fixtureMappingActive) { return }
+    $output = @(
+        & $hdc -t $targetId fport rm "tcp:$FixturePort" "tcp:$FixtureBackendPort" 2>&1
+    ) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or $output -notmatch 'Remove forward ruler success') {
+        throw "HDC reverse mapping cleanup failed: $output"
+    }
+    $remaining = @(& $hdc -t $targetId fport ls 2>&1) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or
+        $remaining -match "(?m)tcp:$FixturePort\s+tcp:$FixtureBackendPort\s+\[Reverse\]") {
+        throw 'HDC reverse mapping remained after cleanup'
+    }
+    $script:fixtureMappingActive = $false
+    $script:fixtureMappingRemoved = $true
 }
 
 function Start-MoshFixture {
@@ -632,6 +686,31 @@ function Get-MoshLifecycleObservation {
     }
 }
 
+function Get-MoshAppProcessIdentity {
+    $processId = (@(& $hdc -t $targetId shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
+    if ($LASTEXITCODE -ne 0 -or $processId -notmatch '^\d+$') {
+        return $null
+    }
+    $stat = (@(& $hdc -t $targetId shell "cat /proc/$processId/stat" 2>&1) -join "`n").Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw '[infrastructure] Unable to read LeanTTY process start identity'
+    }
+    $commandEnd = $stat.LastIndexOf(') ')
+    if ($commandEnd -lt 0) {
+        throw '[infrastructure] LeanTTY process identity has an invalid /proc stat shape'
+    }
+    $fieldsFromState = @($stat.Substring($commandEnd + 2) -split '\s+')
+    if ($fieldsFromState.Count -lt 20 -or $fieldsFromState[19] -notmatch '^\d+$') {
+        throw '[infrastructure] LeanTTY process identity is missing the /proc start time'
+    }
+    $startTimeTicks = [string]$fieldsFromState[19]
+    return [pscustomobject]@{
+        processId = $processId
+        startTimeTicks = $startTimeTicks
+        key = $processId + ':' + $startTimeTicks
+    }
+}
+
 function Test-MoshDeviceLocked {
     param([switch]$TolerateUnavailable)
     $launchOutput = @(
@@ -801,6 +880,12 @@ function Submit-MoshInput {
                 $observation.lastProvenBoundary = 'enter-dispatched-after-server-input-exact'
                 $observation.result = 'passed'
                 return
+            }
+            $idleState = Get-LeanTTYAcceptanceIdleInputState -Logs (
+                Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+            )
+            if ($null -ne $idleState -and [string]$idleState.input -ceq $Text) {
+                throw '[product] LeanTTY input returned to the local prompt while the Mosh Session was expected'
             }
             $observation.inputMismatches++
             $observation.firstMismatchIndex = Get-LeanTTYTextMismatchIndex `
@@ -1183,6 +1268,110 @@ function Wait-MoshPaneCount {
         -Count $Count -TimeoutSeconds 20
 }
 
+function Get-MoshFullDeviceLayout {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    return Get-LeanTTYDeviceLayout `
+        -Hdc $hdc -Target $targetId `
+        -LocalPath (Join-Path $EvidenceDirectory "$Name.json") `
+        -BundleName ''
+}
+
+function Get-MoshWifiToggle {
+    param([Parameter(Mandatory = $true)]$Layout)
+
+    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
+        [string]$_.attributes.id -eq 'entry_toggle_wifi_switch' -and
+        [string]$_.attributes.type -eq 'Toggle' -and
+        [string]$_.attributes.visible -eq 'true' -and
+        [string]$_.attributes.clickable -eq 'true'
+    })
+}
+
+function Test-MoshWifiIpv4Active {
+    $ifconfig = Invoke-HdcChecked `
+        -Hdc $hdc -Target $targetId `
+        -Arguments @('shell', 'ifconfig') `
+        -Operation 'HarmonyOS Wi-Fi interface query'
+    $wlan = [regex]::Match($ifconfig, '(?ms)^wlan0\s+.*?(?=^\S|\z)')
+    return $wlan.Success -and $wlan.Value.Contains('inet addr:') -and $wlan.Value.Contains('UP')
+}
+
+function Set-MoshDeviceWifi {
+    param(
+        [Parameter(Mandatory = $true)][bool]$Enabled,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    $layout = Get-MoshFullDeviceLayout -Name "$Name-before"
+    $toggles = @(Get-MoshWifiToggle -Layout $layout)
+    if ($toggles.Count -eq 0) {
+        $panelButtons = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+            [string]$_.attributes.id -eq 'PluginRootComponent_Stack_status_bar_wifi_panel' -and
+            [string]$_.attributes.visible -eq 'true' -and
+            [string]$_.attributes.clickable -eq 'true'
+        })
+        if ($panelButtons.Count -ne 1) {
+            throw '[environment] HarmonyOS Wi-Fi panel button was unavailable'
+        }
+        $panelCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$panelButtons[0].attributes.bounds)
+        Invoke-LeanTTYDeviceClick `
+            -Hdc $hdc -Target $targetId -X $panelCenter.x -Y $panelCenter.y `
+            -Operation 'Open HarmonyOS Wi-Fi panel'
+        Start-Sleep -Milliseconds 500
+        $layout = Get-MoshFullDeviceLayout -Name "$Name-panel"
+        $toggles = @(Get-MoshWifiToggle -Layout $layout)
+    }
+    if ($toggles.Count -ne 1) {
+        throw "[environment] Expected one visible HarmonyOS Wi-Fi toggle, found $($toggles.Count)"
+    }
+
+    $currentEnabled = [string]$toggles[0].attributes.checked -eq 'true'
+    if ($currentEnabled -ne $Enabled) {
+        $toggleCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$toggles[0].attributes.bounds)
+        Invoke-LeanTTYDeviceClick `
+            -Hdc $hdc -Target $targetId -X $toggleCenter.x -Y $toggleCenter.y `
+            -Operation $(if ($Enabled) { 'Enable HarmonyOS Wi-Fi' } else { 'Disable HarmonyOS Wi-Fi' })
+    }
+
+    $toggleMatches = $false
+    $networkMatches = $false
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Milliseconds 500
+        $stateLayout = Get-MoshFullDeviceLayout -Name "$Name-state"
+        $stateToggles = @(Get-MoshWifiToggle -Layout $stateLayout)
+        $toggleMatches = $stateToggles.Count -eq 1 -and
+            (([string]$stateToggles[0].attributes.checked -eq 'true') -eq $Enabled)
+        $networkMatches = (Test-MoshWifiIpv4Active) -eq $Enabled
+        if ($toggleMatches -and $networkMatches) { break }
+    } while ($stopwatch.Elapsed.TotalSeconds -lt 25)
+    if (-not $toggleMatches -or -not $networkMatches) {
+        throw "[environment] HarmonyOS Wi-Fi did not reach enabled=$Enabled"
+    }
+
+    $script:wifiDisabledByScenario = -not $Enabled
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+    Start-Sleep -Milliseconds 300
+}
+
+function Wait-MoshWifiInterruptionOutcome {
+    param([ValidateRange(1, 30)][int]$TimeoutSeconds = 20)
+
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+        if ($logs -match 'Mosh error stage=mosh_udp') {
+            return [pscustomobject]@{ outcome = 'fatal-udp-error'; logs = $logs }
+        }
+        if ($logs -match 'Mosh reachability state=interrupted reason=no_recent_contact') {
+            return [pscustomobject]@{ outcome = 'interrupted'; logs = $logs }
+        }
+        Start-Sleep -Milliseconds 500
+    } while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    throw '[harness] Timed out waiting for a Mosh Wi-Fi interruption outcome'
+}
+
 function Focus-MoshPane {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('left', 'right')][string]$Side,
@@ -1273,6 +1462,36 @@ function Invoke-MoshSurfaceRebuild {
         -Pattern 'Web terminal ready' -TimeoutSeconds 20 | Out-Null
 }
 
+function Invoke-MoshPageRebuild {
+    Focus-ActiveTerminalInput -Name 'mosh-page-rebuild-before.json' | Out-Null
+    $before = Get-MoshAppProcessIdentity
+    if ($null -eq $before) {
+        throw '[infrastructure] LeanTTY process identity disappeared before page replacement'
+    }
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    & $hdc -t $targetId shell (
+        'uinput -K -d 2072 -d 2045 -d 2047 -d 2036 ' +
+        '-u 2036 -u 2047 -u 2045 -u 2072'
+    ) | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw '[environment] Unable to invoke the LeanTTY page rebuild shortcut'
+    }
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'Acceptance page rebuild requested=true' -TimeoutSeconds 15 | Out-Null
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'Index page destroyed; application workspace retained' -TimeoutSeconds 15 | Out-Null
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'Index page initialized workspace=reused' -TimeoutSeconds 15 | Out-Null
+    Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
+        -LocalPath (Join-Path $EvidenceDirectory 'mosh-page-rebuild-after.json') `
+        -TimeoutSeconds 20 | Out-Null
+    $after = Get-MoshAppProcessIdentity
+    if ($null -eq $after -or [string]$after.key -cne [string]$before.key) {
+        throw '[product] Acceptance page replacement changed the LeanTTY process'
+    }
+    return [pscustomobject]@{ before = $before; after = $after }
+}
+
 function Split-MoshPane {
     Focus-ActiveTerminalInput -Name 'mosh-pane-close-before-split.json' | Out-Null
     & $hdc -t $targetId shell (
@@ -1328,7 +1547,7 @@ function Remove-DeviceState {
     try {
         Submit-LocalCommand -Command "host rm $sshAlias" -Stage 'mosh-final-ssh-host-cleanup'
         Submit-LocalCommand -Command "host rm $alias" -Stage 'mosh-final-host-cleanup'
-        Submit-LocalCommand -Command "ssh-keygen -R [$resolvedServerAddress]:$FixturePort" `
+        Submit-LocalCommand -Command "ssh-keygen -R [$fixtureSshAddress]:$FixturePort" `
             -Stage 'mosh-final-known-host-cleanup'
         $script:deviceStateCleaned = $true
         return
@@ -1343,7 +1562,7 @@ function Remove-DeviceState {
         Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
         Submit-LocalCommand -Command "host rm $sshAlias" -Stage 'mosh-recovered-ssh-host-cleanup'
         Submit-LocalCommand -Command "host rm $alias" -Stage 'mosh-recovered-host-cleanup'
-        Submit-LocalCommand -Command "ssh-keygen -R [$resolvedServerAddress]:$FixturePort" `
+        Submit-LocalCommand -Command "ssh-keygen -R [$fixtureSshAddress]:$FixturePort" `
             -Stage 'mosh-recovered-known-host-cleanup'
         $script:deviceCleanupRecovery = 'app-relaunch'
         $script:deviceStateCleaned = $true
@@ -1453,6 +1672,9 @@ function Write-Evidence {
         'pause-recovery' {
             'controlled-mosh-udp-pause-reported-interrupted-then-recovered-with-remote-shell-preserved'
         }
+        'wifi-pause-recovery' {
+            'physical-wifi-pause-reported-interrupted-then-recovered-with-remote-shell-preserved'
+        }
         'suspend-recovery' {
             'controlled-system-suspend-and-wake-preserved-the-mosh-session-and-remote-shell'
         }
@@ -1460,7 +1682,7 @@ function Write-Evidence {
             'operator-lock-and-unlock-preserved-the-mosh-session-and-remote-shell'
         }
         'operator-lid-recovery' {
-            'operator-physical-lid-close-open-and-unlock-preserved-the-mosh-session-and-remote-shell'
+            'operator-physical-lid-close-open-produced-session-preservation-or-workspace-only-recovery'
         }
         'server-disappearance' {
             'controlled-mosh-server-disappearance-reported-interrupted-and-required-user-close'
@@ -1477,8 +1699,14 @@ function Write-Evidence {
         'surface-rebuild' {
             'active-mosh-page-survived-arkweb-surface-rebuild-and-restored-the-original-page'
         }
+        'page-rebuild' {
+            'active-mosh-session-survived-current-page-destruction-and-replacement-in-the-same-process'
+        }
         'abnormal-exit' {
             'injected-mosh-session-error-restored-the-original-page-and-rejected-session-output'
+        }
+        'process-recovery' {
+            'forced-client-process-exit-restored-only-the-local-workspace-without-session-content'
         }
         'agent-tui' {
             'controlled-mosh-zero-model-real-codex-tui-completed'
@@ -1517,6 +1745,9 @@ function Write-Evidence {
         fixture = [ordered]@{
             stockMoshServer = $true
             sshAuthentication = 'run-scoped-password'
+            sshBootstrapTransport = 'run-scoped-hdc-reverse'
+            sshDeviceEndpoint = "${fixtureSshAddress}:$FixturePort"
+            sshBackendEndpoint = "127.0.0.1:$FixtureBackendPort"
             udpPortPolicy = $(if ($Scenario -eq 'fixed-endpoint') {
                 "requested-fixed-range-$fixedUdpPortStart-$fixedUdpPortEnd"
             } else { "stock-default-dynamic-$moshUdpPortMin-$moshUdpPortMax" })
@@ -1545,7 +1776,9 @@ function Write-Evidence {
         }
         network = [ordered]@{
             preparedStateVerified = $networkStateReady
-            mutatedByScenario = ($Scenario -in @('pause-recovery', 'prediction'))
+            requiredPersistentBoundary = 'windows-and-hyper-v-udp-firewall'
+            sshPortProxyRequired = $false
+            mutatedByScenario = ($Scenario -in @('pause-recovery', 'wifi-pause-recovery', 'prediction'))
             persistentStateMutatedByScenario = $false
             statusEvidence = $networkStatusPath
         }
@@ -1554,6 +1787,8 @@ function Write-Evidence {
                 'fixture-udp-relay-bidirectional-pause'
             } elseif ($Scenario -eq 'pause-recovery') {
                 'wsl-tc-exact-dynamic-port-bidirectional-drop'
+            } elseif ($Scenario -eq 'wifi-pause-recovery') {
+                'harmony-status-bar-wlan-toggle'
             } elseif ($Scenario -eq 'server-disappearance') {
                 'server-sigkill'
             } else { 'none' })
@@ -1574,6 +1809,7 @@ function Write-Evidence {
             localCloseElapsedMs = $localCloseElapsedMs
             authenticatedCloseAck = $authenticatedGracefulClose
             impairmentCleanupVerified = $udpImpairmentCleanupVerified
+            wifiControlCleanupVerified = $wifiControlCleanupVerified
             predictionRelayDroppedPackets = $predictionRelayDroppedPackets
         }
         lifecycleBehavior = [ordered]@{
@@ -1589,8 +1825,11 @@ function Write-Evidence {
             } else { 'none' })
             systemSuspendMs = $systemSuspendMs
             sameAppProcessAfterResume = $sameAppProcessAfterResume
+            processIdentityMethod = 'pid-plus-proc-stat-starttime'
             initialAppProcessId = $initialAppProcessId
             resumedAppProcessId = $resumedAppProcessId
+            initialAppProcessStartTimeTicks = $initialAppProcessStartTimeTicks
+            resumedAppProcessStartTimeTicks = $resumedAppProcessStartTimeTicks
             remoteShellAliveAtProcessChange = $remoteShellAliveAtProcessChange
             serverAliveAtProcessChange = $serverAliveAtProcessChange
             recoveryInputMethod = $recoveryInputMethod
@@ -1607,6 +1846,7 @@ function Write-Evidence {
             physicalLidExercised = ($Scenario -eq 'operator-lid-recovery' -and
                 $operatorLockObserved -and $operatorUnlockObserved)
             operatorDeviceInactiveState = $operatorDeviceInactiveState
+            recoveryOutcome = $operatorRecoveryOutcome
             userActionRequired = $(if ($Scenario -eq 'operator-lock-recovery') {
                 'operator-lock-and-unlock'
             } elseif ($Scenario -eq 'operator-lid-recovery') {
@@ -1660,6 +1900,18 @@ function Write-Evidence {
             commandPassedAfterRebuild = $surfaceRebuildCommandPassed
             primaryOracle = 'acceptance-renderer-termination-log-terminal-search-and-controlled-pty-command'
         }
+        pageLifecycle = [ordered]@{
+            exercised = ($Scenario -eq 'page-rebuild')
+            trigger = $(if ($Scenario -eq 'page-rebuild') {
+                'acceptance-only-ui-context-router-current-page-replacement'
+            } else { 'none' })
+            rebuildRequested = $pageRebuildRequested
+            sameProcess = $pageRebuildProcessPreserved
+            workspaceReused = $pageRebuildWorkspaceReused
+            moshPageRetainedAfterRebuild = $pageRebuildPageRetained
+            commandPassedAfterRebuild = $pageRebuildCommandPassed
+            primaryOracle = 'pid-plus-proc-starttime-page-lifecycle-logs-terminal-search-and-controlled-pty-command'
+        }
         abnormalLifecycle = [ordered]@{
             exercised = ($Scenario -eq 'abnormal-exit')
             faultInjected = $abnormalExitInjected
@@ -1668,13 +1920,26 @@ function Write-Evidence {
             moshPageDiscarded = $moshPageDiscardedAfterSession
             primaryOracle = 'acceptance-only-viewmodel-error-log-page-replacement-ack-and-terminal-search'
         }
+        processRecovery = [ordered]@{
+            exercised = ($Scenario -eq 'process-recovery' -or
+                ($Scenario -eq 'operator-lid-recovery' -and -not $sameAppProcessAfterResume))
+            trigger = $(if ($Scenario -eq 'operator-lid-recovery') {
+                'physical-lid'
+            } elseif ($Scenario -eq 'process-recovery') { 'controlled-force-stop' } else { 'none' })
+            processReplaced = (-not $sameAppProcessAfterResume)
+            workspaceWarningObserved = $processRecoveryWorkspaceRestored
+            remoteContentAbsent = $processRecoveryRemoteContentAbsent
+            sessionNotRestored = $processRecoverySessionNotRestored
+            primaryOracle = 'pid-change-plus-terminal-search-positive-warning-and-negative-old-output-plus-local-command'
+        }
         checks = [ordered]@{
             bootstrapAuthenticated = ($moshServerPid -gt 0)
             udpConnected = ($lastProvenBoundary -match 'connected|command|disconnect|cleanup')
             exactCommandObserved = ($lastProvenBoundary -match 'command|disconnect|cleanup')
             endpointMatchesRequest = $udpEndpointMatchesRequest
             serverPathMatchesRequest = $serverPathMatchesRequest
-            ctrlCaretDisconnect = $(if ($Scenario -eq 'abnormal-exit') {
+            ctrlCaretDisconnect = $(if ($Scenario -in @('abnormal-exit', 'process-recovery') -or
+                ($Scenario -eq 'operator-lid-recovery' -and -not $sameAppProcessAfterResume)) {
                 $false
             } else { $lastProvenBoundary -match 'disconnect|cleanup' })
             authenticatedGracefulClose = $authenticatedGracefulClose
@@ -1745,6 +2010,7 @@ function Write-Evidence {
             deviceStateRemoved = $deviceStateCleaned
             deviceCleanupRecovery = $deviceCleanupRecovery
             fixtureProcessesAbsent = $fixtureCleaned
+            fixtureReverseMappingRemoved = $fixtureMappingRemoved
             persistentNetworkPreserved = $networkStateReady
             temporaryDirectoryRemoved = -not (Test-Path -LiteralPath $fixtureRoot)
         }
@@ -1776,6 +2042,7 @@ try {
     $readiness = Wait-MoshFixtureReady
     $fixtureLinuxPid = [int]$readiness.linuxPid
     $fixturePassword = [string]$readiness.credentials.password
+    New-MoshFixtureMapping
     if ($Scenario -eq 'prediction') {
         foreach ($path in @($fixtureKernelEcho, $fixturePredictionRelay)) {
             [IO.File]::WriteAllText(
@@ -1804,7 +2071,13 @@ try {
     $start = Start-LeanTTYRegressionApp -Hdc $hdc -Target $targetId `
         -CredentialPath (Get-LeanTTYDeviceUnlockPasswordPath) -RepositoryRoot $repoRoot
     $appPid = $start.processId
-    $initialAppProcessId = $appPid
+    $initialProcessIdentity = Get-MoshAppProcessIdentity
+    if ($null -eq $initialProcessIdentity -or
+        [string]$initialProcessIdentity.processId -cne $appPid) {
+        throw '[infrastructure] LeanTTY launch did not produce a stable process identity'
+    }
+    $initialAppProcessId = [string]$initialProcessIdentity.processId
+    $initialAppProcessStartTimeTicks = [string]$initialProcessIdentity.startTimeTicks
     Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
         -LocalPath (Join-Path $EvidenceDirectory 'app-ready.json') -TimeoutSeconds 20 | Out-Null
     $lastProvenBoundary = 'test-hap-launched'
@@ -1813,10 +2086,10 @@ try {
     Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
     Submit-LocalCommand -Command "host rm $sshAlias" -Stage 'mosh-initial-ssh-host-cleanup'
     Submit-LocalCommand -Command "host rm $alias" -Stage 'mosh-initial-host-cleanup'
-    Submit-LocalCommand -Command "ssh-keygen -R [$resolvedServerAddress]:$FixturePort" `
+    Submit-LocalCommand -Command "ssh-keygen -R [$fixtureSshAddress]:$FixturePort" `
         -Stage 'mosh-initial-known-host-cleanup'
     $preferencesDigestBefore = Get-MoshPreferencesDigest
-    Submit-LocalCommand -Command "host add $alias mosh@${resolvedServerAddress}:$FixturePort" `
+    Submit-LocalCommand -Command "host add $alias mosh@${fixtureSshAddress}:$FixturePort" `
         -Stage 'mosh-host-setup'
     Submit-LocalCommand -Command $originalPageMarker -Stage 'mosh-original-page-marker'
     if ($Scenario -eq 'pane-close') {
@@ -2169,6 +2442,34 @@ try {
         $lastProvenBoundary = 'surface-rebuilt-with-mosh-page-and-command-preserved'
     }
 
+    if ($Scenario -eq 'page-rebuild') {
+        Write-LiveStatus -Stage 'page-rebuild'
+        $pageIdentity = Invoke-MoshPageRebuild
+        $pageRebuildRequested = $true
+        $pageRebuildProcessPreserved =
+            [string]$pageIdentity.before.key -ceq [string]$pageIdentity.after.key
+        $pageRebuildWorkspaceReused = $true
+        $pageRebuildPageRetained = Test-MoshTerminalSearch `
+            -Query "LTTY_MOSH_CHECK_OK:$caseId" -ExpectMatch $true `
+            -Name 'mosh-page-rebuild-page-search'
+        $pageCaseId = 'page_' + $attemptId.Substring(0, 12)
+        Submit-MoshInput -Text "ltty-mosh-check $pageCaseId"
+        Wait-ControlFileMatch -Path $activeMoshEvent `
+            -Pattern "(?ms)^case=$([regex]::Escape($pageCaseId))$.*^result=passed$" `
+            -TimeoutSeconds 20 | Out-Null
+        $pageRebuildCommandPassed = Test-MoshTerminalSearch `
+            -Query "LTTY_MOSH_CHECK_OK:$pageCaseId" -ExpectMatch $true `
+            -Name 'mosh-page-rebuild-command-search'
+        $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+        $sessionStayedConnected = $pageRebuildProcessPreserved -and
+            $pageRebuildPageRetained -and $pageRebuildCommandPassed -and $remoteShellAliveAfter
+        if (-not $sessionStayedConnected) {
+            throw '[product] Mosh Session did not survive same-process page replacement'
+        }
+        $observedErrorCategory = 'none'
+        $lastProvenBoundary = 'page-rebuilt-with-process-session-and-command-preserved'
+    }
+
     if ($Scenario -eq 'abnormal-exit') {
         Write-LiveStatus -Stage 'abnormal-exit'
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
@@ -2205,6 +2506,72 @@ try {
         $sessionStayedConnected = $false
         $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
         $lastProvenBoundary = 'abnormal-exit-original-page-restored'
+    }
+
+    if ($Scenario -eq 'process-recovery') {
+        Write-LiveStatus -Stage 'process-recovery-force-stop'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+        $oldAppProcessIdentity = Get-MoshAppProcessIdentity
+        if ($null -eq $oldAppProcessIdentity) {
+            throw '[infrastructure] LeanTTY process identity disappeared before controlled force-stop'
+        }
+        & $hdc -t $targetId shell 'aa force-stop com.leantty.app' | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw '[environment] Unable to force-stop LeanTTY for process recovery'
+        }
+        $processStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            Start-Sleep -Milliseconds 100
+            $remainingProcessId = (@(
+                & $hdc -t $targetId shell 'pidof com.leantty.app' 2>&1
+            ) -join "`n").Trim()
+        } while ($remainingProcessId -match '^\d+$' -and
+            $processStopwatch.Elapsed.TotalSeconds -lt 10)
+        if ($remainingProcessId -match '^\d+$') {
+            throw '[product] LeanTTY process remained after controlled force-stop'
+        }
+
+        $remoteShellAliveAtProcessChange = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+        $serverAliveAtProcessChange = Test-WslProcessPresent -LinuxPid $moshServerPid
+        Write-LiveStatus -Stage 'process-recovery-relaunch'
+        $restarted = Start-LeanTTYRegressionApp -Hdc $hdc -Target $targetId `
+            -CredentialPath (Get-LeanTTYDeviceUnlockPasswordPath) -RepositoryRoot $repoRoot
+        $appPid = $restarted.processId
+        $resumedProcessIdentity = Get-MoshAppProcessIdentity
+        if ($null -eq $resumedProcessIdentity) {
+            throw '[infrastructure] Relaunched LeanTTY has no process identity'
+        }
+        $resumedAppProcessId = [string]$resumedProcessIdentity.processId
+        $resumedAppProcessStartTimeTicks = [string]$resumedProcessIdentity.startTimeTicks
+        $sameAppProcessAfterResume =
+            [string]$resumedProcessIdentity.key -ceq [string]$oldAppProcessIdentity.key
+        if ($sameAppProcessAfterResume) {
+            throw '[product] Controlled process recovery did not create a new LeanTTY process'
+        }
+        Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
+            -LocalPath (Join-Path $EvidenceDirectory 'process-recovery-ready.json') `
+            -TimeoutSeconds 20 | Out-Null
+
+        $processRecoveryWorkspaceRestored = Test-MoshTerminalSearch `
+            -Query 'Workspace layout was recovered' -ExpectMatch $true `
+            -Name 'process-recovery-warning-search'
+        $processRecoveryRemoteContentAbsent = Test-MoshTerminalSearch `
+            -Query $shellCommand -ExpectMatch $false `
+            -Name 'process-recovery-old-output-negative-search'
+        Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
+        Submit-LocalCommand -Command 'help' -Stage 'process-recovery-local-command'
+        $localPromptReady = $true
+        $recoveryLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+        $processRecoverySessionNotRestored =
+            $processRecoveryRemoteContentAbsent -and $recoveryLogs -notmatch 'Mosh Session connected'
+        if (-not ($processRecoveryWorkspaceRestored -and
+            $processRecoveryRemoteContentAbsent -and $processRecoverySessionNotRestored)) {
+            throw '[product] Process recovery restored remote Mosh state or lost the workspace warning'
+        }
+        $sessionStayedConnected = $false
+        $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+        $observedErrorCategory = 'client-process-replaced'
+        $lastProvenBoundary = 'client-process-replaced-local-workspace-only-recovered'
     }
 
     if ($Scenario -eq 'pane-close') {
@@ -2357,7 +2724,7 @@ try {
         Split-MoshPane
         Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
         Submit-LocalCommand `
-            -Command "host add $sshAlias password@${resolvedServerAddress}:$FixturePort" `
+            -Command "host add $sshAlias password@${fixtureSshAddress}:$FixturePort" `
             -Stage 'ssh-mosh-host-setup'
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
         Submit-LocalCommand -Command "ssh $sshAlias" -Stage 'ssh-mosh-ssh-connect-command'
@@ -2450,9 +2817,15 @@ try {
         $systemSuspendMs = [long]$suspendStopwatch.Elapsed.TotalMilliseconds
         Start-Sleep -Seconds 2
 
-        $resumedPid = (@(& $hdc -t $targetId shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
-        $resumedAppProcessId = $resumedPid
-        $sameAppProcessAfterResume = ($LASTEXITCODE -eq 0 -and $resumedPid -ceq $appPid)
+        $resumedProcessIdentity = Get-MoshAppProcessIdentity
+        $resumedAppProcessId = if ($null -eq $resumedProcessIdentity) {
+            ''
+        } else { [string]$resumedProcessIdentity.processId }
+        $resumedAppProcessStartTimeTicks = if ($null -eq $resumedProcessIdentity) {
+            ''
+        } else { [string]$resumedProcessIdentity.startTimeTicks }
+        $sameAppProcessAfterResume = $null -ne $resumedProcessIdentity -and
+            [string]$resumedProcessIdentity.key -ceq [string]$initialProcessIdentity.key
         if (-not $sameAppProcessAfterResume) {
             $remoteShellAliveAtProcessChange = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
             $serverAliveAtProcessChange = Test-WslProcessPresent -LinuxPid $moshServerPid
@@ -2522,51 +2895,100 @@ try {
         $operatorLockDurationMs = [long]$operatorLockStopwatch.Elapsed.TotalMilliseconds
         $deviceUnlockAfterResume = 'operator'
 
-        $resumedPid = (@(& $hdc -t $targetId shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
-        $resumedAppProcessId = $resumedPid
-        $sameAppProcessAfterResume = ($LASTEXITCODE -eq 0 -and $resumedPid -ceq $appPid)
+        $resumedProcessIdentity = Get-MoshAppProcessIdentity
+        $resumedAppProcessId = if ($null -eq $resumedProcessIdentity) {
+            ''
+        } else { [string]$resumedProcessIdentity.processId }
+        $resumedAppProcessStartTimeTicks = if ($null -eq $resumedProcessIdentity) {
+            ''
+        } else { [string]$resumedProcessIdentity.startTimeTicks }
+        $sameAppProcessAfterResume = $null -ne $resumedProcessIdentity -and
+            [string]$resumedProcessIdentity.key -ceq [string]$initialProcessIdentity.key
         if (-not $sameAppProcessAfterResume) {
             $remoteShellAliveAtProcessChange = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
             $serverAliveAtProcessChange = Test-WslProcessPresent -LinuxPid $moshServerPid
-            throw "[product] LeanTTY did not retain the same application process across $operatorStage recovery"
-        }
-        Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
-            -LocalPath (Join-Path $EvidenceDirectory "$operatorStage-resumed.json") `
-            -TimeoutSeconds 30 | Out-Null
+            if ($Scenario -eq 'operator-lock-recovery') {
+                throw '[product] LeanTTY did not retain the same application process across operator-lock recovery'
+            }
 
-        Write-LiveStatus -Stage "$operatorStage-recovery-command"
-        $resumeCommandStopwatch = [Diagnostics.Stopwatch]::StartNew()
-        $resumeCaseId = if ($Scenario -eq 'operator-lid-recovery') {
-            'lid_' + $attemptId.Substring(0, 10)
-        } else { 'lock_' + $attemptId.Substring(0, 10) }
-        $recoveryInputMethod = 'harmony-uitest-targeted-inputText'
-        Submit-MoshInput -Text "ltty-mosh-check $resumeCaseId"
-        Wait-ControlFileMatch -Path $fixtureEvent `
-            -Pattern "(?ms)^case=$([regex]::Escape($resumeCaseId))$.*^result=passed$" `
-            -TimeoutSeconds 20 | Out-Null
-        $resumeCommandElapsedMs = [long]$resumeCommandStopwatch.Elapsed.TotalMilliseconds
+            Write-LiveStatus -Stage 'operator-lid-workspace-recovery'
+            $restarted = Start-LeanTTYRegressionApp -Hdc $hdc -Target $targetId `
+                -CredentialPath (Get-LeanTTYDeviceUnlockPasswordPath) -RepositoryRoot $repoRoot
+            $appPid = $restarted.processId
+            $resumedAppProcessId = $appPid
+            Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
+                -LocalPath (Join-Path $EvidenceDirectory 'operator-lid-workspace-recovered.json') `
+                -TimeoutSeconds 30 | Out-Null
 
-        $lockObservation = Get-MoshLifecycleObservation
-        $automaticCloseObserved = $lockObservation.closed
-        $automaticErrorObserved = $lockObservation.error
-        $interruptionObserved = $lockObservation.interrupted
-        $interruptionReason = $lockObservation.interruptionReason
-        $recoveredStatusObserved = $lockObservation.recovered
-        $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
-        $serverAliveAfterUnlock = Test-WslProcessPresent -LinuxPid $moshServerPid
-        $recoveryCommandPassed = -not $automaticCloseObserved -and -not $automaticErrorObserved
-        $sessionStayedConnected = $recoveryCommandPassed -and $remoteShellAliveAfter -and `
-            $serverAliveAfterUnlock
-        if (-not $sessionStayedConnected) {
-            throw "[product] Mosh Session or remote shell did not survive $operatorStage recovery"
+            $processRecoveryWorkspaceRestored = Test-MoshTerminalSearch `
+                -Query 'Workspace layout was recovered' -ExpectMatch $true `
+                -Name 'operator-lid-recovery-warning-search'
+            $processRecoveryRemoteContentAbsent = Test-MoshTerminalSearch `
+                -Query $shellCommand -ExpectMatch $false `
+                -Name 'operator-lid-old-output-negative-search'
+            Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
+            Submit-LocalCommand -Command 'help' -Stage 'operator-lid-local-command'
+            $localPromptReady = $true
+            $recoveryLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+            $processRecoverySessionNotRestored =
+                $processRecoveryRemoteContentAbsent -and
+                $recoveryLogs -notmatch 'Mosh Session connected'
+            if (-not ($processRecoveryWorkspaceRestored -and
+                $processRecoveryRemoteContentAbsent -and $processRecoverySessionNotRestored)) {
+                throw '[product] Physical-lid recovery restored remote Mosh state or lost the workspace warning'
+            }
+
+            $operatorRecoveryOutcome = 'client-process-replaced-workspace-only'
+            $sessionStayedConnected = $false
+            $recoveryCommandPassed = $true
+            $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+            $observedErrorCategory = 'client-process-replaced'
+            $lastProvenBoundary = 'operator-lid-client-process-replaced-workspace-only-recovered'
+            [IO.File]::WriteAllText(
+                (Join-Path $EvidenceDirectory 'operator-lid-device-app.log'),
+                $recoveryLogs + "`n",
+                [Text.UTF8Encoding]::new($false)
+            )
+        } else {
+            Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
+                -LocalPath (Join-Path $EvidenceDirectory "$operatorStage-resumed.json") `
+                -TimeoutSeconds 30 | Out-Null
+
+            Write-LiveStatus -Stage "$operatorStage-recovery-command"
+            $resumeCommandStopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $resumeCaseId = if ($Scenario -eq 'operator-lid-recovery') {
+                'lid_' + $attemptId.Substring(0, 10)
+            } else { 'lock_' + $attemptId.Substring(0, 10) }
+            $recoveryInputMethod = 'harmony-uitest-targeted-inputText'
+            Submit-MoshInput -Text "ltty-mosh-check $resumeCaseId"
+            Wait-ControlFileMatch -Path $fixtureEvent `
+                -Pattern "(?ms)^case=$([regex]::Escape($resumeCaseId))$.*^result=passed$" `
+                -TimeoutSeconds 20 | Out-Null
+            $resumeCommandElapsedMs = [long]$resumeCommandStopwatch.Elapsed.TotalMilliseconds
+
+            $lockObservation = Get-MoshLifecycleObservation
+            $automaticCloseObserved = $lockObservation.closed
+            $automaticErrorObserved = $lockObservation.error
+            $interruptionObserved = $lockObservation.interrupted
+            $interruptionReason = $lockObservation.interruptionReason
+            $recoveredStatusObserved = $lockObservation.recovered
+            $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+            $serverAliveAfterUnlock = Test-WslProcessPresent -LinuxPid $moshServerPid
+            $recoveryCommandPassed = -not $automaticCloseObserved -and -not $automaticErrorObserved
+            $sessionStayedConnected = $recoveryCommandPassed -and $remoteShellAliveAfter -and `
+                $serverAliveAfterUnlock
+            if (-not $sessionStayedConnected) {
+                throw "[product] Mosh Session or remote shell did not survive $operatorStage recovery"
+            }
+            $operatorRecoveryOutcome = 'client-process-and-session-preserved'
+            $observedErrorCategory = 'none'
+            $lastProvenBoundary = "$operatorStage-recovered-with-process-and-shell-preserved"
+            [IO.File]::WriteAllText(
+                (Join-Path $EvidenceDirectory "$operatorStage-device-app.log"),
+                $lockObservation.logs + "`n",
+                [Text.UTF8Encoding]::new($false)
+            )
         }
-        $observedErrorCategory = 'none'
-        $lastProvenBoundary = "$operatorStage-recovered-with-process-and-shell-preserved"
-        [IO.File]::WriteAllText(
-            (Join-Path $EvidenceDirectory "$operatorStage-device-app.log"),
-            $lockObservation.logs + "`n",
-            [Text.UTF8Encoding]::new($false)
-        )
     }
 
     if ($Scenario -eq 'pause-recovery') {
@@ -2621,6 +3043,64 @@ try {
         )
     }
 
+    if ($Scenario -eq 'wifi-pause-recovery') {
+        Write-LiveStatus -Stage 'wifi-pause'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+        $pauseStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        Set-MoshDeviceWifi -Enabled $false -Name 'mosh-wifi-off'
+        $wifiControlCleanupVerified = $false
+        $wifiOutcome = Wait-MoshWifiInterruptionOutcome -TimeoutSeconds 20
+        $pauseObservation = Get-MoshLifecycleObservation
+        $automaticCloseObserved = $pauseObservation.closed
+        $automaticErrorObserved = $pauseObservation.error
+        $interruptionObserved = $pauseObservation.interrupted
+        $interruptionReason = $pauseObservation.interruptionReason
+        $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+        $serverAliveDuringPause = Test-WslProcessPresent -LinuxPid $moshServerPid
+        $sessionStayedConnected = -not $automaticCloseObserved -and -not $automaticErrorObserved
+        $networkPauseDurationMs = [long]$pauseStopwatch.Elapsed.TotalMilliseconds
+        if ($wifiOutcome.outcome -eq 'fatal-udp-error') {
+            $observedErrorCategory = 'local-udp-io-error'
+            $lastProvenBoundary = 'physical-wifi-disable-terminated-session'
+            throw '[product] Physical Wi-Fi disable produced a fatal local UDP I/O error'
+        }
+        if (-not $sessionStayedConnected) {
+            throw '[product] Mosh Session terminated while physical Wi-Fi was disabled'
+        }
+        if (-not $serverAliveDuringPause -or -not $remoteShellAliveAfter) {
+            throw '[product] Remote Mosh server or shell exited while physical Wi-Fi was disabled'
+        }
+
+        Write-LiveStatus -Stage 'wifi-recovery'
+        Set-MoshDeviceWifi -Enabled $true -Name 'mosh-wifi-on'
+        $wifiControlCleanupVerified = $true
+        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+            -Pattern 'Mosh reachability state=responsive transition=recovered' `
+            -TimeoutSeconds 25 | Out-Null
+        Focus-ActiveTerminalInput -Name 'mosh-wifi-recovery-focus.json' | Out-Null
+        $recoveryCaseId = 'wifi_' + $attemptId.Substring(0, 12)
+        Submit-MoshInput -Text "ltty-mosh-check $recoveryCaseId"
+        Wait-ControlFileMatch -Path $fixtureEvent `
+            -Pattern "(?ms)^case=$([regex]::Escape($recoveryCaseId))$.*^result=passed$" `
+            -TimeoutSeconds 25 | Out-Null
+        $recoveryObservation = Get-MoshLifecycleObservation
+        $automaticCloseObserved = $automaticCloseObserved -or $recoveryObservation.closed
+        $automaticErrorObserved = $automaticErrorObserved -or $recoveryObservation.error
+        $recoveredStatusObserved = $recoveryObservation.recovered
+        $recoveryCommandPassed = -not $automaticCloseObserved -and -not $automaticErrorObserved
+        $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+        if (-not $recoveryCommandPassed -or -not $remoteShellAliveAfter) {
+            throw '[product] Mosh Session did not recover after physical Wi-Fi was re-enabled'
+        }
+        $observedErrorCategory = 'none'
+        $lastProvenBoundary = 'physical-wifi-pause-recovered-with-shell-preserved'
+        [IO.File]::WriteAllText(
+            (Join-Path $EvidenceDirectory 'network-behavior-device-app.log'),
+            $recoveryObservation.logs + "`n",
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
+
     if ($Scenario -eq 'server-disappearance') {
         Write-LiveStatus -Stage 'server-disappearance'
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
@@ -2657,7 +3137,10 @@ try {
         )
     }
 
-    if ($Scenario -notin @('session-isolation', 'abnormal-exit')) {
+    $workspaceOnlyLidRecovery =
+        $Scenario -eq 'operator-lid-recovery' -and -not $sameAppProcessAfterResume
+    if ($Scenario -notin @('session-isolation', 'abnormal-exit', 'process-recovery') -and
+        -not $workspaceOnlyLidRecovery) {
         Write-LiveStatus -Stage 'ctrl-caret-disconnect'
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
         $closeStopwatch = [Diagnostics.Stopwatch]::StartNew()
@@ -2717,6 +3200,7 @@ try {
         throw '[product] LeanTTY Preferences changed during the Mosh compatibility scenario'
     }
     Stop-MoshFixture
+    Remove-MoshFixtureMapping
     $lastProvenBoundary = 'cleanup-complete'
 
     foreach ($path in @($fixtureStdout, $fixtureStderr)) {
@@ -2767,6 +3251,15 @@ try {
             Write-Warning ("Unable to remove owned Mosh UDP impairment: " + $_.Exception.Message)
         }
     }
+    if ($wifiDisabledByScenario) {
+        try {
+            Set-MoshDeviceWifi -Enabled $true -Name 'mosh-wifi-failure-restore'
+            $wifiControlCleanupVerified = $true
+        } catch {
+            $wifiControlCleanupVerified = $false
+            Write-Warning ("Unable to restore HarmonyOS Wi-Fi: " + $_.Exception.Message)
+        }
+    }
     if ($windowToggled -and -not [string]::IsNullOrWhiteSpace($targetId) -and $null -ne $hdc) {
         try {
             Toggle-MoshWindowSize -Name 'mosh-failure-resize-restore'
@@ -2778,6 +3271,9 @@ try {
     }
     if (-not $fixtureCleaned) {
         try { Stop-MoshFixture } catch {}
+    }
+    if ($fixtureMappingActive) {
+        try { Remove-MoshFixtureMapping } catch {}
     }
     if ($awakeLeaseActive) {
         Stop-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $targetId

@@ -56,13 +56,41 @@ HAD-W32 使用 stock 1.4.0 和动态 UDP 60001。精确双向丢弃约 7.9 秒�
 **临时边界。** 不在 LeanTTY 捕获字符串后自动重建 Session，也不把失败隐藏成恢复。首次真机
 纵向切片必须记录原始 `ErrorKind` 的安全类别、Session 是否关闭以及远端 shell 是否仍存活。
 
-**当前物理证据。** 精确 UDP 丢弃只产生网络静默，没有产生本地 socket 错误，Session 和远端
-shell 均存活并恢复。因此该场景没有命中终止性 `SessionError::Io`，也不能关闭网络切换、锁屏
-或接口变化时的 MCRS-003 风险。后续只在这些真实平台场景出现本地 I/O 错误时记录安全类别，
-不为了制造错误而替换产品 socket。
+**早期物理证据。** 精确 UDP 丢弃只产生网络静默，没有产生本地 socket 错误，Session 和远端
+shell 均存活并恢复。因此该场景当时没有命中终止性 `SessionError::Io`，不能关闭网络切换、锁屏
+或接口变化时的风险。
 
-**关闭条件。** 物理 PC 证明目标场景不产生终止性错误；或者 `mosh-client-rs` 用明确白名单、
-有界重试和回归测试处理已验证的临时错误。
+**2026-09-02 真实接口下线复现。** LeanTTY HAP SHA-256
+`2d3c43605ac2c9133387d4c1846d95e120969100f92744528d47db95649afc5a` 使用固定依赖
+`e1346b3dfce5c38b95ef43d78cfb3d73529f00e5`，在 HAD-W32 上连接 stock `mosh-server 1.4.0` 并
+完成基线命令。fixture 随后通过 HarmonyOS 状态栏的真实 WLAN toggle 关闭 `wlan0`，同时验证
+toggle 为 off 且接口失去 IPv4；USB HDC 仅保留控制和观察能力。
+
+结果不是 `Interrupted(NoRecentContact)`：Session 约 7.4 秒内返回本地 UDP I/O error，LeanTTY
+记录 `Mosh error stage=mosh_udp`，结束整段 Mosh 页面并回到本地状态。错误发生点 App 进程仍在，
+受控远端 PTY 仍存活，证明不是进程回收、远端 shell 退出或 server 认证关闭。失败随后重新开启
+WLAN，并确认设备状态、fixture 进程、HDC reverse、持久网络配置和临时目录全部清理。机器证据
+位于
+`build/verification/device-mosh-wifi-pause-recovery-20260902-retry2/device-mosh.json`；一次先行
+运行因 oracle 只等待 reachability、没有同时识别 fatal I/O 而误归类为 harness timeout，已由
+双结果 oracle 替代。
+
+LeanTTY 没有把临时 warning 升级为错误。当前库的 `SessionDriver::run()` 对
+`send_to(...).await` 和接收结果直接使用 `?`；I/O error 被转换为 `SessionError::Io(ErrorKind)`，
+`SessionTask::run()` 随即结束。LeanTTY 只能如实结束已经完成的任务，不能在调用侧保留该 UDP
+socket、SSP、crypto、retransmission 和 roaming 状态，也不能用新 Session 伪装恢复。2026-09-02
+远程 `main` 为 `0a831b7`，相对固定提交只增加 MCRS-008 展示边界文档，没有相关源码修复。
+
+**上游修复验收合同。** 已建立的 Session 遇到经真机确认的临时本地网络/接口错误时，应保留同一
+Session 状态，以有界、无忙循环的方式继续调度；reachability 进入 `Interrupted`，接口恢复后回到
+`Responsive` 并在同一远端 PTY 执行新命令。离线期间的 `cancel()` 必须立即有效，`close()` 仍受
+现有 ACK 上限约束，永久 I/O 错误仍可失败，两个 Session 不能共享重试或 reachability 状态。
+修复应在库仓库内覆盖已验证的错误类别和丢包/恢复/关闭/隔离回归；LeanTTY 只升级完整 Git rev
+并重跑同一 HAD-W32 场景。
+
+**状态与关闭条件。** Open；当前已阻塞 Wi-Fi 暂断和网络切换门。`mosh-client-rs` 用明确白名单、
+有界重试和回归测试处理已验证的临时错误后，LeanTTY 固定新 rev，并用同一物理场景证明上述
+验收合同，才可关闭。
 
 ## MCRS-004：网络静默与 server 消失没有可信终止信号（Resolved as non-goal）
 

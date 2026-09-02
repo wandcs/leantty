@@ -11,6 +11,7 @@ import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordin
 import { BackgroundBellNotification } from '../model/ui/BackgroundBellNotification';
 import { UiText } from '../model/ui/UiText';
 import { WindowGridSnapPolicy } from '../model/ui/WindowGridSnapPolicy';
+import { UnexpectedExitRecoveryStore } from '../model/persistence/UnexpectedExitRecoveryStore';
 
 const logger: Logger = new Logger('EntryAbility')
 const FALLBACK_TITLE_BUTTON_WIDTH: number = 140
@@ -49,6 +50,11 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     DurableStateManager.initialize(this.context)
+    try {
+      UnexpectedExitRecoveryStore.initialize(this.context)
+    } catch (e) {
+      logger.warn('Unexpected-exit recovery is unavailable: ' + e)
+    }
     AppStorage.setOrCreate('pcTitleButtonReservedWidth', FALLBACK_TITLE_BUTTON_WIDTH)
     AppStorage.setOrCreate('mainWindowVisible', true)
     AppStorage.setOrCreate('windowTransparencyAvailable', false)

@@ -1,6 +1,11 @@
 import { Logger } from '../common/logger/Logger'
 import { PaneInfo, SshSessionState, TabInfo, TerminalMode } from '../common/types/TerminalTypes'
 import { PaneRuntime } from './PaneRuntime'
+import {
+  RecoveryTabSnapshot,
+  RecoveryWorkspaceSnapshot,
+  UnexpectedExitRecoveryCodec
+} from '../model/persistence/UnexpectedExitRecoveryRecord'
 
 export { PaneInfo, TabInfo }
 
@@ -12,10 +17,18 @@ export class AppViewModel {
   private activeTabIndex: number = -1
   private nextTabId: number = 1
   private nextPaneId: number = 1
+  private identityGeneration: number = 0
   private logger: Logger = new Logger('AppViewModel')
 
   setPaneRuntimeFactory(factory: (pane: PaneInfo) => PaneRuntime): void {
     this.paneRuntimeFactory = factory
+  }
+
+  setIdentityGeneration(generation: number): void {
+    if (this.tabs.length > 0 || !Number.isInteger(generation) || generation < 0) {
+      return
+    }
+    this.identityGeneration = generation
   }
 
   getTabs(): TabInfo[] {
@@ -71,7 +84,7 @@ export class AppViewModel {
   }
 
   addTab(title: string): TabInfo {
-    let id: string = 'tab-' + this.nextTabId.toString()
+    let id: string = this.runtimeId('tab', this.nextTabId)
     this.nextTabId++
     let tab: TabInfo = new TabInfo(id, title)
     let pane: PaneInfo = this.createPane(title)
@@ -146,6 +159,34 @@ export class AppViewModel {
       return null
     }
     return this.getPane(tab.activePaneId)
+  }
+
+  createRecoverySnapshot(splitRatio: number): RecoveryWorkspaceSnapshot {
+    let workspace: RecoveryWorkspaceSnapshot = new RecoveryWorkspaceSnapshot()
+    workspace.activeTabPosition = this.activeTabIndex
+    workspace.splitRatio = splitRatio
+    for (let i: number = 0; i < this.tabs.length; i++) {
+      let tab: RecoveryTabSnapshot = new RecoveryTabSnapshot()
+      tab.paneCount = this.tabs[i].panes.length
+      tab.activePanePosition = this.findPaneIndex(this.tabs[i], this.tabs[i].activePaneId)
+      workspace.tabs.push(tab)
+    }
+    return workspace
+  }
+
+  restoreRecoverySnapshot(workspace: RecoveryWorkspaceSnapshot): boolean {
+    if (this.tabs.length > 0 || !UnexpectedExitRecoveryCodec.isValidWorkspace(workspace)) {
+      return false
+    }
+    for (let i: number = 0; i < workspace.tabs.length; i++) {
+      let tab: TabInfo = this.addTab('ltty')
+      if (workspace.tabs[i].paneCount === 2 && this.splitPane(tab.id) === null) {
+        return false
+      }
+      this.setActivePane(tab.id, tab.panes[workspace.tabs[i].activePanePosition].id)
+    }
+    this.setActiveTab(workspace.activeTabPosition)
+    return true
   }
 
   getPane(paneId: string): PaneInfo | null {
@@ -273,6 +314,7 @@ export class AppViewModel {
     this.activeTabIndex = -1
     this.nextTabId = 1
     this.nextPaneId = 1
+    this.identityGeneration = 0
     this.scheduleRuntimeDisposals(runtimes)
     await this.waitForPendingRuntimeDisposals()
   }
@@ -290,9 +332,14 @@ export class AppViewModel {
   }
 
   private createPane(title: string): PaneInfo {
-    let id: string = 'pane-' + this.nextPaneId.toString()
+    let id: string = this.runtimeId('pane', this.nextPaneId)
     this.nextPaneId++
     return new PaneInfo(id, title)
+  }
+
+  private runtimeId(kind: string, sequence: number): string {
+    return kind + '-' + (this.identityGeneration > 0 ?
+      this.identityGeneration.toString() + '-' : '') + sequence.toString()
   }
 
   private addPaneRuntime(pane: PaneInfo): void {

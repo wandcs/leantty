@@ -329,9 +329,20 @@ try {
     $entryAbilityProductionText = Get-Content -LiteralPath (
         Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
     ) -Raw
+    $entryModuleProductionText = Get-Content -LiteralPath (
+        Join-Path $repoRoot 'entry\src\main\module.json5'
+    ) -Raw
+    $unexpectedRecoveryRecordText = Get-Content -LiteralPath (
+        Join-Path $repoRoot (
+            'entry\src\main\ets\model\persistence\UnexpectedExitRecoveryRecord.ets'
+        )
+    ) -Raw
     Assert-True (
         $entryAbilityProductionText.Contains('windowStage.setWindowRectAutoSave(true)') -and
-        -not $entryAbilityProductionText.Contains('restoreOrCaptureWindowRect')
+        -not $entryAbilityProductionText.Contains('restoreOrCaptureWindowRect') -and
+        -not $entryAbilityProductionText.Contains('consumeUnexpectedWindow') -and
+        -not $entryModuleProductionText.Contains('enable.remove.starting.window') -and
+        -not $unexpectedRecoveryRecordText.Contains('emergencyWindow')
     ) 'System window auto-save is not the sole owner of restart window geometry'
     $bridgeProtocolText = Get-Content -LiteralPath (
         Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'

@@ -6,6 +6,10 @@
 
 ### Added
 
+- Recover the previous Tab/Pane layout after an unclean process exit. Restored
+  panes receive new runtime identities and start at local `ltty>` in `IDLE`;
+  remote sessions, terminal contents, titles, history and credentials are never
+  restored or persisted.
 - Add the initial `mosh [user@]host|alias` interactive-session path with existing
   Host, Identity, host-key and authentication policy, an isolated Pane-owned UDP
   IPv4 session, strict bootstrap parsing and local `Ctrl-^` disconnect/help escapes.
@@ -29,6 +33,9 @@
 
 ### Fixed
 
+- Keep the process-owned workspace and active Mosh Session across a HarmonyOS
+  WindowStage/Page rebuild, while a true process replacement still restores only
+  fresh local Pane identities and never fabricates a remote Session.
 - Isolate every Mosh Session in a temporary terminal page. LeanTTY seals the original
   page before the first Mosh output, keeps all state-sync repaints out of local history,
   and restores the original page after final output on close, cancellation, error or
