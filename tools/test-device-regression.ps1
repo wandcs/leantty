@@ -1322,7 +1322,7 @@ foreach ($predictionContract in @(
     @{ Source = $moshNativeTypes; Text = 'predictionMode: string' },
     @{ Source = $moshNative; Text = 'connect_with_prediction_mode' },
     @{ Source = $moshNative; Text = 'mosh_prediction_mode(&prediction_mode)' },
-    @{ Source = $moshManifest; Text = 'e1346b3dfce5c38b95ef43d78cfb3d73529f00e5' },
+    @{ Source = $moshManifest; Text = '94f13225aba535c6645a9179e0ce9f00b156629e' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_MOSH_OUTPUT mode=' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' }
 )) {

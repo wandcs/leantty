@@ -33,6 +33,9 @@
 
 ### Fixed
 
+- Preserve an established Mosh Session across temporary local network-interface
+  send errors through the pinned client revision, allowing reachability to report
+  interruption and recovery without replacing the remote PTY.
 - Keep the process-owned workspace and active Mosh Session across a HarmonyOS
   WindowStage/Page rebuild, while a true process replacement still restores only
   fresh local Pane identities and never fabricates a remote Session.

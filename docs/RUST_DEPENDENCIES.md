@@ -116,7 +116,7 @@ The inventory normalizes the equivalent expressions `Apache-2.0 OR MIT` and
 `unicode-ident 1.0.24`
 
 `mosh-client` is resolved from `https://github.com/wandcs/mosh-client-rs.git` at
-commit `e1346b3dfce5c38b95ef43d78cfb3d73529f00e5`. Cargo uses the complete `rev`
+commit `94f13225aba535c6645a9179e0ce9f00b156629e`. Cargo uses the complete `rev`
 instead of a movable branch; see
 [`mosh-client-rs` integration issues](design/mosh-client-rs-integration-issues.md).
 
