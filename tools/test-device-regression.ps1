@@ -824,7 +824,8 @@ foreach ($scriptName in @(
     'verify-background-bell-permission-pc.ps1',
     'verify-long-task-notification-pc.ps1',
     'verify-proxy-jump-pc.ps1',
-    'verify-mosh-pc.ps1'
+    'verify-mosh-pc.ps1',
+    'verify-mosh-matrix-pc.ps1'
 )) {
     $scriptPath = Join-Path $PSScriptRoot $scriptName
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
@@ -1560,6 +1561,7 @@ foreach ($moshContract in @(
     'UnavailableCountsAsLocked',
     'Write-LiveStatus -Stage "await-$operatorStage-close"',
     'Write-LiveStatus -Stage "await-$operatorStage-open-unlock"',
+    'OPERATOR ACTION REQUIRED:',
     "'lid_' + `$attemptId.Substring(0, 10)",
     "`$recoveryInputMethod = 'harmony-uitest-targeted-inputText'",
     'operatorLockObserved = $operatorLockObserved',
@@ -1587,7 +1589,13 @@ foreach ($moshContract in @(
     "hilog -z 30000 | grep -E '`$remotePattern' | ",
     "grep -E 'Ability on|AppMgr|Process|Kill|Terminate|Fault|APP_CRASH|",
     'MOSH CONNECT\s+\d+\s+[A-Za-z0-9+/]{22}',
-    'acceptanceEligible = $false',
+    "'1.6-mosh-physical-acceptance'",
+    "acceptanceEligible = (`$Formal -and `$result -eq 'passed' -and `$cleanupPassed)",
+    'Resolve-LeanTTYRetainedCandidate',
+    'Assert-LeanTTYCandidateHarnessCompatibility',
+    'previousAttemptId = $PreviousAttemptId',
+    'result = $(if ($cleanupPassed)',
+    'Write-LeanTTYAtomicJson -Path $evidencePath',
     'temporaryDirectoryRemoved'
 )) {
     Assert-True ($moshVerifier.Contains($moshContract)) (
@@ -1630,6 +1638,37 @@ Assert-True (
     -not $moshVerifier.Contains("-Pattern 'ACCEPTANCE_INPUT_SUBMIT'") -and
     -not $moshVerifier.Contains('MOSH_KEY=')
 ) 'Mosh physical diagnostic lacks a content-free verdict or paired cleanup contract'
+
+$moshMatrixPath = Join-Path $PSScriptRoot 'verify-mosh-matrix-pc.ps1'
+Assert-True (Test-Path -LiteralPath $moshMatrixPath -PathType Leaf) (
+    'Formal Mosh physical matrix orchestrator is missing'
+)
+$moshMatrix = Get-Content -LiteralPath $moshMatrixPath -Raw
+foreach ($formalMoshContract in @(
+    "'compatibility'",
+    "'pause-recovery'",
+    "'suspend-recovery'",
+    "'operator-lock-recovery'",
+    "'operator-lid-recovery'",
+    "'wifi-pause-recovery'",
+    "'wifi-network-switch'",
+    'Formal = $true',
+    'acceptanceEligible = ($matrixResult',
+    'Assert-MoshScenarioEvidence',
+    'Mosh completed checkpoints are not a valid fixed-order prefix',
+    'Mosh failed-stage cleanup did not pass',
+    'alternateWifiSsidIdentity = $alternateWifiSsidIdentity',
+    'Write-LeanTTYAtomicJson -Path $matrixPath',
+    'PreviousAttemptId = $previousAttemptId'
+)) {
+    Assert-True ($moshMatrix.Contains($formalMoshContract)) (
+        "Formal Mosh matrix omitted contract: $formalMoshContract"
+    )
+}
+Assert-True (
+    -not $moshMatrix.Contains('Start-Job') -and
+    -not $moshMatrix.Contains('ForEach-Object -Parallel')
+) 'Formal Mosh matrix must control the physical PC serially'
 
 $sshMatrixPath = Join-Path $PSScriptRoot 'verify-ssh-matrix-pc.ps1'
 Assert-True (Test-Path -LiteralPath $sshMatrixPath -PathType Leaf) (

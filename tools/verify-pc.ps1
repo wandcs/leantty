@@ -81,6 +81,7 @@ foreach ($scriptName in @(
         'verify-key-passphrase-pc.ps1',
         'verify-ssh-auth-pc.ps1',
         'verify-ssh-matrix-pc.ps1',
+        'verify-mosh-matrix-pc.ps1',
         'verify-terminal-search-pc.ps1',
         'verify-release-pc.ps1',
         'test-build-workflows.ps1',

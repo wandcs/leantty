@@ -129,7 +129,9 @@ manifest、附件和哈希保持不变。
   薄编排入口。先加入 formal candidate/harness 双身份和 `acceptanceEligible` 门，再按
   compatibility、UDP pause、suspend、lock、lid、Wi-Fi pause、Wi-Fi network switch 固定顺序串行
   执行；使用已保存的备用 SSID `CU_lin`，保留 operator action 提示、原网络恢复、无 secret 和
-  完整 cleanup。只有七组同属一个 candidate 且全部通过时，统一报告才可声明完整 C3。
+  完整 cleanup。只有七组同属一个 candidate 且全部通过时，统一报告才可声明完整 C3。formal
+  单场景、可恢复矩阵和统一编排接线已实现；尚未在 clean commit 的 retained candidate 上运行，
+  因此本项保持未完成。
 - [ ] 为 release-mode review HAP 增加独立正常产品路径 smoke，覆盖启动、键盘分 Pane、关闭
   Pane 和清理。安装前拒绝把 release-mode HAP 用于 acceptance-only marker；production
   APP/HAP 继续禁止进入 HDC 安装路径。

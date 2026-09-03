@@ -81,14 +81,15 @@ Before building a release:
   ```powershell
   .\tools\verify-release-pc.ps1 `
     -Target '<physical-PC-target>' `
+    -MoshAlternateWifiSsid '<saved alternate SSID>' `
     -EvidenceDirectory 'C:\path\outside\the\repository\release-verification'
   ```
 
   Its `release-report.json` and `maintainer-summary.md` do not replace the
-  referenced stage evidence. The report currently records
-  `completeApplicablePhysicalMatrixClaimed=false` because the 1.6 Mosh network
-  and lifecycle matrix still needs formal retained-candidate evidence. Do not
-  advance to C4 while that flag is false.
+  referenced stage evidence. The report records
+  `completeApplicablePhysicalMatrixClaimed=true` only after the formal Mosh
+  network/lifecycle matrix and every other registered stage pass. Do not advance
+  to C4 while that flag is false.
 - Before the first formal behavior matrix, qualify the clean harness against
   that exact retained review-test HAP. The entry runs this command; the
   lower-level form remains available for diagnosis:
