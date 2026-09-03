@@ -39,6 +39,7 @@ $startedAt = [DateTimeOffset]::UtcNow
 $checks = [Collections.Generic.List[object]]::new()
 $failure = ''
 $result = 'failed'
+$agentResultReadiness = $null
 
 function Add-ReadinessCheck {
     param([string]$Name, [scriptblock]$Action)
@@ -54,6 +55,36 @@ try {
     Add-ReadinessCheck -Name 'offline-agent-notification-replay' -Action {
         & (Join-Path $PSScriptRoot 'test-agent-compatibility.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'Offline Agent compatibility replay failed' }
+    }
+    Add-ReadinessCheck -Name 'zero-model-agent-result-round-trip' -Action {
+        $syntheticResult = New-LeanTTYAgentCompatibilityReadinessFixture -StartedAt $startedAt
+        $syntheticPath = Join-Path (Split-Path $EvidencePath -Parent) (
+            [IO.Path]::GetFileNameWithoutExtension($EvidencePath) + '-agent-result.json'
+        )
+        $roundTrip = Write-LeanTTYAgentCompatibilityResult `
+            -Path $syntheticPath -Result $syntheticResult
+        $persisted = $roundTrip.result
+        $pairs = @($persisted.checks | ForEach-Object { "$($_.agent)|$($_.mode)" })
+        if ($roundTrip.byteLength -lt 20000 -or
+            $roundTrip.checkCount -ne 8 -or
+            $roundTrip.plannedModelRequests -ne 8 -or
+            @($pairs | Sort-Object -Unique).Count -ne 8 -or
+            @($persisted.commandAutomation.local.commands).Count -ne 40 -or
+            @($persisted.commandAutomation.connected.observations).Count -ne 40 -or
+            $persisted.inventory.privacy.credentialContentRead -ne $false -or
+            $persisted.cleanup.result -ne 'passed') {
+            throw 'Synthetic Agent result did not survive the complete readiness round trip'
+        }
+        $agentResultReadiness = [ordered]@{
+            path = $roundTrip.path
+            sha256 = $roundTrip.sha256
+            byteLength = $roundTrip.byteLength
+            checkCount = $roundTrip.checkCount
+            plannedModelRequestsRepresented = $roundTrip.plannedModelRequests
+            actualModelInvocations = 0
+            commandObservationCount = 40
+            atomicWriteAndReadBack = $true
+        }
     }
     $contract = Get-LeanTTYAgentCompatibilityContract
     Add-ReadinessCheck -Name 'exact-agent-allowlist' -Action {
@@ -114,6 +145,7 @@ try {
         candidateCreated = $false
         agentModelInvocations = 0
         agentContract = $contract
+        agentResultReadiness = $agentResultReadiness
         package = [ordered]@{
             path = $releaseHapFull
             sha256 = $(if (Test-Path -LiteralPath $releaseHapFull -PathType Leaf) {
