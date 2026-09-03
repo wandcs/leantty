@@ -1606,6 +1606,11 @@ Assert-True (
     -not $moshVerifier.Contains('pane-output-and-xterm-write-ack-after-four-authoritative-warmup-characters')
 ) 'Mosh prediction verifier still treats a fixed warmup count as confirmed prediction evidence'
 Assert-True (
+    $moshVerifier.Contains("[string]`$_.attributes.bundleName -eq 'com.leantty.app'") -and
+    $moshVerifier.Contains("[string]`$_.attributes.abilityName -eq 'EntryAbility'") -and
+    $moshVerifier.Contains('[string]$_.attributes.hostWindowId -eq $leanTTYWindowId')
+) 'Mosh window resize selector is not scoped to the focused LeanTTY host window'
+Assert-True (
     -not $moshVerifier.Contains("@('uiInput', 'keyEvent', 2072, 2019)")
 ) 'Mosh input retry still uses a UiTest chord that does not reliably clear the remote line'
 Assert-True (
