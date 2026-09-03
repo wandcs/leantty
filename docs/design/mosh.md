@@ -4,7 +4,7 @@
 >
 > 当前 milestone：1.6
 >
-> 更新日期：2026-08-31
+> 更新日期：2026-09-03
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
@@ -237,6 +237,7 @@ HAP SHA-256 为 `9e2fa750b2a8ca5f5a83a595382aed3076b753ea6c733f33a0df0a73ce9e828
 .\tools\verify-mosh-pc.ps1 -Scenario server-path
 .\tools\verify-mosh-pc.ps1 -Scenario pause-recovery
 .\tools\verify-mosh-pc.ps1 -Scenario wifi-pause-recovery
+.\tools\verify-mosh-pc.ps1 -Scenario wifi-network-switch -AlternateWifiSsid '<saved alternate SSID>'
 .\tools\verify-mosh-pc.ps1 -Scenario server-disappearance
 
 # 不再需要该环境时（管理员）

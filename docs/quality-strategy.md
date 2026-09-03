@@ -1058,7 +1058,8 @@ the same interactive shell and wait for the exact file; fixture-private commands
 for the kernel-echo shell whose prediction behavior is being claimed.
 
 The same routine accepts `-Scenario pause-recovery`, `-Scenario wifi-pause-recovery`,
-`-Scenario suspend-recovery` and `-Scenario server-disappearance`.
+`-Scenario wifi-network-switch`, `-Scenario suspend-recovery` and
+`-Scenario server-disappearance`.
 The pause scenario may add one temporary WSL `clsact` only when none already exists, drops
 both directions for the exact dynamically selected UDP port, and must remove and independently
 check that qdisc before success or failure cleanup. It passes only when LeanTTY observes the
@@ -1076,6 +1077,27 @@ nodes, disables the actual `wlan0` interface, verifies both the toggle and IPv4 
 Wi-Fi and verifies both before sending a recovery command. USB HDC remains only the control and
 observation channel. Failure cleanup must re-enable Wi-Fi; it must not retain SSIDs, addresses or
 other network identities in evidence.
+
+The Wi-Fi network-switch scenario requires one operator-supplied SSID that is already saved on the
+test PC. It first closes a recovered idle second Pane and verifies a one-Pane baseline. It discovers
+the current network through the system panel, runs one controlled Mosh Session and one direct-LAN
+OpenSSH Session against the same stable WSL host, then selects the saved alternate network. The SSH
+comparison uses the existing product-managed identity and never exports its key. Each SSH probe waits
+for PTY resize, then requires an exact echoed marker in native output and the terminal search result.
+The switch is valid only when the device source IPv4 or routing digest changes. The scenario records
+each protocol's observed time, Session outcome, post-switch command and required reconnect action.
+An SSH Session is classified as preserved, automatically disconnected, or unresponsive; the last
+case is recovered through the product's local `~.` disconnect before reconnecting. A harmless empty
+line distinguishes an already returned local prompt from a still-connected but unresponsive SSH
+Pane without relying only on a transient close log. The harness retains Mosh switch logs before SSH
+recovery clears the live buffer. A direct device-side TCP probe separates port reachability from a
+LeanTTY reconnect failure, and a terminal mode probe resolves a missing readiness log before
+classifying that failure. SSH reconnect and its exact post-switch command prove alternate-network
+access to the stable LAN host; the Mosh same-PTY command is the recovery oracle. The scenario restores
+the original network on success and failure. HDC is only the USB control channel. SSIDs,
+addresses, route contents and system-panel layouts stay in the run-owned temporary directory and are
+not retained as evidence. A password prompt is an environment failure: the harness never reads,
+accepts or stores Wi-Fi credentials.
 
 The suspend scenario invokes the HarmonyOS test PC's `power-shell suspend`, waits five seconds,
 then invokes `power-shell wakeup`. It must retain the same LeanTTY process and controlled remote
