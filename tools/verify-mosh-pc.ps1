@@ -17,7 +17,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]
+    [ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]
     [string]$Scenario = 'compatibility',
     [string]$Target = '',
     [string]$HapPath = '',
@@ -25,6 +25,11 @@ param(
     [ValidateRange(1024, 65535)][int]$FixtureBackendPort = 32223,
     [string]$ServerAddress = '192.168.1.4',
     [string]$RemoteScope = '192.168.1.0/24',
+    [string]$AlternateWifiSsid = '',
+    [ValidateRange(1024, 65535)][int]$SshComparisonPort = 2222,
+    [string]$SshComparisonUser = '',
+    [ValidateSet('id_ed25519', 'id_rsa', 'id_ecdsa')]
+    [string]$SshComparisonIdentity = 'id_ed25519',
     [string]$EvidenceDirectory = '',
     [ValidateRange(30, 300)][int]$OperatorWaitSeconds = 120,
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO
@@ -54,6 +59,13 @@ if ((Split-Path $selectedHapPath -Leaf) -match '(?i)unsigned') {
 }
 if ($FixtureBackendPort -eq $FixturePort) {
     throw 'FixtureBackendPort must differ from the external FixturePort'
+}
+if ($Scenario -eq 'wifi-network-switch') {
+    if ([string]::IsNullOrWhiteSpace($AlternateWifiSsid) -or
+        $AlternateWifiSsid.Length -gt 32 -or
+        $AlternateWifiSsid -match '[\x00-\x1f\x7f]') {
+        throw 'AlternateWifiSsid must name one non-empty Wi-Fi network without control characters'
+    }
 }
 
 $startedAt = [DateTimeOffset]::UtcNow
@@ -137,6 +149,7 @@ $appPid = ''
 $targetId = ''
 $resolvedServerAddress = ''
 $resolvedRemoteScope = ''
+$resolvedSshComparisonUser = ''
 $networkStateReady = $false
 $localPromptReady = $false
 $deviceStateCleaned = $false
@@ -192,6 +205,23 @@ $udpImpairmentOwnsQdisc = $false
 $udpImpairmentCleanupVerified = $true
 $wifiDisabledByScenario = $false
 $wifiControlCleanupVerified = $true
+$wifiOriginalSsid = ''
+$wifiNetworkSwitchedByScenario = $false
+$wifiOriginalNetworkRestored = $true
+$wifiSourceAddressChanged = $false
+$wifiRoutingChanged = $false
+$networkSwitchElapsedMs = -1
+$moshSwitchRecoveryElapsedMs = -1
+$sshSwitchDisconnectElapsedMs = -1
+$sshSwitchReconnectElapsedMs = -1
+$sshSwitchSessionPreserved = $false
+$sshSwitchReconnectRequired = $false
+$sshSwitchTransportReachable = $false
+$sshSwitchReconnectFailed = $false
+$sshSwitchReconnectTerminalMode = -1
+$sshSwitchPostSwitchCommandPassed = $false
+$sshSwitchUserAction = 'not-run'
+$sshSwitchOutcome = 'not-run'
 $windowToggled = $false
 $shellCompatibilityPassed = $false
 $tmuxCompatibilityPassed = $false
@@ -669,7 +699,11 @@ function Disable-MoshPredictionRelayPause {
 }
 
 function Get-MoshLifecycleObservation {
-    $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    param([AllowNull()][string]$Logs = $null)
+
+    $logs = if ($null -eq $Logs) {
+        Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    } else { $Logs }
     $interruption = [regex]::Match(
         $logs,
         'Mosh reachability state=interrupted reason=(?<reason>no_recent_contact|no_recent_reply)'
@@ -1277,6 +1311,90 @@ function Get-MoshFullDeviceLayout {
         -BundleName ''
 }
 
+function Submit-MoshSshEchoProbe {
+    param(
+        [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9_]+$')][string]$CaseId,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 15
+    )
+    $marker = "LTTY_PERF_PING_$CaseId"
+    Submit-MoshChildInput -Text "echo $marker" -Name $Name
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern ("PERF ping id=" + [regex]::Escape($marker) + " rttMs=\d+") `
+        -TimeoutSeconds $TimeoutSeconds | Out-Null
+    return $marker
+}
+
+function Get-MoshFocusedPaneTerminalMode {
+    $logsBeforeProbe = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2054
+    $probeLogs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'D: 1 chars, mode=\d+' -TimeoutSeconds 10
+    $matches = [regex]::Matches($probeLogs, 'D: 1 chars, mode=(?<mode>\d+)')
+    if ($matches.Count -lt 1) {
+        throw '[harness] SSH comparison Pane mode probe produced no terminal mode'
+    }
+    return [pscustomobject]@{
+        mode = [int]$matches[$matches.Count - 1].Groups['mode'].Value
+        logs = $logsBeforeProbe + "`n" + $probeLogs
+    }
+}
+
+function Test-MoshDeviceTcpReachable {
+    $output = @(
+        & $hdc -t $targetId shell (
+            "timeout 5 telnet $resolvedServerAddress $SshComparisonPort </dev/null"
+        ) 2>&1
+    ) -join "`n"
+    return $LASTEXITCODE -eq 0 -and $output -match '(?m)^Connected to '
+}
+
+function Invoke-MoshSshDisconnectEscape {
+    $node = Focus-ActiveTerminalInput -Name 'network-switch-ssh-disconnect-escape.json'
+    if ([string]$node.attributes.focused -ne 'true') {
+        throw '[harness] SSH comparison Pane was not focused before local disconnect'
+    }
+    foreach ($physicalCommand in @(
+        'uinput -K -d 2047 -d 2056 -u 2056 -u 2047',
+        'uinput -K -d 2044 -u 2044'
+    )) {
+        & $hdc -t $targetId shell $physicalCommand | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw '[environment] Unable to inject the physical SSH disconnect escape'
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'SSH escape action=disconnect' -TimeoutSeconds 10 | Out-Null
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'SSH closed' -TimeoutSeconds 10 | Out-Null
+}
+
+function Resolve-MoshSshComparisonUser {
+    $candidate = $SshComparisonUser
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        $prefix = Get-LeanTTYWslPrefix -Distribution $Distribution
+        $candidate = (@(& wsl.exe @prefix --exec whoami 2>$null) -join "`n").Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw '[infrastructure] Unable to resolve the default WSL user for SSH comparison'
+        }
+    }
+    if ($candidate -notmatch '^[A-Za-z_][A-Za-z0-9._-]{0,31}$') {
+        throw '[environment] SshComparisonUser is not a safe OpenSSH account name'
+    }
+    return $candidate
+}
+
+function Get-MoshWifiLayout {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    return Get-LeanTTYDeviceLayout `
+        -Hdc $hdc -Target $targetId `
+        -LocalPath (Join-Path $fixtureRoot "$Name.json") `
+        -BundleName ''
+}
+
 function Get-MoshWifiToggle {
     param([Parameter(Mandatory = $true)]$Layout)
 
@@ -1288,13 +1406,188 @@ function Get-MoshWifiToggle {
     })
 }
 
-function Test-MoshWifiIpv4Active {
+function Get-MoshWifiNetworkState {
     $ifconfig = Invoke-HdcChecked `
         -Hdc $hdc -Target $targetId `
         -Arguments @('shell', 'ifconfig') `
         -Operation 'HarmonyOS Wi-Fi interface query'
     $wlan = [regex]::Match($ifconfig, '(?ms)^wlan0\s+.*?(?=^\S|\z)')
-    return $wlan.Success -and $wlan.Value.Contains('inet addr:') -and $wlan.Value.Contains('UP')
+    $address = if ($wlan.Success) {
+        [regex]::Match($wlan.Value, 'inet addr:(?<address>\d{1,3}(?:\.\d{1,3}){3})').Groups['address'].Value
+    } else { '' }
+    $routes = Invoke-HdcChecked `
+        -Hdc $hdc -Target $targetId `
+        -Arguments @('shell', 'netstat', '-rn') `
+        -Operation 'HarmonyOS Wi-Fi route query'
+    $routeBytes = [Text.Encoding]::UTF8.GetBytes(($routes -replace '\s+', ' ').Trim())
+    $routeDigest = [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData($routeBytes)
+    ).ToLowerInvariant()
+    return [pscustomobject]@{
+        active = $wlan.Success -and -not [string]::IsNullOrWhiteSpace($address) -and
+            $wlan.Value.Contains('UP')
+        address = $address
+        routeDigest = $routeDigest
+    }
+}
+
+function Test-MoshWifiIpv4Active {
+    return [bool](Get-MoshWifiNetworkState).active
+}
+
+function Open-MoshWifiPanel {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $layout = Get-MoshWifiLayout -Name "$Name-before"
+    $toggles = @(Get-MoshWifiToggle -Layout $layout)
+    if ($toggles.Count -gt 0) { return $layout }
+    $panelButtons = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+        [string]$_.attributes.id -eq 'PluginRootComponent_Stack_status_bar_wifi_panel' -and
+        [string]$_.attributes.visible -eq 'true' -and
+        [string]$_.attributes.clickable -eq 'true'
+    })
+    if ($panelButtons.Count -ne 1) {
+        throw '[environment] HarmonyOS Wi-Fi panel button was unavailable'
+    }
+    $panelCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$panelButtons[0].attributes.bounds)
+    Invoke-LeanTTYDeviceClick `
+        -Hdc $hdc -Target $targetId -X $panelCenter.x -Y $panelCenter.y `
+        -Operation 'Open HarmonyOS Wi-Fi panel'
+    Start-Sleep -Milliseconds 500
+    return Get-MoshWifiLayout -Name "$Name-panel"
+}
+
+function Get-MoshConnectedWifiSsid {
+    param([Parameter(Mandatory = $true)]$Layout)
+
+    $nodes = @(Get-LeanTTYLayoutNodes -Node $Layout)
+    $labels = @($nodes | Where-Object {
+        [string]$_.attributes.originalText -eq '已连接 WLAN' -and
+        [string]$_.attributes.visible -eq 'true'
+    })
+    if ($labels.Count -ne 1) {
+        throw '[environment] HarmonyOS connected Wi-Fi section was unavailable'
+    }
+    $parts = ([string]$labels[0].attributes.hierarchy).Split(',')
+    if ($parts.Count -lt 4) {
+        throw '[harness] HarmonyOS connected Wi-Fi hierarchy was malformed'
+    }
+    $sectionHierarchy = $parts[0..($parts.Count - 3)] -join ','
+    $rows = @($nodes | Where-Object {
+        [string]$_.attributes.type -eq 'Row' -and
+        [string]$_.attributes.visible -eq 'true' -and
+        [string]$_.attributes.clickable -eq 'true' -and
+        ([string]$_.attributes.hierarchy).StartsWith(
+            "$sectionHierarchy,1", [StringComparison]::Ordinal
+        )
+    } | Sort-Object { ([string]$_.attributes.hierarchy).Length })
+    if ($rows.Count -lt 1) {
+        throw '[environment] HarmonyOS did not report one connected Wi-Fi network'
+    }
+    $rowHierarchy = [string]$rows[0].attributes.hierarchy
+    $texts = @($nodes | Where-Object {
+        [string]$_.attributes.type -eq 'Text' -and
+        [string]$_.attributes.visible -eq 'true' -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.attributes.originalText) -and
+        ([string]$_.attributes.hierarchy).StartsWith(
+            "$rowHierarchy,", [StringComparison]::Ordinal
+        )
+    } | Sort-Object { [string]$_.attributes.hierarchy })
+    if ($texts.Count -lt 1) {
+        throw '[environment] HarmonyOS connected Wi-Fi name was unavailable'
+    }
+    return [string]$texts[0].attributes.originalText
+}
+
+function Get-MoshWifiNetworkRow {
+    param(
+        [Parameter(Mandatory = $true)]$Layout,
+        [Parameter(Mandatory = $true)][string]$Ssid
+    )
+
+    $nodes = @(Get-LeanTTYLayoutNodes -Node $Layout)
+    $texts = @($nodes | Where-Object {
+        [string]$_.attributes.originalText -ceq $Ssid -and
+        [string]$_.attributes.type -eq 'Text' -and
+        [string]$_.attributes.visible -eq 'true'
+    })
+    if ($texts.Count -ne 1) { return $null }
+    $textHierarchy = [string]$texts[0].attributes.hierarchy
+    return @($nodes | Where-Object {
+        [string]$_.attributes.type -eq 'Row' -and
+        [string]$_.attributes.visible -eq 'true' -and
+        [string]$_.attributes.clickable -eq 'true' -and
+        $textHierarchy.StartsWith(
+            ([string]$_.attributes.hierarchy + ','), [StringComparison]::Ordinal
+        )
+    } | Sort-Object { ([string]$_.attributes.hierarchy).Length } -Descending | Select-Object -First 1)
+}
+
+function Set-MoshWifiNetwork {
+    param(
+        [Parameter(Mandatory = $true)][string]$Ssid,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [switch]$AllowUnchangedNetwork
+    )
+
+    $layout = Open-MoshWifiPanel -Name $Name
+    $beforeSsid = Get-MoshConnectedWifiSsid -Layout $layout
+    $beforeState = Get-MoshWifiNetworkState
+    if ($beforeSsid -ceq $Ssid) {
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+        if (-not $AllowUnchangedNetwork) {
+            throw '[environment] AlternateWifiSsid names the currently connected Wi-Fi network'
+        }
+        return [pscustomobject]@{
+            changed = $false; addressChanged = $false; routingChanged = $false
+        }
+    }
+    $rows = @(Get-MoshWifiNetworkRow -Layout $layout -Ssid $Ssid)
+    if ($rows.Count -ne 1) {
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+        throw '[environment] The requested alternate Wi-Fi network is not currently available'
+    }
+    $center = Get-LeanTTYBoundsCenter -Bounds ([string]$rows[0].attributes.bounds)
+    Invoke-LeanTTYDeviceClick -Hdc $hdc -Target $targetId -X $center.x -Y $center.y `
+        -Operation 'Connect to the requested alternate Wi-Fi network'
+
+    $connected = $false
+    $afterState = $null
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Milliseconds 750
+        $stateLayout = Get-MoshWifiLayout -Name "$Name-state"
+        $passwordInputs = @(Get-LeanTTYLayoutNodes -Node $stateLayout | Where-Object {
+            [string]$_.attributes.id -eq 'wifi_password_input' -and
+            [string]$_.attributes.visible -eq 'true'
+        })
+        if ($passwordInputs.Count -gt 0) {
+            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+            throw '[environment] Alternate Wi-Fi must be saved before automated network switching'
+        }
+        try {
+            $connectedSsid = Get-MoshConnectedWifiSsid -Layout $stateLayout
+        } catch {
+            $connectedSsid = ''
+        }
+        $afterState = Get-MoshWifiNetworkState
+        $connected = $connectedSsid -ceq $Ssid -and [bool]$afterState.active
+        if ($connected) { break }
+    } while ($stopwatch.Elapsed.TotalSeconds -lt 35)
+    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+    if (-not $connected) {
+        throw '[environment] HarmonyOS did not connect to the requested alternate Wi-Fi network'
+    }
+    $addressChanged = [string]$beforeState.address -cne [string]$afterState.address
+    $routingChanged = [string]$beforeState.routeDigest -cne [string]$afterState.routeDigest
+    if (-not $addressChanged -and -not $routingChanged) {
+        throw '[environment] Wi-Fi changed names but neither source address nor routing changed'
+    }
+    return [pscustomobject]@{
+        changed = $true
+        addressChanged = $addressChanged
+        routingChanged = $routingChanged
+    }
 }
 
 function Set-MoshDeviceWifi {
@@ -1303,23 +1596,10 @@ function Set-MoshDeviceWifi {
         [Parameter(Mandatory = $true)][string]$Name
     )
 
-    $layout = Get-MoshFullDeviceLayout -Name "$Name-before"
+    $layout = Get-MoshWifiLayout -Name "$Name-before"
     $toggles = @(Get-MoshWifiToggle -Layout $layout)
     if ($toggles.Count -eq 0) {
-        $panelButtons = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
-            [string]$_.attributes.id -eq 'PluginRootComponent_Stack_status_bar_wifi_panel' -and
-            [string]$_.attributes.visible -eq 'true' -and
-            [string]$_.attributes.clickable -eq 'true'
-        })
-        if ($panelButtons.Count -ne 1) {
-            throw '[environment] HarmonyOS Wi-Fi panel button was unavailable'
-        }
-        $panelCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$panelButtons[0].attributes.bounds)
-        Invoke-LeanTTYDeviceClick `
-            -Hdc $hdc -Target $targetId -X $panelCenter.x -Y $panelCenter.y `
-            -Operation 'Open HarmonyOS Wi-Fi panel'
-        Start-Sleep -Milliseconds 500
-        $layout = Get-MoshFullDeviceLayout -Name "$Name-panel"
+        $layout = Open-MoshWifiPanel -Name $Name
         $toggles = @(Get-MoshWifiToggle -Layout $layout)
     }
     if ($toggles.Count -ne 1) {
@@ -1339,7 +1619,7 @@ function Set-MoshDeviceWifi {
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     do {
         Start-Sleep -Milliseconds 500
-        $stateLayout = Get-MoshFullDeviceLayout -Name "$Name-state"
+        $stateLayout = Get-MoshWifiLayout -Name "$Name-state"
         $stateToggles = @(Get-MoshWifiToggle -Layout $stateLayout)
         $toggleMatches = $stateToggles.Count -eq 1 -and
             (([string]$stateToggles[0].attributes.checked -eq 'true') -eq $Enabled)
@@ -1493,12 +1773,34 @@ function Invoke-MoshPageRebuild {
 }
 
 function Split-MoshPane {
-    Focus-ActiveTerminalInput -Name 'mosh-pane-close-before-split.json' | Out-Null
+    Wait-MoshPaneCount -Count 1 -Name 'mosh-pane-close-before-split' | Out-Null
+    Focus-ActiveTerminalInput -Name 'mosh-pane-close-before-split-focus.json' | Out-Null
     & $hdc -t $targetId shell (
         'uinput -K -d 2072 -d 2047 -d 2020 -u 2020 -u 2047 -u 2072'
     ) | Out-Null
     if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to invoke the LeanTTY split shortcut' }
     Wait-MoshPaneCount -Count 2 -Name 'mosh-pane-close-after-split' | Out-Null
+}
+
+function Initialize-MoshSinglePaneWorkspace {
+    $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $targetId `
+        -LocalPath (Join-Path $EvidenceDirectory 'mosh-workspace-initial.json')
+    $paneCount = @(Get-LeanTTYTerminalInputNodes -Layout $layout).Count
+    if ($paneCount -eq 1) {
+        return
+    }
+    if ($paneCount -ne 2) {
+        throw "[environment] Mosh scenario requires one active Tab with one or two Panes; found $paneCount"
+    }
+
+    Focus-ActiveTerminalInput -Name 'mosh-workspace-normalize-focus.json' | Out-Null
+    & $hdc -t $targetId shell (
+        'uinput -K -d 2072 -d 2047 -d 2039 -u 2039 -u 2047 -u 2072'
+    ) | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw '[environment] Unable to close the recovered idle Pane before the Mosh scenario'
+    }
+    Wait-MoshPaneCount -Count 1 -Name 'mosh-workspace-normalized' | Out-Null
 }
 
 function Close-ActiveMoshPane {
@@ -1549,6 +1851,10 @@ function Remove-DeviceState {
         Submit-LocalCommand -Command "host rm $alias" -Stage 'mosh-final-host-cleanup'
         Submit-LocalCommand -Command "ssh-keygen -R [$fixtureSshAddress]:$FixturePort" `
             -Stage 'mosh-final-known-host-cleanup'
+        if ($Scenario -eq 'wifi-network-switch') {
+            Submit-LocalCommand -Command "ssh-keygen -R [$resolvedServerAddress]:$SshComparisonPort" `
+                -Stage 'mosh-network-switch-known-host-cleanup'
+        }
         $script:deviceStateCleaned = $true
         return
     } catch {
@@ -1564,6 +1870,10 @@ function Remove-DeviceState {
         Submit-LocalCommand -Command "host rm $alias" -Stage 'mosh-recovered-host-cleanup'
         Submit-LocalCommand -Command "ssh-keygen -R [$fixtureSshAddress]:$FixturePort" `
             -Stage 'mosh-recovered-known-host-cleanup'
+        if ($Scenario -eq 'wifi-network-switch') {
+            Submit-LocalCommand -Command "ssh-keygen -R [$resolvedServerAddress]:$SshComparisonPort" `
+                -Stage 'mosh-recovered-network-switch-known-host-cleanup'
+        }
         $script:deviceCleanupRecovery = 'app-relaunch'
         $script:deviceStateCleaned = $true
     }
@@ -1675,6 +1985,9 @@ function Write-Evidence {
         'wifi-pause-recovery' {
             'physical-wifi-pause-reported-interrupted-then-recovered-with-remote-shell-preserved'
         }
+        'wifi-network-switch' {
+            'physical-wifi-network-switch-compared-mosh-session-recovery-with-ssh-session-behavior'
+        }
         'suspend-recovery' {
             'controlled-system-suspend-and-wake-preserved-the-mosh-session-and-remote-shell'
         }
@@ -1778,7 +2091,9 @@ function Write-Evidence {
             preparedStateVerified = $networkStateReady
             requiredPersistentBoundary = 'windows-and-hyper-v-udp-firewall'
             sshPortProxyRequired = $false
-            mutatedByScenario = ($Scenario -in @('pause-recovery', 'wifi-pause-recovery', 'prediction'))
+            mutatedByScenario = ($Scenario -in @(
+                'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'prediction'
+            ))
             persistentStateMutatedByScenario = $false
             statusEvidence = $networkStatusPath
         }
@@ -1789,6 +2104,8 @@ function Write-Evidence {
                 'wsl-tc-exact-dynamic-port-bidirectional-drop'
             } elseif ($Scenario -eq 'wifi-pause-recovery') {
                 'harmony-status-bar-wlan-toggle'
+            } elseif ($Scenario -eq 'wifi-network-switch') {
+                'harmony-status-bar-saved-wlan-network-selection'
             } elseif ($Scenario -eq 'server-disappearance') {
                 'server-sigkill'
             } else { 'none' })
@@ -1811,6 +2128,34 @@ function Write-Evidence {
             impairmentCleanupVerified = $udpImpairmentCleanupVerified
             wifiControlCleanupVerified = $wifiControlCleanupVerified
             predictionRelayDroppedPackets = $predictionRelayDroppedPackets
+        }
+        networkSwitchComparison = [ordered]@{
+            exercised = ($Scenario -eq 'wifi-network-switch')
+            networkIdentityRetention = 'redacted'
+            sourceAddressChanged = $wifiSourceAddressChanged
+            routingChanged = $wifiRoutingChanged
+            switchObservedByHarnessMs = $networkSwitchElapsedMs
+            originalNetworkRestored = $wifiOriginalNetworkRestored
+            mosh = [ordered]@{
+                sameSessionPreserved = $sessionStayedConnected
+                sameRemoteTerminalPreserved = $remoteShellAliveAfter
+                postSwitchCommandPassed = $recoveryCommandPassed
+                recoveryObservedByHarnessMs = $moshSwitchRecoveryElapsedMs
+                requiredUserAction = 'none'
+            }
+            ssh = [ordered]@{
+                outcome = $sshSwitchOutcome
+                transportReachable = $sshSwitchTransportReachable
+                sessionPreserved = $sshSwitchSessionPreserved
+                disconnectObservedByHarnessMs = $sshSwitchDisconnectElapsedMs
+                reconnectRequired = $sshSwitchReconnectRequired
+                reconnectFailed = $sshSwitchReconnectFailed
+                reconnectTerminalMode = $sshSwitchReconnectTerminalMode
+                reconnectObservedByHarnessMs = $sshSwitchReconnectElapsedMs
+                postSwitchCommandPassed = $sshSwitchPostSwitchCommandPassed
+                requiredUserAction = $sshSwitchUserAction
+            }
+            primaryOracle = 'changed-device-source-or-route-app-lifecycle-logs-same-mosh-pty-command-and-direct-lan-ssh-command'
         }
         lifecycleBehavior = [ordered]@{
             exercised = ($Scenario -in @(
@@ -2036,6 +2381,9 @@ try {
 
     $resolvedServerAddress = Resolve-MoshServerAddress
     $resolvedRemoteScope = Resolve-MoshRemoteScope
+    if ($Scenario -eq 'wifi-network-switch') {
+        $resolvedSshComparisonUser = Resolve-MoshSshComparisonUser
+    }
     Write-LiveStatus -Stage 'network-fixture-check'
     Assert-MoshTestNetworkReady
     $fixtureProcess = Start-MoshFixture
@@ -2080,6 +2428,7 @@ try {
     $initialAppProcessStartTimeTicks = [string]$initialProcessIdentity.startTimeTicks
     Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
         -LocalPath (Join-Path $EvidenceDirectory 'app-ready.json') -TimeoutSeconds 20 | Out-Null
+    Initialize-MoshSinglePaneWorkspace
     $lastProvenBoundary = 'test-hap-launched'
 
     Write-LiveStatus -Stage 'device-state-setup'
@@ -2088,6 +2437,10 @@ try {
     Submit-LocalCommand -Command "host rm $alias" -Stage 'mosh-initial-host-cleanup'
     Submit-LocalCommand -Command "ssh-keygen -R [$fixtureSshAddress]:$FixturePort" `
         -Stage 'mosh-initial-known-host-cleanup'
+    if ($Scenario -eq 'wifi-network-switch') {
+        Submit-LocalCommand -Command "ssh-keygen -R [$resolvedServerAddress]:$SshComparisonPort" `
+            -Stage 'mosh-network-switch-initial-known-host-cleanup'
+    }
     $preferencesDigestBefore = Get-MoshPreferencesDigest
     Submit-LocalCommand -Command "host add $alias mosh@${fixtureSshAddress}:$FixturePort" `
         -Stage 'mosh-host-setup'
@@ -2171,6 +2524,213 @@ try {
     $remoteShellAliveBefore = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
     if (-not $remoteShellAliveBefore) {
         throw '[product] Controlled remote Mosh terminal exited after the baseline command'
+    }
+
+    if ($Scenario -eq 'wifi-network-switch') {
+        Write-LiveStatus -Stage 'network-switch-ssh-baseline'
+        Split-MoshPane
+        Submit-LocalCommand `
+            -Command (
+                "host add $sshAlias ${resolvedSshComparisonUser}@" +
+                "${resolvedServerAddress}:$SshComparisonPort -i $SshComparisonIdentity"
+            ) `
+            -Stage 'network-switch-ssh-host-setup'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+        Submit-LocalCommand -Command "ssh $sshAlias" -Stage 'network-switch-ssh-connect'
+        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+            -Pattern 'native control event: host_key_prompt:' -TimeoutSeconds 15 | Out-Null
+        Submit-InteractiveValue -Value 'yes' -Name 'network-switch-ssh-host-trust'
+        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+            -Pattern 'SSH session connected, pty resized to' -TimeoutSeconds 30 | Out-Null
+        $sshBaselineCaseId = 'ssh_switch_before_' + $attemptId.Substring(0, 8)
+        $sshBaselineMarker = Submit-MoshSshEchoProbe -CaseId $sshBaselineCaseId `
+            -Name 'network-switch-ssh-baseline-command'
+        if (-not (Test-MoshTerminalSearch `
+            -Query $sshBaselineMarker -ExpectMatch $true `
+            -Name 'network-switch-ssh-baseline-search')) {
+            throw '[product] SSH baseline command failed before the physical network switch'
+        }
+
+        $wifiLayout = Open-MoshWifiPanel -Name 'mosh-network-switch-original'
+        $wifiOriginalSsid = Get-MoshConnectedWifiSsid -Layout $wifiLayout
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+        if ($wifiOriginalSsid -ceq $AlternateWifiSsid) {
+            throw '[environment] AlternateWifiSsid names the currently connected Wi-Fi network'
+        }
+
+        Focus-MoshPane -Side 'left' -Name 'network-switch-mosh-before-switch'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+        Write-LiveStatus -Stage 'wifi-network-switch'
+        $switchStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        $wifiOriginalNetworkRestored = $false
+        $wifiNetworkSwitchedByScenario = $true
+        $switchResult = Set-MoshWifiNetwork `
+            -Ssid $AlternateWifiSsid -Name 'mosh-network-switch-alternate'
+        $networkSwitchElapsedMs = [long]$switchStopwatch.Elapsed.TotalMilliseconds
+        $wifiSourceAddressChanged = [bool]$switchResult.addressChanged
+        $wifiRoutingChanged = [bool]$switchResult.routingChanged
+
+        $sshClosed = $false
+        $switchLifecycleLogs = ''
+        $sshOutcomeStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            $switchLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+            if ($switchLogs -match 'SSH closed, exitCode=') {
+                $sshClosed = $true
+                $sshSwitchDisconnectElapsedMs = [long]$switchStopwatch.Elapsed.TotalMilliseconds
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        } while ($sshOutcomeStopwatch.Elapsed.TotalSeconds -lt 8)
+
+        $sshSwitchTransportReachable = Test-MoshDeviceTcpReachable
+        if (-not $sshSwitchTransportReachable) {
+            throw '[environment] Alternate Wi-Fi cannot reach the stable LAN SSH port'
+        }
+
+        Focus-MoshPane -Side 'right' -Name 'network-switch-ssh-after-switch'
+        if (-not $sshClosed) {
+            $modeObservation = Get-MoshFocusedPaneTerminalMode
+            $switchLifecycleLogs += $modeObservation.logs + "`n"
+            if ($modeObservation.mode -eq 0) {
+                $sshClosed = $true
+                $sshSwitchDisconnectElapsedMs = [long]$switchStopwatch.Elapsed.TotalMilliseconds
+            } else {
+                $sshAfterCaseId = 'ssh_switch_after_' + $attemptId.Substring(0, 8)
+                try {
+                    $sshAfterMarker = Submit-MoshSshEchoProbe -CaseId $sshAfterCaseId `
+                        -Name 'network-switch-ssh-preservation-command'
+                    $sshSwitchSessionPreserved = Test-MoshTerminalSearch `
+                        -Query $sshAfterMarker -ExpectMatch $true `
+                        -Name 'network-switch-ssh-preservation-search'
+                } catch {
+                    $switchLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+                    $switchLifecycleLogs += $switchLogs + "`n"
+                    if ($switchLogs -match 'SSH closed, exitCode=') {
+                        $sshClosed = $true
+                        $sshSwitchDisconnectElapsedMs = [long]$switchStopwatch.Elapsed.TotalMilliseconds
+                    } else {
+                        $modeObservation = Get-MoshFocusedPaneTerminalMode
+                        $switchLifecycleLogs += $modeObservation.logs + "`n"
+                        if ($modeObservation.mode -eq 0) {
+                            $sshClosed = $true
+                            $sshSwitchDisconnectElapsedMs = [long]$switchStopwatch.Elapsed.TotalMilliseconds
+                        } else {
+                            $sshSwitchOutcome = 'unresponsive'
+                            $sshSwitchReconnectRequired = $true
+                            $sshSwitchUserAction = 'disconnect-and-reconnect'
+                            Invoke-MoshSshDisconnectEscape
+                            $sshClosed = $true
+                            $sshSwitchDisconnectElapsedMs = [long]$switchStopwatch.Elapsed.TotalMilliseconds
+                        }
+                    }
+                }
+            }
+        }
+        if ($sshClosed -and $sshSwitchOutcome -eq 'not-run') {
+            $sshSwitchOutcome = 'disconnected'
+            $sshSwitchReconnectRequired = $true
+            $sshSwitchUserAction = 'reconnect'
+        } elseif (-not $sshClosed) {
+            $sshSwitchOutcome = 'preserved'
+            $sshSwitchUserAction = 'none'
+        }
+
+        $switchLifecycleLogs += Get-LeanTTYAppLogs `
+            -Hdc $hdc -Target $targetId -ProcessId $appPid
+        [IO.File]::WriteAllText(
+            (Join-Path $EvidenceDirectory 'network-switch-protocol.log'),
+            $switchLifecycleLogs + "`n",
+            [Text.UTF8Encoding]::new($false)
+        )
+        $switchObservation = Get-MoshLifecycleObservation -Logs $switchLifecycleLogs
+        $automaticCloseObserved = $switchObservation.closed
+        $automaticErrorObserved = $switchObservation.error
+        $interruptionObserved = $switchObservation.interrupted
+        $interruptionReason = $switchObservation.interruptionReason
+        if ($automaticCloseObserved -or $automaticErrorObserved) {
+            $observedErrorCategory = 'local-udp-io-error'
+            throw '[product] Mosh Session terminated during a physical Wi-Fi network switch'
+        }
+        Focus-MoshPane -Side 'right' -Name 'network-switch-ssh-recovery-focus'
+        if ($sshSwitchReconnectRequired) {
+            Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
+            $sshReconnectStopwatch = [Diagnostics.Stopwatch]::StartNew()
+            try {
+                Submit-LocalCommand -Command "ssh $sshAlias" -Stage 'network-switch-ssh-reconnect'
+                Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+                    -Pattern 'SSH session connected, pty resized to' -TimeoutSeconds 30 | Out-Null
+            } catch {
+                $reconnectLogs = Get-LeanTTYAppLogs `
+                    -Hdc $hdc -Target $targetId -ProcessId $appPid
+                [IO.File]::WriteAllText(
+                    (Join-Path $EvidenceDirectory 'network-switch-ssh-reconnect.log'),
+                    $reconnectLogs + "`n",
+                    [Text.UTF8Encoding]::new($false)
+                )
+                $modeObservation = Get-MoshFocusedPaneTerminalMode
+                $switchLifecycleLogs += "`n" + $modeObservation.logs
+                $sshSwitchReconnectTerminalMode = $modeObservation.mode
+                if ($modeObservation.mode -ne 3) {
+                    $sshSwitchReconnectFailed = $true
+                    $sshSwitchOutcome = 'reconnect-failed'
+                    $sshSwitchUserAction = 'retry-reconnect'
+                }
+            }
+            if (-not $sshSwitchReconnectFailed) {
+                $sshSwitchReconnectTerminalMode = 3
+                $sshSwitchReconnectElapsedMs = [long]$sshReconnectStopwatch.Elapsed.TotalMilliseconds
+            }
+        }
+        if (-not $sshSwitchReconnectFailed) {
+            $sshPostCaseId = 'ssh_switch_post_' + $attemptId.Substring(0, 8)
+            $sshPostMarker = Submit-MoshSshEchoProbe -CaseId $sshPostCaseId `
+                -Name 'network-switch-ssh-post-switch-command'
+            $sshSwitchPostSwitchCommandPassed = Test-MoshTerminalSearch `
+                -Query $sshPostMarker -ExpectMatch $true `
+                -Name 'network-switch-ssh-post-switch-search'
+            if (-not $sshSwitchPostSwitchCommandPassed) {
+                throw '[product] SSH did not execute a command after its recorded network-switch outcome'
+            }
+        }
+
+        Focus-MoshPane -Side 'left' -Name 'network-switch-mosh-after-switch'
+        $recoveryCaseId = 'network_switch_' + $attemptId.Substring(0, 8)
+        Submit-MoshInput -Text "ltty-mosh-check $recoveryCaseId"
+        Wait-ControlFileMatch -Path $fixtureEvent `
+            -Pattern "(?ms)^case=$([regex]::Escape($recoveryCaseId))$.*^result=passed$" `
+            -TimeoutSeconds 30 | Out-Null
+        $moshSwitchRecoveryElapsedMs = [long]$switchStopwatch.Elapsed.TotalMilliseconds
+        $switchLifecycleLogs += "`n" + (Get-LeanTTYAppLogs `
+            -Hdc $hdc -Target $targetId -ProcessId $appPid)
+        $switchObservation = Get-MoshLifecycleObservation -Logs $switchLifecycleLogs
+        $recoveredStatusObserved = $switchObservation.recovered
+        $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+        $serverAliveAfterSwitch = Test-WslProcessPresent -LinuxPid $moshServerPid
+        $sessionStayedConnected = -not $automaticCloseObserved -and -not $automaticErrorObserved
+        $recoveryCommandPassed = $sessionStayedConnected -and $remoteShellAliveAfter -and
+            $serverAliveAfterSwitch
+        if (-not $recoveryCommandPassed) {
+            throw '[product] Mosh did not preserve the same remote PTY across the Wi-Fi network switch'
+        }
+
+        if ($sshSwitchReconnectFailed) {
+            throw '[product] SSH failed to reconnect after the network switch despite TCP reachability'
+        }
+
+        Focus-MoshPane -Side 'right' -Name 'network-switch-ssh-final-focus'
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+        Submit-MoshChildInput -Text 'exit' -Name 'network-switch-ssh-exit'
+        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+            -Pattern 'SSH closed, exitCode=0' -TimeoutSeconds 20 | Out-Null
+        Focus-MoshPane -Side 'left' -Name 'network-switch-mosh-final-focus'
+        $observedErrorCategory = 'none'
+        $lastProvenBoundary = 'physical-wifi-network-switch-mosh-ssh-comparison-passed'
+        [IO.File]::WriteAllText(
+            (Join-Path $EvidenceDirectory 'network-behavior-device-app.log'),
+            $switchObservation.logs + "`n",
+            [Text.UTF8Encoding]::new($false)
+        )
     }
 
     if ($Scenario -eq 'fixed-endpoint') {
@@ -3192,6 +3752,15 @@ try {
         }
     }
 
+    if ($Scenario -eq 'wifi-network-switch' -and $wifiNetworkSwitchedByScenario) {
+        Write-LiveStatus -Stage 'wifi-network-restore'
+        Set-MoshWifiNetwork -Ssid $wifiOriginalSsid `
+            -Name 'mosh-network-switch-original-restore' -AllowUnchangedNetwork | Out-Null
+        $wifiOriginalNetworkRestored = $true
+        $wifiControlCleanupVerified = $true
+        $wifiNetworkSwitchedByScenario = $false
+    }
+
     Write-LiveStatus -Stage 'cleanup'
     Remove-DeviceState
     $preferencesDigestAfter = Get-MoshPreferencesDigest
@@ -3258,6 +3827,21 @@ try {
         } catch {
             $wifiControlCleanupVerified = $false
             Write-Warning ("Unable to restore HarmonyOS Wi-Fi: " + $_.Exception.Message)
+        }
+    }
+    if ($wifiNetworkSwitchedByScenario -and
+        -not [string]::IsNullOrWhiteSpace($wifiOriginalSsid)) {
+        try {
+            Set-MoshWifiNetwork -Ssid $wifiOriginalSsid `
+                -Name 'mosh-network-switch-failure-restore' -AllowUnchangedNetwork | Out-Null
+            $wifiOriginalNetworkRestored = $true
+            $wifiControlCleanupVerified = $true
+            $wifiNetworkSwitchedByScenario = $false
+        } catch {
+            $wifiOriginalNetworkRestored = $false
+            $wifiControlCleanupVerified = $false
+            Write-Warning ("Unable to restore the original HarmonyOS Wi-Fi network: " +
+                $_.Exception.Message)
         }
     }
     if ($windowToggled -and -not [string]::IsNullOrWhiteSpace($targetId) -and $null -ne $hdc) {

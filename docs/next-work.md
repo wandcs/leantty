@@ -93,8 +93,14 @@ manifest、附件和哈希保持不变。
     后回到 `Responsive`，在同一远端 PTY（PID 12575）执行新命令，随后认证关闭。没有自动
     close/error；Preferences、secret、fixture、映射、持久网络和 WLAN 恢复清理均通过。证据为
     `build/verification/device-mosh-wifi-pause-recovery-20260903-94f1322/device-mosh.json`。
-  - [ ] Wi-Fi 暂断通过后再执行网络切换，并分别记录 Mosh 与 SSH 的恢复时间、会话状态和必要
-    用户操作；不能用已有的精确端口丢包结果代替真实接口/路由变化。
+  - [x] 真实 Wi-Fi 网络切换已在 HAD-W32 上通过。测试机切换到已保存、可访问同一 LAN 的备用
+    网络后，源地址和路由均改变；Mosh 从 `Interrupted(NoRecentContact)` 回到 `Responsive`，保留
+    同一 Session 与远端 PTY，并在切换开始后约 53.3 秒完成新命令，无需用户操作。作为对照，
+    SSH 在约 23.3 秒后退回本地提示符；设备直连 TCP 端口仍可达，用户需重新连接，约 7.0 秒后
+    新 SSH Session 可执行命令。候选 HAP SHA-256 为
+    `59de09640022fa23e9d4529e7cdfbb715a4f6efc7a6ca18a013079141d978fc8`；Preferences、secret、
+    fixture、映射、持久网络、原 Wi-Fi 和临时目录清理均通过。证据为
+    `build/verification/device-mosh-network-switch-20260904-final/device-mosh.json`。
   - [ ] 汇总全部场景后审计 hilog、Preferences、终端、fixture、临时目录和崩溃信息；任何
     secret、状态污染或清理不确定均使本项保持未完成。
 
