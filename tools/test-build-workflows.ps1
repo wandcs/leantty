@@ -114,6 +114,115 @@ try {
             Where-Object { $_.Name -match '^\.(?:tmp|bak)-' }).Count -eq 0
     ) 'Full synthetic Agent result did not survive its atomic JSON round trip'
 
+    $releaseStages = @(Get-LeanTTYReleaseVerificationStages)
+    $expectedReleaseStageNames = @(
+        'candidate',
+        'harness-qualification',
+        'key-passphrase',
+        'key-comment-restart',
+        'ecdsa-import-restart',
+        'host-identity',
+        'host-identity-openssh',
+        'host-identity-default-ecdsa',
+        'background-bell',
+        'background-bell-suppression',
+        'background-bell-cold-stale',
+        'background-bell-late-handled',
+        'background-bell-late-destroyed',
+        'background-bell-manual-dismiss',
+        'background-bell-permission',
+        'unexpected-recovery-uninstall',
+        'long-task-notification',
+        'agent-compatibility',
+        'ssh-physical-matrix'
+    )
+    Assert-True (
+        (@($releaseStages.name) -join '|') -ceq ($expectedReleaseStageNames -join '|') -and
+        [int](($releaseStages | Measure-Object plannedModelRequests -Sum).Sum) -eq 9 -and
+        [int]$releaseStages[-3].plannedModelRequests -eq 1 -and
+        [int]$releaseStages[-2].plannedModelRequests -eq 8
+    ) 'Release verification stage order or fixed model-request budget changed'
+    foreach ($releaseStage in $releaseStages) {
+        Assert-True (
+            Test-Path -LiteralPath (Join-Path $PSScriptRoot $releaseStage.script) -PathType Leaf
+        ) "Release stage '$($releaseStage.name)' references a missing authoritative script"
+    }
+
+    $syntheticReleaseEvidencePath = Join-Path $testRoot 'release-report\stage-result.json'
+    Write-LeanTTYAtomicJson -Path $syntheticReleaseEvidencePath -Value ([ordered]@{
+        status = 'passed'
+        attemptId = 'attempt-2'
+        previousAttemptId = 'attempt-1'
+        cleanup = [ordered]@{ result = 'passed'; detail = 'synthetic cleanup' }
+    })
+    $syntheticReleaseEvidence = Get-LeanTTYReleaseEvidenceSummary `
+        -Path $syntheticReleaseEvidencePath -StageName 'synthetic'
+    Assert-True (
+        $syntheticReleaseEvidence.outcome -eq 'passed' -and
+        $syntheticReleaseEvidence.cleanup -eq 'passed' -and
+        $syntheticReleaseEvidence.attemptId -eq 'attempt-2' -and
+        $syntheticReleaseEvidence.previousAttemptId -eq 'attempt-1' -and
+        $syntheticReleaseEvidence.actualModelRequests -eq 'unavailable'
+    ) 'Release evidence summary inferred model usage or lost attempt/cleanup metadata'
+
+    $quotedSshEvidenceDirectory = Join-Path $testRoot "release-report\ssh operator's evidence"
+    $syntheticHap = Join-Path $testRoot 'release-report\LeanTTY-test-signed.hap'
+    [IO.File]::WriteAllText($syntheticHap, 'synthetic')
+    $sshResumeCommand = Get-LeanTTYReleaseSshResumeCommand `
+        -RepoRoot $repoRoot -Target 'HAD-W32' -HapPath $syntheticHap `
+        -EvidenceDirectory $quotedSshEvidenceDirectory -FixturePort 22222 `
+        -Distribution 'Ubuntu'
+    Assert-True (
+        $sshResumeCommand.Contains('-Resume') -and
+        $sshResumeCommand.Contains("ssh operator''s evidence") -and
+        $sshResumeCommand.Contains('-FixturePort 22222') -and
+        -not $sshResumeCommand.Contains('UnlockPasswordPath')
+    ) 'SSH resume command is not bound safely to the original evidence directory'
+
+    $syntheticReleaseReport = [pscustomobject][ordered]@{
+        result = 'failed'
+        completeApplicablePhysicalMatrixClaimed = $false
+        candidate = [ordered]@{ sha256 = 'a' * 64 }
+        harness = [ordered]@{ gitCommit = 'b' * 40; gitTree = 'c' * 40 }
+        modelUsage = [ordered]@{
+            plannedRequests = 9; actualRequests = 'unavailable'; automaticRetries = 0
+        }
+        stages = @([ordered]@{
+                name = 'ssh-physical-matrix'; status = 'failed'; attemptCount = 1
+                durationMs = 1250; cleanup = 'passed'; resultPath = $syntheticReleaseEvidencePath
+            })
+        failure = 'synthetic failure'
+        sshResumeCommand = $sshResumeCommand
+    }
+    $releaseArtifacts = Write-LeanTTYReleaseReportArtifacts `
+        -EvidenceDirectory (Join-Path $testRoot 'release-report') `
+        -Report $syntheticReleaseReport
+    $releaseReportRoundTrip = Get-Content -LiteralPath $releaseArtifacts.reportPath -Raw |
+        ConvertFrom-Json
+    $releaseSummaryText = Get-Content -LiteralPath $releaseArtifacts.summaryPath -Raw
+    Assert-True (
+        $releaseReportRoundTrip.modelUsage.actualRequests -eq 'unavailable' -and
+        $releaseSummaryText.Contains('ssh-physical-matrix') -and
+        $releaseSummaryText.Contains($sshResumeCommand) -and
+        -not $releaseSummaryText.Contains('UnlockPasswordPath') -and
+        @(Get-ChildItem -LiteralPath (Split-Path $releaseArtifacts.reportPath -Parent) -Force |
+            Where-Object { $_.Name -match '^\.(?:tmp|bak)-' }).Count -eq 0
+    ) 'Release report or maintainer summary lost identity, resume or atomic-write guarantees'
+
+    $releaseOrchestratorPath = Join-Path $PSScriptRoot 'verify-release-pc.ps1'
+    Assert-True (Test-Path -LiteralPath $releaseOrchestratorPath -PathType Leaf) (
+        "Release verification orchestrator is missing: $releaseOrchestratorPath"
+    )
+    $releaseOrchestratorText = Get-Content -LiteralPath $releaseOrchestratorPath -Raw
+    Assert-True (
+        $releaseOrchestratorText.Contains('Get-LeanTTYReleaseVerificationStages') -and
+        $releaseOrchestratorText.Contains('Invoke-AuthoritativeReleaseStage') -and
+        $releaseOrchestratorText.Contains('Get-LeanTTYReleaseSshResumeCommand') -and
+        $releaseOrchestratorText.Contains('automaticRetries = 0') -and
+        -not $releaseOrchestratorText.Contains('uitest uiInput') -and
+        -not $releaseOrchestratorText.Contains('wsl.exe --exec')
+    ) 'Release entry duplicated device control or lost its fixed no-auto-retry contract'
+
     Assert-True (
         $candidateScriptText.Contains('remote get-url origin') -and
         -not $candidateScriptText.Contains('git-common-dir')

@@ -74,11 +74,24 @@ git clone https://github.com/wandcs/leantty.git $releaseCheckout
 
 Before building a release:
 
-- Run `tools/verify-pc.ps1` on the target HarmonyOS PC from the clean development
-  checkout. Before the first formal behavior matrix, qualify the clean harness
-  against that exact retained review-test HAP, then run every applicable named
-  `verify-*-pc.ps1` scenario against the unchanged HAP before pushing the
-  verified commit:
+- From the clean development checkout, use the thin registered checkpoint entry
+  to run `verify-pc.ps1`, qualify the harness and invoke the current named
+  scenarios against one unchanged retained HAP:
+
+  ```powershell
+  .\tools\verify-release-pc.ps1 `
+    -Target '<physical-PC-target>' `
+    -EvidenceDirectory 'C:\path\outside\the\repository\release-verification'
+  ```
+
+  Its `release-report.json` and `maintainer-summary.md` do not replace the
+  referenced stage evidence. The report currently records
+  `completeApplicablePhysicalMatrixClaimed=false` because the 1.6 Mosh network
+  and lifecycle matrix still needs formal retained-candidate evidence. Do not
+  advance to C4 while that flag is false.
+- Before the first formal behavior matrix, qualify the clean harness against
+  that exact retained review-test HAP. The entry runs this command; the
+  lower-level form remains available for diagnosis:
 
   ```powershell
   .\tools\qualify-acceptance-harness-pc.ps1 `
