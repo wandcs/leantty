@@ -1362,6 +1362,7 @@ foreach ($networkContract in @(
 foreach ($moshContract in @(
     'real stock',
     "'start-ssh-auth-fixture.ps1'",
+    "'leantty_ssh/ssh-auth-fixture/src/main.rs'",
     "'preflight-device.ps1'",
     "'dev-pc.ps1'",
     "'mosh-input-snapshot'",
