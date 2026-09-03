@@ -246,6 +246,7 @@ physical checkpoints in the fixed order below:
 ```powershell
 .\tools\verify-release-pc.ps1 `
   -Target '<physical-PC-target>' `
+  -MoshAlternateWifiSsid '<saved alternate SSID>' `
   -EvidenceDirectory 'C:\path\outside\the\repository\release-verification'
 ```
 
@@ -260,12 +261,12 @@ harness commit/tree, target, ports and distribution. An SSH failure additionally
 prints the exact `verify-ssh-matrix-pc.ps1 -Resume` command bound to that stage's
 existing evidence directory.
 
-The entry currently reports `completeApplicablePhysicalMatrixClaimed=false`.
-The 1.6 Mosh verifier still produces diagnostic-only evidence, so its seven
-applicable network/lifecycle stages must be promoted to retained-candidate
-acceptance and added to this registry before the report can represent complete
-C3. Production/review artifacts, signing and publication remain C4 and later
-work in every case.
+The Mosh stage requires one already saved alternate Wi-Fi that can reach the
+same test LAN. The report stores only a hash identity for that SSID. It reports
+`completeApplicablePhysicalMatrixClaimed=true` only after the seven formal Mosh
+network/lifecycle scenarios and every other registered C3 stage pass against
+the same candidate and harness. Production/review artifacts, signing and
+publication remain C4 and later work in every case.
 
 The lower-level commands called by the current registry are:
 
@@ -285,6 +286,7 @@ The lower-level commands called by the current registry are:
 .\tools\verify-background-bell-notification-pc.ps1 -HapPath <signed-test-hap> -ManualDismiss
 .\tools\verify-background-bell-permission-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-unexpected-recovery-uninstall-pc.ps1 -HapPath <signed-test-hap>
+.\tools\verify-mosh-matrix-pc.ps1 -Target <physical-PC-target> -HapPath <signed-test-hap> -AlternateWifiSsid <saved-alternate-SSID>
 .\tools\verify-long-task-notification-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-agent-compatibility-pc.ps1 -HapPath <signed-test-hap>
 .\tools\verify-ssh-matrix-pc.ps1
@@ -1047,9 +1049,10 @@ search while Mosh and controlled DEC 1049 content remain confined to the Session
 physical `Ctrl-^ .`, the original marker must return and all Mosh-only markers must be absent.
 The close verdict waits for page-restoration acknowledgement, then verifies the Preferences
 digest, bootstrap-negative search and paired device/fixture cleanup.
-It never mutates the persistent network and remains
-`acceptanceEligible=false`; formal release coverage must rerun the applicable
-network/lifecycle matrix against the retained candidate.
+It never mutates the persistent network. A routine invocation remains
+`acceptanceEligible=false`; formal release coverage uses
+`verify-mosh-matrix-pc.ps1`, which passes `-Formal` and validates the retained
+candidate, clean harness, fixed scenario order and paired cleanup.
 
 `-Scenario agent-tui` is the change-scoped Mosh Agent diagnostic. It starts the installed,
 authenticated Codex TUI in `direct interaction` mode and submits no prompt, so

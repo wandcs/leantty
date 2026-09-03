@@ -32,7 +32,10 @@ param(
     [string]$SshComparisonIdentity = 'id_ed25519',
     [string]$EvidenceDirectory = '',
     [ValidateRange(30, 300)][int]$OperatorWaitSeconds = 120,
-    [string]$Distribution = $env:LEANTTY_WSL_DISTRO
+    [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
+    [switch]$Formal,
+    [string]$CandidateBasePath = '',
+    [string]$PreviousAttemptId = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,8 +48,65 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+. (Join-Path $PSScriptRoot 'candidate-store.ps1')
+. (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
-$selectedHapPath = if ([string]::IsNullOrWhiteSpace($HapPath)) {
+$formalScenarios = @(
+    'compatibility',
+    'pause-recovery',
+    'suspend-recovery',
+    'operator-lock-recovery',
+    'operator-lid-recovery',
+    'wifi-pause-recovery',
+    'wifi-network-switch'
+)
+$harnessStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the Mosh harness source state' }
+$harnessDirty = $harnessStatus.Count -gt 0
+$harnessCommit = (& git -C $repoRoot rev-parse HEAD 2>&1).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the Mosh harness commit' }
+$harnessTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}' 2>&1).Trim().ToLowerInvariant()
+if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the Mosh harness tree' }
+$harnessDifferencePaths = @()
+$candidate = $null
+
+if ($Formal) {
+    if ($Scenario -notin $formalScenarios) {
+        throw "Formal Mosh acceptance does not include scenario '$Scenario'"
+    }
+    if ([string]::IsNullOrWhiteSpace($HapPath)) {
+        throw '-Formal requires -HapPath for one exact retained candidate'
+    }
+    if ($harnessDirty) { throw 'Formal Mosh acceptance requires a clean committed harness' }
+    $candidate = Resolve-LeanTTYRetainedCandidate `
+        -RepoRoot $repoRoot -HapPath $HapPath -CandidateBasePath $CandidateBasePath
+    if ([bool]$candidate.gitDirty -or
+        [string]$candidate.verificationMode -notin @('device-deployed', 'device-behavior')) {
+        throw 'Formal Mosh acceptance requires a clean device-deployed retained candidate'
+    }
+    $harnessDifferencePaths = @(Assert-LeanTTYCandidateHarnessCompatibility `
+        -RepoRoot $repoRoot -Candidate $candidate -AllowedHarnessPaths @(
+            'tools/verify-mosh-pc.ps1',
+            'tools/verify-mosh-matrix-pc.ps1',
+            'tools/verify-release-pc.ps1',
+            'tools/release-tooling.ps1',
+            'tools/test-build-workflows.ps1',
+            'tools/test-device-regression.ps1',
+            'tools/candidate-store.ps1',
+            'tools/configure-mosh-test-network.ps1',
+            'tools/device-regression.ps1',
+            'tools/hdc-common.ps1',
+            'tools/rust-wsl.ps1',
+            'docs/next-work.md',
+            'docs/quality-strategy.md',
+            'docs/release-process.md',
+            'docs/design/mosh.md'
+        ))
+}
+
+$selectedHapPath = if ($Formal) {
+    [string]$candidate.hapPath
+} elseif ([string]::IsNullOrWhiteSpace($HapPath)) {
     Join-Path $repoRoot 'entry\build\default\outputs\default\entry-default-signed.hap'
 } else {
     [IO.Path]::GetFullPath($HapPath)
@@ -2036,24 +2096,52 @@ function Write-Evidence {
         -Observations $commandObservations `
         -BusinessVerdict $(if ($result -eq 'passed') { 'passed' } else { 'failed' }) `
         -BusinessPostcondition $businessPostcondition
+    $cleanupPassed = $deviceStateCleaned -and $fixtureCleaned -and
+        $fixtureMappingRemoved -and $networkStateReady -and
+        -not (Test-Path -LiteralPath $fixtureRoot) -and
+        ($Scenario -ne 'wifi-network-switch' -or $wifiOriginalNetworkRestored)
     $evidence = [ordered]@{
-        schemaVersion = 1
-        gate = '1.6-mosh-physical-diagnostic'
+        schemaVersion = 2
+        gate = $(if ($Formal) {
+            '1.6-mosh-physical-acceptance'
+        } else { '1.6-mosh-physical-diagnostic' })
         result = $result
-        acceptanceEligible = $false
-        verificationMode = 'device-behavior-diagnostic'
+        acceptanceEligible = ($Formal -and $result -eq 'passed' -and $cleanupPassed)
+        verificationMode = $(if ($Formal) {
+            'device-behavior-acceptance'
+        } else { 'device-behavior-diagnostic' })
         startedAt = $startedAt.ToString('o')
         completedAt = [DateTimeOffset]::UtcNow.ToString('o')
         durationMs = [long]([DateTimeOffset]::UtcNow - $startedAt).TotalMilliseconds
         attemptId = $attemptId
+        previousAttemptId = $PreviousAttemptId
         scenario = $Scenario
-        candidate = [ordered]@{
-            hapSha256 = (Get-FileHash -LiteralPath $selectedHapPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            provenance = 'explicit-current-test-signed-hap'
-        }
+        candidate = $(if ($Formal) {
+            [ordered]@{
+                hapPath = [string]$candidate.hapPath
+                hapSha256 = [string]$candidate.sha256
+                provenance = 'retained-device-deployed-candidate'
+                verificationMode = [string]$candidate.verificationMode
+                gitCommit = [string]$candidate.gitCommit
+                gitTree = [string]$candidate.gitTree
+                gitDirty = [bool]$candidate.gitDirty
+            }
+        } else {
+            [ordered]@{
+                hapPath = $selectedHapPath
+                hapSha256 = (Get-FileHash -LiteralPath $selectedHapPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                provenance = 'explicit-current-test-signed-hap'
+                verificationMode = 'diagnostic'
+                gitCommit = $null
+                gitTree = $null
+                gitDirty = $null
+            }
+        })
         harness = [ordered]@{
-            commit = (& git -C $repoRoot rev-parse HEAD).Trim()
-            dirty = (@(git -C $repoRoot status --porcelain --untracked-files=all).Count -gt 0)
+            gitCommit = $harnessCommit
+            gitTree = $harnessTree
+            gitDirty = $harnessDirty
+            differencePathsFromCandidate = @($harnessDifferencePaths)
         }
         fixture = [ordered]@{
             stockMoshServer = $true
@@ -2352,6 +2440,7 @@ function Write-Evidence {
         automation = $automation
         connectedInput = $connectedInputObservations
         cleanup = [ordered]@{
+            result = $(if ($cleanupPassed) { 'passed' } else { 'failed' })
             deviceStateRemoved = $deviceStateCleaned
             deviceCleanupRecovery = $deviceCleanupRecovery
             fixtureProcessesAbsent = $fixtureCleaned
@@ -2363,11 +2452,7 @@ function Write-Evidence {
         failure = $failure
         lastProvenBoundary = $lastProvenBoundary
     }
-    [IO.File]::WriteAllText(
-        $evidencePath,
-        (ConvertTo-Json $evidence -Depth 10) + "`n",
-        [Text.UTF8Encoding]::new($false)
-    )
+    Write-LeanTTYAtomicJson -Path $evidencePath -Value $evidence -Depth 12
 }
 
 try {
@@ -3440,6 +3525,11 @@ try {
         Write-LiveStatus -Stage "await-$operatorStage-close"
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
         $operatorLockStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        $operatorInstruction = if ($Scenario -eq 'operator-lid-recovery') {
+            'close the test PC lid, then open and unlock it'
+        } else { 'lock the test PC, then unlock it' }
+        Write-Host "OPERATOR ACTION REQUIRED: $operatorInstruction within $OperatorWaitSeconds seconds" `
+            -ForegroundColor Yellow
         if ($Scenario -eq 'operator-lid-recovery') {
             Wait-MoshDeviceLockState -ExpectedLocked $true `
                 -TolerateUnavailable -UnavailableCountsAsLocked | Out-Null
@@ -3801,7 +3891,8 @@ try {
     }
     $result = 'passed'
     Write-Evidence
-    Write-Host "MOSH PC DIAGNOSTIC SUCCESS: $evidencePath" -ForegroundColor Green
+    $successLabel = if ($Formal) { 'MOSH PC ACCEPTANCE' } else { 'MOSH PC DIAGNOSTIC' }
+    Write-Host "$successLabel SUCCESS: $evidencePath" -ForegroundColor Green
 } catch {
     $failure = $_.Exception.Message
     $failureDomain = if ($failure -match '^\[(product|harness|environment|infrastructure|unknown)\]') {

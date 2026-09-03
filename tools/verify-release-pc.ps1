@@ -17,6 +17,7 @@ param(
     [ValidateRange(1024, 65535)][int]$FixturePort = 22222,
     [ValidateRange(20000, 40000)][int]$LongTaskPort = 23150,
     [ValidateRange(0, 65535)][int]$AgentPort = 0,
+    [Parameter(Mandatory = $true)][string]$MoshAlternateWifiSsid,
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
     [switch]$Resume
 )
@@ -95,6 +96,8 @@ function Assert-ReleaseResumeIdentity {
         [int]$ExistingReport.invocation.fixturePort -ne $FixturePort -or
         [int]$ExistingReport.invocation.longTaskPort -ne $LongTaskPort -or
         [int]$ExistingReport.invocation.agentPort -ne $AgentPort -or
+        [string]$ExistingReport.invocation.moshAlternateWifiSsidIdentity -ne
+            (Get-LeanTTYHashIdentity -Value $MoshAlternateWifiSsid) -or
         [string]$ExistingReport.invocation.distribution -cne [string]$Distribution) {
         throw 'Release invocation identity changed; resume with the original target, paths, ports and distribution'
     }
@@ -149,11 +152,11 @@ function Assert-PassingReleaseCheckpoints {
                 throw 'Passing harness qualification no longer matches the candidate and harness identities'
             }
         }
-        if ($definition.kind -eq 'ssh-matrix') {
+        if ($definition.kind -in @('mosh-matrix', 'ssh-matrix')) {
             if ([string]$summary.evidence.candidate.sha256 -ne [string]$ResolvedCandidate.sha256 -or
                 [string]$summary.evidence.harness.gitCommit -ne $harnessCommit -or
                 [string]$summary.evidence.harness.gitTree -ne $harnessTree) {
-                throw 'Passing SSH matrix no longer matches the candidate and harness identities'
+                throw "Passing $($definition.kind) no longer matches the candidate and harness identities"
             }
         }
     }
@@ -194,6 +197,7 @@ if ($Resume) {
             fixturePort = $FixturePort
             longTaskPort = $LongTaskPort
             agentPort = $AgentPort
+            moshAlternateWifiSsidIdentity = Get-LeanTTYHashIdentity -Value $MoshAlternateWifiSsid
             distribution = [string]$Distribution
         }
         candidate = $null
@@ -215,7 +219,6 @@ if ($Resume) {
         sshResumeCommand = ''
         failure = ''
         remainingReleaseWork = @(
-            'formal-mosh-network-and-lifecycle-matrix',
             'production-and-review-artifact-preparation',
             'signing-and-archive-audit',
             'immutable-tag-and-github-release',
@@ -269,7 +272,7 @@ function Invoke-AuthoritativeReleaseStage {
         [Parameter(Mandatory = $true)]$Definition,
         [Parameter(Mandatory = $true)][string]$StageEvidenceDirectory,
         [AllowEmptyString()][string]$PreviousAttemptId = '',
-        [switch]$ResumeSsh
+        [switch]$ResumeMatrix
     )
 
     $scriptPath = Join-Path $PSScriptRoot ([string]$Definition.script)
@@ -372,6 +375,17 @@ function Invoke-AuthoritativeReleaseStage {
             & $scriptPath -Target $Target -HapPath ([string]$candidate.hapPath) `
                 -EvidenceDirectory $StageEvidenceDirectory
         }
+        'mosh-matrix' {
+            $arguments = @{
+                Target = $Target; HapPath = [string]$candidate.hapPath
+                CandidateBasePath = $normalizedCandidateBasePath
+                EvidenceDirectory = $StageEvidenceDirectory
+                AlternateWifiSsid = $MoshAlternateWifiSsid
+            }
+            Add-OptionalArgument -Arguments $arguments -Name Distribution -Value $Distribution
+            if ($ResumeMatrix) { $arguments['Resume'] = $true }
+            & $scriptPath @arguments
+        }
         'long-task' {
             & $scriptPath -Target $Target -HapPath ([string]$candidate.hapPath) `
                 -CandidateBasePath $normalizedCandidateBasePath `
@@ -391,7 +405,7 @@ function Invoke-AuthoritativeReleaseStage {
                 EvidenceDirectory = $StageEvidenceDirectory; FixturePort = $FixturePort
             }
             Add-OptionalArgument -Arguments $arguments -Name Distribution -Value $Distribution
-            if ($ResumeSsh) { $arguments['Resume'] = $true }
+            if ($ResumeMatrix) { $arguments['Resume'] = $true }
             & $scriptPath @arguments
         }
         default { throw "Unknown release stage kind: $($Definition.kind)" }
@@ -409,7 +423,8 @@ try {
             throw "Stage '$($stage.name)' was interrupted without cleanup evidence; audit it before a new run"
         }
         if ($Resume -and [string]$stage.status -eq 'failed' -and
-            $definition.kind -ne 'ssh-matrix' -and [string]$stage.cleanup -ne 'passed') {
+            $definition.kind -notin @('mosh-matrix', 'ssh-matrix') -and
+            [string]$stage.cleanup -ne 'passed') {
             throw "Stage '$($stage.name)' cannot resume because its cleanup is not proved"
         }
 
@@ -430,9 +445,10 @@ try {
         }
 
         $previousAttemptId = [string]$stage.attemptId
-        $resumeSsh = ($definition.kind -eq 'ssh-matrix' -and [int]$stage.attemptCount -gt 0)
+        $resumeMatrix = ($definition.kind -in @('mosh-matrix', 'ssh-matrix') -and
+            [int]$stage.attemptCount -gt 0)
         $nextAttempt = [int]$stage.attemptCount + 1
-        $stageEvidenceDirectory = if ($definition.kind -eq 'ssh-matrix') {
+        $stageEvidenceDirectory = if ($definition.kind -in @('mosh-matrix', 'ssh-matrix')) {
             Join-Path $stageRoot ([string]$definition.name)
         } else {
             Join-Path (Join-Path $stageRoot ([string]$definition.name)) "attempt-$nextAttempt"
@@ -457,7 +473,7 @@ try {
                 -Definition $definition `
                 -StageEvidenceDirectory $stageEvidenceDirectory `
                 -PreviousAttemptId $previousAttemptId `
-                -ResumeSsh:$resumeSsh
+                -ResumeMatrix:$resumeMatrix
             if ($definition.kind -eq 'candidate') {
                 $candidate = Resolve-LeanTTYRetainedCandidate `
                     -RepoRoot $repoRoot -CandidateBasePath $normalizedCandidateBasePath
@@ -515,6 +531,7 @@ try {
     }
     $report.result = 'passed'
     $report.registeredStagesPassed = $true
+    $report.completeApplicablePhysicalMatrixClaimed = $true
     $cleanupValues = @($report.stages | ForEach-Object { [string]$_.cleanup })
     $report.cleanup = [ordered]@{
         result = $(if ($cleanupValues -contains 'failed' -or
@@ -530,6 +547,7 @@ try {
     $caughtError = $_
     $report.result = 'failed'
     $report.registeredStagesPassed = $false
+    $report.completeApplicablePhysicalMatrixClaimed = $false
     $report.failure = $_.Exception.Message
     $report.cleanup = [ordered]@{
         result = $(if (@($report.stages | Where-Object {

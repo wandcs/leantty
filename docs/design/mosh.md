@@ -244,6 +244,21 @@ HAP SHA-256 为 `9e2fa750b2a8ca5f5a83a595382aed3076b753ea6c733f33a0df0a73ce9e828
 .\tools\configure-mosh-test-network.ps1 -Mode Disable
 ```
 
+正式 1.6 候选使用一个固定顺序入口；它要求显式 retained、device-deployed HAP、clean harness
+和一条已保存且仍能访问同一测试 LAN 的备用 Wi-Fi。SSID 只以哈希身份进入矩阵记录：
+
+```powershell
+.\tools\verify-mosh-matrix-pc.ps1 `
+  -Target '<physical-PC-target>' `
+  -HapPath '<exact retained LeanTTY-test-signed.hap>' `
+  -AlternateWifiSsid '<saved alternate SSID>'
+```
+
+矩阵依次运行 compatibility、UDP pause、suspend、operator lock、physical lid、Wi-Fi pause 和
+Wi-Fi network switch。每组都必须生成 `acceptanceEligible=true`、相同 candidate/harness 身份、
+无 secret、Preferences 不变和完整 cleanup；失败即停且不自动重试。只有失败组已经证明 cleanup
+通过时，显式 `-Resume` 才会在原证据目录重跑该组并继续剩余后缀。
+
 ## 客户端依赖合同
 
 LeanTTY 选择 [`wandcs/mosh-client-rs`](https://github.com/wandcs/mosh-client-rs) 的

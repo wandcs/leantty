@@ -132,6 +132,7 @@ try {
         'background-bell-manual-dismiss',
         'background-bell-permission',
         'unexpected-recovery-uninstall',
+        'mosh-formal-matrix',
         'long-task-notification',
         'agent-compatibility',
         'ssh-physical-matrix'

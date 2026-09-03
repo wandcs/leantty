@@ -226,6 +226,8 @@ function Get-LeanTTYReleaseVerificationStages {
         New-Stage -Name 'unexpected-recovery-uninstall' `
             -Script 'verify-unexpected-recovery-uninstall-pc.ps1' `
             -ResultFile 'result.json' -Kind 'unexpected-recovery-uninstall'
+        New-Stage -Name 'mosh-formal-matrix' -Script 'verify-mosh-matrix-pc.ps1' `
+            -ResultFile 'mosh-matrix.json' -Kind 'mosh-matrix'
         New-Stage -Name 'long-task-notification' -Script 'verify-long-task-notification-pc.ps1' `
             -ResultFile 'result.json' -Kind 'long-task' -PlannedModelRequests 1
         New-Stage -Name 'agent-compatibility' -Script 'verify-agent-compatibility-pc.ps1' `
@@ -408,9 +410,12 @@ function Write-LeanTTYReleaseReportArtifacts {
         $lines.Add('```')
     }
     $lines.Add('')
-    $lines.Add('This report covers the currently registered formal candidate and physical stages.')
-    $lines.Add('It does not claim the complete applicable 1.6 physical matrix: formal Mosh,')
-    $lines.Add('production/review artifacts, signing, publication and AppGallery remain separate.')
+    if ([bool]$Report.completeApplicablePhysicalMatrixClaimed) {
+        $lines.Add('This report covers the complete registered 1.6 candidate and physical matrix.')
+    } else {
+        $lines.Add('This report does not claim the complete applicable 1.6 physical matrix.')
+    }
+    $lines.Add('Production/review artifacts, signing, publication and AppGallery remain separate.')
     Write-LeanTTYAtomicText -Path $summaryPath -Content (($lines -join "`n") + "`n")
 
     return [pscustomobject][ordered]@{
