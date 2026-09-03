@@ -240,7 +240,34 @@ layout capture and an interactive screen layout. It does not install, launch,
 unlock or prove LeanTTY behavior. Named diagnostic stages are focused evidence
 and MUST NOT be presented as complete release acceptance.
 
-Formal release software gate, candidate build and deployment use one command:
+The thin registered release entry runs the current candidate, harness and
+physical checkpoints in the fixed order below:
+
+```powershell
+.\tools\verify-release-pc.ps1 `
+  -Target '<physical-PC-target>' `
+  -EvidenceDirectory 'C:\path\outside\the\repository\release-verification'
+```
+
+Pass `-HapPath` only to start from an exact retained candidate instead of
+rebuilding C1/C2. The entry invokes the existing scripts; it does not contain a
+second device driver or acceptance implementation. It stops at the first
+failure, writes `release-report.json` and `maintainer-summary.md` atomically,
+and records stage duration, attempts, candidate/harness identity, cleanup and
+planned/available actual model usage. It never retries a model request
+automatically. Explicit `-Resume` requires the same report, retained candidate,
+harness commit/tree, target, ports and distribution. An SSH failure additionally
+prints the exact `verify-ssh-matrix-pc.ps1 -Resume` command bound to that stage's
+existing evidence directory.
+
+The entry currently reports `completeApplicablePhysicalMatrixClaimed=false`.
+The 1.6 Mosh verifier still produces diagnostic-only evidence, so its seven
+applicable network/lifecycle stages must be promoted to retained-candidate
+acceptance and added to this registry before the report can represent complete
+C3. Production/review artifacts, signing and publication remain C4 and later
+work in every case.
+
+The lower-level commands called by the current registry are:
 
 ```powershell
 .\tools\verify-pc.ps1

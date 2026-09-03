@@ -119,9 +119,17 @@ manifest、附件和哈希保持不变。
   连接命令观测，当前为 53,314 UTF-8 字节；回读会核对结构、身份、状态、请求数、检查数、
   inventory/privacy 和 cleanup。readiness 不启动 Agent 或模型，正式用量仍为 8 次请求、长任务
   另 1 次、0 自动模型重试。
-- [ ] 增加单一薄发布编排入口，只调用现有权威脚本并保存阶段、candidate/harness 身份、耗时、
-  重试、模型用量和清理结果。SSH 组失败后输出绑定原证据目录的精确 `-Resume`；最终生成统一
-  `release-report.json` 和维护者摘要，不另建第二套发布实现。
+- [x] 已增加单一薄发布编排入口 `tools/verify-release-pc.ps1`。它按现有正式清单串行调用权威
+  脚本，失败即停；显式续跑会核对 candidate、harness、设备、端口和 WSL 身份，只复用已通过
+  检查点。报告原子保存阶段、attempt/resume、耗时、计划/可取得的实际模型用量和 cleanup；SSH
+  失败会给出绑定原目录的精确 `-Resume`。统一输出为 `release-report.json` 与
+  `maintainer-summary.md`，不包含第二套设备驱动。当前报告明确不声称 1.6 完整 C3，因为 Mosh
+  verifier 仍只产生 diagnostic evidence。
+- [ ] 将已闭合的七组 Mosh 网络/生命周期场景升级为正式 retained-candidate acceptance，并接入
+  薄编排入口。先加入 formal candidate/harness 双身份和 `acceptanceEligible` 门，再按
+  compatibility、UDP pause、suspend、lock、lid、Wi-Fi pause、Wi-Fi network switch 固定顺序串行
+  执行；使用已保存的备用 SSID `CU_lin`，保留 operator action 提示、原网络恢复、无 secret 和
+  完整 cleanup。只有七组同属一个 candidate 且全部通过时，统一报告才可声明完整 C3。
 - [ ] 为 release-mode review HAP 增加独立正常产品路径 smoke，覆盖启动、键盘分 Pane、关闭
   Pane 和清理。安装前拒绝把 release-mode HAP 用于 acceptance-only marker；production
   APP/HAP 继续禁止进入 HDC 安装路径。
