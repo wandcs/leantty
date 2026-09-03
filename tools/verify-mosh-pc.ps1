@@ -1246,12 +1246,29 @@ function Submit-MoshStreamPayload {
 
 function Get-MoshWindowToggleButton {
     param([Parameter(Mandatory = $true)]$Layout)
-    $buttons = @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
+    $nodes = @(Get-LeanTTYLayoutNodes -Node $Layout)
+    $leanTTYRoots = @($nodes | Where-Object {
+        [string]$_.attributes.bundleName -eq 'com.leantty.app' -and
+        [string]$_.attributes.abilityName -eq 'EntryAbility' -and
+        [string]$_.attributes.type -eq 'root' -and
+        [string]$_.attributes.focused -eq 'true' -and
+        [string]$_.attributes.visible -eq 'true'
+    })
+    if ($leanTTYRoots.Count -ne 1) {
+        throw "[harness] Expected one focused LeanTTY root window, found $($leanTTYRoots.Count)"
+    }
+    $leanTTYWindowId = [string]$leanTTYRoots[0].attributes.hostWindowId
+    if ([string]::IsNullOrWhiteSpace($leanTTYWindowId)) {
+        throw '[harness] Focused LeanTTY root window has no host window identity'
+    }
+    $buttons = @($nodes | Where-Object {
         [string]$_.attributes.id -match '^Enhance(?:Maximize|Recover)Btn$' -and
-        [string]$_.attributes.clickable -eq 'true'
+        [string]$_.attributes.clickable -eq 'true' -and
+        [string]$_.attributes.visible -eq 'true' -and
+        [string]$_.attributes.hostWindowId -eq $leanTTYWindowId
     })
     if ($buttons.Count -ne 1) {
-        throw "[harness] Expected one HarmonyOS window size toggle, found $($buttons.Count)"
+        throw "[harness] Expected one LeanTTY window size toggle, found $($buttons.Count)"
     }
     return $buttons[0]
 }
