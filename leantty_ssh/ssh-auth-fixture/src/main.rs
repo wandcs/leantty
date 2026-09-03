@@ -648,7 +648,7 @@ fn mosh_terminal_stty_args(kernel_echo: bool) -> Vec<&'static str> {
     if kernel_echo {
         Vec::new()
     } else {
-        vec!["-icanon", "-echo", "min", "1", "time", "0"]
+        vec!["-icanon", "-echo", "-isig", "min", "1", "time", "0"]
     }
 }
 
@@ -2685,7 +2685,7 @@ mod tests {
         assert_eq!(mosh_terminal_stty_args(true), Vec::<&'static str>::new());
         assert_eq!(
             mosh_terminal_stty_args(false),
-            ["-icanon", "-echo", "min", "1", "time", "0"]
+            ["-icanon", "-echo", "-isig", "min", "1", "time", "0"]
         );
     }
 

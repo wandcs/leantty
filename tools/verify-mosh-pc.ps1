@@ -97,6 +97,7 @@ if ($Formal) {
             'tools/device-regression.ps1',
             'tools/hdc-common.ps1',
             'tools/rust-wsl.ps1',
+            'leantty_ssh/ssh-auth-fixture/src/main.rs',
             'docs/next-work.md',
             'docs/quality-strategy.md',
             'docs/release-process.md',
