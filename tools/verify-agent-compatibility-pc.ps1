@@ -154,9 +154,8 @@ $commandObservations = [Collections.Generic.List[object]]::new()
 $connectedCommandObservations = [Collections.Generic.List[object]]::new()
 $controlledLocaleChecked = $false
 
-$result = [ordered]@{
-    schemaVersion = 2
-    scenario = $(if ($Osc99CapabilityProbe) {
+$result = New-LeanTTYAgentCompatibilityResult `
+    -Scenario $(if ($Osc99CapabilityProbe) {
         'osc99-capability-response-over-default-wsl-openssh'
     } elseif ($InteractionOnlyProbe) {
         'zero-model-agent-tui-interaction-over-default-wsl-openssh'
@@ -164,14 +163,14 @@ $result = [ordered]@{
         'qwen-native-osc52-scrollback-with-osc8-observation-over-default-wsl-openssh'
     } else {
         'native-agent-tui-compatibility-over-default-wsl-openssh'
-    })
-    startedAt = $startedAt.ToString('o')
-    attemptId = $attemptId
-    previousAttemptId = $PreviousAttemptId
-    runMode = $(if ($DiagnosticHap) { 'diagnostic' } else { 'acceptance' })
-    releaseEligible = (-not $DiagnosticHap)
-    target = $Target
-    candidate = [ordered]@{
+    }) `
+    -StartedAt $startedAt `
+    -AttemptId $attemptId `
+    -PreviousAttemptId $PreviousAttemptId `
+    -RunMode $(if ($DiagnosticHap) { 'diagnostic' } else { 'acceptance' }) `
+    -ReleaseEligible (-not $DiagnosticHap) `
+    -Target $Target `
+    -Candidate ([ordered]@{
         hapPath = $HapPath
         sha256 = $candidateSha256
         role = $(if ($DiagnosticHap) { 'test-signed-diagnostic-hap' } else { 'retained-test-candidate' })
@@ -181,37 +180,31 @@ $result = [ordered]@{
         verificationMode = $candidate.verificationMode
         retained = (-not $DiagnosticHap)
         reusedAcrossHarnessOnlyChanges = ($harnessDifferencePaths.Count -gt 0)
-    }
-    harness = [ordered]@{
+    }) `
+    -Harness ([ordered]@{
         gitCommit = $harnessCommit
         gitTree = $harnessTree
         gitDirty = $harnessDirty
         differencePathsFromCandidate = @($harnessDifferencePaths)
-    }
-    server = [ordered]@{
+    }) `
+    -Server ([ordered]@{
         environment = 'default-wsl-isolated-openssh'
         port = $Port
         authentication = 'existing-app-ed25519-public-key-only'
         terminalLocale = 'pending'
-    }
-    inventory = $null
-    selectedAgents = $(if ($Osc99CapabilityProbe) { @() } else { @($Agents) })
-    selectedModes = $(if ($Osc99CapabilityProbe) { @() } else { @($Modes) })
-    plannedModelRequests = $(if ($Osc99CapabilityProbe -or $InteractionOnlyProbe) {
+    }) `
+    -SelectedAgents $(if ($Osc99CapabilityProbe) { @() } else { @($Agents) }) `
+    -SelectedModes $(if ($Osc99CapabilityProbe) { @() } else { @($Modes) }) `
+    -PlannedModelRequests $(if ($Osc99CapabilityProbe -or $InteractionOnlyProbe) {
         0
     } else {
         $Agents.Count * $Modes.Count
-    })
-    diagnosticOverrides = $(if ($OpenCodeForceOsc99Protocol) {
+    }) `
+    -DiagnosticOverrides $(if ($OpenCodeForceOsc99Protocol) {
         @('OPENTUI_NOTIFICATION_PROTOCOL=osc99')
     } else {
         @()
     })
-    checks = @()
-    commandAutomation = $null
-    cleanup = [ordered]@{ result = 'pending'; detail = '' }
-    status = 'invalid/interrupted'
-}
 
 function Write-AgentCompatibilityProgress {
     param([Parameter(Mandatory = $true)][string]$Stage)
@@ -1583,10 +1576,9 @@ try {
         $result.status = 'invalid/interrupted'
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
-    Write-LeanTTYAtomicJson `
+    $null = Write-LeanTTYAgentCompatibilityResult `
         -Path (Join-Path $EvidenceDirectory 'result.json') `
-        -Value $result `
-        -Depth 20
+        -Result $result
     Write-AgentCompatibilityProgress -Stage 'complete'
 }
 

@@ -85,6 +85,9 @@ try {
     )
     . $releaseToolingScript
 
+    $agentPolicyScript = Join-Path $PSScriptRoot 'agent-compatibility-policy.ps1'
+    . $agentPolicyScript
+
     $atomicRecordPath = Join-Path $testRoot 'atomic\record.json'
     Write-LeanTTYAtomicJson -Path $atomicRecordPath -Value ([ordered]@{ attempt = 1 })
     Write-LeanTTYAtomicJson -Path $atomicRecordPath -Value ([ordered]@{ attempt = 2 })
@@ -94,6 +97,22 @@ try {
         @(Get-ChildItem -LiteralPath (Split-Path $atomicRecordPath -Parent) -Force |
             Where-Object { $_.Name -match '^\.(?:tmp|bak)-' }).Count -eq 0
     ) 'Atomic evidence replacement left stale files or incomplete JSON'
+
+    $agentResultPath = Join-Path $testRoot 'atomic\agent-result.json'
+    $agentResultFixture = New-LeanTTYAgentCompatibilityReadinessFixture `
+        -StartedAt ([DateTimeOffset]'2026-09-04T00:00:00Z')
+    $agentResultRoundTrip = Write-LeanTTYAgentCompatibilityResult `
+        -Path $agentResultPath -Result $agentResultFixture
+    Assert-True (
+        $agentResultRoundTrip.byteLength -ge 20000 -and
+        $agentResultRoundTrip.checkCount -eq 8 -and
+        $agentResultRoundTrip.plannedModelRequests -eq 8 -and
+        @($agentResultRoundTrip.result.commandAutomation.local.commands).Count -eq 40 -and
+        @($agentResultRoundTrip.result.commandAutomation.connected.observations).Count -eq 40 -and
+        $agentResultRoundTrip.result.inventory.privacy.credentialContentRead -eq $false -and
+        @(Get-ChildItem -LiteralPath (Split-Path $agentResultPath -Parent) -Force |
+            Where-Object { $_.Name -match '^\.(?:tmp|bak)-' }).Count -eq 0
+    ) 'Full synthetic Agent result did not survive its atomic JSON round trip'
 
     Assert-True (
         $candidateScriptText.Contains('remote get-url origin') -and
@@ -194,6 +213,9 @@ try {
         'agentModelInvocations = 0',
         "'focused-policy-tooling-web-arkts'",
         "'offline-agent-notification-replay'",
+        "'zero-model-agent-result-round-trip'",
+        'New-LeanTTYAgentCompatibilityReadinessFixture',
+        'Write-LeanTTYAgentCompatibilityResult',
         "'stable-candidate-namespace'",
         "'release-package-marker-exclusion'",
         '-PreflightOnly'

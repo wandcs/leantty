@@ -558,8 +558,14 @@ how expensive the previous run was.
 Before freezing C0, run `test-release-readiness.ps1` against independent clean
 production/review checkouts and one release-mode HAP. The drill runs only the
 focused `policy,tooling,web,arkts` gate, offline Agent compatibility replay,
+the shared full Agent-result constructor and atomic write/read-back path,
 release-package marker audit, stable candidate-namespace check and both release
-preflights. Its evidence must state `releaseEligible=false`,
+preflights. The synthetic Agent result represents the complete four-Agent by
+direct/tmux matrix and forty local plus forty connected command observations;
+it contains no terminal content or credentials and invokes no Agent or model.
+The round trip must preserve all eight unique Agent/mode checks, the planned
+eight-request contract, nested inventory/privacy and cleanup fields, and a JSON
+size of at least 20,000 UTF-8 bytes. Its evidence must state `releaseEligible=false`,
 `candidateCreated=false` and `agentModelInvocations=0`. Failure repairs the
 corresponding product/tooling input before C0; the drill never creates or
 substitutes for a formal candidate.

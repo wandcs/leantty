@@ -301,6 +301,9 @@ try {
     $deviceScript = Get-Content -LiteralPath (
         Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1'
     ) -Raw
+    $policyScript = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'agent-compatibility-policy.ps1'
+    ) -Raw
     $deploymentIndex = $deviceScript.IndexOf("'dev-pc.ps1'")
     $publicKeyIndex = $deviceScript.IndexOf("id_ed25519.pub' 2>&1")
     Assert-True (
@@ -385,13 +388,12 @@ try {
         -not $deviceScript.Contains("'claude'") -and
         -not $deviceScript.Contains("'gemini'")
     ) 'Agent device fixture can lose the original failure or raw-free capture summary'
-    $atomicResultWrite = [regex]::Match(
-        $deviceScript,
-        '(?ms)Write-LeanTTYAtomicJson\s+`\r?\n\s+-Path \(Join-Path \$EvidenceDirectory ''result\.json''\)\s+`\r?\n\s+-Value \$result\s+`\r?\n\s+-Depth (?<depth>[0-9]+)'
-    )
     Assert-True (
-        $atomicResultWrite.Success -and [int]$atomicResultWrite.Groups['depth'].Value -le 20
-    ) 'Agent compatibility result exceeds the atomic JSON writer depth contract'
+        $deviceScript.Contains('New-LeanTTYAgentCompatibilityResult') -and
+        $deviceScript.Contains('Write-LeanTTYAgentCompatibilityResult') -and
+        $policyScript.Contains('Write-LeanTTYAtomicJson -Path $Path -Value $Result -Depth 20') -and
+        $policyScript.Contains('Agent compatibility result changed across its atomic JSON round trip')
+    ) 'Agent compatibility result does not share its constructed and verified atomic writer'
 } finally {
     if (Test-Path -LiteralPath $temporaryDirectory) {
         Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force
