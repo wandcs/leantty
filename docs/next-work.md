@@ -2,7 +2,7 @@
 
 > 状态：唯一有效的项目 TODO；1.5.1 已通过 AppGallery 审核并上架，进入 1.6.0 开发
 >
-> 更新日期：2026-09-03
+> 更新日期：2026-09-04
 >
 > 当前 milestone：[`1.6 — Mosh 弱网连接`](roadmap.md)
 >
@@ -69,7 +69,7 @@ manifest、附件和哈希保持不变。
   - [x] 普通卸载重装清理门已通过：卸载前存在两 Tab/活动 Tab 双 Pane 的异常记录；不保留
     应用私有数据地卸载并重装同一 HAP 后，以 generation 1、无异常恢复、默认单 Tab/Pane 启动。
     测试未读取、删除或迁移用于长期保留 SSH key/config 的独立 Durable Asset Store。
-- [ ] 在同一物理 PC 上完成正常网络、合盖、锁屏、Wi-Fi 暂断、网络切换、UDP 阻断和恢复矩阵，
+- [x] 在同一物理 PC 上完成正常网络、合盖、锁屏、Wi-Fi 暂断、网络切换、UDP 阻断和恢复矩阵，
   对比 SSH 的恢复时间、会话保留和用户操作，并审计 hilog、Preferences、终端与崩溃信息无 secret。
   - [x] 当前 test HAP 已通过正常网络基线和精确端口双向 UDP 阻断/恢复；Mosh 在
     `Interrupted(NoRecentContact)` 期间保留 Session 与远端 PTY，恢复后继续执行命令。
@@ -101,8 +101,13 @@ manifest、附件和哈希保持不变。
     `59de09640022fa23e9d4529e7cdfbb715a4f6efc7a6ca18a013079141d978fc8`；Preferences、secret、
     fixture、映射、持久网络、原 Wi-Fi 和临时目录清理均通过。证据为
     `build/verification/device-mosh-network-switch-20260904-final/device-mosh.json`。
-  - [ ] 汇总全部场景后审计 hilog、Preferences、终端、fixture、临时目录和崩溃信息；任何
-    secret、状态污染或清理不确定均使本项保持未完成。
+  - [x] 已汇总每类场景的最后一份通过证据并审计 hilog、Preferences、终端、fixture、临时目录
+    和崩溃信息。七组证据均为 `passed` 且到达 `cleanup-complete`；Preferences 未变、终端未显示
+    bootstrap secret、设备状态与 fixture 进程均已清理、临时目录已删除、持久网络未被修改。
+    旧四组未使用 HDC reverse，使用 reverse 的后三组均记录映射已删除；20 份保留日志中未发现
+    crash/panic/fatal/OOM 模式，全部证据中未发现原始 `MOSH CONNECT` 密钥。聚合记录为
+    `build/verification/mosh-matrix-audit-20260904.md`。这些是逐切片 test HAP 证据，不替代正式
+    release commit 的 production/review candidate 与完整发布矩阵。
 
 ## 2. 在正式候选前收敛发布环境
 
