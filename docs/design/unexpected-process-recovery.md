@@ -335,6 +335,26 @@ stock server、远端 PTY、HDC reverse、fixture 和临时目录全部清理。
 这条确定性证据与两次真实合盖的症状证据配对，闭合 runtime-reclaim 合同；它不把注入本身表述
 为一次真实合盖，也不承诺系统保留远端 Session。
 
+正式 retained candidate `59375d85867b59e45a440f05982ed8be8d35162e153a0bc95a0274269ab68bc4`
+随后补充了一个重要时序边界：真实合盖前后 PID/start time 均为 `56909/56192126`，恢复可见时
+日志先记录 `runtimeRecovery=not-required`，但 4.3 秒后的首个输入已落入 `SessionViewModel mode=0`。
+原因是旧检测读取 `PaneInfo.mode` UI 投影，它仍残留 CONNECTED；live SessionViewModel 已被回收为
+IDLE。矩阵在第 5 组按规则失败并停止，前四组虽各自通过且清理完成，也不能跨产品修复沿用。
+机器可读证据位于
+`%USERPROFILE%\Documents\LeanTTY-verification\1.6-formal-20260904\mosh-matrix-4fe407d\mosh-matrix.json`。
+
+修订后的不一致门逐个检查简单活动 Pane 投影对应的 live `SessionViewModel.getMode()`；只有全部
+runtime 仍存在且均非 IDLE 才视为 Session graph 完整。任一 runtime 缺失或已空闲时，整组投影
+声明的远端 Pane 一起降级为明确重连并统一清理 native registry，避免保留半个可信 graph。
+测试包的 `runtime-reclaim` 注入也保留陈旧 `PaneInfo.mode`，从而覆盖真实系统形态，而不再让 UI
+投影同步掩盖该问题。
+
+修订后的测试 HAP `cb098fd2a7f4e6c09fd79a612603e30423ca2107c3bd3502c979cf5eb3dd433c`
+已在 HAD-W32 上通过上述确定性场景：PID/start time 保持 `63331/56240158`，运行时回收、提示、
+旧内容隔离、Session 未恢复和 cleanup 均为真；日志记录 `nativeCancelRequests=1`，并拒绝晚到的
+Mosh output/event。该结果只证明修订后的同进程不一致门，真实合盖仍须由新 retained candidate
+重新执行完整矩阵。
+
 ### 2026-09-02 旧通知跨进程隔离证据
 
 同一 HAP 建立后台 BEL 通知后，测试强制停止 LeanTTY，再点击仍留在系统通知中心的旧通知。
