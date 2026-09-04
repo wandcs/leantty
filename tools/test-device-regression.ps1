@@ -1390,7 +1390,7 @@ foreach ($moshContract in @(
     "'-MoshNetworkTimeoutSeconds', `$moshNetworkTimeoutSeconds",
     'serverNetworkTimeoutSeconds = $moshNetworkTimeoutSeconds',
     'FixtureBackendPort must differ from the external FixturePort',
-    "[ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]",
+    "[ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'runtime-reclaim', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]",
     "'mosh-session-isolation'",
     'controlName=',
     'mosh-session-[1-9][0-9]*',
@@ -1466,6 +1466,9 @@ foreach ($moshContract in @(
     "-Query 'Workspace layout was recovered' -ExpectMatch `$true",
     'remoteContentAbsent = $processRecoveryRemoteContentAbsent',
     'sessionNotRestored = $processRecoverySessionNotRestored',
+    'runtimeReclaimed = $runtimeWorkspaceRecovered',
+    'acceptance-only-runtime-state-reclaim',
+    'ACCEPTANCE_RUNTIME_RECLAIM recovered=true',
     'active-mosh-pane-closed-and-surviving-pane-started-an-isolated-session',
     'two-mosh-and-ssh-mosh-concurrent-sessions-kept-state-terminal-input-output-and-cleanup-isolated',
     'twoMoshKeysDistinct = $sessionIsolationKeysDistinct',
@@ -1891,6 +1894,8 @@ Assert-True (
     -not $sessionViewModel.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
     $acceptanceSource.Contains("import { ACCEPTANCE_TESTS } from 'BuildProfile'") -and
     $acceptanceSource.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
+    $acceptanceSource.Contains('ACCEPTANCE_RUNTIME_RECLAIM state=dropped') -and
+    $acceptanceSource.Contains('reclaimRuntimeStateForAcceptance') -and
     $acceptanceSource.Contains('Acceptance: Rebuild Renderer') -and
     $acceptanceSource.Contains('Acceptance: Downloads No-Replace') -and
     $acceptanceSource.Contains('Acceptance: Downloads FD Boundary') -and

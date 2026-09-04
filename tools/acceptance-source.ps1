@@ -149,6 +149,10 @@ function Add-LeanTTYAcceptanceSource {
       this.rebuildPageForAcceptance()
       return true
     }
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && shiftKey && event.keyCode === 2035) {
+      this.reclaimRuntimeForAcceptance()
+      return true
+    }
     let navigationAction: WorkspaceNavigationAction = InteractionPolicy.workspaceNavigationAction(
 '@
     $text.index = Set-LeanTTYAcceptanceSourceText `
@@ -203,6 +207,28 @@ function Add-LeanTTYAcceptanceSource {
     this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' }).catch((error: Error) => {
       logger.error('Acceptance page rebuild completed=false,error=' + error.message)
     })
+  }
+
+  private reclaimRuntimeForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    let runtime: PaneRuntime | null = this.activePaneRuntime()
+    if (runtime === null) {
+      logger.error('ACCEPTANCE_RUNTIME_RECLAIM state=ignored,reason=no-active-pane')
+      return
+    }
+    let activePaneIds: string = AppStorage.get<string>('activeRemotePaneIds') ?? ''
+    let activeMoshPaneIds: string = AppStorage.get<string>('activeMoshPaneIds') ?? ''
+    if (!runtime.viewModel.reclaimRuntimeStateForAcceptance()) {
+      logger.error('ACCEPTANCE_RUNTIME_RECLAIM state=ignored,reason=no-active-mosh')
+      return
+    }
+    AppStorage.setOrCreate('activeRemotePaneIds', activePaneIds)
+    AppStorage.setOrCreate('activeMoshPaneIds', activeMoshPaneIds)
+    logger.warn('ACCEPTANCE_RUNTIME_RECLAIM state=dropped,pane=' + runtime.id)
+    let recovered: boolean = this.recoverReclaimedRuntimeSessions()
+    logger.info('ACCEPTANCE_RUNTIME_RECLAIM recovered=' + recovered.toString() + ',pane=' + runtime.id)
   }
 
   private rebuildRendererForAcceptance(): void {
@@ -936,6 +962,21 @@ function Add-LeanTTYAcceptanceSource {
             "        ',bytes=' + data.byteLength.toString())`n" +
             "    }")
     $moshFailureMethod = @'
+  reclaimRuntimeStateForAcceptance(): boolean {
+    if (!ACCEPTANCE_TESTS || this.moshClient === null || !this.acceptingSessionOutput) {
+      return false
+    }
+    this.acceptingSessionOutput = false
+    this.clearAuthChallenge()
+    this.moshClient = null
+    this.sshClient = new SshClient()
+    this.session.markDisconnected()
+    this.setMode(TerminalMode.IDLE)
+    this.connectionProtocol = ConnectionCommandProtocol.SSH
+    this.notifyStateChange()
+    return true
+  }
+
   failMoshForAcceptance(): void {
     if (!ACCEPTANCE_TESTS || this.moshClient === null || !this.acceptingSessionOutput) {
       this.logger.warn('ACCEPTANCE_MOSH_ERROR state=ignored')

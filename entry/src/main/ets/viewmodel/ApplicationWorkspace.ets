@@ -1,7 +1,7 @@
 import { AppViewModel } from './AppViewModel'
 
-// HarmonyOS may rebuild the WindowStage while the application process and its Sessions stay alive.
-// Keep the Tab -> Pane -> Session owner at process scope so a replacement page only rebinds UI.
+// Keep the live Tab -> Pane -> Session graph outside ArkUI state storage. The graph owns callbacks,
+// native handles and renderer objects; only the simple UI projections belong in @State/AppStorage.
 export class ApplicationWorkspace {
   private static instance: ApplicationWorkspace | null = null
   private readonly appViewModel: AppViewModel = new AppViewModel()

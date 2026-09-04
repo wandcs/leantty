@@ -63,6 +63,8 @@ export default class EntryAbility extends UIAbility {
       TransparencyPolicy.normalize(UserPreferences.loadTransparencyMode()))
     AppStorage.setOrCreate('hasActiveSshSession', false)
     AppStorage.setOrCreate('skipNextTerminateConfirmation', false)
+    AppStorage.setOrCreate('activeRemotePaneIds', '')
+    AppStorage.setOrCreate('activeMoshPaneIds', '')
     AppStorage.setOrCreate('backgroundBellReturnPaneId', '')
     AppStorage.setOrCreate('backgroundBellReturnToken', 0)
     this.publishBackgroundBellReturnRequest(want)

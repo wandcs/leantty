@@ -17,10 +17,13 @@ export default function workspaceOwnershipTest() {
   describe('WorkspaceOwnership', () => {
     it('keepsOneProcessScopedWorkspaceAcrossPageOwners', 0, () => {
       let first: ApplicationWorkspace = ApplicationWorkspace.getInstance()
+      first.initialize(0.61)
       let second: ApplicationWorkspace = ApplicationWorkspace.getInstance()
 
       expect(first === second).assertEqual(true)
       expect(first.getViewModel() === second.getViewModel()).assertEqual(true)
+      expect(second.isInitialized()).assertEqual(true)
+      expect(second.getSplitRatio()).assertEqual(0.61)
     })
 
     it('initializesProcessScopedGeometryOnlyOnce', 0, () => {

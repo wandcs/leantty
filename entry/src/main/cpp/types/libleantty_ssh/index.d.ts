@@ -102,6 +102,7 @@ export declare function moshWrite(sessionId: string, data: string): void
 export declare function moshResize(sessionId: string, columns: number, rows: number): void
 export declare function moshSetOutputPaused(sessionId: string, paused: boolean): void
 export declare function moshDisconnect(sessionId: string): void
+export declare function cancelAllSessions(): number
 export declare function sshStartFileTransfer(
   direction: string, host: string, port: number, user: string,
   privateKeyPath: string, privateKeyRequiresPassphrase: boolean,
