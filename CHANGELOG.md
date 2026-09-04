@@ -39,6 +39,10 @@
 - Keep the process-owned workspace and active Mosh Session across a HarmonyOS
   WindowStage/Page rebuild, while a true process replacement still restores only
   fresh local Pane identities and never fabricates a remote Session.
+- Detect when HarmonyOS retains the process but reclaims the ArkTS Session graph.
+  LeanTTY keeps the Tab/Pane layout, rejects late remote output, cancels orphaned
+  native sessions and shows a clear local reconnect notice instead of silently
+  returning the Pane to `ltty>`.
 - Isolate every Mosh Session in a temporary terminal page. LeanTTY seals the original
   page before the first Mosh output, keeps all state-sync repaints out of local history,
   and restores the original page after final output on close, cancellation, error or

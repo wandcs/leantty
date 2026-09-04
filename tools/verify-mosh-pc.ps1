@@ -17,7 +17,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]
+    [ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'runtime-reclaim', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]
     [string]$Scenario = 'compatibility',
     [string]$Target = '',
     [string]$HapPath = '',
@@ -254,6 +254,7 @@ $terminalEofObservedBeforeRecoveryInput = $false
 $processRecoveryWorkspaceRestored = $false
 $processRecoveryRemoteContentAbsent = $false
 $processRecoverySessionNotRestored = $false
+$runtimeWorkspaceRecovered = $false
 $moshNetworkTimeoutSeconds = if ($Scenario -in @(
     'operator-lock-recovery', 'operator-lid-recovery'
 )) {
@@ -1874,6 +1875,43 @@ function Invoke-MoshPageRebuild {
     return [pscustomobject]@{ before = $before; after = $after }
 }
 
+function Invoke-MoshRuntimeReclaim {
+    Focus-ActiveTerminalInput -Name 'mosh-runtime-reclaim-before.json' | Out-Null
+    $before = Get-MoshAppProcessIdentity
+    if ($null -eq $before) {
+        throw '[infrastructure] LeanTTY process identity disappeared before runtime reclaim'
+    }
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    & $hdc -t $targetId shell (
+        'uinput -K -d 2072 -d 2045 -d 2047 -d 2035 ' +
+        '-u 2035 -u 2047 -u 2045 -u 2072'
+    ) | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw '[environment] Unable to invoke the LeanTTY runtime-reclaim shortcut'
+    }
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'ACCEPTANCE_RUNTIME_RECLAIM state=dropped' -TimeoutSeconds 15 | Out-Null
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'Runtime session state reclaimed; workspace-only recovery=true' `
+        -TimeoutSeconds 15 | Out-Null
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'ACCEPTANCE_RUNTIME_RECLAIM recovered=true' -TimeoutSeconds 15 | Out-Null
+    $runtimeLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    [IO.File]::WriteAllText(
+        (Join-Path $EvidenceDirectory 'mosh-runtime-reclaim-device-app.log'),
+        $runtimeLogs + "`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
+        -LocalPath (Join-Path $EvidenceDirectory 'mosh-runtime-reclaim-after.json') `
+        -TimeoutSeconds 20 | Out-Null
+    $after = Get-MoshAppProcessIdentity
+    if ($null -eq $after -or [string]$after.key -cne [string]$before.key) {
+        throw '[product] Acceptance runtime reclaim changed the LeanTTY process'
+    }
+    return [pscustomobject]@{ before = $before; after = $after }
+}
+
 function Split-MoshPane {
     Wait-MoshPaneCount -Count 1 -Name 'mosh-pane-close-before-split' | Out-Null
     Focus-ActiveTerminalInput -Name 'mosh-pane-close-before-split-focus.json' | Out-Null
@@ -2116,6 +2154,9 @@ function Write-Evidence {
         }
         'page-rebuild' {
             'active-mosh-session-survived-current-page-destruction-and-replacement-in-the-same-process'
+        }
+        'runtime-reclaim' {
+            'same-process-runtime-reclaim-preserved-workspace-warned-and-cleaned-the-orphan-session'
         }
         'abnormal-exit' {
             'injected-mosh-session-error-restored-the-original-page-and-rejected-session-output'
@@ -2404,16 +2445,20 @@ function Write-Evidence {
             primaryOracle = 'acceptance-only-viewmodel-error-log-page-replacement-ack-and-terminal-search'
         }
         processRecovery = [ordered]@{
-            exercised = ($Scenario -eq 'process-recovery' -or
-                ($Scenario -eq 'operator-lid-recovery' -and -not $sameAppProcessAfterResume))
+            exercised = ($Scenario -in @('process-recovery', 'runtime-reclaim') -or
+                ($Scenario -eq 'operator-lid-recovery' -and
+                    (-not $sameAppProcessAfterResume -or $runtimeWorkspaceRecovered)))
             trigger = $(if ($Scenario -eq 'operator-lid-recovery') {
                 'physical-lid'
+            } elseif ($Scenario -eq 'runtime-reclaim') {
+                'acceptance-only-runtime-state-reclaim'
             } elseif ($Scenario -eq 'process-recovery') { 'controlled-force-stop' } else { 'none' })
             processReplaced = (-not $sameAppProcessAfterResume)
+            runtimeReclaimed = $runtimeWorkspaceRecovered
             workspaceWarningObserved = $processRecoveryWorkspaceRestored
             remoteContentAbsent = $processRecoveryRemoteContentAbsent
             sessionNotRestored = $processRecoverySessionNotRestored
-            primaryOracle = 'pid-change-plus-terminal-search-positive-warning-and-negative-old-output-plus-local-command'
+            primaryOracle = 'pid-or-runtime-recovery-log-plus-terminal-search-positive-warning-and-negative-old-output-plus-local-command'
         }
         checks = [ordered]@{
             bootstrapAuthenticated = ($moshServerPid -gt 0)
@@ -2421,8 +2466,9 @@ function Write-Evidence {
             exactCommandObserved = ($lastProvenBoundary -match 'command|disconnect|cleanup')
             endpointMatchesRequest = $udpEndpointMatchesRequest
             serverPathMatchesRequest = $serverPathMatchesRequest
-            ctrlCaretDisconnect = $(if ($Scenario -in @('abnormal-exit', 'process-recovery') -or
-                ($Scenario -eq 'operator-lid-recovery' -and -not $sameAppProcessAfterResume)) {
+            ctrlCaretDisconnect = $(if ($Scenario -in @('abnormal-exit', 'process-recovery', 'runtime-reclaim') -or
+                ($Scenario -eq 'operator-lid-recovery' -and
+                    (-not $sameAppProcessAfterResume -or $runtimeWorkspaceRecovered))) {
                 $false
             } else { $lastProvenBoundary -match 'disconnect|cleanup' })
             authenticatedGracefulClose = $authenticatedGracefulClose
@@ -3171,6 +3217,40 @@ try {
         $lastProvenBoundary = 'page-rebuilt-with-process-session-and-command-preserved'
     }
 
+    if ($Scenario -eq 'runtime-reclaim') {
+        Write-LiveStatus -Stage 'runtime-reclaim'
+        $runtimeIdentity = Invoke-MoshRuntimeReclaim
+        $sameAppProcessAfterResume =
+            [string]$runtimeIdentity.before.key -ceq [string]$runtimeIdentity.after.key
+        $resumedAppProcessId = [string]$runtimeIdentity.after.processId
+        $resumedAppProcessStartTimeTicks = [string]$runtimeIdentity.after.startTimeTicks
+        $runtimeWorkspaceRecovered = $true
+        $processRecoveryWorkspaceRestored = Test-MoshTerminalSearch `
+            -Query 'Workspace layout was kept' -ExpectMatch $true `
+            -Name 'mosh-runtime-reclaim-warning-search'
+        $processRecoveryRemoteContentAbsent = Test-MoshTerminalSearch `
+            -Query $shellCommand -ExpectMatch $false `
+            -Name 'mosh-runtime-reclaim-old-output-negative-search'
+        Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
+        Submit-LocalCommand -Command 'help' -Stage 'mosh-runtime-reclaim-local-command'
+        $localPromptReady = $true
+        Wait-WslProcessAbsent -LinuxPid $moshServerPid -TimeoutSeconds 8 | Out-Null
+        Wait-WslProcessAbsent -LinuxPid $fixtureTerminalPid -TimeoutSeconds 8 | Out-Null
+        $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+        $processRecoverySessionNotRestored =
+            $processRecoveryRemoteContentAbsent -and -not $remoteShellAliveAfter -and
+            -not (Test-WslProcessPresent -LinuxPid $moshServerPid)
+        if (-not ($sameAppProcessAfterResume -and $processRecoveryWorkspaceRestored -and
+            $processRecoveryRemoteContentAbsent -and $processRecoverySessionNotRestored)) {
+            throw '[product] Same-process runtime-reclaim recovery contract failed'
+        }
+        $operatorRecoveryOutcome = 'client-runtime-reclaimed-workspace-only'
+        $sessionStayedConnected = $false
+        $recoveryCommandPassed = $true
+        $observedErrorCategory = 'client-runtime-reclaimed'
+        $lastProvenBoundary = 'same-process-runtime-reclaimed-workspace-only-recovered'
+    }
+
     if ($Scenario -eq 'abnormal-exit') {
         Write-LiveStatus -Stage 'abnormal-exit'
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
@@ -3681,40 +3761,82 @@ try {
                 -LocalPath (Join-Path $EvidenceDirectory "$operatorStage-resumed.json") `
                 -TimeoutSeconds 30 | Out-Null
 
-            Write-LiveStatus -Stage "$operatorStage-recovery-command"
-            $resumeCommandStopwatch = [Diagnostics.Stopwatch]::StartNew()
-            $resumeCaseId = if ($Scenario -eq 'operator-lid-recovery') {
-                'lid_' + $attemptId.Substring(0, 10)
-            } else { 'lock_' + $attemptId.Substring(0, 10) }
-            $recoveryInputMethod = 'harmony-uitest-targeted-inputText'
-            Submit-MoshInput -Text "ltty-mosh-check $resumeCaseId"
-            Wait-ControlFileMatch -Path $fixtureEvent `
-                -Pattern "(?ms)^case=$([regex]::Escape($resumeCaseId))$.*^result=passed$" `
-                -TimeoutSeconds 20 | Out-Null
-            $resumeCommandElapsedMs = [long]$resumeCommandStopwatch.Elapsed.TotalMilliseconds
+            $sameProcessRecoveryLogs = Get-LeanTTYAppLogs `
+                -Hdc $hdc -Target $targetId -ProcessId $appPid
+            $runtimeWorkspaceRecovered = $Scenario -eq 'operator-lid-recovery' -and
+                $sameProcessRecoveryLogs -match
+                    'Runtime session state reclaimed; workspace-only recovery=true'
+            if ($runtimeWorkspaceRecovered) {
+                Write-LiveStatus -Stage 'operator-lid-runtime-workspace-recovery'
+                $processRecoveryWorkspaceRestored = Test-MoshTerminalSearch `
+                    -Query 'Workspace layout was kept' -ExpectMatch $true `
+                    -Name 'operator-lid-runtime-recovery-warning-search'
+                $processRecoveryRemoteContentAbsent = Test-MoshTerminalSearch `
+                    -Query $shellCommand -ExpectMatch $false `
+                    -Name 'operator-lid-runtime-old-output-negative-search'
+                Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
+                Submit-LocalCommand -Command 'help' -Stage 'operator-lid-runtime-local-command'
+                $localPromptReady = $true
+                $processRecoverySessionNotRestored =
+                    $processRecoveryRemoteContentAbsent -and
+                    $sameProcessRecoveryLogs -notmatch 'Mosh Session closed'
+                if (-not ($processRecoveryWorkspaceRestored -and
+                    $processRecoveryRemoteContentAbsent -and $processRecoverySessionNotRestored)) {
+                    throw '[product] Runtime-reclaimed lid recovery lost its workspace-only contract'
+                }
+                Wait-WslProcessAbsent -LinuxPid $moshServerPid -TimeoutSeconds 8 | Out-Null
+                Wait-WslProcessAbsent -LinuxPid $fixtureTerminalPid -TimeoutSeconds 8 | Out-Null
+                $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+                if ($remoteShellAliveAfter -or (Test-WslProcessPresent -LinuxPid $moshServerPid)) {
+                    throw '[product] Runtime-reclaimed Mosh Session was not cleaned up'
+                }
+                $operatorRecoveryOutcome = 'client-runtime-reclaimed-workspace-only'
+                $sessionStayedConnected = $false
+                $recoveryCommandPassed = $true
+                $observedErrorCategory = 'client-runtime-reclaimed'
+                $lastProvenBoundary = 'operator-lid-client-runtime-reclaimed-workspace-only-recovered'
+                [IO.File]::WriteAllText(
+                    (Join-Path $EvidenceDirectory 'operator-lid-device-app.log'),
+                    $sameProcessRecoveryLogs + "`n",
+                    [Text.UTF8Encoding]::new($false)
+                )
+            } else {
 
-            $lockObservation = Get-MoshLifecycleObservation
-            $automaticCloseObserved = $lockObservation.closed
-            $automaticErrorObserved = $lockObservation.error
-            $interruptionObserved = $lockObservation.interrupted
-            $interruptionReason = $lockObservation.interruptionReason
-            $recoveredStatusObserved = $lockObservation.recovered
-            $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
-            $serverAliveAfterUnlock = Test-WslProcessPresent -LinuxPid $moshServerPid
-            $recoveryCommandPassed = -not $automaticCloseObserved -and -not $automaticErrorObserved
-            $sessionStayedConnected = $recoveryCommandPassed -and $remoteShellAliveAfter -and `
-                $serverAliveAfterUnlock
-            if (-not $sessionStayedConnected) {
-                throw "[product] Mosh Session or remote shell did not survive $operatorStage recovery"
+                Write-LiveStatus -Stage "$operatorStage-recovery-command"
+                $resumeCommandStopwatch = [Diagnostics.Stopwatch]::StartNew()
+                $resumeCaseId = if ($Scenario -eq 'operator-lid-recovery') {
+                    'lid_' + $attemptId.Substring(0, 10)
+                } else { 'lock_' + $attemptId.Substring(0, 10) }
+                $recoveryInputMethod = 'harmony-uitest-targeted-inputText'
+                Submit-MoshInput -Text "ltty-mosh-check $resumeCaseId"
+                Wait-ControlFileMatch -Path $fixtureEvent `
+                    -Pattern "(?ms)^case=$([regex]::Escape($resumeCaseId))$.*^result=passed$" `
+                    -TimeoutSeconds 20 | Out-Null
+                $resumeCommandElapsedMs = [long]$resumeCommandStopwatch.Elapsed.TotalMilliseconds
+
+                $lockObservation = Get-MoshLifecycleObservation
+                $automaticCloseObserved = $lockObservation.closed
+                $automaticErrorObserved = $lockObservation.error
+                $interruptionObserved = $lockObservation.interrupted
+                $interruptionReason = $lockObservation.interruptionReason
+                $recoveredStatusObserved = $lockObservation.recovered
+                $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+                $serverAliveAfterUnlock = Test-WslProcessPresent -LinuxPid $moshServerPid
+                $recoveryCommandPassed = -not $automaticCloseObserved -and -not $automaticErrorObserved
+                $sessionStayedConnected = $recoveryCommandPassed -and $remoteShellAliveAfter -and `
+                    $serverAliveAfterUnlock
+                if (-not $sessionStayedConnected) {
+                    throw "[product] Mosh Session or remote shell did not survive $operatorStage recovery"
+                }
+                $operatorRecoveryOutcome = 'client-process-and-session-preserved'
+                $observedErrorCategory = 'none'
+                $lastProvenBoundary = "$operatorStage-recovered-with-process-and-shell-preserved"
+                [IO.File]::WriteAllText(
+                    (Join-Path $EvidenceDirectory "$operatorStage-device-app.log"),
+                    $lockObservation.logs + "`n",
+                    [Text.UTF8Encoding]::new($false)
+                )
             }
-            $operatorRecoveryOutcome = 'client-process-and-session-preserved'
-            $observedErrorCategory = 'none'
-            $lastProvenBoundary = "$operatorStage-recovered-with-process-and-shell-preserved"
-            [IO.File]::WriteAllText(
-                (Join-Path $EvidenceDirectory "$operatorStage-device-app.log"),
-                $lockObservation.logs + "`n",
-                [Text.UTF8Encoding]::new($false)
-            )
         }
     }
 
@@ -3865,7 +3987,9 @@ try {
     }
 
     $workspaceOnlyLidRecovery =
-        $Scenario -eq 'operator-lid-recovery' -and -not $sameAppProcessAfterResume
+        ($Scenario -eq 'operator-lid-recovery' -and
+        (-not $sameAppProcessAfterResume -or $runtimeWorkspaceRecovered)) -or
+        $Scenario -eq 'runtime-reclaim'
     if ($Scenario -notin @('session-isolation', 'abnormal-exit', 'process-recovery') -and
         -not $workspaceOnlyLidRecovery) {
         Write-LiveStatus -Stage 'ctrl-caret-disconnect'

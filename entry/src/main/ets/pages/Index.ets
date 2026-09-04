@@ -29,7 +29,7 @@ const MENU_ACTION_COUNT: number = 6
 @Component
 struct Index {
   private applicationWorkspace: ApplicationWorkspace = ApplicationWorkspace.getInstance()
-  @State appVm: AppViewModel = ApplicationWorkspace.getInstance().getViewModel()
+  private appVm: AppViewModel = this.applicationWorkspace.getViewModel()
   @State tabs: TabInfo[] = []
   @State activeTabIndex: number = 0
   @State paneRuntimeRevision: number = 0
@@ -329,12 +329,17 @@ struct Index {
   }
 
   private onMainWindowVisibilityChanged(): void {
-    logger.info('Main window visibility applied: visible=' + this.mainWindowVisible.toString())
     if (this.mainWindowVisible) {
+      let bindingRestored: boolean = this.restoreApplicationWorkspaceBinding()
+      let runtimeRecovered: boolean = this.recoverReclaimedRuntimeSessions()
+      logger.info('Main window visibility applied: visible=true,workspaceBinding=' +
+        (bindingRestored ? 'restored' : 'retained') + ',runtimeRecovery=' +
+        (runtimeRecovered ? 'workspace-only' : 'not-required'))
       BackgroundBellNotification.resetForVisibleWindow()
       this.restoreActivePaneFocus()
       return
     }
+    logger.info('Main window visibility applied: visible=false,workspaceBinding=retained')
     let mounted: PaneRuntime[] = this.mountedPaneRuntimes()
     for (let i = 0; i < mounted.length; i++) {
       mounted[i].viewModel.requestBlur()
@@ -345,6 +350,66 @@ struct Index {
     }
     this.clearWarmTabEvictionTimer()
     this.warmTabId = ''
+  }
+
+  private restoreApplicationWorkspaceBinding(): boolean {
+    let owner: AppViewModel = this.applicationWorkspace.getViewModel()
+    if (this.appVm === owner) {
+      return false
+    }
+    this.appVm = owner
+    this.appVm.setPaneRuntimeFactory((pane: PaneInfo): PaneRuntime => this.createPaneRuntime(pane))
+    this.splitRatio = this.applicationWorkspace.getSplitRatio()
+    this.rebindPaneRuntimes()
+    this.syncWorkspace()
+    this.paneRuntimeRevision++
+    return true
+  }
+
+  private recoverReclaimedRuntimeSessions(): boolean {
+    let expectedPaneIds: string[] = this.storedPaneIds('activeRemotePaneIds')
+    if (expectedPaneIds.length === 0 || this.workspaceHasActiveSession()) {
+      return false
+    }
+    let expectedMoshPaneIds: string[] = this.storedPaneIds('activeMoshPaneIds')
+    let recoveredPaneCount: number = 0
+    for (let i = 0; i < expectedPaneIds.length; i++) {
+      let runtime: PaneRuntime | null = this.findPaneRuntime(expectedPaneIds[i])
+      if (runtime === null) {
+        continue
+      }
+      runtime.viewModel.recoverReclaimedRemoteSession(
+        expectedMoshPaneIds.indexOf(expectedPaneIds[i]) >= 0)
+      recoveredPaneCount++
+    }
+    let nativeCancelCount: number = -1
+    if (recoveredPaneCount > 0) {
+      try {
+        nativeCancelCount = SessionViewModel.cancelOrphanedNativeSessions()
+      } catch (e) {
+        logger.error('Unable to cancel orphaned native Sessions: ' + e)
+      }
+    }
+    this.syncWorkspace()
+    logger.warn('Runtime session state reclaimed; workspace-only recovery=true,panes=' +
+      recoveredPaneCount.toString() + ',nativeCancelRequests=' + nativeCancelCount.toString())
+    return recoveredPaneCount > 0
+  }
+
+  private storedPaneIds(key: string): string[] {
+    let encoded: string = AppStorage.get<string>(key) ?? ''
+    if (encoded.length === 0 || encoded.length > 2048) {
+      return []
+    }
+    let values: string[] = encoded.split('|')
+    let paneIds: string[] = []
+    for (let i = 0; i < values.length; i++) {
+      if (values[i].length > 0 && paneIds.indexOf(values[i]) < 0 &&
+        this.appVm.getPane(values[i]) !== null) {
+        paneIds.push(values[i])
+      }
+    }
+    return paneIds
   }
 
   private onBackgroundBellReturnRequested(): void {
@@ -1008,6 +1073,26 @@ struct Index {
     this.tabs = this.appVm.getTabs().slice()
     this.activeTabIndex = this.appVm.getActiveTabIndex()
     AppStorage.setOrCreate('hasActiveSshSession', this.workspaceHasActiveSession())
+    AppStorage.setOrCreate('activeRemotePaneIds', this.activeRemotePaneIds(false))
+    AppStorage.setOrCreate('activeMoshPaneIds', this.activeRemotePaneIds(true))
+  }
+
+  private activeRemotePaneIds(moshOnly: boolean): string {
+    let paneIds: string[] = []
+    let tabs: TabInfo[] = this.appVm.getTabs()
+    for (let tabIndex = 0; tabIndex < tabs.length; tabIndex++) {
+      for (let paneIndex = 0; paneIndex < tabs[tabIndex].panes.length; paneIndex++) {
+        let pane: PaneInfo = tabs[tabIndex].panes[paneIndex]
+        if (pane.mode === TerminalMode.IDLE) {
+          continue
+        }
+        let runtime: PaneRuntime | null = this.findPaneRuntime(pane.id)
+        if (!moshOnly || (runtime !== null && runtime.viewModel.isMoshProtocol())) {
+          paneIds.push(pane.id)
+        }
+      }
+    }
+    return paneIds.join('|')
   }
 
   private checkpointWorkspace(): void {

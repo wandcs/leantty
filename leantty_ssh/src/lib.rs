@@ -4315,6 +4315,42 @@ pub fn mosh_disconnect(session_id: String) -> Result<()> {
 }
 
 #[napi]
+pub fn cancel_all_sessions() -> Result<u32> {
+    let mut requested = 0_u32;
+    {
+        let sessions = get_sessions()
+            .lock()
+            .map_err(|_| napi_error("SSH session map lock poisoned"))?;
+        for session in sessions.values() {
+            if session.disconnect_tx.try_send(()).is_ok() {
+                requested += 1;
+            }
+        }
+    }
+    {
+        let sessions = get_mosh_sessions()
+            .lock()
+            .map_err(|_| napi_error("Mosh session map lock poisoned"))?;
+        for session in sessions.values() {
+            if session.disconnect_tx.try_send(()).is_ok() {
+                requested += 1;
+            }
+        }
+    }
+    {
+        let sessions = get_file_transfer_sessions()
+            .lock()
+            .map_err(|_| napi_error("file transfer session map lock poisoned"))?;
+        for session in sessions.values() {
+            if session.disconnect_tx.try_send(()).is_ok() {
+                requested += 1;
+            }
+        }
+    }
+    Ok(requested)
+}
+
+#[napi]
 pub async fn ssh_generate_key_pair(
     algorithm: String,
     passphrase: String,

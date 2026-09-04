@@ -198,6 +198,36 @@ export class SessionViewModel {
     return this.mode
   }
 
+  isMoshProtocol(): boolean {
+    return this.connectionProtocol === ConnectionCommandProtocol.MOSH
+  }
+
+  static cancelOrphanedNativeSessions(): number {
+    return MoshClient.cancelOrphanedNativeSessions()
+  }
+
+  recoverReclaimedRemoteSession(wasMosh: boolean): void {
+    this.acceptingSessionOutput = false
+    this.clearAuthChallenge()
+    this.moshClient = null
+    this.sshClient = new SshClient()
+    this.session.markDisconnected()
+    this.setMode(TerminalMode.IDLE)
+    this.connectionProtocol = ConnectionCommandProtocol.SSH
+    let writeNotice: () => void = (): void => {
+      this.writeTerminal('\u001b[0m\r\n' + LocalCommandOutput.warning(
+        'LeanTTY session state was reclaimed while the device was suspended. ' +
+        'Workspace layout was kept; reconnect this pane to continue.') +
+        '\r\n' + LocalCommandOutput.prompt())
+    }
+    if (wasMosh) {
+      this.finishMoshTerminalOwnership(writeNotice)
+    } else {
+      this.finishSessionTerminalOwnership(writeNotice)
+    }
+    this.notifyStateChange()
+  }
+
   setPaneIdentity(paneId: string): void {
     this.paneId = paneId
   }

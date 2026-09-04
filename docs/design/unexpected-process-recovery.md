@@ -4,7 +4,7 @@
 >
 > 当前 milestone：1.6
 >
-> 更新日期：2026-09-02
+> 更新日期：2026-09-04
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
@@ -50,9 +50,10 @@ LeanTTY 不能承诺进程永不退出，但应把意外退出从“整个工作
 - 长期配置持久化仍明确排除工作区和 Session。新增的异常退出记录只含 Tab/Pane 数量与活动
   位置、稳定 split ratio 和 run generation；终端内容、远端状态、秘密和透明度仍不持久化。
   主窗口几何目前完全由 HarmonyOS 托管，见 [`architecture.md`](../architecture.md)。
-- HAD-W32 已证明受控挂起和 `Win+L` 不会必然替换进程。物理合盖存在两条实际路径：系统可能
-  替换 LeanTTY 进程，也可能保留同一 PID 与 `/proc/<pid>/stat` start time、但重建 WindowStage
-  和 Page。前者只能恢复本地工作区，后者必须保留进程内 Session；两者都不证明长时任务适用。
+- HAD-W32 已证明受控挂起和 `Win+L` 不会必然替换进程。物理合盖存在三种可观察结果：系统替换
+  LeanTTY 进程；保留同一 PID/start time 且保留完整 Session graph；或保留进程身份但回收 ArkTS
+  Session graph。前者只能恢复本地工作区；第二种必须保留同一远端 PTY；第三种必须保留布局、
+  明确提示重连并清理失主的 native Session。PID 不是唯一运行时身份，三者都不证明长时任务适用。
 - HarmonyOS `dataTransfer` 要求 Live View 持续更新真实传输进度。HAD-W32 在屏幕保持点亮和
   解锁、SSH 仍连接且 LeanTTY PID 不变时，因 10 分钟没有更新通知进度撤销任务。系统服务先以
   reason 23 删除通知，再向应用回调 reason 1；因此不能把 reason 1 单独解释成用户取消。
@@ -280,14 +281,15 @@ Session 的受控状态机，不替代物理合盖、Surface 重建或 Pane 晚�
 该结果闭合物理合盖的进程替换分支，不宣称系统会保留本地 Mosh Session。
 
 随后一轮加入 `/proc/<pid>/stat` start time 的运行给出了另一条确定证据：合盖前后 PID 均为
-24550，start time ticks 均为 38439318，但解锁后输入落入本地 `ltty`，证明同一进程仍存活而
-WindowStage/Page 被重建，旧页面的 `aboutToDisappear()` 错误释放了 Mosh Session；这不是 PID
-复用，也不是测试输入失败。机器可读证据位于
+24550，start time ticks 均为 38439318，但解锁后输入落入本地 `ltty`。它证明同一进程身份仍
+存活，但当时尚不能区分页面析构主动释放 Session、工作区 owner 被替换或 ArkTS 对象内部状态
+被回收；这不是 PID 复用，也不是测试输入失败。机器可读证据位于
 `build/verification/device-mosh-operator-lid-recovery-20260902-proc-identity/device-mosh.json`。
 
-因此工作区所有权提升到进程级 `ApplicationWorkspace`：它在进程内持有唯一 `AppViewModel`，
+工作区所有权随后提升到进程级 `ApplicationWorkspace`：它在进程内持有唯一 `AppViewModel`，
 替换页面只重绑 Pane runtime 的 UI callback 并重新附着 Surface；页面析构不再释放工作区或
-Session。显式正常关闭仍先断开所有 runtime 再标记 clean，进程真正替换时仍只走持久化结构恢复。
+Session。确定性 `page-rebuild` 真机证据证明该边界正确，但它没有解释真实合盖中的对象状态回收。
+显式正常关闭仍先断开所有 runtime 再标记 clean，进程真正替换时仍只走持久化结构恢复。
 
 当前修复 HAP 首次重跑真实合盖时选择了进程替换分支：PID/start time 从
 40273/38593315 变为 45041/38618783，stock server 与 PTY 在替换点仍存活，本地工作区提示、
@@ -303,6 +305,35 @@ reverse、fixture、设备状态和临时目录全部清理。证据位于
 `build/verification/device-mosh-page-rebuild-20260902-retry2/device-mosh.json`，HAP SHA-256 为
 `2d3c43605ac2c9133387d4c1846d95e120969100f92744528d47db95649afc5a`。这条确定性证据直接覆盖
 此前故障所在的页面析构/重建边界；生产源码和发布包不包含该触发入口。
+
+### 2026-09-04 同进程运行时回收证据与合同
+
+两次新的真实合盖诊断排除了“只要保留 workspace owner 就能保留 Session”的假设：
+`mosh-appstorage-lid-r2` 的 PID/start time 为 `59496/55760057`，`mosh-runtime-owner-lid-r3` 为
+`765/55802674`，合盖前后均未改变；恢复输入前都没有 Mosh close/error，stock server 与远端
+PTY 仍存活，但 Pane 已为本地空闲状态。第二次日志还记录 `workspaceBinding=retained`。因此
+WindowStage、Page、workspace 对象甚至进程身份都不是 Session 完整性的充分证明；把复杂
+`AppViewModel` 放进 AppStorage 或只移除页面字段上的 `@State` 也不能建立该保证。
+
+最终实现把 live Tab -> Pane -> Session graph 保持为普通应用级 owner，不放进 `@State` 或
+AppStorage；后两者只保存用于 UI 更新和不一致检测的简单投影。每次同步工作区时，AppStorage
+记录活动远端 Pane ID 和其中的 Mosh Pane ID。窗口恢复可见时，如果投影仍声明活动 Session，
+但 live graph 已全部回到空闲，LeanTTY 认定 ArkTS Session graph 已被回收：先停止接收旧输出，
+恢复每个 Pane 的本地页面并显示重连提示，再通过 native registry 取消失主的 SSH、Mosh 和传输
+Session。该分支不恢复终端内容、凭据或连接，也不解析远端输出猜测生命周期。
+
+物理合盖由系统选择进程替换、Session 保留或 runtime 回收，重复合盖不能稳定命中指定分支。
+因此测试包增加编译期裁剪的 `runtime-reclaim` 症状注入：它只制造“简单活动投影仍在、
+SessionViewModel 已空闲、native Mosh 仍存活”的已观察状态，恢复本身完全走生产路径。HAD-W32
+上 PID/start time 均保持 `33256/56033973`，恢复日志记录 `panes=1,nativeCancelRequests=1`；结构化
+结果证明 `processReplaced=false`、
+`runtimeReclaimed=true`、提示可见、旧远端内容不可见、Session 未伪恢复、本地 `help` 可执行，
+stock server、远端 PTY、HDC reverse、fixture 和临时目录全部清理。测试 HAP SHA-256 为
+`8b1b5851b916dfc6d9ac60bdab35f26716507801da630c066063e19d46d79e9e`，机器可读证据位于
+`%USERPROFILE%\Documents\LeanTTY-verification\1.6-mosh-formal-20260904\mosh-runtime-reclaim-deterministic-r4\device-mosh.json`，关键日志同目录保存为
+`mosh-runtime-reclaim-device-app.log`。
+这条确定性证据与两次真实合盖的症状证据配对，闭合 runtime-reclaim 合同；它不把注入本身表述
+为一次真实合盖，也不承诺系统保留远端 Session。
 
 ### 2026-09-02 旧通知跨进程隔离证据
 

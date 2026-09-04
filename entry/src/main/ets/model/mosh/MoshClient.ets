@@ -497,6 +497,10 @@ export class MoshClient {
     return MoshClient.CLOSE_REASONS.indexOf(reason) >= 0 ? reason : 'unknown'
   }
 
+  static cancelOrphanedNativeSessions(): number {
+    return sshNative.cancelAllSessions()
+  }
+
   static parseStatus(event: NativeTransportEvent): MoshStatusInfo | null {
     let stages: string[] = ['mosh_bootstrap', 'mosh_udp']
     let statuses: string[] = ['started', 'succeeded', 'failed', 'closed']
