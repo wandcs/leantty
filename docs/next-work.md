@@ -126,23 +126,19 @@ manifest、附件和哈希保持不变。
   `maintainer-summary.md`，不包含第二套设备驱动。当前报告明确不声称 1.6 完整 C3，因为 Mosh
   verifier 仍只产生 diagnostic evidence。
 - [ ] 闭合物理合盖的两条实际结果。进程替换时恢复本地 Tab/Pane，显示远端 Session 未恢复
-  提示且不带回旧输出；PID 与 `/proc` start time 不变但 ArkTS Session graph 被回收时，以简单
-  AppStorage 活动 Pane 投影识别不一致，保留布局、恢复本地页面、隔离晚到输出并取消全部失主的
-  native Session。两次真实合盖分别证明进程替换，以及同进程、无 Mosh close/error、server/PTY
-  仍存活但 Session 已空闲；由于系统不能确定选择后一个分支，修复后的恢复合同由测试包专用
-  `runtime-reclaim` 症状注入在 HAD-W32 上确定复验：同一 PID/start time、提示、旧内容隔离、本地
-  命令、stock server/PTY 清理和 fixture cleanup 全部通过。生产包不包含触发入口。随后正式候选
-  `59375d85867b59e45a440f05982ed8be8d35162e153a0bc95a0274269ab68bc4` 的真实同进程合盖发现
-  UI `PaneInfo.mode` 仍残留 CONNECTED，而 live
-  `SessionViewModel.getMode()` 已为 IDLE，旧检测因此过早判定无需恢复。改为逐个核对 live runtime
-  后，测试 HAP `cb098fd2a7f4e6c09fd79a612603e30423ca2107c3bd3502c979cf5eb3dd433c`
-  已用保留陈旧 UI 投影的 `runtime-reclaim` 在真机确定复验通过。随后正式候选 commit `8b92a0d`、
-  HAP `38cf485bf9754a7a0df80ebbe468f6968497657b9c66249392f5193ff0014e5c` 的真实同进程合盖又证明，
-  live 检查通过后、首个输入前仍可能丢失 Session graph。现改为在实际输入边界核对活动 Pane：
-  不一致时消费第一段输入并触发既有统一恢复，不增加延时或第二套状态机。测试 HAP
-  `87b32579163b0b38a87aa0a4bf64ff23166b3b42bfb6719a75d2287bb2a3c3bb` 已在同一 PID/start time
-  `46922/56576305` 下证明单字符不泄漏、提示、旧内容隔离、本地命令和 cleanup 通过。仍必须用新
-  正式候选复验真实合盖；旧候选和它的前四组正式结果不得沿用。
+  提示且不带回旧输出；PID 与 `/proc` start time 不变但 ArkTS Session graph 被回收时，保留布局、
+  恢复本地页面、隔离晚到输出并取消全部失主的 native Session。真实合盖已分别证明进程替换，
+  以及同进程、无 Mosh close/error、server/PTY 仍存活但 Session 已空闲。正式候选 commit
+  `eede0ab`、HAP `584fa1fe6a9afe1ce3d081bec4e8d09d11ade4a5be8b910c708d697dd06a8430` 又证明
+  AppStorage 活动 Pane 投影也会随真实合盖丢失：PID/start time `5386/56737521` 未变，首个输入
+  进入 `mode=0`，但旧输入门没有拦截。现改用实际输入来源 Surface 持有的 Mosh 页面和 Pane
+  identity 作为最终边界，由 `Index` 继续独占活动 Pane 核对、降级、提示和 native 清理；正常关闭、
+  本地 IDLE 和晚到非活动 Surface 不触发，也不增加延时或第二套状态机。测试 HAP
+  `636035b2d115f597b821e36042fcb45b1b6d0c3ac051457c6ea04b0479e22a56` 已在主动清空两项
+  AppStorage 投影、同一 PID/start time `20453/56837533` 下证明首字符不泄漏、只清理 1 个 Pane/
+  1 个 native Session、提示、旧内容和晚到事件隔离、本地命令及 cleanup 全部通过。生产包不含
+  注入入口。仍必须用合并后的新正式候选复验真实合盖并从头执行完整矩阵；旧候选和它的前四组
+  正式结果不得沿用。
 - [ ] 将已闭合的七组 Mosh 网络/生命周期场景升级为正式 retained-candidate acceptance，并接入
   薄编排入口。先加入 formal candidate/harness 双身份和 `acceptanceEligible` 门，再按
   compatibility、UDP pause、suspend、lock、lid、Wi-Fi pause、Wi-Fi network switch 固定顺序串行

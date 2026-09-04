@@ -371,12 +371,29 @@ struct Index {
     return true
   }
 
-  private recoverReclaimedRuntimeSessions(): boolean {
+  private recoverReclaimedRuntimeSessions(requestedPaneId: string = ''): boolean {
     let expectedPaneIds: string[] = this.storedPaneIds('activeRemotePaneIds')
+    let projectedPaneIds: string[] = this.projectedRemotePaneIds()
+    for (let i = 0; i < projectedPaneIds.length; i++) {
+      if (expectedPaneIds.indexOf(projectedPaneIds[i]) < 0) {
+        expectedPaneIds.push(projectedPaneIds[i])
+      }
+    }
+    if (requestedPaneId.length > 0 && this.appVm.getPane(requestedPaneId) !== null &&
+      expectedPaneIds.indexOf(requestedPaneId) < 0) {
+      expectedPaneIds.push(requestedPaneId)
+    }
     if (expectedPaneIds.length === 0 || this.runtimeSessionsMatchProjection(expectedPaneIds)) {
       return false
     }
     let expectedMoshPaneIds: string[] = this.storedPaneIds('activeMoshPaneIds')
+    for (let i = 0; i < expectedPaneIds.length; i++) {
+      let runtime: PaneRuntime | null = this.findPaneRuntime(expectedPaneIds[i])
+      if (runtime !== null && runtime.surface.ownsMoshSessionPage() &&
+        expectedMoshPaneIds.indexOf(expectedPaneIds[i]) < 0) {
+        expectedMoshPaneIds.push(expectedPaneIds[i])
+      }
+    }
     let recoveredPaneCount: number = 0
     for (let i = 0; i < expectedPaneIds.length; i++) {
       let runtime: PaneRuntime | null = this.findPaneRuntime(expectedPaneIds[i])
@@ -411,6 +428,20 @@ struct Index {
     return true
   }
 
+  private projectedRemotePaneIds(): string[] {
+    let paneIds: string[] = []
+    let tabs: TabInfo[] = this.appVm.getTabs()
+    for (let tabIndex = 0; tabIndex < tabs.length; tabIndex++) {
+      for (let paneIndex = 0; paneIndex < tabs[tabIndex].panes.length; paneIndex++) {
+        let pane: PaneInfo = tabs[tabIndex].panes[paneIndex]
+        if (pane.mode !== TerminalMode.IDLE) {
+          paneIds.push(pane.id)
+        }
+      }
+    }
+    return paneIds
+  }
+
   private storedPaneIds(key: string): string[] {
     let encoded: string = AppStorage.get<string>(key) ?? ''
     if (encoded.length === 0 || encoded.length > 2048) {
@@ -439,7 +470,7 @@ struct Index {
       logger.warn('Runtime recovery request ignored because the active Pane changed')
       return
     }
-    let recovered: boolean = this.recoverReclaimedRuntimeSessions()
+    let recovered: boolean = this.recoverReclaimedRuntimeSessions(requestedPaneId)
     logger.info('Runtime recovery request handled pane=' + requestedPaneId +
       ',recovered=' + recovered.toString())
   }
@@ -862,7 +893,7 @@ struct Index {
       let runtime: PaneRuntime | null = activeRuntime
       if (runtime !== null) {
         runtime.viewModel.handleTerminalInput(KeyCodeMap.toAnsi(
-          event.keyCode, ctrlKey, altKey, shiftKey))
+          event.keyCode, ctrlKey, altKey, shiftKey), runtime.surface)
         return true
       }
     }
@@ -871,7 +902,7 @@ struct Index {
       let runtime: PaneRuntime | null = activeRuntime
       if (runtime !== null) {
         runtime.viewModel.handleTerminalInput(KeyCodeMap.toAnsi(
-          event.keyCode, ctrlKey, altKey, shiftKey))
+          event.keyCode, ctrlKey, altKey, shiftKey), runtime.surface)
         return true
       }
     }
@@ -1104,8 +1135,6 @@ struct Index {
   private syncWorkspace(): void {
     this.tabs = this.appVm.getTabs().slice()
     this.activeTabIndex = this.appVm.getActiveTabIndex()
-    let activePane: PaneInfo | null = this.appVm.getActivePane()
-    AppStorage.setOrCreate('activePaneId', activePane === null ? '' : activePane.id)
     AppStorage.setOrCreate('hasActiveSshSession', this.workspaceHasActiveSession())
     AppStorage.setOrCreate('activeRemotePaneIds', this.activeRemotePaneIds(false))
     AppStorage.setOrCreate('activeMoshPaneIds', this.activeRemotePaneIds(true))

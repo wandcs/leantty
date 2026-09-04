@@ -16,6 +16,7 @@ export class PaneRuntime {
     this.id = id
     this.viewModel = viewModel
     this.surface = new TerminalSurfaceController()
+    this.surface.setPaneIdentity(id)
     this.viewModel.bindTerminalSurface(this.surface)
   }
 

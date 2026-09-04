@@ -271,7 +271,7 @@ export class SessionViewModel {
     this.terminalSurface = surface
     surface.setInputMasked(SessionViewModel.isSecretInputMode(this.mode))
     surface.setOnMessage((msg: BridgeMessage) => {
-      this.handleBridgeMessage(msg)
+      this.handleBridgeMessage(msg, surface)
     })
     surface.setOnReady((recoveredOutput: boolean) => {
       this.onBridgeReady(recoveredOutput)
@@ -1206,14 +1206,14 @@ export class SessionViewModel {
     }
   }
 
-  private handleBridgeMessage(msg: BridgeMessage): void {
+  private handleBridgeMessage(msg: BridgeMessage, sourceSurface: TerminalSurfaceController): void {
     switch (msg.kind) {
       case BridgeProtocol.KIND_TERMINAL:
         if (msg.channel !== BridgeProtocol.CHANNEL_DATA) {
           break
         }
         this.logger.info('D: ' + msg.payload.length.toString() + ' chars, mode=' + this.mode.toString())
-        this.handleTerminalInput(msg.payload)
+        this.handleTerminalInput(msg.payload, sourceSurface)
         break
       case BridgeProtocol.KIND_RESIZE:
         if (msg.channel !== BridgeProtocol.CHANNEL_CONTROL) {
@@ -1245,8 +1245,8 @@ export class SessionViewModel {
     }
   }
 
-  handleTerminalInput(data: string): void {
-    if (this.requestRuntimeRecoveryBeforeIdleInput()) {
+  handleTerminalInput(data: string, sourceSurface?: TerminalSurfaceController): void {
+    if (this.requestRuntimeRecoveryBeforeIdleInput(sourceSurface)) {
       return
     }
     if (this.terminalResetPending) {
@@ -1311,18 +1311,20 @@ export class SessionViewModel {
     }
   }
 
-  private requestRuntimeRecoveryBeforeIdleInput(): boolean {
-    if (this.mode !== TerminalMode.IDLE) {
+  private requestRuntimeRecoveryBeforeIdleInput(sourceSurface?: TerminalSurfaceController): boolean {
+    if (this.mode !== TerminalMode.IDLE || this.terminalResetPending) {
       return false
     }
-    let activePaneId: string = AppStorage.get<string>('activePaneId') ?? ''
-    let expectedPaneIds: string = AppStorage.get<string>('activeRemotePaneIds') ?? ''
-    if (activePaneId.length === 0 || this.paneId !== activePaneId ||
-      expectedPaneIds.split('|').indexOf(activePaneId) < 0) {
+    let surface: TerminalSurfaceController | null = sourceSurface ?? this.terminalSurface
+    if (surface === null || !surface.ownsMoshSessionPage()) {
+      return false
+    }
+    let paneId: string = surface.getPaneIdentity()
+    if (paneId.length === 0) {
       return false
     }
     let token: number = AppStorage.get<number>('runtimeRecoveryRequestToken') ?? 0
-    AppStorage.setOrCreate('runtimeRecoveryRequestPaneId', activePaneId)
+    AppStorage.setOrCreate('runtimeRecoveryRequestPaneId', paneId)
     this.logger.warn('Terminal input withheld for runtime recovery')
     AppStorage.setOrCreate('runtimeRecoveryRequestToken', token + 1)
     return true
