@@ -1302,6 +1302,9 @@ $moshClient = Get-Content -LiteralPath (
 $moshSessionViewModel = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
 ) -Raw
+$moshIndexPage = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
+) -Raw
 $moshNativeTypes = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\cpp\types\libleantty_ssh\index.d.ts'
 ) -Raw
@@ -1327,7 +1330,8 @@ foreach ($predictionContract in @(
     @{ Source = $moshNative; Text = 'mosh_prediction_mode(&prediction_mode)' },
     @{ Source = $moshManifest; Text = '94f13225aba535c6645a9179e0ce9f00b156629e' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_MOSH_OUTPUT mode=' },
-    @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' }
+    @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' },
+    @{ Source = $moshIndexPage; Text = 'runtime.viewModel.getMode() === TerminalMode.IDLE' }
 )) {
     Assert-True ($predictionContract.Source.Contains($predictionContract.Text)) (
         "Mosh prediction pass-through omitted contract: $($predictionContract.Text)"

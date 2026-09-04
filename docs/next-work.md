@@ -125,13 +125,19 @@ manifest、附件和哈希保持不变。
   失败会给出绑定原目录的精确 `-Resume`。统一输出为 `release-report.json` 与
   `maintainer-summary.md`，不包含第二套设备驱动。当前报告明确不声称 1.6 完整 C3，因为 Mosh
   verifier 仍只产生 diagnostic evidence。
-- [x] 已闭合物理合盖的两条实际结果。进程替换时恢复本地 Tab/Pane，显示远端 Session 未恢复
+- [ ] 闭合物理合盖的两条实际结果。进程替换时恢复本地 Tab/Pane，显示远端 Session 未恢复
   提示且不带回旧输出；PID 与 `/proc` start time 不变但 ArkTS Session graph 被回收时，以简单
   AppStorage 活动 Pane 投影识别不一致，保留布局、恢复本地页面、隔离晚到输出并取消全部失主的
   native Session。两次真实合盖分别证明进程替换，以及同进程、无 Mosh close/error、server/PTY
   仍存活但 Session 已空闲；由于系统不能确定选择后一个分支，修复后的恢复合同由测试包专用
   `runtime-reclaim` 症状注入在 HAD-W32 上确定复验：同一 PID/start time、提示、旧内容隔离、本地
-  命令、stock server/PTY 清理和 fixture cleanup 全部通过。生产包不包含触发入口。
+  命令、stock server/PTY 清理和 fixture cleanup 全部通过。生产包不包含触发入口。随后正式候选
+  `59375d85867b59e45a440f05982ed8be8d35162e153a0bc95a0274269ab68bc4` 的真实同进程合盖发现
+  UI `PaneInfo.mode` 仍残留 CONNECTED，而 live
+  `SessionViewModel.getMode()` 已为 IDLE，旧检测因此过早判定无需恢复。改为逐个核对 live runtime
+  后，测试 HAP `cb098fd2a7f4e6c09fd79a612603e30423ca2107c3bd3502c979cf5eb3dd433c`
+  已用保留陈旧 UI 投影的 `runtime-reclaim` 在真机确定复验通过；仍必须用新正式候选复验真实合盖，
+  旧候选和它的前四组正式结果不得沿用。
 - [ ] 将已闭合的七组 Mosh 网络/生命周期场景升级为正式 retained-candidate acceptance，并接入
   薄编排入口。先加入 formal candidate/harness 双身份和 `acceptanceEligible` 门，再按
   compatibility、UDP pause、suspend、lock、lid、Wi-Fi pause、Wi-Fi network switch 固定顺序串行

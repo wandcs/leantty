@@ -368,7 +368,7 @@ struct Index {
 
   private recoverReclaimedRuntimeSessions(): boolean {
     let expectedPaneIds: string[] = this.storedPaneIds('activeRemotePaneIds')
-    if (expectedPaneIds.length === 0 || this.workspaceHasActiveSession()) {
+    if (expectedPaneIds.length === 0 || this.runtimeSessionsMatchProjection(expectedPaneIds)) {
       return false
     }
     let expectedMoshPaneIds: string[] = this.storedPaneIds('activeMoshPaneIds')
@@ -394,6 +394,16 @@ struct Index {
     logger.warn('Runtime session state reclaimed; workspace-only recovery=true,panes=' +
       recoveredPaneCount.toString() + ',nativeCancelRequests=' + nativeCancelCount.toString())
     return recoveredPaneCount > 0
+  }
+
+  private runtimeSessionsMatchProjection(expectedPaneIds: string[]): boolean {
+    for (let i = 0; i < expectedPaneIds.length; i++) {
+      let runtime: PaneRuntime | null = this.findPaneRuntime(expectedPaneIds[i])
+      if (runtime === null || runtime.viewModel.getMode() === TerminalMode.IDLE) {
+        return false
+      }
+    }
+    return true
   }
 
   private storedPaneIds(key: string): string[] {
