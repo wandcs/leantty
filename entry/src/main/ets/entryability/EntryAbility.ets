@@ -65,7 +65,6 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('skipNextTerminateConfirmation', false)
     AppStorage.setOrCreate('activeRemotePaneIds', '')
     AppStorage.setOrCreate('activeMoshPaneIds', '')
-    AppStorage.setOrCreate('activePaneId', '')
     AppStorage.setOrCreate('runtimeRecoveryRequestPaneId', '')
     AppStorage.setOrCreate('runtimeRecoveryRequestToken', 0)
     AppStorage.setOrCreate('backgroundBellReturnPaneId', '')

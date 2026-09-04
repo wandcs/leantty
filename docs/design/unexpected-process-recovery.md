@@ -381,6 +381,34 @@ ASCII `x`。HAD-W32 上测试 HAP
 `%USERPROFILE%\Documents\LeanTTY-verification\1.6-formal-20260905\mosh-runtime-first-input-r3\device-mosh.json`。
 该测试证明首次输入安全边界，不代替新正式候选的真实合盖和完整七组矩阵。
 
+commit `eede0ab760ea23866c0d62008d277d2c5e1d242b`、HAP
+`584fa1fe6a9afe1ce3d081bec4e8d09d11ade4a5be8b910c708d697dd06a8430` 的正式矩阵再次校正了这条
+边界。第 5 组真实合盖保持同一 PID/start time `5386/56737521`，恢复输入前 stock server 和远端
+PTY 仍存活，也没有 Mosh close/error/interruption；但窗口恢复日志仍报告
+`runtimeRecovery=not-required`，首个输入进入 `mode=0` 后直接落入 `ltty>`，且没有
+`Terminal input withheld`。这证明合盖也会清除用来判断活动 Pane 的 AppStorage 简单投影；把
+AppStorage 当成最终输入权威仍然不成立。矩阵按规则停止，已通过的 compatibility、UDP pause、
+suspend 和 lock 结果不能跨修复沿用。证据位于
+`%USERPROFILE%\Documents\LeanTTY-verification\1.6-formal-20260905\mosh-matrix-eede0ab\mosh-matrix.json`。
+
+修订后的最终输入门改用输入来源 `TerminalSurfaceController` 自己持有的 Mosh Session 页面状态和
+Pane identity。Surface 是用户当前可见 Mosh 画面与输入事件的直接所有者；如果对应
+`SessionViewModel` 已为 IDLE，但该 Surface 仍持有 Mosh 页面，首段输入会被消费，并把 Surface 的
+Pane ID 交给 `Index`。`Index` 再核对它仍是活动 Pane，合并仍存在的 UI 投影，并继续独占布局降级、
+提示和 native registry 清理。正常 Mosh 页面关闭期间的 `terminalResetPending`、不持有 Mosh 页面的
+本地 IDLE Pane，以及非活动或晚到 Surface 输入都不能触发恢复；实现没有增加延时、计时器或第二套
+Session 状态机。
+
+编译期裁剪的 `runtime-reclaim` 进一步主动清空 `activeRemotePaneIds` 和 `activeMoshPaneIds`，证明
+这条门不再依赖 AppStorage 活动投影。HAD-W32 上测试 HAP
+`636035b2d115f597b821e36042fcb45b1b6d0c3ac051457c6ea04b0479e22a56` 保持同一 PID/start time
+`20453/56837533`；日志依次记录 `mode=0`、首字符被拦截、
+`panes=1,nativeCancelRequests=1`、请求完成以及晚到 Mosh output/event 被拒绝。结构化结果同时证明
+提示可见、旧内容不可见、Session 未伪恢复、后续本地 `help` 可执行且 cleanup 通过。证据位于
+`%USERPROFILE%\Documents\LeanTTY-verification\1.6-formal-20260905\mosh-runtime-surface-owned-r1\device-mosh.json`。
+该结果仍是诊断 HAP 的确定性合同证据；真实合盖和完整七组矩阵必须在合并后的新正式候选上从头
+复验。
+
 ### 2026-09-02 旧通知跨进程隔离证据
 
 同一 HAP 建立后台 BEL 通知后，测试强制停止 LeanTTY，再点击仍留在系统通知中心的旧通知。

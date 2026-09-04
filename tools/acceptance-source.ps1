@@ -218,8 +218,6 @@ function Add-LeanTTYAcceptanceSource {
       logger.error('ACCEPTANCE_RUNTIME_RECLAIM state=ignored,reason=no-active-pane')
       return
     }
-    let activePaneIds: string = AppStorage.get<string>('activeRemotePaneIds') ?? ''
-    let activeMoshPaneIds: string = AppStorage.get<string>('activeMoshPaneIds') ?? ''
     let projectedPane: PaneInfo | null = this.appVm.getPane(runtime.id)
     let projectedMode: TerminalMode = projectedPane === null ? TerminalMode.IDLE : projectedPane.mode
     if (!runtime.viewModel.reclaimRuntimeStateForAcceptance()) {
@@ -229,8 +227,8 @@ function Add-LeanTTYAcceptanceSource {
     if (projectedPane !== null) {
       projectedPane.mode = projectedMode
     }
-    AppStorage.setOrCreate('activeRemotePaneIds', activePaneIds)
-    AppStorage.setOrCreate('activeMoshPaneIds', activeMoshPaneIds)
+    AppStorage.setOrCreate('activeRemotePaneIds', '')
+    AppStorage.setOrCreate('activeMoshPaneIds', '')
     logger.warn('ACCEPTANCE_RUNTIME_RECLAIM state=dropped,pane=' + runtime.id)
   }
 

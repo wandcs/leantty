@@ -1302,6 +1302,12 @@ $moshClient = Get-Content -LiteralPath (
 $moshSessionViewModel = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
 ) -Raw
+$moshPaneRuntime = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\viewmodel\PaneRuntime.ets'
+) -Raw
+$moshTerminalSurface = Get-Content -LiteralPath (
+    Join-Path $repoRoot 'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets'
+) -Raw
 $moshIndexPage = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
 ) -Raw
@@ -1332,12 +1338,16 @@ foreach ($predictionContract in @(
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_MOSH_OUTPUT mode=' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' },
     @{ Source = $moshIndexPage; Text = 'runtime.viewModel.getMode() === TerminalMode.IDLE' },
-    @{ Source = $moshSessionViewModel; Text = 'if (this.requestRuntimeRecoveryBeforeIdleInput())' },
-    @{ Source = $moshSessionViewModel; Text = 'this.paneId !== activePaneId' },
-    @{ Source = $moshIndexPage; Text = 'vm.setPaneIdentity(pane.id)' },
+    @{ Source = $moshSessionViewModel; Text = 'if (this.requestRuntimeRecoveryBeforeIdleInput(sourceSurface))' },
+    @{ Source = $moshSessionViewModel; Text = '!surface.ownsMoshSessionPage()' },
+    @{ Source = $moshTerminalSurface; Text = 'return this.moshPageRequested || this.outputBuffer.isSessionPageActive()' },
+    @{ Source = $moshIndexPage; Text = 'runtime.surface.ownsMoshSessionPage()' },
+    @{ Source = $moshIndexPage; Text = 'this.recoverReclaimedRuntimeSessions(requestedPaneId)' },
+    @{ Source = $moshSessionViewModel; Text = 'this.terminalResetPending' },
+    @{ Source = $moshPaneRuntime; Text = 'this.surface.setPaneIdentity(id)' },
     @{ Source = $moshSessionViewModel; Text = 'Terminal input withheld for runtime recovery' },
     @{ Source = $moshIndexPage; Text = "@Watch('onRuntimeRecoveryRequested')" },
-    @{ Source = $moshIndexPage; Text = "AppStorage.setOrCreate('activePaneId'" }
+    @{ Source = $acceptanceSource; Text = "AppStorage.setOrCreate('activeRemotePaneIds', '')" }
 )) {
     Assert-True ($predictionContract.Source.Contains($predictionContract.Text)) (
         "Mosh prediction pass-through omitted contract: $($predictionContract.Text)"
