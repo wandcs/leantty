@@ -683,7 +683,8 @@ fn run_mosh_shell(control_directory: &Path, case_id: &str, in_tmux: bool) -> io:
             else\n\
               printf 'kind=%s\\ncase=%s\\nresult=failed\\n' \"$LTTY_MOSH_KIND\" \"$1\" > \"$LTTY_MOSH_EVENT\"\n\
             fi\n\
-          }\n",
+          }\n\
+          bind -x '\"\\C-g\":ltty-shell-check \"$LTTY_MOSH_CASE\"'\n",
     )?;
 
     let mut command = if in_tmux {

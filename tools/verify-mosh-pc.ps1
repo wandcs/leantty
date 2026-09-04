@@ -1016,6 +1016,15 @@ function Submit-MoshChildInput {
     }
 }
 
+function Invoke-MoshChildCheck {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    Focus-ActiveTerminalInput -Name "$Name.json" | Out-Null
+    & $hdc -t $targetId shell 'uinput -K -d 2072 -d 2023 -u 2023 -u 2072' | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw '[environment] Unable to inject the controlled Bash check shortcut'
+    }
+}
+
 function Submit-MoshPredictionAscii {
     param(
         [Parameter(Mandatory = $true)][ValidatePattern('^[a-z]$')][string]$Text,
@@ -2847,10 +2856,11 @@ try {
     Write-LiveStatus -Stage 'real-shell'
     Submit-MoshInput -Text "ltty-mosh-shell $caseId"
     Wait-ControlFile -Path $fixtureShellReady -TimeoutSeconds 15 | Out-Null
-    Submit-MoshChildInput -Text "ltty-shell-check $caseId" -Name 'mosh-real-shell-check'
+    Invoke-MoshChildCheck -Name 'mosh-real-shell-check'
     Wait-ControlFileMatch -Path $fixtureShellEvent `
         -Pattern '(?m)^result=passed$' -TimeoutSeconds 15 | Out-Null
-    Submit-MoshChildInput -Text 'exit' -Name 'mosh-real-shell-exit'
+    Focus-ActiveTerminalInput -Name 'mosh-real-shell-exit.json' | Out-Null
+    Invoke-LeanTTYDeviceCtrlD -Hdc $hdc -Target $targetId
     Wait-ControlFileMatch -Path $fixtureShellEvent `
         -Pattern '(?m)^closed=true$' -TimeoutSeconds 15 | Out-Null
     $shellCompatibilityPassed = $true
@@ -2858,10 +2868,11 @@ try {
     Write-LiveStatus -Stage 'tmux'
     Submit-MoshInput -Text "ltty-mosh-tmux $caseId"
     Wait-ControlFile -Path $fixtureTmuxReady -TimeoutSeconds 15 | Out-Null
-    Submit-MoshChildInput -Text "ltty-shell-check $caseId" -Name 'mosh-tmux-check'
+    Invoke-MoshChildCheck -Name 'mosh-tmux-check'
     Wait-ControlFileMatch -Path $fixtureTmuxEvent `
         -Pattern '(?m)^result=passed$' -TimeoutSeconds 15 | Out-Null
-    Submit-MoshChildInput -Text 'exit' -Name 'mosh-tmux-exit'
+    Focus-ActiveTerminalInput -Name 'mosh-tmux-exit.json' | Out-Null
+    Invoke-LeanTTYDeviceCtrlD -Hdc $hdc -Target $targetId
     Wait-ControlFileMatch -Path $fixtureTmuxEvent `
         -Pattern '(?m)^closed=true$' -TimeoutSeconds 15 | Out-Null
     $tmuxCompatibilityPassed = $true
@@ -2917,16 +2928,20 @@ try {
     Write-LiveStatus -Stage 'less'
     Submit-MoshInput -Text "ltty-mosh-less $caseId"
     Start-Sleep -Milliseconds 700
-    Submit-MoshChildInput -Text 'g' -Submit $false -Name 'mosh-less-home'
+    Focus-ActiveTerminalInput -Name 'mosh-less-home.json' | Out-Null
+    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $targetId -KeyCode 2023
     Start-Sleep -Milliseconds 300
     $lessFirstLineObserved = Test-MoshTerminalSearch `
         -Query "LTTY_MOSH_LESS_LINE_001:$caseId" -ExpectMatch $true `
         -Name 'mosh-less-first-search'
-    Submit-MoshChildInput -Text 'G' -Submit $false -Name 'mosh-less-end'
+    Focus-ActiveTerminalInput -Name 'mosh-less-end.json' | Out-Null
+    & $hdc -t $targetId shell 'uinput -K -d 2047 -d 2023 -u 2023 -u 2047' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to inject physical Shift+G for less' }
     Start-Sleep -Milliseconds 300
     $lessLastLineObserved = Test-MoshTerminalSearch `
         -Query "LTTY_MOSH_LESS_LAST:$caseId" -ExpectMatch $true -Name 'mosh-less-last-search'
-    Submit-MoshChildInput -Text 'q' -Submit $false -Name 'mosh-less-exit'
+    Focus-ActiveTerminalInput -Name 'mosh-less-exit.json' | Out-Null
+    Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $targetId -KeyCode 2033
     Wait-ControlFileMatch -Path $fixtureLessEvent `
         -Pattern '(?ms)^result=passed$.*^documentLines=181$.*^closed=true$' `
         -TimeoutSeconds 15 | Out-Null
