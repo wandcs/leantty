@@ -631,6 +631,8 @@ Assert-True (
     $authFixtureSourceText.Contains('mosh-server returned a port outside the requested range') -and
     $authFixtureSourceText.Contains('StdCommand::new("/bin/bash")') -and
     $authFixtureSourceText.Contains('StdCommand::new("tmux")') -and
+    $authFixtureSourceText.Contains('bind -x') -and
+    $authFixtureSourceText.Contains('\\C-g') -and
     $authFixtureSourceText.Contains('StdCommand::new("vim")') -and
     $authFixtureSourceText.Contains('control_directory.join("mosh-terminal-pid")') -and
     $authFixtureSourceText.Contains('control_directory.join("mosh-kernel-echo")') -and
@@ -1368,6 +1370,11 @@ foreach ($moshContract in @(
     "'mosh-input-snapshot'",
     "'mosh-event'",
     "'server-input-exact-before-enter'",
+    'function Invoke-MoshChildCheck',
+    "'uinput -K -d 2072 -d 2023 -u 2023 -u 2072'",
+    'Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $targetId -KeyCode 2023',
+    "'uinput -K -d 2047 -d 2023 -u 2023 -u 2047'",
+    'Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $targetId -KeyCode 2033',
     '$moshUdpPortMin = 60000',
     '$moshUdpPortMax = 61000',
     'Resolve-MoshRemoteScope',
@@ -1603,6 +1610,14 @@ foreach ($moshContract in @(
         "Mosh physical diagnostic omitted contract: $moshContract"
     )
 }
+Assert-True (
+    -not $moshVerifier.Contains('Submit-MoshVerifiedChildCommand') -and
+    -not $moshVerifier.Contains('Get-MoshTerminalSearchMatch') -and
+    -not $moshVerifier.Contains('Submit-MoshChildInput -Text "ltty-shell-check $caseId"') -and
+    -not $moshVerifier.Contains("Submit-MoshChildInput -Text 'g' -Submit `$false") -and
+    -not $moshVerifier.Contains("Submit-MoshChildInput -Text 'G' -Submit `$false") -and
+    -not $moshVerifier.Contains("Submit-MoshChildInput -Text 'q' -Submit `$false")
+) 'Mosh pager control keys still use unreliable UiTest text injection'
 Assert-True (
     -not $moshVerifier.Contains('pane-output-and-xterm-write-ack-after-four-authoritative-warmup-characters')
 ) 'Mosh prediction verifier still treats a fixed warmup count as confirmed prediction evidence'
