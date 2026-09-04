@@ -1891,11 +1891,15 @@ function Invoke-MoshRuntimeReclaim {
     }
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
         -Pattern 'ACCEPTANCE_RUNTIME_RECLAIM state=dropped' -TimeoutSeconds 15 | Out-Null
+    $inputNode = Focus-ActiveTerminalInput -Name 'mosh-runtime-reclaim-trigger-focus.json'
+    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $targetId -Text 'x' -InputNode $inputNode
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'Terminal input withheld for runtime recovery' -TimeoutSeconds 15 | Out-Null
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
         -Pattern 'Runtime session state reclaimed; workspace-only recovery=true' `
         -TimeoutSeconds 15 | Out-Null
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-        -Pattern 'ACCEPTANCE_RUNTIME_RECLAIM recovered=true' -TimeoutSeconds 15 | Out-Null
+        -Pattern 'Runtime recovery request handled pane=.*recovered=true' -TimeoutSeconds 15 | Out-Null
     $runtimeLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
     [IO.File]::WriteAllText(
         (Join-Path $EvidenceDirectory 'mosh-runtime-reclaim-device-app.log'),

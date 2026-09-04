@@ -1246,6 +1246,9 @@ export class SessionViewModel {
   }
 
   handleTerminalInput(data: string): void {
+    if (this.requestRuntimeRecoveryBeforeIdleInput()) {
+      return
+    }
     if (this.terminalResetPending) {
       return
     }
@@ -1306,6 +1309,23 @@ export class SessionViewModel {
     if (this.mode === TerminalMode.CONNECTING) {
       return
     }
+  }
+
+  private requestRuntimeRecoveryBeforeIdleInput(): boolean {
+    if (this.mode !== TerminalMode.IDLE) {
+      return false
+    }
+    let activePaneId: string = AppStorage.get<string>('activePaneId') ?? ''
+    let expectedPaneIds: string = AppStorage.get<string>('activeRemotePaneIds') ?? ''
+    if (activePaneId.length === 0 || this.paneId !== activePaneId ||
+      expectedPaneIds.split('|').indexOf(activePaneId) < 0) {
+      return false
+    }
+    let token: number = AppStorage.get<number>('runtimeRecoveryRequestToken') ?? 0
+    AppStorage.setOrCreate('runtimeRecoveryRequestPaneId', activePaneId)
+    this.logger.warn('Terminal input withheld for runtime recovery')
+    AppStorage.setOrCreate('runtimeRecoveryRequestToken', token + 1)
+    return true
   }
 
   private handleConnectedInput(data: string): void {
