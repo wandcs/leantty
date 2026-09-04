@@ -243,6 +243,13 @@ $operatorUnlockObserved = $false
 $operatorLockDurationMs = -1
 $operatorDeviceInactiveState = 'not-observed'
 $operatorRecoveryOutcome = 'not-run'
+$operatorPreRecoveryCloseObserved = $false
+$operatorPreRecoveryErrorObserved = $false
+$operatorPreRecoveryInterruptionObserved = $false
+$operatorPreRecoveryInterruptionReason = 'not-observed'
+$remoteShellAliveBeforeRecoveryInput = $false
+$serverAliveBeforeRecoveryInput = $false
+$terminalEofObservedBeforeRecoveryInput = $false
 $processRecoveryWorkspaceRestored = $false
 $processRecoveryRemoteContentAbsent = $false
 $processRecoverySessionNotRestored = $false
@@ -2307,6 +2314,13 @@ function Write-Evidence {
                 $operatorLockObserved -and $operatorUnlockObserved)
             operatorDeviceInactiveState = $operatorDeviceInactiveState
             recoveryOutcome = $operatorRecoveryOutcome
+            preRecoveryCloseObserved = $operatorPreRecoveryCloseObserved
+            preRecoveryErrorObserved = $operatorPreRecoveryErrorObserved
+            preRecoveryInterruptionObserved = $operatorPreRecoveryInterruptionObserved
+            preRecoveryInterruptionReason = $operatorPreRecoveryInterruptionReason
+            remoteShellAliveBeforeRecoveryInput = $remoteShellAliveBeforeRecoveryInput
+            serverAliveBeforeRecoveryInput = $serverAliveBeforeRecoveryInput
+            terminalEofObservedBeforeRecoveryInput = $terminalEofObservedBeforeRecoveryInput
             userActionRequired = $(if ($Scenario -eq 'operator-lock-recovery') {
                 'operator-lock-and-unlock'
             } elseif ($Scenario -eq 'operator-lid-recovery') {
@@ -3587,6 +3601,26 @@ try {
         } else { [string]$resumedProcessIdentity.startTimeTicks }
         $sameAppProcessAfterResume = $null -ne $resumedProcessIdentity -and
             [string]$resumedProcessIdentity.key -ceq [string]$initialProcessIdentity.key
+        $operatorPreRecoveryLogs = Get-LeanTTYAppLogs `
+            -Hdc $hdc -Target $targetId -ProcessId $appPid
+        $operatorPreRecoveryObservation = Get-MoshLifecycleObservation `
+            -Logs $operatorPreRecoveryLogs
+        $operatorPreRecoveryCloseObserved = $operatorPreRecoveryObservation.closed
+        $operatorPreRecoveryErrorObserved = $operatorPreRecoveryObservation.error
+        $operatorPreRecoveryInterruptionObserved = $operatorPreRecoveryObservation.interrupted
+        $operatorPreRecoveryInterruptionReason = $operatorPreRecoveryObservation.interruptionReason
+        $remoteShellAliveBeforeRecoveryInput = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
+        $serverAliveBeforeRecoveryInput = Test-WslProcessPresent -LinuxPid $moshServerPid
+        if (Test-Path -LiteralPath $fixtureEvent -PathType Leaf) {
+            $terminalEventBeforeRecoveryInput = Get-Content -LiteralPath $fixtureEvent -Raw
+            $terminalEofObservedBeforeRecoveryInput =
+                $terminalEventBeforeRecoveryInput -match '(?m)^result=eof$'
+        }
+        [IO.File]::WriteAllText(
+            (Join-Path $EvidenceDirectory "$operatorStage-pre-recovery-device-app.log"),
+            $operatorPreRecoveryLogs + "`n",
+            [Text.UTF8Encoding]::new($false)
+        )
         if (-not $sameAppProcessAfterResume) {
             $remoteShellAliveAtProcessChange = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
             $serverAliveAtProcessChange = Test-WslProcessPresent -LinuxPid $moshServerPid
