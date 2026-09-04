@@ -60,6 +60,16 @@ export default function sshSessionLifecycleTest() {
       expect(SessionViewModel.isCurrentMoshClient(null, currentClient)).assertEqual(false)
     })
 
+    it('limitsMoshCloseDiagnosticsToFixedReasons', 0, () => {
+      expect(MoshClient.safeCloseReason('disconnect_requested')).assertEqual('disconnect_requested')
+      expect(MoshClient.safeCloseReason('local_closed')).assertEqual('local_closed')
+      expect(MoshClient.safeCloseReason('remote_closed')).assertEqual('remote_closed')
+      expect(MoshClient.safeCloseReason('resize_channel_closed')).assertEqual('resize_channel_closed')
+      expect(MoshClient.safeCloseReason('write_channel_closed')).assertEqual('write_channel_closed')
+      expect(MoshClient.safeCloseReason('remote supplied text')).assertEqual('unknown')
+      expect(MoshClient.safeCloseReason('')).assertEqual('unknown')
+    })
+
     it('mapsHostKeyAndTransportFailuresIntoTheSession', 0, () => {
       let session: SshSession = new SshSession()
       let changed: HostKeyChangedInfo = new HostKeyChangedInfo()

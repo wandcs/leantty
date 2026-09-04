@@ -1562,6 +1562,7 @@ foreach ($moshContract in @(
     'serverAliveAtProcessChange = $serverAliveAtProcessChange',
     'preRecoveryCloseObserved = $operatorPreRecoveryCloseObserved',
     'preRecoveryErrorObserved = $operatorPreRecoveryErrorObserved',
+    'preRecoveryCloseReason = $operatorPreRecoveryCloseReason',
     'remoteShellAliveBeforeRecoveryInput = $remoteShellAliveBeforeRecoveryInput',
     'serverAliveBeforeRecoveryInput = $serverAliveBeforeRecoveryInput',
     'terminalEofObservedBeforeRecoveryInput = $terminalEofObservedBeforeRecoveryInput',

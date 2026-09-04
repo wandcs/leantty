@@ -247,6 +247,7 @@ $operatorPreRecoveryCloseObserved = $false
 $operatorPreRecoveryErrorObserved = $false
 $operatorPreRecoveryInterruptionObserved = $false
 $operatorPreRecoveryInterruptionReason = 'not-observed'
+$operatorPreRecoveryCloseReason = 'not-observed'
 $remoteShellAliveBeforeRecoveryInput = $false
 $serverAliveBeforeRecoveryInput = $false
 $terminalEofObservedBeforeRecoveryInput = $false
@@ -776,6 +777,10 @@ function Get-MoshLifecycleObservation {
         $logs,
         'Mosh reachability state=interrupted reason=(?<reason>no_recent_contact|no_recent_reply)'
     )
+    $closeReason = [regex]::Match(
+        $logs,
+        'Mosh close reason=(?<reason>disconnect_requested|local_closed|remote_closed|resize_channel_closed|write_channel_closed|unknown)'
+    )
     return [pscustomobject]@{
         logs = $logs
         closed = ($logs -match 'Mosh Session closed')
@@ -785,6 +790,9 @@ function Get-MoshLifecycleObservation {
             $interruption.Groups['reason'].Value
         } else { 'not-observed' })
         recovered = ($logs -match 'Mosh reachability state=responsive transition=recovered')
+        closeReason = $(if ($closeReason.Success) {
+            $closeReason.Groups['reason'].Value
+        } else { 'not-observed' })
     }
 }
 
@@ -2318,6 +2326,7 @@ function Write-Evidence {
             preRecoveryErrorObserved = $operatorPreRecoveryErrorObserved
             preRecoveryInterruptionObserved = $operatorPreRecoveryInterruptionObserved
             preRecoveryInterruptionReason = $operatorPreRecoveryInterruptionReason
+            preRecoveryCloseReason = $operatorPreRecoveryCloseReason
             remoteShellAliveBeforeRecoveryInput = $remoteShellAliveBeforeRecoveryInput
             serverAliveBeforeRecoveryInput = $serverAliveBeforeRecoveryInput
             terminalEofObservedBeforeRecoveryInput = $terminalEofObservedBeforeRecoveryInput
@@ -3609,6 +3618,7 @@ try {
         $operatorPreRecoveryErrorObserved = $operatorPreRecoveryObservation.error
         $operatorPreRecoveryInterruptionObserved = $operatorPreRecoveryObservation.interrupted
         $operatorPreRecoveryInterruptionReason = $operatorPreRecoveryObservation.interruptionReason
+        $operatorPreRecoveryCloseReason = $operatorPreRecoveryObservation.closeReason
         $remoteShellAliveBeforeRecoveryInput = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
         $serverAliveBeforeRecoveryInput = Test-WslProcessPresent -LinuxPid $moshServerPid
         if (Test-Path -LiteralPath $fixtureEvent -PathType Leaf) {
