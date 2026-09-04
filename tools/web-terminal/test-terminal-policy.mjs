@@ -852,7 +852,7 @@ assert.match(sessionViewModel,
 assert.doesNotMatch(sessionViewModel, /failMoshForAcceptance|ACCEPTANCE_MOSH_ERROR/,
   'production Session source must exclude the acceptance-only Mosh failure trigger');
 assert.match(sessionViewModel,
-  /handleTerminalInput\(data: string\): void \{[\s\S]*?if \(this\.terminalResetPending\)[\s\S]*?return/,
+  /handleTerminalInput\(data: string, sourceSurface\?: TerminalSurfaceController\): void \{[\s\S]*?if \(this\.terminalResetPending\)[\s\S]*?return/,
   'local input must wait until Session reset completion');
 assert.match(sessionViewModel,
   /private setMode\(newMode: TerminalMode\): void \{[\s\S]*?let returningToLocalPrompt: boolean = this\.mode !== TerminalMode\.IDLE &&[\s\S]*?newMode === TerminalMode\.IDLE[\s\S]*?if \(returningToLocalPrompt\) \{[\s\S]*?this\.notifyTitleChange\('ltty'\)/,
