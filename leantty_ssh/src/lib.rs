@@ -2803,7 +2803,15 @@ fn mosh_session_error_code(error: &mosh_client::SessionError) -> &'static str {
     }
 }
 
-fn mosh_session_exit_failure(exit: MoshSessionExit) -> Option<(&'static str, &'static str)> {
+fn mosh_session_close_reason(exit: &MoshSessionExit) -> Option<&'static str> {
+    match exit {
+        MoshSessionExit::LocalClosed => Some("local_closed"),
+        MoshSessionExit::RemoteClosed => Some("remote_closed"),
+        _ => None,
+    }
+}
+
+fn mosh_session_exit_failure(exit: &MoshSessionExit) -> Option<(&'static str, &'static str)> {
     match exit {
         MoshSessionExit::LocalClosed | MoshSessionExit::RemoteClosed => None,
         MoshSessionExit::Cancelled => Some((
@@ -2827,10 +2835,15 @@ fn record_mosh_task_result(
     >,
     close_code: &mut String,
     close_detail: &mut String,
+    close_reason: &mut String,
 ) {
     match result {
         Ok(Ok(exit)) => {
-            if let Some((code, detail)) = mosh_session_exit_failure(exit) {
+            if let Some(reason) = mosh_session_close_reason(&exit) {
+                if close_reason.is_empty() {
+                    *close_reason = reason.to_string();
+                }
+            } else if let Some((code, detail)) = mosh_session_exit_failure(&exit) {
                 *close_code = code.to_string();
                 *close_detail = detail.to_string();
             }
@@ -2899,6 +2912,7 @@ async fn run_mosh_protocol(
     let mut output_paused = false;
     let mut close_code = String::new();
     let mut close_detail = String::new();
+    let mut close_reason = String::new();
     let mut task_finished = false;
     let mut graceful_close_requested = false;
     let mut reachability_open = true;
@@ -2940,6 +2954,7 @@ async fn run_mosh_protocol(
                         (&mut task).await,
                         &mut close_code,
                         &mut close_detail,
+                        &mut close_reason,
                     );
                     break;
                 }
@@ -2962,7 +2977,10 @@ async fn run_mosh_protocol(
                         break;
                     }
                 }
-                None => break,
+                None => {
+                    close_reason = "write_channel_closed".to_string();
+                    break;
+                }
             },
             size = receivers.resize_rx.recv(), if !graceful_close_requested => match size {
                 Some((columns, rows)) => {
@@ -2972,7 +2990,10 @@ async fn run_mosh_protocol(
                         break;
                     }
                 }
-                None => break,
+                None => {
+                    close_reason = "resize_channel_closed".to_string();
+                    break;
+                }
             },
             paused = receivers.output_pause_rx.recv(), if !graceful_close_requested => {
                 let was_paused = output_paused;
@@ -2998,11 +3019,17 @@ async fn run_mosh_protocol(
                 }
                 output_paused = false;
                 graceful_close_requested = true;
+                close_reason = "disconnect_requested".to_string();
                 session.close();
             },
             result = &mut task => {
                 task_finished = true;
-                record_mosh_task_result(result, &mut close_code, &mut close_detail);
+                record_mosh_task_result(
+                    result,
+                    &mut close_code,
+                    &mut close_detail,
+                    &mut close_reason,
+                );
                 break;
             }
         }
@@ -3041,12 +3068,18 @@ async fn run_mosh_protocol(
             "failed"
         },
     );
+    let transport_exit_code = if close_code.is_empty() { 0 } else { -1 };
+    let transport_detail = if close_code.is_empty() {
+        close_reason
+    } else {
+        close_detail
+    };
     let _ = send_transport_close(
         &context.transport_callback,
-        if close_code.is_empty() { 0 } else { -1 },
+        transport_exit_code,
         ConnectionLayer::Target.as_str().to_string(),
         close_code,
-        close_detail,
+        transport_detail,
     );
 }
 
@@ -4418,16 +4451,16 @@ mod tests {
     use super::{
         append_mosh_bootstrap_output, build_client_config, channel_writer_exit_message,
         is_current_auth_generation, mosh_bootstrap_command, mosh_bootstrap_exit_error,
-        mosh_prediction_mode, mosh_server_ipv4, mosh_server_path, mosh_session_exit_failure,
-        mosh_udp_port_range, run_channel_writer_core, send_scheduled_input,
-        should_flush_immediately, transfer, validate_keepalive, validate_mosh_server_port,
-        wait_for_auth_command, wait_for_auth_exchange, wait_for_connect, wait_for_file_transfer,
-        wait_for_host_key_decision, AuthExchangeResult, AuthMethod, AuthWaitResult,
-        ChangedHostKeyControl, ConnectProgress, ConnectWaitResult, ConnectionLayer, ControlEvent,
-        FileTransferEvent, FileTransferWaitResult, HostKeyDecision, LayeredAuthMethod,
-        MoshSessionExit, MoshSessionInterruption, MoshSessionReachability, OutputDeliveryMetrics,
-        SessionClose, SessionPhaseFailure, TransportEvent, AUTH_EXCHANGE_TIMEOUT,
-        AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
+        mosh_prediction_mode, mosh_server_ipv4, mosh_server_path, mosh_session_close_reason,
+        mosh_session_exit_failure, mosh_udp_port_range, run_channel_writer_core,
+        send_scheduled_input, should_flush_immediately, transfer, validate_keepalive,
+        validate_mosh_server_port, wait_for_auth_command, wait_for_auth_exchange, wait_for_connect,
+        wait_for_file_transfer, wait_for_host_key_decision, AuthExchangeResult, AuthMethod,
+        AuthWaitResult, ChangedHostKeyControl, ConnectProgress, ConnectWaitResult, ConnectionLayer,
+        ControlEvent, FileTransferEvent, FileTransferWaitResult, HostKeyDecision,
+        LayeredAuthMethod, MoshSessionExit, MoshSessionInterruption, MoshSessionReachability,
+        OutputDeliveryMetrics, SessionClose, SessionPhaseFailure, TransportEvent,
+        AUTH_EXCHANGE_TIMEOUT, AUTH_RESPONSE_TIMEOUT, INPUT_WRITE_CHUNK_BYTES,
     };
     use napi_ohos::Status;
     use russh::client;
@@ -4552,22 +4585,30 @@ mod tests {
     #[test]
     fn mosh_graceful_close_exits_are_normal_and_hard_stops_are_failures() {
         assert_eq!(
-            mosh_session_exit_failure(MoshSessionExit::LocalClosed),
+            mosh_session_close_reason(&MoshSessionExit::LocalClosed),
+            Some("local_closed")
+        );
+        assert_eq!(
+            mosh_session_exit_failure(&MoshSessionExit::LocalClosed),
             None
         );
         assert_eq!(
-            mosh_session_exit_failure(MoshSessionExit::RemoteClosed),
+            mosh_session_close_reason(&MoshSessionExit::RemoteClosed),
+            Some("remote_closed")
+        );
+        assert_eq!(
+            mosh_session_exit_failure(&MoshSessionExit::RemoteClosed),
             None
         );
         assert_eq!(
-            mosh_session_exit_failure(MoshSessionExit::Cancelled),
+            mosh_session_exit_failure(&MoshSessionExit::Cancelled),
             Some((
                 "cancelled",
                 "Mosh protocol task stopped without a graceful close"
             ))
         );
         assert_eq!(
-            mosh_session_exit_failure(MoshSessionExit::OwnerDropped),
+            mosh_session_exit_failure(&MoshSessionExit::OwnerDropped),
             Some(("internal", "Mosh protocol session owner was dropped"))
         );
     }

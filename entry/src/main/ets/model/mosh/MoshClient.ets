@@ -131,6 +131,13 @@ export class MoshClientMessage {
 }
 
 export class MoshClient {
+  private static readonly CLOSE_REASONS: string[] = [
+    'disconnect_requested',
+    'local_closed',
+    'remote_closed',
+    'resize_channel_closed',
+    'write_channel_closed'
+  ]
   private static nextGeneration: number = 1
   private sessionId: string = ''
   private generation: number = 0
@@ -476,6 +483,7 @@ export class MoshClient {
         this.handleError(new MoshError(
           MoshErrorCode.NETWORK, event.detail, event.detail, 'mosh_udp'))
       } else {
+        this.logger.info('Mosh close reason=' + MoshClient.safeCloseReason(event.detail))
         this.clearSession()
         this.emitEvent(MoshClientMessage.close(event.exitCode))
       }
@@ -483,6 +491,10 @@ export class MoshClient {
     }
     this.handleError(new MoshError(
       MoshErrorCode.INTERNAL, 'Invalid native Mosh transport event', '', 'client'))
+  }
+
+  static safeCloseReason(reason: string): string {
+    return MoshClient.CLOSE_REASONS.indexOf(reason) >= 0 ? reason : 'unknown'
   }
 
   static parseStatus(event: NativeTransportEvent): MoshStatusInfo | null {

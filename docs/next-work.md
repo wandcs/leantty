@@ -125,13 +125,17 @@ manifest、附件和哈希保持不变。
   失败会给出绑定原目录的精确 `-Resume`。统一输出为 `release-report.json` 与
   `maintainer-summary.md`，不包含第二套设备驱动。当前报告明确不声称 1.6 完整 C3，因为 Mosh
   verifier 仍只产生 diagnostic evidence。
+- [ ] 先闭合 retained candidate 上的同进程物理合盖回归。正式矩阵已观察到 PID 与 `/proc`
+  start time 均不变，但恢复输入前 Mosh 没有关闭或报错，server 与远端 PTY 仍存活；恢复后的
+  ArkTS 工作区却已回到空闲 Session。先修复跨页面重建的工作区所有权，再复验同一远端 PTY
+  可以继续执行命令；不得用进程替换分支的通过结果覆盖本场景。
 - [ ] 将已闭合的七组 Mosh 网络/生命周期场景升级为正式 retained-candidate acceptance，并接入
   薄编排入口。先加入 formal candidate/harness 双身份和 `acceptanceEligible` 门，再按
   compatibility、UDP pause、suspend、lock、lid、Wi-Fi pause、Wi-Fi network switch 固定顺序串行
   执行；使用已保存的备用 SSID `CU_lin`，保留 operator action 提示、原网络恢复、无 secret 和
   完整 cleanup。只有七组同属一个 candidate 且全部通过时，统一报告才可声明完整 C3。formal
-  单场景、可恢复矩阵和统一编排接线已实现；尚未在 clean commit 的 retained candidate 上运行，
-  因此本项保持未完成。
+  单场景、可恢复矩阵和统一编排接线已实现；首次 retained-candidate 矩阵在物理合盖阶段发现上述
+  产品回归并停止，因此修复和复验完成前，本项保持未完成。
 - [ ] 为 release-mode review HAP 增加独立正常产品路径 smoke，覆盖启动、键盘分 Pane、关闭
   Pane 和清理。安装前拒绝把 release-mode HAP 用于 acceptance-only marker；production
   APP/HAP 继续禁止进入 HDC 安装路径。
