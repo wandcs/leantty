@@ -355,6 +355,32 @@ runtime 仍存在且均非 IDLE 才视为 Session graph 完整。任一 runtime 
 Mosh output/event。该结果只证明修订后的同进程不一致门，真实合盖仍须由新 retained candidate
 重新执行完整矩阵。
 
+正式候选 commit `8b92a0dc6366697c03138af52cec9e16d5f90105`、HAP
+`38cf485bf9754a7a0df80ebbe468f6968497657b9c66249392f5193ff0014e5c` 的完整矩阵又证明：即使窗口
+恢复可见时核对 live mode，系统仍可在该检查之后、首个输入之前丢失 Session graph。第 5 组真实
+合盖前后 PID/start time 均为 `23031/56407267`；`00:08:11.136` 可见性检查仍记录
+`runtimeRecovery=not-required`，`00:08:11.715` 收到 `onNewWant`，但 `00:08:16.066` 首个输入已
+进入 `mode=0` 并退回 `ltty>`。恢复输入前没有 Mosh close/error/interruption，stock server 与远端
+PTY 仍存活。矩阵按规则停止，前四组结果不能跨修复沿用。机器可读证据位于
+`%USERPROFILE%\Documents\LeanTTY-verification\1.6-formal-20260904\mosh-matrix-8b92a0d\mosh-matrix.json`。
+
+因此恢复门增加真实输入边界防护，而不是增加任意延时：每次工作区同步只投影当前活动 Pane ID
+和活动远端 Pane ID；如果活动 Pane 的 live `SessionViewModel` 已为 IDLE，但简单投影仍声明它是
+远端 Session，第一段输入会被整段消费，并用一次性 token 请求 `Index` 执行既有的统一恢复路径。
+正常 IDLE Pane、其他 Pane 的远端 Session、非当前 Pane 的晚到输入，以及 live mode 非 IDLE 都
+不会触发。`Index` 在执行前
+再次核对活动 Pane，仍由 `recoverReclaimedRuntimeSessions()` 独占降级、提示和 native registry
+清理责任；这里不引入第二套 Session 状态机或超时计时器。
+
+编译期裁剪的 `runtime-reclaim` 随之改为在可见性检查后只丢弃 runtime，再发送一个不带 Enter 的
+ASCII `x`。HAD-W32 上测试 HAP
+`87b32579163b0b38a87aa0a4bf64ff23166b3b42bfb6719a75d2287bb2a3c3bb` 保持同一 PID/start time
+`46922/56576305`；日志依次证明状态丢弃、首次输入被拦截、`panes=1,nativeCancelRequests=1` 和
+恢复请求完成。结构化结果同时证明提示可见、旧远端内容不可见、Session 未伪恢复、后续本地
+`help` 可执行且 cleanup 通过；如果 `x` 泄漏到本地输入缓冲，后续命令不会通过。证据位于
+`%USERPROFILE%\Documents\LeanTTY-verification\1.6-formal-20260905\mosh-runtime-first-input-r3\device-mosh.json`。
+该测试证明首次输入安全边界，不代替新正式候选的真实合盖和完整七组矩阵。
+
 ### 2026-09-02 旧通知跨进程隔离证据
 
 同一 HAP 建立后台 BEL 通知后，测试强制停止 LeanTTY，再点击仍留在系统通知中心的旧通知。

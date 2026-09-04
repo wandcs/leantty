@@ -46,6 +46,9 @@ struct Index {
   @StorageLink('backgroundBellReturnPaneId') backgroundBellReturnPaneId: string = ''
   @StorageLink('backgroundBellReturnToken') @Watch('onBackgroundBellReturnRequested')
   backgroundBellReturnToken: number = 0
+  @StorageLink('runtimeRecoveryRequestPaneId') runtimeRecoveryRequestPaneId: string = ''
+  @StorageLink('runtimeRecoveryRequestToken') @Watch('onRuntimeRecoveryRequested')
+  runtimeRecoveryRequestToken: number = 0
   @State splitRatio: number = 0.5
   @State splitDragging: boolean = false
   @State splitHandleHovered: boolean = false
@@ -71,6 +74,7 @@ struct Index {
     UnexpectedExitRecoveryStore.markClean(this.appVm.createRecoverySnapshot(this.splitRatio))
   }
   private consumedBackgroundBellReturnToken: number = 0
+  private consumedRuntimeRecoveryRequestToken: number = 0
   private restoringUnexpectedWorkspace: boolean = false
 
   aboutToAppear(): void {
@@ -100,6 +104,7 @@ struct Index {
     ThemeManager.getInstance().onThemeChange(this.themeChangeHandler)
     ApplicationCloseCoordinator.register(this.applicationCloseHandler)
     this.onBackgroundBellReturnRequested()
+    this.onRuntimeRecoveryRequested()
     logger.info('Index page initialized workspace=' + (reusedWorkspace ? 'reused' : 'new'))
   }
 
@@ -420,6 +425,23 @@ struct Index {
       }
     }
     return paneIds
+  }
+
+  private onRuntimeRecoveryRequested(): void {
+    if (this.runtimeRecoveryRequestToken <= this.consumedRuntimeRecoveryRequestToken) {
+      return
+    }
+    this.consumedRuntimeRecoveryRequestToken = this.runtimeRecoveryRequestToken
+    let requestedPaneId: string = this.runtimeRecoveryRequestPaneId
+    AppStorage.setOrCreate('runtimeRecoveryRequestPaneId', '')
+    let activePane: PaneInfo | null = this.appVm.getActivePane()
+    if (requestedPaneId.length === 0 || activePane === null || activePane.id !== requestedPaneId) {
+      logger.warn('Runtime recovery request ignored because the active Pane changed')
+      return
+    }
+    let recovered: boolean = this.recoverReclaimedRuntimeSessions()
+    logger.info('Runtime recovery request handled pane=' + requestedPaneId +
+      ',recovered=' + recovered.toString())
   }
 
   private onBackgroundBellReturnRequested(): void {
@@ -1082,6 +1104,8 @@ struct Index {
   private syncWorkspace(): void {
     this.tabs = this.appVm.getTabs().slice()
     this.activeTabIndex = this.appVm.getActiveTabIndex()
+    let activePane: PaneInfo | null = this.appVm.getActivePane()
+    AppStorage.setOrCreate('activePaneId', activePane === null ? '' : activePane.id)
     AppStorage.setOrCreate('hasActiveSshSession', this.workspaceHasActiveSession())
     AppStorage.setOrCreate('activeRemotePaneIds', this.activeRemotePaneIds(false))
     AppStorage.setOrCreate('activeMoshPaneIds', this.activeRemotePaneIds(true))

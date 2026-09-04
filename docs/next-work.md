@@ -136,8 +136,13 @@ manifest、附件和哈希保持不变。
   UI `PaneInfo.mode` 仍残留 CONNECTED，而 live
   `SessionViewModel.getMode()` 已为 IDLE，旧检测因此过早判定无需恢复。改为逐个核对 live runtime
   后，测试 HAP `cb098fd2a7f4e6c09fd79a612603e30423ca2107c3bd3502c979cf5eb3dd433c`
-  已用保留陈旧 UI 投影的 `runtime-reclaim` 在真机确定复验通过；仍必须用新正式候选复验真实合盖，
-  旧候选和它的前四组正式结果不得沿用。
+  已用保留陈旧 UI 投影的 `runtime-reclaim` 在真机确定复验通过。随后正式候选 commit `8b92a0d`、
+  HAP `38cf485bf9754a7a0df80ebbe468f6968497657b9c66249392f5193ff0014e5c` 的真实同进程合盖又证明，
+  live 检查通过后、首个输入前仍可能丢失 Session graph。现改为在实际输入边界核对活动 Pane：
+  不一致时消费第一段输入并触发既有统一恢复，不增加延时或第二套状态机。测试 HAP
+  `87b32579163b0b38a87aa0a4bf64ff23166b3b42bfb6719a75d2287bb2a3c3bb` 已在同一 PID/start time
+  `46922/56576305` 下证明单字符不泄漏、提示、旧内容隔离、本地命令和 cleanup 通过。仍必须用新
+  正式候选复验真实合盖；旧候选和它的前四组正式结果不得沿用。
 - [ ] 将已闭合的七组 Mosh 网络/生命周期场景升级为正式 retained-candidate acceptance，并接入
   薄编排入口。先加入 formal candidate/harness 双身份和 `acceptanceEligible` 门，再按
   compatibility、UDP pause、suspend、lock、lid、Wi-Fi pause、Wi-Fi network switch 固定顺序串行

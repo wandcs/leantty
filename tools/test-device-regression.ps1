@@ -1331,7 +1331,13 @@ foreach ($predictionContract in @(
     @{ Source = $moshManifest; Text = '94f13225aba535c6645a9179e0ce9f00b156629e' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_MOSH_OUTPUT mode=' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' },
-    @{ Source = $moshIndexPage; Text = 'runtime.viewModel.getMode() === TerminalMode.IDLE' }
+    @{ Source = $moshIndexPage; Text = 'runtime.viewModel.getMode() === TerminalMode.IDLE' },
+    @{ Source = $moshSessionViewModel; Text = 'if (this.requestRuntimeRecoveryBeforeIdleInput())' },
+    @{ Source = $moshSessionViewModel; Text = 'this.paneId !== activePaneId' },
+    @{ Source = $moshIndexPage; Text = 'vm.setPaneIdentity(pane.id)' },
+    @{ Source = $moshSessionViewModel; Text = 'Terminal input withheld for runtime recovery' },
+    @{ Source = $moshIndexPage; Text = "@Watch('onRuntimeRecoveryRequested')" },
+    @{ Source = $moshIndexPage; Text = "AppStorage.setOrCreate('activePaneId'" }
 )) {
     Assert-True ($predictionContract.Source.Contains($predictionContract.Text)) (
         "Mosh prediction pass-through omitted contract: $($predictionContract.Text)"
@@ -1341,6 +1347,9 @@ foreach ($predictionContract in @(
 $moshVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-mosh-pc.ps1'
 ) -Raw
+Assert-True ($moshVerifier.Contains("-Text 'x' -InputNode `$inputNode") -and
+    $moshVerifier.Contains('Terminal input withheld for runtime recovery')) `
+    'Mosh runtime-reclaim verifier does not exercise the post-visibility first-input guard'
 $moshNetwork = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'configure-mosh-test-network.ps1'
 ) -Raw
@@ -1472,7 +1481,9 @@ foreach ($moshContract in @(
     'sessionNotRestored = $processRecoverySessionNotRestored',
     'runtimeReclaimed = $runtimeWorkspaceRecovered',
     'acceptance-only-runtime-state-reclaim',
-    'ACCEPTANCE_RUNTIME_RECLAIM recovered=true',
+    'ACCEPTANCE_RUNTIME_RECLAIM state=dropped',
+    'Terminal input withheld for runtime recovery',
+    'Runtime recovery request handled pane=.*recovered=true',
     'active-mosh-pane-closed-and-surviving-pane-started-an-isolated-session',
     'two-mosh-and-ssh-mosh-concurrent-sessions-kept-state-terminal-input-output-and-cleanup-isolated',
     'twoMoshKeysDistinct = $sessionIsolationKeysDistinct',

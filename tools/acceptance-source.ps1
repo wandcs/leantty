@@ -232,8 +232,6 @@ function Add-LeanTTYAcceptanceSource {
     AppStorage.setOrCreate('activeRemotePaneIds', activePaneIds)
     AppStorage.setOrCreate('activeMoshPaneIds', activeMoshPaneIds)
     logger.warn('ACCEPTANCE_RUNTIME_RECLAIM state=dropped,pane=' + runtime.id)
-    let recovered: boolean = this.recoverReclaimedRuntimeSessions()
-    logger.info('ACCEPTANCE_RUNTIME_RECLAIM recovered=' + recovered.toString() + ',pane=' + runtime.id)
   }
 
   private rebuildRendererForAcceptance(): void {
