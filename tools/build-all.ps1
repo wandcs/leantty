@@ -13,6 +13,9 @@ param(
     [string]$BuildMode = 'debug',
     [switch]$Metadata,
     [switch]$PreflightOnly,
+    [switch]$NoDaemon,
+    [switch]$Offline,
+    [string]$BuildLogDirectory = '',
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$ReleaseId
 )
@@ -23,6 +26,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'package-policy.ps1')
 . (Join-Path $PSScriptRoot 'acceptance-source.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+. (Join-Path $PSScriptRoot 'formal-build-environment.ps1')
 $productName = 'default'
 $projectProfilePath = Join-Path $repoRoot 'build-profile.json5'
 $localSigningConfigPath = Join-Path $repoRoot 'signing.local.json5'
@@ -341,6 +345,9 @@ if ($Clean) {
 
 $nativeTypePackage = Join-Path $repoRoot 'entry\oh_modules\libleantty_ssh.so'
 if (-not (Test-Path -LiteralPath $nativeTypePackage -PathType Container)) {
+    if ($Offline) {
+        throw 'Offline build requires prepare-formal-build-inputs.ps1 first'
+    }
     Push-Location $repoRoot
     try {
         & $ohpm install --all --lockfile_stable_order
@@ -355,6 +362,7 @@ if (-not (Test-Path -LiteralPath $nativeTypePackage -PathType Container)) {
 
 $nativeArgs = @{}
 if ($ForceNative -or $Clean) { $nativeArgs['Force'] = $true }
+if ($Offline) { $nativeArgs['Offline'] = $true }
 & (Join-Path $PSScriptRoot 'build-native.ps1') @nativeArgs
 if ($LASTEXITCODE -ne 0) { throw 'ARM64 native build failed' }
 $nativeSo = Join-Path $repoRoot 'entry\libs\arm64-v8a\libleantty_ssh.so'
@@ -367,6 +375,7 @@ $hapArgs = @(
     'assembleApp',
     '-p', ('buildMode=' + $BuildMode)
 )
+if ($NoDaemon) { $hapArgs += '--no-daemon' }
 $projectProfileBackup = $null
 if (Test-Path -LiteralPath $localSigningConfigPath) {
     $projectProfileBackup = [IO.File]::ReadAllBytes($projectProfilePath)
@@ -393,8 +402,20 @@ try {
             -RepoRoot $repoRoot `
             -Enabled ($BuildMode -eq 'debug') `
             -Action {
-                & $nodeExe @hapArgs
-                if ($LASTEXITCODE -ne 0) { throw "PC HAP build failed in $BuildMode mode" }
+                if ([string]::IsNullOrWhiteSpace($BuildLogDirectory)) {
+                    & $nodeExe @hapArgs
+                    if ($LASTEXITCODE -ne 0) { throw "PC HAP build failed in $BuildMode mode" }
+                } else {
+                    $buildRun = Invoke-LeanTTYCapturedProcess `
+                        -FilePath $nodeExe `
+                        -Arguments $hapArgs `
+                        -WorkingDirectory $repoRoot `
+                        -StandardOutputPath (Join-Path $BuildLogDirectory 'hvigor-build.stdout.log') `
+                        -StandardErrorPath (Join-Path $BuildLogDirectory 'hvigor-build.stderr.log')
+                    if ($buildRun.exitCode -ne 0) {
+                        throw "PC HAP build failed in $BuildMode mode; inspect captured stdout/stderr"
+                    }
+                }
             }
     } finally {
         Pop-Location

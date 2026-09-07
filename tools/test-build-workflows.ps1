@@ -1129,6 +1129,12 @@ try {
         $verifyPcText.Contains('[IO.File]::WriteAllBytes(') -and
         $verifyPcText.Contains('verify-pc build changed the committed formal-release candidate')
     ) 'verify-pc does not preserve generated OHPM lockfiles while rejecting content drift'
+    Assert-True (
+        $verifyPcText.Contains('prepare-formal-build-inputs.ps1') -and
+        $verifyPcText.Contains('-NoDaemon') -and
+        $verifyPcText.Contains('-Offline') -and
+        $verifyPcText.Contains('-BuildLogDirectory $EvidenceDirectory')
+    ) 'verify-pc does not separate dependency prewarming from offline no-daemon verification'
 
     $buildAllText = Get-Content -LiteralPath (
         Join-Path $PSScriptRoot 'build-all.ps1'
@@ -1143,6 +1149,102 @@ try {
         $buildAllText.Contains('& $ohpm install --all --lockfile_stable_order') -and
         $buildAllText.Contains("entry\oh_modules\libleantty_ssh.so")
     ) 'Clean release build does not restore required OHPM dependencies'
+    Assert-True (
+        $buildAllText.Contains('[switch]$NoDaemon') -and
+        $buildAllText.Contains('[switch]$Offline') -and
+        $buildAllText.Contains("`$hapArgs += '--no-daemon'") -and
+        $buildAllText.Contains("`$nativeArgs['Offline'] = `$true") -and
+        $buildAllText.Contains('Invoke-LeanTTYCapturedProcess')
+    ) 'Formal HAP build does not support captured no-daemon offline execution'
+
+    $formalPreparationText = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'prepare-formal-build-inputs.ps1'
+    ) -Raw
+    $formalEnvironmentText = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'formal-build-environment.ps1'
+    ) -Raw
+    $arkTsWarningBaseline = Get-Content -LiteralPath (
+        Join-Path $PSScriptRoot 'arkts-warning-baseline.json'
+    ) -Raw | ConvertFrom-Json
+    Assert-True (
+        $formalPreparationText.Contains("'ci', '--ignore-scripts'") -and
+        $formalPreparationText.Contains("'run', 'build'") -and
+        $formalPreparationText.Contains("install --all --lockfile_stable_order") -and
+        $formalPreparationText.Contains("'fetch', '--locked'") -and
+        $formalPreparationText.Contains('sourceInputsUnchanged') -and
+        $formalEnvironmentText.Contains('RedirectStandardOutput = $true') -and
+        $formalEnvironmentText.Contains('RedirectStandardError = $true') -and
+        $formalEnvironmentText.Contains('Assert-LeanTTYArkTsWarningBaseline') -and
+        [int]$arkTsWarningBaseline.warningCount -gt 0 -and
+        [string]$arkTsWarningBaseline.sha256 -match '^[0-9a-f]{64}$'
+    ) 'Formal dependency preparation or exact ArkTS warning accounting is missing'
+    . (Join-Path $PSScriptRoot 'formal-build-environment.ps1')
+    $lockfileBefore = [Text.Encoding]::UTF8.GetBytes("{`n  value: 1`n}`n")
+    Assert-True (Test-LeanTTYOhpmLockfileTextEqual -Before $lockfileBefore `
+        -After ([Text.Encoding]::UTF8.GetBytes("{`r`n  value: 1`r`n}"))) (
+        'OHPM line endings must not be treated as dependency drift'
+    )
+    Assert-True (-not (Test-LeanTTYOhpmLockfileTextEqual -Before $lockfileBefore `
+        -After ([Text.Encoding]::UTF8.GetBytes("{`n  value: 2`n}`n")))) (
+        'OHPM dependency text drift must be rejected'
+    )
+    Assert-Throws -Action {
+        Test-LeanTTYOhpmLockfileTextEqual -Before $lockfileBefore -After ([byte[]]@(255)) | Out-Null
+    } -Message 'OHPM comparison accepted invalid UTF-8'
+    $captureCode = '[Console]::Out.Write("o" * 131072); [Console]::Error.Write("e" * 131072); exit 7'
+    $captureRun = Invoke-LeanTTYCapturedProcess `
+        -FilePath (Join-Path $PSHOME 'pwsh.exe') `
+        -Arguments @('-NoProfile', '-Command', $captureCode) `
+        -WorkingDirectory $testRoot `
+        -StandardOutputPath (Join-Path $testRoot 'capture stdout.log') `
+        -StandardErrorPath (Join-Path $testRoot 'capture stderr.log')
+    Assert-True (
+        $captureRun.exitCode -eq 7 -and
+        $captureRun.stdout -ceq ('o' * 131072) -and
+        $captureRun.stderr -ceq ('e' * 131072) -and
+        [IO.File]::ReadAllText($captureRun.stdoutPath) -ceq $captureRun.stdout -and
+        [IO.File]::ReadAllText($captureRun.stderrPath) -ceq $captureRun.stderr
+    ) 'Captured process lost its exit code or independent full-size output streams'
+    $syntheticWarnings = "ArkTS:WARN File: $($repoRoot.Replace('\', '/'))/entry/src/main/ets/Fake.ets:3:4`n" +
+        " Function may throw exceptions. Special handling is required.`n"
+    $syntheticFingerprint = Get-LeanTTYArkTsWarningFingerprint `
+        -StandardError $syntheticWarnings -RepoRoot $repoRoot
+    $syntheticBaselinePath = Join-Path $testRoot 'synthetic-arkts-warning-baseline.json'
+    [IO.File]::WriteAllText(
+        $syntheticBaselinePath,
+        (ConvertTo-Json -InputObject ([ordered]@{
+            devEcoVersion = 'test-deveco'
+            hvigorVersion = 'test-hvigor'
+            warningCount = $syntheticFingerprint.warningCount
+            sha256 = $syntheticFingerprint.sha256
+        })),
+        [Text.UTF8Encoding]::new($false)
+    )
+    $syntheticAccepted = Assert-LeanTTYArkTsWarningBaseline `
+        -BaselinePath $syntheticBaselinePath -RepoRoot $repoRoot `
+        -DevEcoVersion 'test-deveco' -HvigorVersion 'test-hvigor' `
+        -StandardError $syntheticWarnings
+    Assert-True ($syntheticAccepted.warningCount -eq 1) (
+        'Exact warning baseline rejected matching nonempty stderr'
+    )
+    Assert-Throws -Action {
+        Assert-LeanTTYArkTsWarningBaseline `
+            -BaselinePath $syntheticBaselinePath -RepoRoot $repoRoot `
+            -DevEcoVersion 'test-deveco' -HvigorVersion 'test-hvigor' `
+            -StandardError ($syntheticWarnings + $syntheticWarnings) | Out-Null
+    } -Message 'Exact warning baseline accepted an added ArkTS warning'
+    Assert-Throws -Action {
+        Assert-LeanTTYArkTsWarningBaseline `
+            -BaselinePath $syntheticBaselinePath -RepoRoot $repoRoot `
+            -DevEcoVersion 'different-deveco' -HvigorVersion 'test-hvigor' `
+            -StandardError $syntheticWarnings | Out-Null
+    } -Message 'Warning baseline accepted a different toolchain'
+    Assert-Throws -Action {
+        Assert-LeanTTYArkTsWarningBaseline `
+            -BaselinePath $syntheticBaselinePath -RepoRoot $repoRoot `
+            -DevEcoVersion 'test-deveco' -HvigorVersion 'test-hvigor' `
+            -StandardError ($syntheticWarnings.Replace('Function may throw', 'New diagnostic may throw')) | Out-Null
+    } -Message 'Warning baseline accepted changed text with an unchanged count'
     $projectBuildProfileText = Get-Content -LiteralPath (
         Join-Path $repoRoot 'build-profile.json5'
     ) -Raw

@@ -17,6 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+. (Join-Path $PSScriptRoot 'formal-build-environment.ps1')
 
 $startedAt = [DateTimeOffset]::UtcNow
 $script:regressionResults = [Collections.Generic.List[object]]::new()
@@ -224,6 +225,9 @@ if ($needsDevEco) {
 $hypiumPath = Join-Path $repoRoot 'oh_modules\@ohos\hypium'
 if ((Test-RegressionGroupSelected -Groups @('arkts')) -and
     -not (Test-Path -LiteralPath $hypiumPath)) {
+    if ($script:regressionMode -eq 'full') {
+        throw 'Formal ArkTS verification requires prepare-formal-build-inputs.ps1 first'
+    }
     Invoke-RegressionCheck -Name 'ohpm-lockfile-restore' -Groups @('arkts') -Action {
         Push-Location $repoRoot
         try {
@@ -277,8 +281,32 @@ Invoke-RegressionCheck -Name 'trusted-arkts-tests' -Groups @('arkts') -Action {
     Push-Location $repoRoot
     try {
         $arkTsTestStartedAt = Get-Date
-        & $nodeExe $hvigorJs --mode module -p module=entry@default test
-        if ($LASTEXITCODE -ne 0) { throw 'Trusted ArkTS unit tests failed' }
+        $arkTsRun = Invoke-LeanTTYCapturedProcess `
+            -FilePath $nodeExe `
+            -Arguments @($hvigorJs, '--no-daemon', '--mode', 'module', '-p', 'module=entry@default', 'test') `
+            -WorkingDirectory $repoRoot `
+            -StandardOutputPath (Join-Path $evidenceDirectory 'arkts-test.stdout.log') `
+            -StandardErrorPath (Join-Path $evidenceDirectory 'arkts-test.stderr.log')
+        if ($arkTsRun.exitCode -ne 0) {
+            throw 'Trusted ArkTS unit tests failed; inspect the captured stdout/stderr evidence'
+        }
+        $devEcoVersion = [string](
+            Get-Content -LiteralPath (Join-Path $deveco 'product-info.json') -Raw |
+                ConvertFrom-Json
+        ).version
+        $hvigorVersionRun = Invoke-LeanTTYCapturedProcess `
+            -FilePath $nodeExe `
+            -Arguments @($hvigorJs, '--version') `
+            -WorkingDirectory $repoRoot `
+            -StandardOutputPath (Join-Path $evidenceDirectory 'hvigor-version.stdout.log') `
+            -StandardErrorPath (Join-Path $evidenceDirectory 'hvigor-version.stderr.log')
+        if ($hvigorVersionRun.exitCode -ne 0) { throw 'Unable to resolve the Hvigor version' }
+        $warningState = Assert-LeanTTYArkTsWarningBaseline `
+            -BaselinePath (Join-Path $PSScriptRoot 'arkts-warning-baseline.json') `
+            -RepoRoot $repoRoot `
+            -DevEcoVersion $devEcoVersion `
+            -HvigorVersion $hvigorVersionRun.stdout.Trim() `
+            -StandardError $arkTsRun.stderr
     } finally {
         Pop-Location
     }
@@ -299,7 +327,13 @@ Invoke-RegressionCheck -Name 'trusted-arkts-tests' -Groups @('arkts') -Action {
         [int]$summaryMatch.Groups['error'].Value -ne 0) {
         throw ('Trusted ArkTS unit tests failed: ' + $summaryMatch.Value.Trim())
     }
-    $script:regressionDetail = $summaryMatch.Value.Trim()
+    $script:regressionDetail = $summaryMatch.Value.Trim() +
+        "; ArkTS warnings=$($warningState.warningCount), sha256=$($warningState.sha256)"
+}
+
+$formalRustEnvironment = @{}
+if ($script:regressionMode -eq 'full') {
+    $formalRustEnvironment['CARGO_NET_OFFLINE'] = 'true'
 }
 
 Invoke-RegressionCheck -Name 'rust-format-wsl' -Groups @(
@@ -307,21 +341,21 @@ Invoke-RegressionCheck -Name 'rust-format-wsl' -Groups @(
 ) -Action {
     Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -CargoArguments @(
         'fmt', '--manifest-path', './leantty_ssh/Cargo.toml', '--all', '--', '--check'
-    )
+    ) -Environment $formalRustEnvironment
 }
 
 Invoke-RegressionCheck -Name 'rust-clippy-wsl' -Groups @('rust-core') -Action {
     Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -CargoArguments @(
         'clippy', '--locked', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty-ssh-core', '--all-targets', '--', '-D', 'warnings'
-    )
+    ) -Environment $formalRustEnvironment
 }
 
 Invoke-RegressionCheck -Name 'rust-native-clippy-wsl' -Groups @('rust-native') -Action {
     Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -CargoArguments @(
         'clippy', '--locked', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty_ssh', '--all-targets', '--', '-D', 'warnings'
-    )
+    ) -Environment $formalRustEnvironment
 }
 
 Invoke-RegressionCheck -Name 'rust-native-test-isolation-wsl' -Groups @('rust-native') -Action {
@@ -345,14 +379,14 @@ Invoke-RegressionCheck -Name 'rust-native-tests-wsl' -Groups @('rust-native') -A
     Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -CargoArguments @(
         'test', '--locked', '--offline', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty_ssh'
-    )
+    ) -Environment $formalRustEnvironment
 }
 
 Invoke-RegressionCheck -Name 'rust-core-tests-wsl' -Groups @('rust-core') -Action {
     Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -CargoArguments @(
         'test', '--locked', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty-ssh-core'
-    )
+    ) -Environment $formalRustEnvironment
 }
 
 Invoke-RegressionCheck -Name 'mosh-input-rejection-native-trigger' -Groups @('rust-native') -Action {
@@ -363,20 +397,22 @@ Invoke-RegressionCheck -Name 'ssh-auth-fixture-tests-wsl' -Groups @('ssh-fixture
     Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -CargoArguments @(
         'test', '--locked', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty-ssh-auth-fixture'
-    )
+    ) -Environment $formalRustEnvironment
 }
 
 Invoke-RegressionCheck -Name 'ssh-auth-fixture-clippy-wsl' -Groups @('ssh-fixture') -Action {
     Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -CargoArguments @(
         'clippy', '--locked', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty-ssh-auth-fixture', '--all-targets', '--', '-D', 'warnings'
-    )
+    ) -Environment $formalRustEnvironment
 }
 
 Invoke-RegressionCheck -Name 'ssh-auth-fixture-e2e-wsl' -Groups @('ssh-fixture') -Action {
     $wslRepoRoot = ConvertTo-LeanTTYWslPath -WindowsPath $repoRoot
     $wslPrefix = Get-LeanTTYWslPrefix
-    & wsl.exe @wslPrefix --cd $wslRepoRoot -- env RUSTUP_TOOLCHAIN=stable bash ./leantty_ssh/ssh-auth-fixture/test-e2e.sh
+    & wsl.exe @wslPrefix --cd $wslRepoRoot -- env RUSTUP_TOOLCHAIN=stable `
+        CARGO_NET_OFFLINE=$(if ($script:regressionMode -eq 'full') { 'true' } else { 'false' }) `
+        bash ./leantty_ssh/ssh-auth-fixture/test-e2e.sh
     if ($LASTEXITCODE -ne 0) { throw 'SSH authentication fixture end-to-end tests failed' }
 }
 

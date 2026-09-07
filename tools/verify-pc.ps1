@@ -72,6 +72,8 @@ foreach ($scriptName in @(
         'candidate-store.ps1',
         'harness-qualification.ps1',
         'release-tooling.ps1',
+        'formal-build-environment.ps1',
+        'prepare-formal-build-inputs.ps1',
         'sign-release-tag.ps1',
         'rust-wsl.ps1',
         'device-regression.ps1',
@@ -127,6 +129,10 @@ if ($evidenceDirectoryFullPath.Equals(
 }
 $EvidenceDirectory = $evidenceDirectoryFullPath
 New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
+$formalInputEvidencePath = Join-Path $EvidenceDirectory 'formal-build-inputs.json'
+& (Join-Path $PSScriptRoot 'prepare-formal-build-inputs.ps1') `
+    -EvidencePath $formalInputEvidencePath
+if ($LASTEXITCODE -ne 0) { throw 'Formal build input preparation failed' }
 $softwareEvidencePath = Join-Path $EvidenceDirectory 'software.json'
 & (Join-Path $PSScriptRoot 'test-regression.ps1') -EvidencePath $softwareEvidencePath
 if ($LASTEXITCODE -ne 0) { throw 'Formal-release software regression gate failed' }
@@ -152,9 +158,16 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host 'Generated native library source-control policy passed.' -ForegroundColor Green
 
 if ($SkipDevice) {
-    & (Join-Path $PSScriptRoot 'build-all.ps1') -Clean -BuildMode debug
+    & (Join-Path $PSScriptRoot 'build-all.ps1') `
+        -Clean -BuildMode debug -NoDaemon -Offline -BuildLogDirectory $EvidenceDirectory
 } else {
-    $deviceArgs = @{ Clean = $true; Target = $Target }
+    $deviceArgs = @{
+        Clean = $true
+        Target = $Target
+        NoDaemon = $true
+        Offline = $true
+        BuildLogDirectory = $EvidenceDirectory
+    }
     if ($FollowLogs) { $deviceArgs['FollowLogs'] = $true }
     & (Join-Path $PSScriptRoot 'dev-pc.ps1') @deviceArgs
 }
@@ -175,7 +188,7 @@ $retainedCandidate = Save-LeanTTYVerifiedCandidate `
     -RepoRoot $repoRoot `
     -HapPath $verifiedHap `
     -VerificationMode $verificationMode `
-    -EvidencePaths @($softwareEvidencePath)
+    -EvidencePaths @($formalInputEvidencePath, $softwareEvidencePath)
 if ($temporaryEvidenceDirectory -and
     (Test-Path -LiteralPath $EvidenceDirectory -PathType Container)) {
     Remove-Item -LiteralPath $EvidenceDirectory -Recurse -Force
