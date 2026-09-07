@@ -2505,4 +2505,177 @@ Assert-True (
     $unexpectedRecoveryUninstallVerifier.Contains('exactCandidateReinstalled = $true')
 ) 'Unexpected-recovery uninstall scenario lost its fresh-install or durable-asset boundary'
 
+. (Join-Path $PSScriptRoot 'input-order-evidence.ps1')
+$traceLine = 'ACCEPTANCE_INPUT_ORDER 1234567;1;0;1;0,12,2,0,1,0,1,1,1,0,0,0'
+$traceParsed = ConvertFrom-LeanTTYInputOrderEvidence -Logs $traceLine -Token '1234567'
+Assert-True ($traceParsed.complete -and $traceParsed.rows.Count -eq 1 -and
+    $traceParsed.rows[0][2] -eq 2 -and -not $traceParsed.contentEqualityObserved) 'Numeric trace parsing failed'
+foreach ($invalidTrace in @('', ($traceLine + "`n" + $traceLine),
+    $traceLine.Replace(';0;1;', ';0;2;'), $traceLine.Replace('0,12,2', '1,12,2'),
+    $traceLine.Replace('0,12,2', '0,12,9'), $traceLine.Replace('0,12,2', '0,200001,2'),
+    ($traceLine + 'private-sentinel'), $traceLine.Replace(';1;0;1;', ';1;0;17;'))) {
+    Assert-Throws { ConvertFrom-LeanTTYInputOrderEvidence -Logs $invalidTrace -Token '1234567' } `
+        'Malformed, missing, duplicate or unbounded input-order evidence was accepted'
+}
+$earlyTrace = ConvertFrom-LeanTTYInputOrderEvidence -Logs $traceLine.Replace(';1;0;1;', ';3;0;1;') -Token '1234567'
+Assert-True (-not $earlyTrace.complete -and $earlyTrace.stopReason -eq 'mode-or-replay') 'Early trace end was promoted'
+$otherTrace = $traceLine.Replace('1234567', '7654321') + "`n" + $traceLine
+Assert-True ((ConvertFrom-LeanTTYInputOrderEvidence -Logs $otherTrace -Token '1234567').rows.Count -eq 1) `
+    'Trace token isolation failed'
+
+$attributionLine = 'ACCEPTANCE_INPUT_ORDER 1234567;1;0;1;0,1,2,0,1,0,1,31,31,0,0,1/1,200000,9,0,31,31,1,31,31,1,1,0'
+$attributionParsed = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $attributionLine -Token '1234567' -Mode 0
+Assert-True ($attributionParsed.complete -and $attributionParsed.summary.exact -and
+    $attributionParsed.rows.Count -eq 2 -and -not $attributionParsed.contentRecorded) 'Attribution evidence parser failed'
+foreach ($invalidAttribution in @('', ($attributionLine + "`n" + $attributionLine),
+    $attributionLine.Replace(';0;1;', ';0;2;'), $attributionLine.Replace(',9,0,31,31,1,', ',9,0,31,30,1,'),
+    $attributionLine.Replace('1,200000,9', '1,600001,9'), ($attributionLine + 'private-sentinel'))) {
+    Assert-Throws { ConvertFrom-LeanTTYInputAttributionEvidence -Logs $invalidAttribution -Token '1234567' -Mode 0 } `
+        'Invalid attribution trace was accepted'
+}
+Assert-Throws { ConvertFrom-LeanTTYInputAttributionEvidence -Logs $attributionLine -Token '1234567' -Mode 1 } `
+    'Different attribution mode was accepted'
+Assert-True (-not (ConvertFrom-LeanTTYInputAttributionEvidence -Logs $attributionLine.Replace(';1;0;1;', ';2;0;1;') `
+    -Token '1234567' -Mode 0).complete) 'Truncated attribution trace was promoted'
+
+$observerLine = 'ACCEPTANCE_OBSERVER_FINAL 1234567;6;1;180;1;0'
+Assert-True ((ConvertFrom-LeanTTYObserverEvidence -Logs $observerLine -Token '1234567' -Profile 6).exact) 'Observer final parser failed'
+foreach ($invalidObserver in @('', ($observerLine + "`n" + $observerLine), $observerLine.Replace(';6;', ';5;'),
+    $observerLine.Replace(';1;180;', ';0;180;'), $observerLine.Replace(';180;1;', ';179;1;'),
+    $observerLine.Replace('1234567', '7654321'), ($observerLine + 'private-sentinel'))) {
+    Assert-Throws { ConvertFrom-LeanTTYObserverEvidence -Logs $invalidObserver -Token '1234567' -Profile 6 } `
+        'Invalid or stale observer final accepted'
+}
+$observerMissing = ConvertFrom-LeanTTYObserverEvidence -Logs $observerLine.Replace(';180;1;0', ';179;0;19') -Token '1234567' -Profile 6
+Assert-True (-not $observerMissing.exact -and $observerMissing.firstMismatchIndex -eq 18) 'Observer mismatch hidden'
+$syntheticNative = ConvertFrom-LeanTTYObserverEvidence -Logs 'ACCEPTANCE_OBSERVER_FINAL 1234567;8;1;30;0;31' -Token '1234567' -Profile 8
+Assert-True ($syntheticNative.units -eq 30 -and -not $syntheticNative.exact) 'Synthetic missing native output was hidden'
+$syntheticRows = [Collections.Generic.List[string]]::new()
+for ($caseIndex = 0; $caseIndex -lt 50; $caseIndex++) {
+    $caseId = $caseIndex % 5
+    $outputUnits = if ($caseId -eq 1) { 0 } else { 1 }
+    $downSeen = if ($caseId -lt 2) { 1 } else { 0 }
+    $syntheticRows.Add("$caseIndex,$caseIndex,17,$caseId,$([Math]::Floor($caseIndex / 5)),1,1,$outputUnits,$outputUnits,$downSeen,0,1")
+}
+$syntheticRows.Add('50,50,9,8,40,30,0,40,0,0,0,0')
+$syntheticLines = @(for ($part = 0; $part -lt 4; $part++) {
+    'ACCEPTANCE_INPUT_ORDER 1234567;1;' + $part + ';4;' +
+        (($syntheticRows | Select-Object -Skip ($part * 16) -First 16) -join '/')
+}) -join "`n"
+$syntheticEvidence = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $syntheticLines -Token '1234567' -Mode 8
+Assert-True ($syntheticEvidence.complete -and $syntheticEvidence.syntheticCases.Count -eq 50 -and
+    $syntheticEvidence.summary.actualUnits -eq 30) 'Synthetic fixed-set evidence parser failed'
+Assert-True ($syntheticEvidence.eventKinds.syntheticCase -eq 17 -and $syntheticEvidence.eventColumns[3] -eq 'caseId' -and
+    $null -eq $syntheticEvidence.summary.textareaUnits) 'Synthetic schema mislabeled columns or invented final textarea measurement'
+$syntheticCancelled = ConvertFrom-LeanTTYInputAttributionEvidence -Logs 'ACCEPTANCE_INPUT_ORDER 1234567;3;0;1;0,10,9,8,40,0,0,0,0,0,0,0' -Token '1234567' -Mode 8
+Assert-True (-not $syntheticCancelled.complete -and $syntheticCancelled.syntheticCases.Count -eq 0) 'Cancelled synthetic run was promoted'
+foreach ($invalidSynthetic in @($syntheticLines.Replace('50,50,9,8,40,30', '50,50,9,8,40,31'),
+    $syntheticLines.Replace('0,0,17,0,0', '0,0,17,1,0'),
+    $syntheticLines.Replace(',0,1/', ',1,1/'), ($syntheticLines + "`n" + $syntheticLines))) {
+    Assert-Throws { ConvertFrom-LeanTTYInputAttributionEvidence -Logs $invalidSynthetic -Token '1234567' -Mode 8 } `
+        'Malformed synthetic sequence, totals or duplicate evidence accepted'
+}
+$chainLine = 'ACCEPTANCE_INPUT_ORDER 1234567;1;0;1;0,1,15,1,0,0,0,0,0,0,0,1/1,2,16,1,1,0,1,1,1,1,0,1/2,3,6,1,0,0,0,0,0,1,0,1/3,4,12,0,0,0,0,180,0,1,180,1/4,200000,9,4,180,180,1,180,180,1,1,0'
+$chainParsed = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $chainLine -Token '1234567' -Mode 4
+Assert-True ($chainParsed.complete -and $chainParsed.summary.exact -and $chainParsed.summary.expectedUnits -eq 180 -and
+    $null -eq $chainParsed.summary.domIsLettersOnly -and $chainParsed.rows.Count -eq 5) 'Chain evidence parser failed'
+foreach ($invalidChain in @($chainLine.Replace(',9,4,180,180,1,', ',9,4,31,31,1,'),
+    $chainLine.Replace(';0;1;', ';0;257;'), $chainLine.Replace('2,3,6,1,0', '2,3,6,0,0'),
+    $chainLine.Replace('1,2,16,1,1', '1,2,16,1,2'), $chainLine.Replace('1234567', '7654321'))) {
+    Assert-Throws { ConvertFrom-LeanTTYInputAttributionEvidence -Logs $invalidChain -Token '1234567' -Mode 4 } `
+        'Invalid chain evidence was accepted'
+}
+$chainMismatch = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $chainLine.Replace(',9,4,180,180,1,', ',9,4,180,179,0,') -Token '1234567' -Mode 4
+Assert-True ($chainMismatch.complete -and -not $chainMismatch.summary.exact) 'Missing input was hidden'
+
+& {
+    # Exercise the diagnostic owner with device boundaries replaced, not the parser.
+    $diagnosticAst = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1'), [ref]$null, [ref]$null)
+    foreach ($name in @('Invoke-InputOrderDiagnostic', 'Get-SingleFocusedDiagnosticInputNode',
+        'Get-TextInputMismatchIndex')) {
+        $definition = $diagnosticAst.Find({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        Assert-True ($null -ne $definition) "Input diagnostic owner missing: $name"
+        . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    $Scenario = 'input-attribution'; $hdc = 'unused'; $resolvedTarget = 'unused'; $appProcessId = '100'
+    $EvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) ('leantty-input-owner-test-' + [Guid]::NewGuid().ToString('N'))
+    function Wait-LeanTTYTerminalInputLayout { return @{} }
+    function Get-LeanTTYTerminalInputNodes { return @{ attributes = @{ focused = 'true' } } }
+    function Clear-LeanTTYAppLogs {}
+    function Invoke-HdcChecked { param($Hdc, $Target, $Arguments, $Operation) $deviceActions.Add($Operation) }
+    function Submit-LeanTTYDeviceCommand {
+        param($Hdc, $Target, $ProcessId, $Command, $Stage, $MaxInputAttempts, $ObservationSink, $InputNodeProvider)
+        Assert-True ($Command -cmatch '^__acceptance_input_attribution_[1578]_([1-9][0-9]{6})$' -and
+            $MaxInputAttempts -eq 1) 'Diagnostic arming must remain single-shot'
+        $probeState.token = $Matches[1]
+        $ObservationSink.Add([ordered]@{ enterCount = 1 })
+    }
+    function Wait-LeanTTYAppLog {
+        param($Hdc, $Target, $ProcessId, $Pattern, $TimeoutSeconds)
+        if ($Pattern -ceq 'Tab added: ') { return 'Tab added: owned-input-tab title=Terminal' }
+        if ($Pattern.StartsWith('Tab removed: ')) { return 'Tab removed: owned-input-tab' }
+        if ($Pattern.StartsWith('ACCEPTANCE_OBSERVER_READY') -or $Pattern.EndsWith(';0;0;0;')) { return $Pattern }
+        return $probeLogs.Replace('1234567', $probeState.token)
+    }
+    function Invoke-LeanTTYDeviceText {
+        param($Hdc, $Target, $InputNode, $Text)
+        $deliveredVectors.Add($Text)
+        if ($loseTarget) {
+            throw (New-LeanTTYTextInputFailure -Phase after -ExpectedNode $null -CurrentNodes @() `
+                -Message '[harness] controlled owner loss')
+        }
+    }
+    function Get-LastAcceptanceInputState { return $expectedVector }
+    function Reset-LeanTTYDeviceCommandInput { $probeState.resets++ }
+    foreach ($case in @(
+        @{ mode = 1; loseTarget = $false }, @{ mode = 5; loseTarget = $false },
+        @{ mode = 7; loseTarget = $false }, @{ mode = 8; loseTarget = $false },
+        @{ mode = 1; loseTarget = $true }
+    )) {
+        $AttributionMode = $case.mode; $loseTarget = $case.loseTarget
+        $probeState = @{ token = ''; resets = 0 }
+        $deliveredVectors = [Collections.Generic.List[string]]::new()
+        $deviceActions = [Collections.Generic.List[string]]::new()
+        $expectedVector = if ($AttributionMode -eq 1) { '0123456789abcdefghijklmnopqrstu' }
+            elseif ($AttributionMode -eq 8) { 'a' * 40 } else { 'ssh-keygen -R [127.0.0.1]:2223' * 6 }
+        $probeLogs = switch ($AttributionMode) {
+            1 { $attributionLine.Replace(',9,0,31,', ',9,1,31,') }
+            5 { 'ACCEPTANCE_OBSERVER_FINAL 1234567;5;1;180;1;0' }
+            7 { $chainLine + "`nACCEPTANCE_OBSERVER_FINAL 1234567;7;1;180;1;0`nACCEPTANCE_INPUT_CHAIN_NATIVE 1234567;1;180" }
+            8 { $syntheticLines + "`nACCEPTANCE_OBSERVER_FINAL 1234567;8;1;30;0;31`nACCEPTANCE_INPUT_CHAIN_NATIVE 1234567;30;30" }
+        }
+        $result = Invoke-InputOrderDiagnostic
+        $expectedDeliveries = if ($AttributionMode -eq 8) { 0 } else { 1 }
+        Assert-True ($result.vectorAttempts -eq $expectedDeliveries -and
+            $deliveredVectors.Count -eq $expectedDeliveries -and -not $result.vectorSubmitted -and
+            $result.armingObservations.Count -eq 1) 'Diagnostic injected or submitted an unexpected vector'
+        if ($expectedDeliveries -eq 1) {
+            Assert-True ($deliveredVectors[0] -ceq $expectedVector) 'Diagnostic changed the public input vector'
+        }
+        if ($loseTarget) {
+            Assert-True ($result.result -eq 'failed' -and $result.cleanup -eq 'failed' -and
+                $result.textTargetFailure.phase -eq 'after' -and $probeState.resets -eq 0 -and
+                $deviceActions.Count -eq 1 -and $result.trace.complete) (
+                'Owner loss must retain available trace without further reset or close keys'
+            )
+        } else {
+            Assert-True ($result.result -eq 'completed' -and $result.cleanup -eq 'passed' -and
+                $probeState.resets -eq 1 -and $deviceActions.Count -eq 2) 'Diagnostic did not close its completed probe'
+            if ($AttributionMode -eq 5) {
+                Assert-True ($null -eq $result.trace -and $result.native.exact -and
+                    -not $result.observationProfile.logsPolledDuringInjection -and
+                    -not $result.observationProfile.zeroOverhead) 'Observer control invented trace or zero overhead'
+            }
+            if ($AttributionMode -eq 8) {
+                Assert-True ($result.synthetic.mechanismReproduced -and -not $result.synthetic.deviceCauseProven) (
+                    'Synthetic mechanism must not be promoted to natural device causality'
+                )
+            }
+        }
+    }
+}
+
 Write-Host 'Device regression helper tests passed.' -ForegroundColor Green
