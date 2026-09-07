@@ -26,6 +26,8 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
 $startedAt = [DateTimeOffset]::UtcNow
+. (Join-Path $PSScriptRoot 'device-package.ps1')
+Assert-LeanTTYDeviceHap -HapPath $ReviewHapPath -Purpose acceptance | Out-Null
 $reviewHap = Assert-LeanTTYDeviceTestHapPath `
     -HapPath $ReviewHapPath `
     -ParameterName 'ReviewHapPath'

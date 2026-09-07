@@ -43,6 +43,8 @@ if ([string]::IsNullOrWhiteSpace($UnlockPasswordPath)) {
 }
 
 function Install-ExactCandidate {
+    . (Join-Path $PSScriptRoot 'device-package.ps1')
+    Assert-LeanTTYDeviceHap -HapPath $HapPath -Purpose development | Out-Null
     Invoke-HdcChecked `
         -Hdc $hdc -Target $Target `
         -Arguments @('install', '-r', $HapPath) `

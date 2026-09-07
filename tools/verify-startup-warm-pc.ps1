@@ -128,6 +128,8 @@ try {
         }
     }
     if (-not (Test-Path -LiteralPath $hapPath -PathType Leaf)) { throw "Signed HAP is missing: $hapPath" }
+    . (Join-Path $PSScriptRoot 'device-package.ps1')
+    Assert-LeanTTYDeviceHap -HapPath $hapPath -Purpose development | Out-Null
     $installOutput = @(& $script:hdc -t $script:target install -r -d $hapPath 2>&1) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $installOutput -match '(?i)\[Fail\]|error') {
         throw "Warm startup diagnostic install failed: $installOutput"

@@ -350,6 +350,8 @@ try {
         uiTestVersion = (Invoke-HdcShell $hdc $resolvedTarget 'uitest --version').Trim()
     }
 
+    . (Join-Path $PSScriptRoot 'device-package.ps1')
+    Assert-LeanTTYDeviceHap -HapPath $HapPath -Purpose acceptance | Out-Null
     $installOutput = @(& $hdc -t $resolvedTarget install -r $HapPath 2>&1) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $installOutput -match '(?i)\[Fail\]|error') {
         throw '[infrastructure] Diagnostic HAP installation failed'

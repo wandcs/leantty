@@ -663,6 +663,8 @@ try {
 
     Start-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $Target
     $awakeLeaseAcquired = $true
+    . (Join-Path $PSScriptRoot 'device-package.ps1')
+    Assert-LeanTTYDeviceHap -HapPath $HapPath -Purpose acceptance | Out-Null
     $installOutput = @(& $hdc -t $Target install -r $HapPath 2>&1) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $installOutput -match '(?i)\[Fail\]|error') {
         throw "[environment] Diagnostic HAP install failed: $installOutput"
