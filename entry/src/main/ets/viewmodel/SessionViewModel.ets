@@ -145,17 +145,13 @@ export class SessionViewModel {
   private authResponses: string[] = []
   private context: common.Context | null = null
   private pendingKeypush: boolean = false
-  private perfInputBuffer: string = ''
-  private perfPingId: string = ''
-  private perfPingStartedMs: number = 0
-  private perfOutputTail: string = ''
   private keypushKeyName: string = ''
   private keypushPublicKey: string = ''
   private keypushMarker: string = ''
   private keypushOutputTail: string = ''
+  private keypushOutputDecoder: util.TextDecoder | null = null
   private keypushTimeoutId: number = -1
   private terminalFocused: boolean = false
-  private outputObserverDecoder: util.TextDecoder = util.TextDecoder.create('utf-8')
   private localHelpPending: boolean = false
   private paneId: string = ''
   private fileTransferClient: FileTransferClient | null = null
@@ -358,7 +354,7 @@ export class SessionViewModel {
       this.sshClient.onEvent((message: SshClientMessage) => {
         this.onSshEvent(message)
       })
-      this.outputObserverDecoder = util.TextDecoder.create('utf-8')
+      this.keypushOutputDecoder = null
       this.sshClient.onData((data: Uint8Array) => {
         this.onSessionData(data)
       })
@@ -956,7 +952,7 @@ export class SessionViewModel {
     if (!this.acceptingSessionOutput) {
       return
     }
-    this.observeSessionOutput(data, true)
+    this.observeKeypushBytes(data)
     this.writeTerminalBytes(data)
   }
 
@@ -964,48 +960,19 @@ export class SessionViewModel {
     if (!this.acceptingSessionOutput) {
       return
     }
-    this.observeSessionOutput(data, false)
     if (this.terminalSurface !== null) {
       this.terminalSurface.writeMoshBytes(data)
     }
   }
 
-  private observeSessionOutput(data: Uint8Array, includeKeypush: boolean): void {
-    let observedText: string = this.outputObserverDecoder.decodeToString(data, { stream: true })
-    this.observePerfOutput(observedText)
-    if (includeKeypush) {
-      this.observeKeypushOutput(observedText)
+  private observeKeypushBytes(data: Uint8Array): void {
+    if (!this.pendingKeypush || this.keypushMarker.length === 0) {
+      return
     }
-  }
-
-  private observePerfOutput(data: string): void {
-    let combined: string = this.perfOutputTail + data
-    if (this.perfPingId.length > 0 && combined.indexOf(this.perfPingId) >= 0) {
-      let elapsed: number = Date.now() - this.perfPingStartedMs
-      this.logger.info('PERF ping id=' + this.perfPingId + ' rttMs=' + elapsed.toString())
-      this.perfPingId = ''
-      this.perfPingStartedMs = 0
+    if (this.keypushOutputDecoder === null) {
+      this.keypushOutputDecoder = util.TextDecoder.create('utf-8')
     }
-    this.perfOutputTail = combined.length > 256 ? combined.substring(combined.length - 256) : combined
-  }
-
-  private observePerfInput(data: string): void {
-    for (let i = 0; i < data.length; i++) {
-      let ch: string = data.charAt(i)
-      if (ch === '\r' || ch === '\n') {
-        if (this.perfInputBuffer.startsWith('echo LTTY_PERF_PING_')) {
-          this.perfPingId = this.perfInputBuffer.substring(5)
-          this.perfPingStartedMs = Date.now()
-          this.perfOutputTail = ''
-        }
-        this.perfInputBuffer = ''
-      } else if (ch.charCodeAt(0) >= 32 && ch.charCodeAt(0) < 127) {
-        this.perfInputBuffer += ch
-        if (this.perfInputBuffer.length > 256) {
-          this.perfInputBuffer = this.perfInputBuffer.substring(this.perfInputBuffer.length - 256)
-        }
-      }
-    }
+    this.observeKeypushOutput(this.keypushOutputDecoder.decodeToString(data, { stream: true }))
   }
 
   private onSshClose(exitCode: number): void {
@@ -1360,7 +1327,6 @@ export class SessionViewModel {
     for (let index = 0; index < result.events.length; index++) {
       let event: SshEscapeEvent = result.events[index]
       if (event.kind === SshEscapeEventKind.REMOTE_DATA) {
-        this.observePerfInput(event.data)
         this.sshClient.write(event.data)
       } else if (event.kind === SshEscapeEventKind.DISCONNECT) {
         this.logger.info('SSH escape action=disconnect')
@@ -2839,6 +2805,7 @@ export class SessionViewModel {
     this.keypushPublicKey = ''
     this.keypushMarker = ''
     this.keypushOutputTail = ''
+    this.keypushOutputDecoder = null
   }
 
   private resolvePrivateKey(identityFile: string = this.pendingKeyPath): KeyPairInfo | null {

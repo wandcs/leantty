@@ -81,3 +81,18 @@ input assertions; the packaged run must pass them. Both use the same synthetic
 event corpus, actual DOM listeners and real timers. Neither proves that the
 historical intermittent UiTest loss had this cause, nor replaces HarmonyOS PC
 input/IME validation.
+
+## Development performance probe
+
+`acceptance-performance.js` is injected by `performance-diagnostic-source.ps1`
+only into debug/test terminal sources; it is absent from release packages.
+It validates a bounded public fixture stream, sequence and CRLF, observes the
+xterm public buffer, and reports its own observation cost. Its frame callback
+is not a physical-display latency measurement.
+
+`perfActiveActionsEnabled` defaults to `false`. Automatic public-vector input
+and standard WebGL context-loss are for dedicated fixture packages only, never
+ordinary debug use. A dedicated build must restore this source and the device's
+ordinary package afterward. Remote output alone must not enable those actions.
+`tools/test-performance-diagnostics.cjs` exercises the injected probe and its
+default-off action boundary through the `arkts` regression group.

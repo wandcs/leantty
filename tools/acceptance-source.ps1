@@ -1,3 +1,6 @@
+. (Join-Path $PSScriptRoot 'mosh-input-rejection-source.ps1')
+. (Join-Path $PSScriptRoot 'performance-diagnostic-source.ps1')
+
 function Set-LeanTTYAcceptanceSourceText {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
@@ -32,16 +35,20 @@ function Add-LeanTTYAcceptanceSource {
 
     $files = [ordered]@{
         index = Join-Path $RepoRoot 'entry\src\main\ets\pages\Index.ets'
+        protocol = Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
         bridge = Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
         surface = Join-Path $RepoRoot 'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets'
         session = Join-Path $RepoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
+        moshClient = Join-Path $RepoRoot 'entry\src\main\ets\model\mosh\MoshClient.ets'
         transfer = Join-Path $RepoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
         client = Join-Path $RepoRoot 'entry\src\main\ets\model\transfer\FileTransferClient.ets'
+        terminal = Join-Path $RepoRoot 'entry\src\main\resources\rawfile\terminal.html'
     }
     $text = @{}
     foreach ($name in $files.Keys) {
         $text[$name] = [IO.File]::ReadAllText($files[$name])
     }
+    Add-LeanTTYPerformanceDiagnosticSource -Text $text
 
     $indexImports = "import { BrowserLauncher } from '../model/browser/BrowserLauncher'`n" +
         "import { TransferFileManager, TransferLocalFile } from '../model/transfer/TransferFileManager'`n" +
@@ -138,6 +145,10 @@ function Add-LeanTTYAcceptanceSource {
       }
       return true
     }
+    if (ACCEPTANCE_TESTS && ctrlKey && altKey && shiftKey && event.keyCode === 2037) {
+      this.captureTerminalFingerprintForAcceptance()
+      return true
+    }
     if (ACCEPTANCE_TESTS && ctrlKey && altKey && !shiftKey && event.keyCode === 2035) {
       let runtime: PaneRuntime | null = this.activePaneRuntime()
       if (runtime !== null) {
@@ -209,6 +220,46 @@ function Add-LeanTTYAcceptanceSource {
     })
   }
 
+  private captureTerminalFingerprintForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    let runtime: PaneRuntime | null = this.activePaneRuntime()
+    if (runtime === null) {
+      logger.error('ACCEPTANCE_TERMINAL_FINGERPRINT state=missing-active-pane')
+      return
+    }
+    runtime.surface.captureTerminalFingerprintForAcceptance()
+  }
+
+  private acceptanceRuntimeWorkspace: string = ''
+
+  private runtimeWorkspaceIdentityForAcceptance(): string {
+    let tabs: TabInfo[] = this.appVm.getTabs()
+    let identity: string[] = [this.appVm.getActiveTabIndex().toString()]
+    for (let i = 0; i < tabs.length; i++) {
+      identity.push(tabs[i].id, tabs[i].activePaneId)
+      for (let j = 0; j < tabs[i].panes.length; j++) {
+        identity.push(tabs[i].panes[j].id)
+      }
+      identity.push('|')
+    }
+    return identity.join(',')
+  }
+
+  private observeRuntimeRecoveryForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS || this.acceptanceRuntimeWorkspace.length === 0) {
+      return
+    }
+    let workspaceSame: boolean =
+      this.runtimeWorkspaceIdentityForAcceptance() === this.acceptanceRuntimeWorkspace
+    let runtime: PaneRuntime | null = this.activePaneRuntime()
+    let localBufferUnits: number = runtime === null ? -1 : runtime.viewModel.localInputUnitsForAcceptance()
+    logger.info('ACCEPTANCE_RUNTIME_RECOVERY workspaceSame=' + workspaceSame.toString() +
+      ',localBufferUnits=' + localBufferUnits.toString())
+    this.acceptanceRuntimeWorkspace = ''
+  }
+
   private reclaimRuntimeForAcceptance(): void {
     if (!ACCEPTANCE_TESTS) {
       return
@@ -220,10 +271,12 @@ function Add-LeanTTYAcceptanceSource {
     }
     let projectedPane: PaneInfo | null = this.appVm.getPane(runtime.id)
     let projectedMode: TerminalMode = projectedPane === null ? TerminalMode.IDLE : projectedPane.mode
+    let workspaceIdentity: string = this.runtimeWorkspaceIdentityForAcceptance()
     if (!runtime.viewModel.reclaimRuntimeStateForAcceptance()) {
       logger.error('ACCEPTANCE_RUNTIME_RECLAIM state=ignored,reason=no-active-mosh')
       return
     }
+    this.acceptanceRuntimeWorkspace = workspaceIdentity
     if (projectedPane !== null) {
       projectedPane.mode = projectedMode
     }
@@ -879,10 +932,259 @@ function Add-LeanTTYAcceptanceSource {
     $menuAddition += "      }`n"
     $text.index = Set-LeanTTYAcceptanceSourceText $text.index $menuAnchor $menuAddition
 
+    $text.protocol = Set-LeanTTYAcceptanceSourceText $text.protocol `
+        "  static readonly KIND_SEARCH_STATE: string = 'searchState'" `
+        ("  static readonly KIND_SEARCH_STATE: string = 'searchState'`n" +
+            "  static readonly KIND_ACCEPTANCE_SEARCH_RESULT: string = 'acceptanceSearchResult'`n" +
+            "  static readonly KIND_ACCEPTANCE_INPUT_METRICS: string = 'acceptanceInputMetrics'`n" +
+            "  static readonly KIND_ACCEPTANCE_INPUT_ORDER: string = 'acceptanceInputOrder'`n" +
+            "  static readonly KIND_ACCEPTANCE_TERMINAL_FINGERPRINT: string = 'acceptanceTerminalFingerprint'`n" +
+            "  static readonly KIND_ACCEPTANCE_SNAPSHOT_FINGERPRINT: string = 'acceptanceSnapshotFingerprint'`n" +
+            "  static readonly KIND_ACCEPTANCE_PAGE_REPLACED_FINGERPRINT: string = 'acceptancePageReplacedFingerprint'")
+    $protocolValidationAnchor = @'
+    if (kind === BridgeProtocol.KIND_SEARCH_STATE && payload !== 'open' &&
+      payload !== 'composing' && payload !== 'closed') {
+      return null
+    }
+'@
+    $protocolValidationReplacement = $protocolValidationAnchor + @'
+    if (kind === BridgeProtocol.KIND_ACCEPTANCE_INPUT_ORDER &&
+      (payload.length > 4096 || !/^[1-9][0-9]{6};[0-4];[0-9]{1,3};[0-9]{1,3};(?:[0-9]+(?:,[0-9]+){11}(?:\/[0-9]+(?:,[0-9]+){11}){0,15})?$/.test(payload))) {
+      return null
+    }
+    if (kind === BridgeProtocol.KIND_ACCEPTANCE_INPUT_METRICS &&
+      !/^[0-9]+(?:,[0-9]+){11}$/.test(payload)) {
+      return null
+    }
+    if (kind === BridgeProtocol.KIND_ACCEPTANCE_SEARCH_RESULT &&
+      !/^[0-9]+,[0-9a-f]{16},-?[0-9]+,[0-9]+$/.test(payload)) {
+      return null
+    }
+    if (kind === BridgeProtocol.KIND_ACCEPTANCE_TERMINAL_FINGERPRINT &&
+      !/^[0-9]+,(?:normal|alternate),[0-9]+,[0-9]+,[0-9]+,[0-9a-f]{16}$/.test(payload)) {
+      return null
+    }
+    if (kind === BridgeProtocol.KIND_ACCEPTANCE_SNAPSHOT_FINGERPRINT &&
+      !/^[0-9]+,(?:normal|alternate),[0-9]+,[0-9]+,[0-9]+,[0-9a-f]{16}$/.test(payload)) {
+      return null
+    }
+    if (kind === BridgeProtocol.KIND_ACCEPTANCE_PAGE_REPLACED_FINGERPRINT &&
+      !/^[0-9]+,(?:normal|alternate),[0-9]+,[0-9]+,[0-9]+,[0-9a-f]{16}$/.test(payload)) {
+      return null
+    }
+'@
+    $text.protocol = Set-LeanTTYAcceptanceSourceText `
+        $text.protocol $protocolValidationAnchor $protocolValidationReplacement
+    $text.protocol = Set-LeanTTYAcceptanceSourceText $text.protocol `
+        "      kind === BridgeProtocol.KIND_SEARCH_STATE ||`n      kind === BridgeProtocol.KIND_SNAPSHOT" `
+        ("      kind === BridgeProtocol.KIND_SEARCH_STATE ||`n" +
+            "      kind === BridgeProtocol.KIND_ACCEPTANCE_SEARCH_RESULT ||`n" +
+            "      kind === BridgeProtocol.KIND_ACCEPTANCE_INPUT_METRICS ||`n" +
+            "      kind === BridgeProtocol.KIND_ACCEPTANCE_INPUT_ORDER ||`n" +
+            "      kind === BridgeProtocol.KIND_ACCEPTANCE_TERMINAL_FINGERPRINT ||`n" +
+            "      kind === BridgeProtocol.KIND_ACCEPTANCE_SNAPSHOT_FINGERPRINT ||`n" +
+            "      kind === BridgeProtocol.KIND_ACCEPTANCE_PAGE_REPLACED_FINGERPRINT ||`n" +
+            "      kind === BridgeProtocol.KIND_SNAPSHOT")
+
+    # Content-free counters only. No event key/data, textarea value or hash is retained.
+    # The 300 ms report is diagnostic observation, never a readiness/submission gate.
+    $acceptanceInputMetricsMethod = @'
+    var acceptanceInputMetrics = null;
+    var acceptanceInputMetricsTimer = 0;
+    function resetAcceptanceInputMetrics() {
+      if (acceptanceInputMetricsTimer) clearTimeout(acceptanceInputMetricsTimer);
+      acceptanceInputMetricsTimer = 0;
+      acceptanceInputMetrics = secureInput ? [0,0,0,0,0,0,0,0,0,0,0,0] : null;
+      if (acceptanceInputMetrics) {
+        sendBridgeControl('acceptanceInputMetrics', acceptanceInputMetrics.join(','));
+      }
+    }
+    function observeAcceptanceInput(index, units) {
+      if (!secureInput || !acceptanceInputMetrics) return;
+      acceptanceInputMetrics[index] += units;
+      if (acceptanceInputMetricsTimer) clearTimeout(acceptanceInputMetricsTimer);
+      acceptanceInputMetricsTimer = setTimeout(function() {
+        acceptanceInputMetricsTimer = 0;
+        if (!secureInput || !acceptanceInputMetrics || !term || !term.textarea) return;
+        acceptanceInputMetrics[11] = term.textarea.value.length;
+        sendBridgeControl('acceptanceInputMetrics', acceptanceInputMetrics.join(','));
+      }, 300);
+    }
+    function observeAcceptanceData(data) {
+      for (var index = 0; index < data.length; index++) {
+        var code = data.charCodeAt(index);
+        observeAcceptanceInput(code >= 32 && code < 127 ? 6 :
+          (code === 8 || code === 127 ? 7 : 8), 1);
+      }
+    }
+    function installAcceptanceInputMetrics() {
+      term.textarea.addEventListener('keydown', function(event) {
+        if (event.key && event.key.length === 1) observeAcceptanceInput(0, 1);
+        if (event.keyCode === 229) observeAcceptanceInput(1, 1);
+      }, true);
+      term.textarea.addEventListener('keypress', function() {
+        observeAcceptanceInput(2, 1);
+      }, true);
+      term.textarea.addEventListener('input', function(event) {
+        observeAcceptanceInput(3, 1);
+        observeAcceptanceInput(4, event.data ? event.data.length : 0);
+      }, true);
+      ['compositionstart', 'compositionupdate', 'compositionend'].forEach(function(name) {
+        term.textarea.addEventListener(name, function() {
+          observeAcceptanceInput(5, 1);
+        }, true);
+      });
+    }
+
+'@
+    $acceptanceInputOrderMethod = [IO.File]::ReadAllText(
+        (Join-Path $PSScriptRoot 'web-terminal/acceptance-input-order.js'))
+    $acceptanceInputOrderMethod += [IO.File]::ReadAllText(
+        (Join-Path $PSScriptRoot 'web-terminal/acceptance-input-attribution.js'))
+    $acceptanceInputOrderMethod += [IO.File]::ReadAllText(
+        (Join-Path $PSScriptRoot 'web-terminal/acceptance-input-synthetic.js'))
+    # A coordinate click deliberately traverses Pane -> Bridge focus. The plain
+    # textarea is the test-only focus owner; do not redirect its click to xterm.
+    $text.terminal = Set-LeanTTYAcceptanceSourceText $text.terminal `
+        '              if (term && !isSearchOpen()) { term.focus(); }' `
+        '              if (!focusAcceptanceInputAttribution() && term && !isSearchOpen()) { term.focus(); }'
+    $text.terminal = Set-LeanTTYAcceptanceSourceText $text.terminal `
+        '    function applyInputSecurity() {' `
+        ($acceptanceInputMetricsMethod + $acceptanceInputOrderMethod +
+            "    function applyInputSecurity() {`n      stopAcceptanceInputOrder(3);")
+    $text.terminal = Set-LeanTTYAcceptanceSourceText $text.terminal `
+        '      term.onData(function(data) {' `
+        ("      installAcceptanceInputMetrics();`n      installAcceptanceInputOrder();`n" +
+            "      term.onData(function(data) {`n        observeAcceptanceInputOrderData(data);`n" +
+            "        observeAcceptanceData(data);`n        observeAcceptanceChainData(data);")
+    $chainPostAnchor = @'
+        nativePort.postMessage(serializeBridgeMessage(BRIDGE_WEB_TO_NATIVE, BRIDGE_DATA, kind, payload));
+'@
+    $chainPostReplacement = @'
+        observeAcceptanceChainPost(12, payload);
+        nativePort.postMessage(serializeBridgeMessage(BRIDGE_WEB_TO_NATIVE, BRIDGE_DATA, kind, payload));
+        observeAcceptanceChainPost(13, payload);
+      } else {
+        observeAcceptanceChainPost(14, payload);
+'@
+    $text.terminal = Set-LeanTTYAcceptanceSourceText $text.terminal $chainPostAnchor $chainPostReplacement
+    $text.terminal = Set-LeanTTYAcceptanceSourceText $text.terminal `
+        "              secureInput = message.payload === 'masked';" `
+        ("              secureInput = message.payload === 'masked';`n" +
+            '              resetAcceptanceInputMetrics();')
+    $text.terminal = Set-LeanTTYAcceptanceSourceText $text.terminal `
+        "        if (secureInput && term && term.textarea) term.textarea.value = '';" `
+        ("        if (secureInput && term && term.textarea) {`n" +
+            "          observeAcceptanceInput(9, 1);`n" +
+            "          observeAcceptanceInput(10, term.textarea.value.length > 0 ? 1 : 0);`n" +
+            "          term.textarea.value = '';`n        }")
+
+    $acceptanceHashMethod = @'
+    function acceptanceTextHash(value) {
+      var bytes = new TextEncoder().encode(value);
+      var first = 2166136261;
+      var second = 5381;
+      for (var index = 0; index < bytes.length; index++) {
+        first = Math.imul(first ^ bytes[index], 16777619) >>> 0;
+        second = (Math.imul(second, 33) ^ bytes[index]) >>> 0;
+      }
+      function hex32(number) {
+        return ('00000000' + (number >>> 0).toString(16)).slice(-8);
+      }
+      return hex32(first) + hex32(second);
+    }
+
+    function acceptanceVisibleFingerprint(generation) {
+      if (!term) return '';
+      var buffer = term.buffer.active;
+      var lines = [];
+      for (var row = 0; row < term.rows; row++) {
+        var line = buffer.getLine(buffer.viewportY + row);
+        lines.push(line ? line.translateToString(false) : '');
+      }
+      var bufferName = buffer === term.buffer.alternate ? 'alternate' : 'normal';
+      return generation + ',' + bufferName + ',' + term.cols + ',' + term.rows + ',' +
+        buffer.viewportY + ',' + acceptanceTextHash(lines.join('\u0000'));
+    }
+
+    var acceptancePageReplacementSequence = 0;
+    function reportAcceptanceSnapshotFingerprint() {
+      var fingerprint = acceptanceVisibleFingerprint(acceptancePageReplacementSequence);
+      if (fingerprint.length > 0) {
+        sendBridgeControl('acceptanceSnapshotFingerprint', fingerprint);
+      }
+    }
+
+    function reportAcceptancePageReplacedFingerprint() {
+      acceptancePageReplacementSequence++;
+      var fingerprint = acceptanceVisibleFingerprint(acceptancePageReplacementSequence);
+      if (fingerprint.length > 0) {
+        sendBridgeControl('acceptancePageReplacedFingerprint', fingerprint);
+      }
+    }
+
+'@
+    $text.terminal = Set-LeanTTYAcceptanceSourceText $text.terminal `
+        '    function updateSearchFeedback() {' `
+        ($acceptanceHashMethod + '    function updateSearchFeedback() {')
+    $searchResultAnchor = @'
+        searchResultCount = result.resultCount;
+        updateSearchFeedback();
+'@
+    $searchResultReplacement = @'
+        searchResultCount = result.resultCount;
+        updateSearchFeedback();
+        if (searchQuery.length > 0) {
+          sendBridgeControl('acceptanceSearchResult', searchQuery.length + ',' +
+            acceptanceTextHash(searchQuery) + ',' + searchResultIndex + ',' + searchResultCount);
+        }
+'@
+    $text.terminal = Set-LeanTTYAcceptanceSourceText `
+        $text.terminal $searchResultAnchor $searchResultReplacement
+    $snapshotAnchor = @'
+          if (snapshot !== null) {
+            for (var j = 0; j < requestIds.length; j++) {
+'@
+    $snapshotReplacement = @'
+          if (snapshot !== null) {
+            reportAcceptanceSnapshotFingerprint();
+            for (var j = 0; j < requestIds.length; j++) {
+'@
+    $text.terminal = Set-LeanTTYAcceptanceSourceText `
+        $text.terminal $snapshotAnchor $snapshotReplacement
+    $pageReplacementAnchor = @'
+      var completeReplacement = function() {
+        restoringSnapshot = false;
+        onComplete();
+'@
+    $pageReplacementReplacement = @'
+      var completeReplacement = function() {
+        restoringSnapshot = false;
+        reportAcceptancePageReplacedFingerprint();
+        onComplete();
+'@
+    $text.terminal = Set-LeanTTYAcceptanceSourceText `
+        $text.terminal $pageReplacementAnchor $pageReplacementReplacement
+
     $text.bridge = Set-LeanTTYAcceptanceSourceText $text.bridge `
         "import { Logger } from '../../common/logger/Logger'" `
         "import { Logger } from '../../common/logger/Logger'`nimport { ACCEPTANCE_TESTS } from 'BuildProfile'"
     $bridgeMethod = @'
+  armInputOrderForAcceptance(token: string, attributionMode: number = -1): void {
+    if (!ACCEPTANCE_TESTS || !/^[1-9][0-9]{6}$/.test(token) ||
+      attributionMode < -1 || (attributionMode > 4 && attributionMode !== 8)) { return }
+    this.webCtrl.runJavaScript("armAcceptanceInputOrder('" + token + "'," + attributionMode + ")").catch(() => {
+      this.logger.error('ACCEPTANCE_INPUT_ORDER_ARM failed')
+    })
+  }
+
+  stopInputOrderForAcceptance(): void {
+    if (!ACCEPTANCE_TESTS) { return }
+    this.webCtrl.runJavaScript('stopAcceptanceInputOrder(3)').catch(() => {
+      this.logger.error('ACCEPTANCE_INPUT_ORDER_STOP failed')
+    })
+  }
+
   terminateRendererForAcceptance(): boolean {
     if (!ACCEPTANCE_TESTS) {
       return false
@@ -910,6 +1212,26 @@ function Add-LeanTTYAcceptanceSource {
     })
   }
 
+  captureTerminalFingerprintForAcceptance(generation: number): void {
+    if (!ACCEPTANCE_TESTS) {
+      return
+    }
+    let generationText: string = generation.toString()
+    this.webCtrl.runJavaScript(
+      "(function() { if (typeof term === 'undefined' || !term || " +
+      "typeof acceptanceTextHash !== 'function') { return 'missing'; } " +
+      "term.write('', function() { var buffer = term.buffer.active; var lines = []; " +
+      "for (var row = 0; row < term.rows; row++) { var line = buffer.getLine(buffer.viewportY + row); " +
+      "lines.push(line ? line.translateToString(false) : ''); } " +
+      "var bufferName = buffer === term.buffer.alternate ? 'alternate' : 'normal'; " +
+      "var hash = acceptanceTextHash(lines.join('\\u0000')); " +
+      "sendBridgeControl('acceptanceTerminalFingerprint', '" + generationText + ",' + bufferName + ',' + " +
+      "term.cols + ',' + term.rows + ',' + buffer.viewportY + ',' + hash); }); return 'scheduled'; })()"
+    ).catch((error: Error) => {
+      this.logger.error('Acceptance terminal fingerprint failed: ' + error.message)
+    })
+  }
+
 '@
     $text.bridge = Set-LeanTTYAcceptanceSourceText $text.bridge `
         '  private postTerminalPacket(data: Uint8Array): number {' `
@@ -924,6 +1246,29 @@ function Add-LeanTTYAcceptanceSource {
         "import util from '@ohos.util'" `
         "import util from '@ohos.util'`nimport { ACCEPTANCE_TESTS } from 'BuildProfile'"
     $surfaceMethod = @'
+  private acceptanceInputOrderToken: string = ''
+  private acceptanceInputChainActive: boolean = false
+  private acceptanceInputChainPackets: number = 0
+  private acceptanceInputChainUnits: number = 0
+
+  armInputOrderForAcceptance(token: string, attributionMode: number = -1): void {
+    if (ACCEPTANCE_TESTS && this.bridge !== null && /^[1-9][0-9]{6}$/.test(token)) {
+      this.acceptanceInputOrderToken = token
+      this.acceptanceInputChainActive = attributionMode === 4 || attributionMode === 8
+      this.acceptanceInputChainPackets = 0
+      this.acceptanceInputChainUnits = 0
+      this.bridge.armInputOrderForAcceptance(token, attributionMode)
+    }
+  }
+
+  stopInputOrderForAcceptance(): void {
+    if (ACCEPTANCE_TESTS && this.acceptanceInputOrderToken !== '') {
+      this.acceptanceInputOrderToken = ''
+      this.acceptanceInputChainActive = false
+      if (this.bridge !== null) { this.bridge.stopInputOrderForAcceptance() }
+    }
+  }
+
   terminateRendererForAcceptance(): boolean {
     if (!ACCEPTANCE_TESTS || this.bridge === null) {
       return false
@@ -937,10 +1282,82 @@ function Add-LeanTTYAcceptanceSource {
     }
   }
 
+  captureTerminalFingerprintForAcceptance(): void {
+    if (ACCEPTANCE_TESTS && this.bridge !== null) {
+      this.bridge.captureTerminalFingerprintForAcceptance(this.moshPageGeneration)
+    }
+  }
+
 '@
     $text.surface = Set-LeanTTYAcceptanceSourceText $text.surface `
         '  private handleBridgeMessage(sourceBridge: TerminalBridge, msg: BridgeMessage): void {' `
         ($surfaceMethod + '  private handleBridgeMessage(sourceBridge: TerminalBridge, msg: BridgeMessage): void {')
+    $surfaceMessageAnchor = @'
+    if (this.bridge === sourceBridge && msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_SEARCH_STATE) {
+'@
+    $surfaceMessageReplacement = @'
+    if (ACCEPTANCE_TESTS && this.acceptanceInputChainActive && this.bridge === sourceBridge &&
+      msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_DATA && msg.kind === BridgeProtocol.KIND_TERMINAL) {
+      this.acceptanceInputChainPackets++
+      this.acceptanceInputChainUnits += msg.payload.length
+    }
+    if (ACCEPTANCE_TESTS && this.bridge === sourceBridge &&
+      msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_ACCEPTANCE_INPUT_ORDER) {
+      if (this.acceptanceInputOrderToken !== '' && msg.payload.startsWith(this.acceptanceInputOrderToken + ';')) {
+        if (this.acceptanceInputChainActive && msg.payload.split(';')[1] !== '0' &&
+          msg.payload.split(';')[2] === '0') {
+          this.logger.info('ACCEPTANCE_INPUT_CHAIN_NATIVE ' + this.acceptanceInputOrderToken + ';' +
+            this.acceptanceInputChainPackets.toString() + ';' + this.acceptanceInputChainUnits.toString())
+          this.acceptanceInputChainActive = false
+        }
+        this.logger.info('ACCEPTANCE_INPUT_ORDER ' + msg.payload)
+      }
+      return
+    }
+    if (ACCEPTANCE_TESTS && this.bridge === sourceBridge &&
+      msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_ACCEPTANCE_INPUT_METRICS) {
+      this.logger.info('ACCEPTANCE_INPUT_WEB ' + msg.payload)
+      return
+    }
+    if (ACCEPTANCE_TESTS && this.bridge === sourceBridge &&
+      msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_ACCEPTANCE_SEARCH_RESULT) {
+      this.logger.info('ACCEPTANCE_SEARCH_RESULT ' + msg.payload)
+      return
+    }
+    if (ACCEPTANCE_TESTS && this.bridge === sourceBridge &&
+      msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_ACCEPTANCE_TERMINAL_FINGERPRINT) {
+      this.logger.info('ACCEPTANCE_TERMINAL_FINGERPRINT ' + msg.payload)
+      return
+    }
+    if (ACCEPTANCE_TESTS && this.bridge === sourceBridge &&
+      msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_ACCEPTANCE_SNAPSHOT_FINGERPRINT) {
+      this.logger.info('ACCEPTANCE_SNAPSHOT_FINGERPRINT ' + msg.payload)
+      return
+    }
+    if (ACCEPTANCE_TESTS && this.bridge === sourceBridge &&
+      msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL &&
+      msg.kind === BridgeProtocol.KIND_ACCEPTANCE_PAGE_REPLACED_FINGERPRINT) {
+      this.logger.info('ACCEPTANCE_PAGE_REPLACED_FINGERPRINT ' + msg.payload)
+      return
+    }
+    if (this.bridge === sourceBridge && msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
+      msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_SEARCH_STATE) {
+'@
+    $text.surface = Set-LeanTTYAcceptanceSourceText `
+        $text.surface $surfaceMessageAnchor $surfaceMessageReplacement
 
     $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
         "import { KeyCommandService, KeyCommandContext } from '../model/command/KeyCommandService'" `
@@ -953,16 +1370,80 @@ function Add-LeanTTYAcceptanceSource {
         '  private perfPingStartedMs: number = 0' `
         ("  private perfPingStartedMs: number = 0`n" +
             "  private acceptanceInputSequence: number = 0`n" +
+            "  private acceptanceInputProbe: boolean = false`n" +
             "  private acceptanceBackpressureStalled: boolean = false`n" +
             "  private acceptanceBackpressureProgressCallbacks: number = 0")
+    $observerMethods = @'
+  private acceptanceObserverToken: string = ''
+  private acceptanceObserverTimer: number = -1
+  private acceptanceObserverQuiet: boolean = false
+
+  private stopAcceptanceObserver(): void {
+    if (this.acceptanceObserverTimer !== -1) { clearTimeout(this.acceptanceObserverTimer) }
+    this.acceptanceObserverTimer = -1
+    this.acceptanceObserverToken = ''
+    this.acceptanceObserverQuiet = false
+  }
+
+  private armAcceptanceObserver(token: string, profile: number): void {
+    if (!ACCEPTANCE_TESTS || this.mode !== TerminalMode.IDLE || this.terminalSurface === null ||
+      !/^[1-9][0-9]{6}$/.test(token) || profile < 5 || profile > 8) { return }
+    this.stopAcceptanceObserver()
+    this.acceptanceObserverToken = token
+    this.acceptanceObserverQuiet = profile !== 5
+    if (profile === 7) { this.terminalSurface.armInputOrderForAcceptance(token, 4) }
+    if (profile === 8) { this.terminalSurface.armInputOrderForAcceptance(token, 8) }
+    this.acceptanceObserverTimer = setTimeout(() => {
+      if (this.acceptanceObserverToken !== token) { return }
+      const valid: boolean = this.mode === TerminalMode.IDLE && this.terminalSurface !== null
+      const expected: string = profile === 8 ? 'a'.repeat(40) : 'ssh-keygen -R [127.0.0.1]:2223'.repeat(6)
+      const actual: string = valid ? this.commandLine.getText() : ''
+      let mismatch: number = -1
+      for (let i: number = 0; i < Math.max(expected.length, actual.length); i++) {
+        if (expected.charAt(i) !== actual.charAt(i)) { mismatch = i; break }
+      }
+      this.stopAcceptanceObserver()
+      this.logger.info('ACCEPTANCE_OBSERVER_FINAL ' + token + ';' + profile.toString() + ';' +
+        (valid ? '1' : '0') + ';' + actual.length.toString() + ';' +
+        (actual === expected ? '1' : '0') + ';' + (mismatch + 1).toString())
+    }, 23000)
+    this.logger.info('ACCEPTANCE_OBSERVER_READY ' + token + ';' + profile.toString())
+  }
+
+'@
     $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
-        '    this.observePerfOutput(observedText)' `
-        ("    this.observePerfOutput(observedText)`n" +
+        '  handleTerminalInput(data: string, sourceSurface?: TerminalSurfaceController): void {' `
+        ($observerMethods + '  handleTerminalInput(data: string, sourceSurface?: TerminalSurfaceController): void {')
+    foreach ($observerBoundary in @('  async disconnect(): Promise<void> {', '  onTerminalSurfaceDetached(): void {')) {
+        $text.session = Set-LeanTTYAcceptanceSourceText $text.session $observerBoundary `
+            ($observerBoundary + "`n    this.stopAcceptanceObserver()")
+    }
+    $moshOutputAnchor = @'
+  private onMoshData(data: Uint8Array): void {
+    if (!this.acceptingSessionOutput) {
+      return
+    }
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText $text.session $moshOutputAnchor `
+        ($moshOutputAnchor + "`n" +
             "    if (ACCEPTANCE_TESTS && this.moshClient !== null) {`n" +
             "      this.logger.info('ACCEPTANCE_MOSH_OUTPUT mode=' + this.moshPredictionMode +`n" +
             "        ',bytes=' + data.byteLength.toString())`n" +
             "    }")
+    $runtimeRecoveryAnchor = @'
+    logger.info('Runtime recovery request handled pane=' + requestedPaneId +
+      ',recovered=' + recovered.toString())
+'@
+    $text.index = Set-LeanTTYAcceptanceSourceText $text.index $runtimeRecoveryAnchor `
+        ($runtimeRecoveryAnchor + "`n    this.observeRuntimeRecoveryForAcceptance()")
     $moshFailureMethod = @'
+  localInputUnitsForAcceptance(): number {
+    if (!ACCEPTANCE_TESTS || this.getMode() !== TerminalMode.IDLE) {
+      return -1
+    }
+    return this.commandLine.getText().length
+  }
+
   reclaimRuntimeStateForAcceptance(): boolean {
     if (!ACCEPTANCE_TESTS || this.moshClient === null || !this.acceptingSessionOutput) {
       return false
@@ -1196,6 +1677,36 @@ function Add-LeanTTYAcceptanceSource {
     this.commandBarVm.addToHistory(cmd)
 '@
     $configCommandReplacement = @'
+    if (ACCEPTANCE_TESTS && /^__acceptance_input_attribution_[5-8]_[1-9][0-9]{6}$/.test(cmd)) {
+      this.writePrompt()
+      const parts: string[] = cmd.split('_')
+      this.armAcceptanceObserver(parts[parts.length - 1], Number(parts[parts.length - 2]))
+      return
+    }
+    if (ACCEPTANCE_TESTS && /^__acceptance_input_attribution_[0-4]_[1-9][0-9]{6}$/.test(cmd)) {
+      this.writePrompt()
+      const parts: string[] = cmd.split('_')
+      if (this.terminalSurface !== null) {
+        this.terminalSurface.armInputOrderForAcceptance(parts[parts.length - 1], Number(parts[parts.length - 2]))
+      }
+      return
+    }
+    if (ACCEPTANCE_TESTS && /^__acceptance_input_trace_[1-9][0-9]{6}$/.test(cmd)) {
+      this.writePrompt()
+      if (this.terminalSurface !== null) {
+        this.terminalSurface.armInputOrderForAcceptance(cmd.substring('__acceptance_input_trace_'.length))
+      }
+      return
+    }
+    if (ACCEPTANCE_TESTS && cmd === '__acceptance_input_probe') {
+      // A disposable, disconnected fixture. Use only the public test vector below.
+      this.acceptanceInputProbe = true
+      this.passwordBuffer = ''
+      this.setMode(TerminalMode.PASSWORD_INPUT)
+      this.writeTerminal('Input diagnostic (synthetic text only): ')
+      this.logger.info('ACCEPTANCE_INPUT_PROBE state=ready')
+      return
+    }
     if (ACCEPTANCE_TESTS && cmd.startsWith('__acceptance_key_backup_')) {
       let keyBackupSeparator: number = cmd.indexOf(' ')
       if (keyBackupSeparator > '__acceptance_key_backup_'.length) {
@@ -1215,6 +1726,11 @@ function Add-LeanTTYAcceptanceSource {
 '@
     $text.session = Set-LeanTTYAcceptanceSourceText `
         $text.session $configCommandAnchor $configCommandReplacement
+    $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
+        '  private setMode(newMode: TerminalMode): void {' `
+        ("  private setMode(newMode: TerminalMode): void {`n" +
+            "    if (ACCEPTANCE_TESTS && this.terminalSurface !== null) {`n" +
+            "      this.terminalSurface.stopInputOrderForAcceptance()`n    }")
     $backpressureAnchor = @'
   private onFileTransferProgress(event: FileTransferProgress): void {
 '@
@@ -1294,7 +1810,7 @@ function Add-LeanTTYAcceptanceSource {
     let actions: TerminalInputAction[] = TerminalInputParser.parse(data, true)
     for (let i = 0; i < actions.length; i++) {
       let action: TerminalInputAction = actions[i]
-      if (ACCEPTANCE_TESTS) {
+      if (ACCEPTANCE_TESTS && !this.acceptanceObserverQuiet) {
         this.logger.info('ACCEPTANCE_IDLE_ACTION kind=' + action.kind.toString() +
           ',completionActive=' + this.completionEngine.isActive().toString() +
           ',menuActive=' + this.completionEngine.isMenuActive().toString())
@@ -1324,7 +1840,7 @@ function Add-LeanTTYAcceptanceSource {
           this.redrawLocalCommandLine()
         }
       }
-      if (ACCEPTANCE_TESTS) {
+      if (ACCEPTANCE_TESTS && !this.acceptanceObserverQuiet) {
         this.logger.info('ACCEPTANCE_IDLE_RESULT kind=' + action.kind.toString() + ',input=' +
           SessionViewModel.terminalSafeText(this.commandLine.getText()) +
           ',completionActive=' + this.completionEngine.isActive().toString() +
@@ -1337,6 +1853,27 @@ function Add-LeanTTYAcceptanceSource {
 '@
     $text.session = Set-LeanTTYAcceptanceSourceText `
         $text.session $idleResultAnchor $idleResultReplacement
+    $passwordProbeAnchor = @'
+    this.handleBufferedInput(data, this.passwordBuffer, (v) => { this.passwordBuffer = v }, () => { this.submitPassword() }, '*')
+'@
+    $passwordProbeReplacement = $passwordProbeAnchor + "`n" + @'
+    if (ACCEPTANCE_TESTS && this.acceptanceInputProbe) {
+      this.logger.info('ACCEPTANCE_INPUT_NATIVE receivedUnits=' + data.length.toString() +
+        ',bufferUnits=' + this.passwordBuffer.length.toString() +
+        ',exact=' + (this.passwordBuffer === '0123456789abcdefghijklmnopqrstuv').toString())
+    }
+'@
+    $text.session = Set-LeanTTYAcceptanceSourceText `
+        $text.session $passwordProbeAnchor $passwordProbeReplacement
+    $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
+        '  private cancelPendingConnection(): void {' `
+        ("  private cancelPendingConnection(): void {`n" +
+            "    this.acceptanceInputProbe = false")
+    $text.session = Set-LeanTTYAcceptanceSourceText $text.session `
+        '  private submitPassword(): void {' `
+        ("  private submitPassword(): void {`n" +
+            "    if (ACCEPTANCE_TESTS && this.acceptanceInputProbe) {`n" +
+            "      this.cancelPendingConnection()`n      return`n    }")
     foreach ($inputPoint in @(
         @{ anchor = "  private async executeCommandBuffer(): Promise<void> {"; kind = 'command' },
         @{ anchor = "    this.writeTerminal('\r\n')`n    let pw: string = this.passwordBuffer"; kind = 'password' },
@@ -1508,6 +2045,9 @@ function Add-LeanTTYAcceptanceSource {
     $text.client = Set-LeanTTYAcceptanceSourceText `
         $text.client $lateTerminalAnchor $lateTerminalReplacement
 
+    if ([IO.File]::ReadAllText($nativeTypesPath).Contains('moshArmInputRejectionForAcceptance')) {
+        Add-LeanTTYMoshInputRejectionArkTsSource -Text $text
+    }
     foreach ($name in $files.Keys) {
         [IO.File]::WriteAllText($files[$name], $text[$name], [Text.UTF8Encoding]::new($false))
     }
@@ -1527,11 +2067,14 @@ function Invoke-WithLeanTTYAcceptanceSource {
     }
     $paths = @(
         Join-Path $RepoRoot 'entry\src\main\ets\pages\Index.ets'
+        Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
+        Join-Path $RepoRoot 'entry\src\main\ets\model\mosh\MoshClient.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\model\transfer\FileTransferClient.ets'
+        Join-Path $RepoRoot 'entry\src\main\resources\rawfile\terminal.html'
     )
     $backups = @{}
     foreach ($path in $paths) { $backups[$path] = [IO.File]::ReadAllBytes($path) }
@@ -1763,6 +2306,7 @@ export declare function sshAcceptanceProbeFileDescriptor(
 function Invoke-WithLeanTTYNativeAcceptanceSource {
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [switch]$MoshInputRejectionOnly,
         [Parameter(Mandatory = $true)][scriptblock]$Action
     )
 
@@ -1773,7 +2317,11 @@ function Invoke-WithLeanTTYNativeAcceptanceSource {
     $backups = @{}
     foreach ($path in $paths) { $backups[$path] = [IO.File]::ReadAllBytes($path) }
     try {
-        Add-LeanTTYNativeAcceptanceSource -RepoRoot $RepoRoot | Out-Null
+        if ($MoshInputRejectionOnly) {
+            Add-LeanTTYMoshInputRejectionNativeSource -RepoRoot $RepoRoot
+        } else {
+            Add-LeanTTYNativeAcceptanceSource -RepoRoot $RepoRoot | Out-Null
+        }
         & $Action
     } finally {
         foreach ($path in $paths) {

@@ -31,7 +31,20 @@
   per-Pane mode to the pinned Mosh client. `adaptive` remains the default; the
   library retains prediction authority and Session isolation.
 
+### Changed
+
+- Avoid unused SSH/Mosh output-observer decoding while retaining the Keypush
+  marker stream and isolated debug probes.
+
 ### Fixed
+
+- Exclude terminal-content performance probes from production builds while
+  retaining bounded maintainer diagnostics in debug/test builds.
+- Replay terminal checkpoints at their saved dimensions before fitting the
+  current Pane, preserving xterm resize semantics across Mosh page restoration
+  and Surface rebuilds.
+- Refresh retained Pane geometry, visibility and focus when splitting, closing
+  a sibling or switching Tabs, without rebuilding the surviving terminal.
 
 - Coordinate non-composing xterm text input with its pending textarea diff to
   prevent missing or duplicate characters during IME keyCode 229 interleaving.

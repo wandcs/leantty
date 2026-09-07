@@ -241,7 +241,7 @@ export class TerminalSurfaceController {
     }
     let generation: number = this.moshPageGeneration
     if (this.outputBuffer.isSessionPageActive()) {
-      this.replaceMoshTerminalPage('', generation, () => {
+      this.replaceMoshTerminalPage('', 0, generation, () => {
         this.completeMoshPageBegin(generation)
       })
       return
@@ -257,7 +257,7 @@ export class TerminalSurfaceController {
         return
       }
       this.outputBuffer.beginSessionPage()
-      this.replaceMoshTerminalPage('', generation, () => {
+      this.replaceMoshTerminalPage('', 0, generation, () => {
         this.completeMoshPageBegin(generation)
       })
     })
@@ -286,7 +286,8 @@ export class TerminalSurfaceController {
     }
     let generation: number = this.moshPageGeneration
     let originalSnapshot: string = this.outputBuffer.getSessionPageBaseSnapshot()
-    this.replaceMoshTerminalPage(originalSnapshot, generation, () => {
+    let originalViewport: number = this.outputBuffer.getSessionPageBaseViewport()
+    this.replaceMoshTerminalPage(originalSnapshot, originalViewport, generation, () => {
       if (generation !== this.moshPageGeneration) {
         return
       }
@@ -294,7 +295,8 @@ export class TerminalSurfaceController {
     })
   }
 
-  private replaceMoshTerminalPage(snapshot: string, generation: number, onReplaced: () => void): void {
+  private replaceMoshTerminalPage(
+    snapshot: string, viewport: number, generation: number, onReplaced: () => void): void {
     let sourceBridge: TerminalBridge | null = this.bridge
     if (sourceBridge === null) {
       this.resumeMoshPageTransition()
@@ -302,7 +304,7 @@ export class TerminalSurfaceController {
     }
     this.moshPageReplacePending = true
     let activeBridge: TerminalBridge = sourceBridge
-    activeBridge.replaceTerminalPage(snapshot, (replaced: boolean) => {
+    activeBridge.replaceTerminalPage(snapshot, viewport, (replaced: boolean) => {
       this.moshPageReplacePending = false
       if (generation !== this.moshPageGeneration) {
         return
@@ -624,13 +626,18 @@ export class TerminalSurfaceController {
     }
     if (msg.direction === BridgeProtocol.DIRECTION_WEB_TO_NATIVE &&
       msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_SNAPSHOT) {
-      let separator: number = msg.payload.indexOf('|')
-      let requestIdText: string = separator > 0 ? msg.payload.substring(0, separator) : ''
+      let requestIdEnd: number = msg.payload.indexOf('|')
+      let viewportEnd: number = requestIdEnd > 0 ? msg.payload.indexOf('|', requestIdEnd + 1) : -1
+      let requestIdText: string = requestIdEnd > 0 ? msg.payload.substring(0, requestIdEnd) : ''
+      let viewportText: string = viewportEnd > requestIdEnd + 1 ?
+        msg.payload.substring(requestIdEnd + 1, viewportEnd) : ''
       let requestId: number = parseInt(requestIdText, 10)
-      if (this.bridge === sourceBridge && separator > 0 && !isNaN(requestId) &&
-        requestId > 0 && requestId.toString() === requestIdText) {
+      let viewport: number = parseInt(viewportText, 10)
+      if (this.bridge === sourceBridge && viewportEnd > requestIdEnd + 1 && !isNaN(requestId) &&
+        requestId > 0 && requestId.toString() === requestIdText && !isNaN(viewport) &&
+        viewport >= 0 && viewport.toString() === viewportText) {
         if (requestId >= this.snapshotCommitFloor && requestId >= this.lastCommittedSnapshotRequestId) {
-          this.outputBuffer.replaceSnapshot(msg.payload.substring(separator + 1))
+          this.outputBuffer.replaceSnapshot(msg.payload.substring(viewportEnd + 1), viewport)
           this.lastCommittedSnapshotRequestId = requestId
         }
         this.completeSnapshotRequest(requestId, true)

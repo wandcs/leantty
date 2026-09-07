@@ -5,9 +5,11 @@ export class TerminalOutputBuffer {
   private detachedBackpressured: boolean = false
   private attached: boolean = false
   private snapshot: string = ''
+  private snapshotViewport: number = 0
   private snapshotStateSuffix: string = ''
   private sessionPageActive: boolean = false
   private sessionPageBaseSnapshot: string = ''
+  private sessionPageBaseViewport: number = 0
   private readonly hiddenHighWaterBytes: number
 
   constructor(hiddenHighWaterBytes: number = 768 * 1024) {
@@ -69,9 +71,14 @@ export class TerminalOutputBuffer {
     return this.detachedBytes
   }
 
-  replaceSnapshot(snapshot: string): void {
+  replaceSnapshot(snapshot: string, viewport: number = 0): void {
     this.snapshot = snapshot
+    this.snapshotViewport = viewport
     this.snapshotStateSuffix = ''
+  }
+
+  getSnapshotViewport(): number {
+    return this.snapshotViewport
   }
 
   beginSessionPage(): boolean {
@@ -79,8 +86,10 @@ export class TerminalOutputBuffer {
       return false
     }
     this.sessionPageBaseSnapshot = this.getSnapshot()
+    this.sessionPageBaseViewport = this.snapshotViewport
     this.sessionPageActive = true
     this.snapshot = ''
+    this.snapshotViewport = 0
     this.snapshotStateSuffix = ''
     return true
   }
@@ -93,6 +102,10 @@ export class TerminalOutputBuffer {
     return this.sessionPageBaseSnapshot
   }
 
+  getSessionPageBaseViewport(): number {
+    return this.sessionPageBaseViewport
+  }
+
   endSessionPage(): string {
     if (!this.sessionPageActive) {
       return this.getSnapshot()
@@ -100,6 +113,8 @@ export class TerminalOutputBuffer {
     let originalSnapshot: string = this.sessionPageBaseSnapshot
     this.sessionPageActive = false
     this.sessionPageBaseSnapshot = ''
+    this.snapshotViewport = this.sessionPageBaseViewport
+    this.sessionPageBaseViewport = 0
     this.snapshot = originalSnapshot
     this.snapshotStateSuffix = ''
     this.detachedChunks = []

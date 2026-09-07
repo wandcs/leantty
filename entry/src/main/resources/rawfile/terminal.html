@@ -264,14 +264,6 @@
     var resizeForcePending = false;
     var lastReportedCols = 0;
     var lastReportedRows = 0;
-    var perfActive = false;
-    var perfCaseId = '';
-    var perfExpectedBytes = 0;
-    var perfReceivedBytes = 0;
-    var perfStartedAt = 0;
-    var perfParsedAt = 0;
-    var perfAwaitingPaint = false;
-    var perfPaintFrameScheduled = false;
     var bellAttentionGate = LeanTTYTerminalPolicy.createBellAttentionGate();
     var acceleratedWheelDispatch = false;
     var alternateWheelState = LeanTTYTerminalPolicy.createWheelState();
@@ -690,7 +682,10 @@
       var bestSnapshot = null;
       try {
         while (true) {
-          var snapshot = serializeAddon.serialize({ scrollback: scrollback });
+          // Geometry belongs to the opaque, in-memory framebuffer checkpoint.
+          // Native storage may append a VT state-reset suffix without parsing it.
+          var snapshot = 'LTTY1:' + term.cols + ',' + term.rows + '|' +
+            serializeAddon.serialize({ scrollback: scrollback });
           if (term && term._core && term._core.coreService &&
               term._core.coreService.isCursorHidden) {
             snapshot += '\x1b[?25l';
@@ -724,11 +719,12 @@
           for (var i = 0; i < requestIds.length; i++) {
             maxRequestIdLength = Math.max(maxRequestIdLength, requestIds[i].length);
           }
+          var viewport = term.buffer.active.viewportY.toString();
           var snapshot = serializeTerminalSnapshot(
-            MAX_SNAPSHOT_PAYLOAD_LENGTH - maxRequestIdLength - 1);
+            MAX_SNAPSHOT_PAYLOAD_LENGTH - maxRequestIdLength - viewport.length - 2);
           if (snapshot !== null) {
             for (var j = 0; j < requestIds.length; j++) {
-              sendBridgeControl('snapshot', requestIds[j] + '|' + snapshot);
+              sendBridgeControl('snapshot', requestIds[j] + '|' + viewport + '|' + snapshot);
             }
           }
           snapshotCapturePending = false;
@@ -739,7 +735,31 @@
       }
     }
 
-    function replaceTerminalPage(snapshot, onComplete) {
+    function restoreTerminalSnapshot(snapshot, viewport, onComplete) {
+      var currentCols = term.cols;
+      var currentRows = term.rows;
+      var geometry = /^LTTY1:([1-9][0-9]{0,4}),([1-9][0-9]{0,4})\|/.exec(snapshot);
+      if (snapshot.indexOf('LTTY1:') === 0 && !geometry) {
+        throw new Error('Invalid terminal snapshot geometry');
+      }
+      if (geometry) {
+        // SerializeAddon requires replay at the source size before normal reflow.
+        term.resize(parseInt(geometry[1], 10), parseInt(geometry[2], 10));
+        snapshot = snapshot.substring(geometry[0].length);
+      }
+      try {
+        term.write(snapshot, function() {
+          if (viewport !== null) term.scrollToLine(viewport);
+          term.resize(currentCols, currentRows);
+          onComplete();
+        });
+      } catch (ex) {
+        term.resize(currentCols, currentRows);
+        throw ex;
+      }
+    }
+
+    function replaceTerminalPage(snapshot, viewport, onComplete) {
       if (!term) {
         onComplete();
         return;
@@ -756,7 +776,7 @@
       };
       try {
         term.reset();
-        term.write(snapshot, completeReplacement);
+        restoreTerminalSnapshot(snapshot, viewport, completeReplacement);
       } catch (ex) {
         completeReplacement();
       }
@@ -813,44 +833,6 @@
       } catch (ex) {
         fallbackToDomRenderer('initialization-failed');
       }
-    }
-
-    function reportPerfResult() {
-      if (!nativePort || !perfActive) return;
-      var paintedAt = performance.now();
-      var parseMs = perfParsedAt > 0 ? perfParsedAt - perfStartedAt : paintedAt - perfStartedAt;
-      var paintMs = paintedAt - perfStartedAt;
-      var expectedBytes = Math.max(1, perfExpectedBytes);
-      var metric = {
-        caseId: perfCaseId,
-        expectedBytes: perfExpectedBytes,
-        actualBytes: perfReceivedBytes,
-        completenessPercent: Math.round(perfReceivedBytes / expectedBytes * 100000) / 1000,
-        parseMs: Math.round(parseMs * 1000) / 1000,
-        parseMbps: Math.round((perfReceivedBytes * 8 / 1000000) /
-          (Math.max(parseMs, 0.001) / 1000) * 1000) / 1000,
-        paintMs: Math.round(paintMs * 1000) / 1000,
-        renderedMs: Math.round(paintMs * 1000) / 1000,
-        renderMbps: Math.round((perfReceivedBytes * 8 / 1000000) /
-          (Math.max(paintMs, 0.001) / 1000) * 1000) / 1000
-      };
-      sendBridgeControl('perfRender', JSON.stringify(metric));
-      perfActive = false;
-      perfAwaitingPaint = false;
-      perfPaintFrameScheduled = false;
-      perfCaseId = '';
-      perfExpectedBytes = 0;
-      perfReceivedBytes = 0;
-      perfStartedAt = 0;
-      perfParsedAt = 0;
-    }
-
-    function reportPerfAfterPaint() {
-      if (!perfActive || !perfAwaitingPaint || perfPaintFrameScheduled) return;
-      perfPaintFrameScheduled = true;
-      requestAnimationFrame(function() {
-        reportPerfResult();
-      });
     }
 
     var defaultTheme = {
@@ -942,7 +924,9 @@
 
     function performResize() {
       resizeFrameScheduled = false;
-      if (!fitAddon || !term) return;
+      // Completion schedules a fresh fit. Never interrupt replay or publish its
+      // temporary source geometry to a live Session.
+      if (!fitAddon || !term || restoringSnapshot) return;
       var force = resizeForcePending;
       resizeForcePending = false;
       fitAndCenterTerminalGrid();
@@ -1208,35 +1192,11 @@
         event.stopPropagation();
       });
 
-      term.onTitleChange(function(title) {
-        if (title.indexOf('LTTY_PERF_BEGIN__:') === 0) {
-          var beginParts = title.split(':');
-          if (beginParts.length === 3) {
-            perfActive = true;
-            perfCaseId = beginParts[1];
-            perfExpectedBytes = parseInt(beginParts[2], 10);
-            perfReceivedBytes = 0;
-            perfStartedAt = performance.now();
-            perfParsedAt = 0;
-            perfAwaitingPaint = false;
-            perfPaintFrameScheduled = false;
-          }
-          return;
-        }
-        if (title === 'LTTY_PERF_END__:' + perfCaseId) {
-          perfParsedAt = performance.now();
-          perfAwaitingPaint = true;
-          term.refresh(0, term.rows - 1);
-          return;
-        }
-      });
-
       term.onBell(function() {
         triggerTerminalAttention();
       });
 
       term.onRender(function() {
-        reportPerfAfterPaint();
         refreshLinkVisualState();
       });
 
@@ -1273,13 +1233,6 @@
         return;
       }
       var terminalBytes = terminalPacket.bytes;
-      if (perfActive) {
-        var perfText = new TextDecoder('utf-8').decode(terminalBytes);
-        var endSequence = '\x1b]0;LTTY_PERF_END__:' + perfCaseId;
-        var endOffset = perfText.indexOf(endSequence);
-        var perfPayload = endOffset >= 0 ? perfText.substring(0, endOffset) : perfText;
-        perfReceivedBytes += LeanTTYTerminalPolicy.countPerfPayloadBytes(perfPayload);
-      }
       term.write(terminalBytes, function() {
         sendBridgeControl('writeAck',
           terminalPacket.sequence.toString() + ',' + terminalBytes.byteLength.toString());
@@ -1384,7 +1337,7 @@
                   reportInteractiveReadyAfterPaint();
                 };
                 try {
-                  term.write(message.payload, completeRestore);
+                  restoreTerminalSnapshot(message.payload, null, completeRestore);
                 } catch (ex) {
                   completeRestore();
                 }
@@ -1393,7 +1346,11 @@
             case 'terminalPageReplace':
               if (message.channel !== BRIDGE_CONTROL ||
                   message.payload.length > MAX_SNAPSHOT_PAYLOAD_LENGTH) break;
-              replaceTerminalPage(message.payload, function() {
+              var viewportEnd = message.payload.indexOf('|');
+              var viewportText = viewportEnd > 0 ? message.payload.substring(0, viewportEnd) : '';
+              if (!/^(0|[1-9][0-9]*)$/.test(viewportText)) break;
+              replaceTerminalPage(message.payload.substring(viewportEnd + 1),
+                parseInt(viewportText, 10), function() {
                 sendBridgeControl('terminalPageReplaceComplete', '');
               });
               break;
