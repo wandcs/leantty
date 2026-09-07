@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { applyXtermWebglDefaultBackgroundPatch } from './patches/xterm-webgl-default-background.mjs';
+import { applyXtermInputOrderPatch } from './patches/xterm-input-order.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..', '..');
@@ -25,6 +26,11 @@ for (const [sourceRelative, outputName] of assets) {
   const source = resolve(scriptDir, sourceRelative);
   const output = resolve(outputDir, outputName);
   let content = await readFile(source, 'utf8');
+  if (outputName === 'xterm.js') {
+    const packageMetadata = JSON.parse(await readFile(
+      resolve(scriptDir, 'node_modules/@xterm/xterm/package.json'), 'utf8'));
+    content = applyXtermInputOrderPatch(content, packageMetadata.version);
+  }
   if (outputName === 'addon-webgl.js') {
     const packageMetadata = JSON.parse(await readFile(
       resolve(scriptDir, 'node_modules/@xterm/addon-webgl/package.json'),

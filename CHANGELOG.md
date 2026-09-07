@@ -33,6 +33,10 @@
 
 ### Fixed
 
+- Coordinate non-composing xterm text input with its pending textarea diff to
+  prevent missing or duplicate characters during IME keyCode 229 interleaving.
+  The repair is a version/hash-locked build-time patch, with no input compensation
+  in LeanTTY's Bridge or transport layers.
 - Preserve an established Mosh Session across temporary local network-interface
   send errors through the pinned client revision, allowing reachability to report
   interruption and recovery without replacing the remote PTY.
