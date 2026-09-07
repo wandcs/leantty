@@ -1007,8 +1007,8 @@ dependencies = [
 
 [[package]]
 name = "mosh-client"
-version = "0.0.0"
-source = "git+https://github.com/wandcs/mosh-client-rs.git?rev=94f13225aba535c6645a9179e0ce9f00b156629e#94f13225aba535c6645a9179e0ce9f00b156629e"
+version = "0.1.0"
+source = "git+https://github.com/wandcs/mosh-client-rs.git?tag=v0.1.0#aed5865c1d779a989a3b0cf0c84aa046313515ee"
 dependencies = [
  "aes",
  "base64",
