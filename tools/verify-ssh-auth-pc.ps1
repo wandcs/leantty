@@ -171,6 +171,9 @@ New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
 
 $checks = [Collections.Generic.List[object]]::new()
 $commandObservations = [Collections.Generic.List[object]]::new()
+$authInputObservations = [Collections.Generic.List[object]]::new()
+$fixturePasswordEvidence = [ordered]@{ status = 'not-captured'; events = @(); unparsedEventCount = 0 }
+$textTargetFailure = $null
 $connectedInputObservations = [Collections.Generic.List[object]]::new()
 $startedAt = [DateTimeOffset]::UtcNow
 $fixtureProcess = $null
@@ -534,8 +537,14 @@ function Assert-AuthControlChannels {
 }
 
 function Assert-NoSecretExposure {
-    param([Parameter(Mandatory = $true)][string]$LayoutName)
+    param(
+        [Parameter(Mandatory = $true)][string]$LayoutName,
+        [Collections.IDictionary]$InputObservation = $null
+    )
     $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
+    if ($null -ne $InputObservation) {
+        $InputObservation.web = Get-AuthInputWebEvidence -Logs $logs
+    }
     foreach ($secret in $secrets) {
         if (-not [string]::IsNullOrEmpty($secret) -and $logs.Contains($secret)) {
             throw 'HarmonyOS application logs exposed a temporary SSH fixture secret'
@@ -678,17 +687,108 @@ function Invoke-TemporaryFixtureAuthText {
     Invoke-AuthUiText -Text $Value -InputNode $InputNode
 }
 
+function Get-AuthInputWebEvidence {
+    param([AllowEmptyString()][string]$Logs)
+    $reports = [regex]::Matches($Logs,
+        '(?m)\bACCEPTANCE_INPUT_WEB ([0-9]{1,9}(?:,[0-9]{1,9}){11})\r?$')
+    $latest = $null
+    if ($reports.Count -gt 0) {
+        $counts = $reports[$reports.Count - 1].Groups[1].Value.Split(',')
+        $names = @('printableKeydowns', 'imeKeydowns', 'keypresses', 'inputEvents', 'inputUnits',
+            'compositionEvents', 'dataPrintableUnits', 'dataDeletes', 'dataOtherUnits',
+            'clearCalls', 'nonemptyClears', 'textareaUnits')
+        $latest = [ordered]@{}
+        for ($index = 0; $index -lt $names.Count; $index++) { $latest[$names[$index]] = [int]$counts[$index] }
+    }
+    return [ordered]@{
+        status = $(if ($reports.Count -gt 0) { 'observed' } else { 'missing' })
+        reportCount = $reports.Count
+        latest = $latest
+    }
+}
+
+function Get-AuthFixturePasswordEvidence {
+    param([AllowEmptyString()][string]$Logs)
+    $events = @()
+    $unparsed = 0
+    # Only the fixture's fixed enum and numeric mismatch summary are retained.
+    $scenarios = 'Password|PublicKey|PasswordKeyboardInteractive|PublicKeyPassword|' +
+        'PublicKeyKeyboardInteractive|KeyboardInteractiveMultiRound|KeyboardInteractiveZeroPrompt|' +
+        'UnsupportedMethod|ChannelDenied|KeyInstall|Navigation|Mosh|unknown'
+    foreach ($line in ($Logs -split '\r?\n')) {
+        if (-not $line.StartsWith('auth method=password ')) { continue }
+        $eventMatch = [regex]::Match($line, ('^auth method=password scenario=(' + $scenarios +
+            ') result=(matched|reject)(?: expected_bytes=([0-9]{1,9}) received_bytes=([0-9]{1,9})' +
+            ' overlap_mismatches=([0-9]{1,9}) length_delta=(-?[0-9]{1,9}))?$'))
+        if (-not $eventMatch.Success) { $unparsed++; continue }
+        $events += [ordered]@{
+            index = $events.Count
+            scenario = $eventMatch.Groups[1].Value
+            result = $eventMatch.Groups[2].Value
+            exactCredentialMatch = $eventMatch.Groups[2].Value -ceq 'matched'
+            expectedBytes = $(if ($eventMatch.Groups[3].Success) { [int]$eventMatch.Groups[3].Value } else { $null })
+            receivedBytes = $(if ($eventMatch.Groups[4].Success) { [int]$eventMatch.Groups[4].Value } else { $null })
+            overlapMismatches = $(if ($eventMatch.Groups[5].Success) { [int]$eventMatch.Groups[5].Value } else { $null })
+            lengthDelta = $(if ($eventMatch.Groups[6].Success) { [int]$eventMatch.Groups[6].Value } else { $null })
+        }
+    }
+    return [ordered]@{ status = $(if ($events.Count -gt 0) { 'observed' } else { 'missing' });
+        events = $events; unparsedEventCount = $unparsed }
+}
+
+function Save-AuthFixturePasswordEvidence {
+    try {
+        $script:fixturePasswordEvidence = if (Test-Path -LiteralPath $fixtureStderr -PathType Leaf) {
+            Get-AuthFixturePasswordEvidence -Logs (Read-FixtureLogText)
+        } else { [ordered]@{ status = 'missing'; events = @(); unparsedEventCount = 0 } }
+    } catch {
+        $script:fixturePasswordEvidence = [ordered]@{ status = 'unavailable'; events = @(); unparsedEventCount = 0 }
+    }
+}
+
 function Submit-AuthValue {
     param(
         [Parameter(Mandatory = $true)][string]$Value,
         [Parameter(Mandatory = $true)][string]$LayoutName
     )
-    $inputNode = Focus-ActiveCommandInput -LayoutName ($LayoutName + '.focus.json')
-    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Invoke-TemporaryFixtureAuthText -Value $Value -InputNode $inputNode
-    Assert-NoSecretExposure -LayoutName $LayoutName
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    Wait-AuthLog -Pattern 'ACCEPTANCE_INPUT_SUBMIT' -TimeoutSeconds 10
+    $observation = [ordered]@{
+        stage = $currentStage
+        submissionIndex = $authInputObservations.Count
+        expectedUnits = $Value.Length
+        result = 'running'
+        enterAttempted = $false
+        submitAckObserved = $false
+        textTargetFailure = $null
+        web = [ordered]@{ status = 'not-captured'; reportCount = 0; latest = $null }
+    }
+    $logsScoped = $false
+    try {
+        $inputNode = Focus-ActiveCommandInput -LayoutName ($LayoutName + '.focus.json')
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+        $logsScoped = $true
+        Invoke-TemporaryFixtureAuthText -Value $Value -InputNode $inputNode
+        # Reuse the existing pre-Enter audit read. No new wait, flush or input gate.
+        Assert-NoSecretExposure -LayoutName $LayoutName -InputObservation $observation
+        $observation.enterAttempted = $true
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+        Wait-AuthLog -Pattern 'ACCEPTANCE_INPUT_SUBMIT' -TimeoutSeconds 10
+        $observation.submitAckObserved = $true
+        $observation.result = 'submitted'
+    } catch {
+        $observation.result = 'failed'
+        $observation.textTargetFailure = $_.Exception.Data['LeanTTYTextInputFailure']
+        if ($logsScoped -and -not $observation.enterAttempted -and $observation.web.status -eq 'not-captured') {
+            try {
+                $observation.web = Get-AuthInputWebEvidence -Logs (
+                    Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid)
+            } catch {
+                $observation.web.status = 'unavailable'
+            }
+        }
+        throw
+    } finally {
+        $authInputObservations.Add([pscustomobject]$observation) | Out-Null
+    }
 }
 
 function Focus-ActiveCommandInput {
@@ -1684,6 +1784,15 @@ function Write-AuthEvidence {
         executionGroup = $executionGroup
         groupManifest = $selectedGroupManifest
         checks = @($checks)
+        inputBoundary = [ordered]@{
+            # These counters are process-log snapshots, not correlated per-Pane
+            # receipts. Do not pair fixture events with submissions by array index.
+            webScope = 'process-log-since-clear-before-enter-unsettled'
+            fixtureScope = 'run-ordered-password-events-no-submission-correlation'
+            submissions = @($authInputObservations)
+            fixturePassword = $fixturePasswordEvidence
+            textTargetFailure = $textTargetFailure
+        }
         resourceManifest = [ordered]@{
             disposableKey = $keyName
             ecdsaImportedKey = $ecdsaKeyName
@@ -1711,7 +1820,7 @@ function Write-AuthEvidence {
     }
     [IO.File]::WriteAllText(
         $evidencePath,
-        (ConvertTo-Json -InputObject $evidence -Depth 7),
+        (ConvertTo-Json -InputObject $evidence -Depth 12),
         [Text.UTF8Encoding]::new($false)
     )
 }
@@ -2849,6 +2958,7 @@ try {
     $scenarioResult = 'passed'
 } catch {
     $caughtError = $_
+    $textTargetFailure = $_.Exception.Data['LeanTTYTextInputFailure']
     $failure = $_.Exception.Message
     if ($null -ne $fixtureProcess -and $fixtureProcess.HasExited) {
         $failureDomain = 'infrastructure'
@@ -3006,6 +3116,8 @@ try {
             $cleanupFailures.Add('HarmonyOS awake lease cleanup failed')
         }
     }
+    # Retain on success and failure before the run-scoped fixture logs are removed.
+    Save-AuthFixturePasswordEvidence
     if (Test-Path -LiteralPath $fixtureRoot) {
         Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $fixtureRoot) {
