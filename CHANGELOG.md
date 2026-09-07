@@ -13,8 +13,8 @@
 - Add the initial `mosh [user@]host|alias` interactive-session path with existing
   Host, Identity, host-key and authentication policy, an isolated Pane-owned UDP
   IPv4 session, strict bootstrap parsing and local `Ctrl-^` disconnect/help escapes.
-  The protocol dependency is pinned to an exact public `wandcs/mosh-client-rs`
-  Git revision; remaining options and weak-network acceptance remain in development.
+  The protocol dependency uses the public `wandcs/mosh-client-rs` v0.1.0 release
+  tag and exact package version; formal candidate acceptance remains pending.
 - Add `mosh -p <port>` and `mosh -p <low>:<high>` for a fixed Mosh UDP endpoint,
   with strict pre-network validation and rejection when the stock server returns
   an endpoint outside the requested range. SSH Host `Port` remains bootstrap-only.

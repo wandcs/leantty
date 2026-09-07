@@ -1,6 +1,6 @@
 # Rust Dependency License Inventory
 
-Generated and reviewed on 2026-08-30 from `leantty_ssh/Cargo.lock` in a WSL
+Generated on 2026-08-30 and rechecked on 2026-09-07 from `leantty_ssh/Cargo.lock` in a WSL
 shell opened at the mounted checkout:
 
 ```bash
@@ -10,7 +10,7 @@ cargo metadata --locked --offline \
 ```
 
 The target-filtered graph contains 181 registry packages and one external Git
-package, `mosh-client 0.0.0`. Every package reports a license expression or
+package, `mosh-client 0.1.0`. Every package reports a license expression or
 license file. Package build dependencies are included conservatively even when
 they are not linked into the final shared library.
 
@@ -60,7 +60,7 @@ they are not linked into the final shared library.
 `internal-russh-num-bigint 0.5.0`, `keccak 0.2.0`, `kem 0.3.0`,
 `libc 0.2.186`, `lock_api 0.4.14`, `log 0.4.33`, `md5 0.8.1`,
 `ml-kem 0.3.2`,
-`module-lattice 0.2.3`, `mosh-client 0.0.0`, `nohash-hasher 0.2.0`, `num-bigint 0.4.8`,
+`module-lattice 0.2.3`, `mosh-client 0.1.0`, `nohash-hasher 0.2.0`, `num-bigint 0.4.8`,
 `num-integer 0.1.46`, `num-traits 0.2.19`, `once_cell 1.21.4`,
 `parking_lot_core 0.9.12`,
 `p256 0.14.0`, `p384 0.14.0`, `p521 0.14.0`,
@@ -116,8 +116,9 @@ The inventory normalizes the equivalent expressions `Apache-2.0 OR MIT` and
 `unicode-ident 1.0.24`
 
 `mosh-client` is resolved from `https://github.com/wandcs/mosh-client-rs.git` at
-commit `94f13225aba535c6645a9179e0ce9f00b156629e`. Cargo uses the complete `rev`
-instead of a movable branch; see
+commit `aed5865c1d779a989a3b0cf0c84aa046313515ee`. Cargo.toml selects release tag
+`v0.1.0` and exact version `=0.1.0`; Cargo.lock fixes that tag's source commit.
+It does not track a moving branch; see
 [`mosh-client-rs` integration issues](design/mosh-client-rs-integration-issues.md).
 
 The release build copies the applicable license and notice files from the
