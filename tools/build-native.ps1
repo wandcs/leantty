@@ -9,7 +9,8 @@ param(
     [string]$DevEcoHome = $env:DEVECO_HOME,
     [string]$WslDistribution = $env:LEANTTY_WSL_DISTRO,
     [switch]$Force,
-    [switch]$SkipCopy
+    [switch]$SkipCopy,
+    [switch]$Offline
 )
 
 $ErrorActionPreference = 'Stop'
@@ -152,17 +153,19 @@ foreach ($t in $targets) {
         "CC_$targetKey" = $wslClangWrapper
         "AR_$targetKey" = $wslArWrapper
     }
+    $cargoArguments = @(
+        'build',
+        '--manifest-path', './leantty_ssh/Cargo.toml',
+        '--target', $target,
+        '--release',
+        '--locked'
+    )
+    if ($Offline) { $cargoArguments += '--offline' }
     Invoke-LeanTTYRustWsl `
         -RepoRoot $repoRoot `
         -Distribution $WslDistribution `
         -Environment $rustEnvironment `
-        -CargoArguments @(
-            'build',
-            '--manifest-path', './leantty_ssh/Cargo.toml',
-            '--target', $target,
-            '--release',
-            '--locked'
-        )
+        -CargoArguments $cargoArguments
     [void]$rebuiltTargets.Add($target)
 }
 

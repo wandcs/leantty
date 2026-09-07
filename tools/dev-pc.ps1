@@ -16,7 +16,10 @@ param(
     [switch]$LatestCandidate,
     [switch]$NoLaunch,
     [switch]$FollowLogs,
-    [switch]$RequireUsb
+    [switch]$RequireUsb,
+    [switch]$NoDaemon,
+    [switch]$Offline,
+    [string]$BuildLogDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,6 +78,11 @@ if (-not $SkipBuild) {
     $buildArgs = @{ BuildMode = 'debug' }
     if ($Clean) { $buildArgs['Clean'] = $true }
     if ($ForceNative) { $buildArgs['ForceNative'] = $true }
+    if ($NoDaemon) { $buildArgs['NoDaemon'] = $true }
+    if ($Offline) { $buildArgs['Offline'] = $true }
+    if (-not [string]::IsNullOrWhiteSpace($BuildLogDirectory)) {
+        $buildArgs['BuildLogDirectory'] = $BuildLogDirectory
+    }
     & (Join-Path $PSScriptRoot 'build-all.ps1') @buildArgs
     if ($LASTEXITCODE -ne 0) { throw 'ARM64 PC debug build failed' }
 }
