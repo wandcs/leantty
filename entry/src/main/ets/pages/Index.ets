@@ -308,7 +308,12 @@ struct Index {
   }
 
   private activeTab(): TabInfo | null {
-    return this.appVm.getActiveTab()
+    // UI predicates must read the observed projection. Reading only appVm
+    // leaves retained ForEach children subscribed to their initial layout.
+    if (this.activeTabIndex < 0 || this.activeTabIndex >= this.tabs.length) {
+      return null
+    }
+    return this.tabs[this.activeTabIndex]
   }
 
   private mountedPaneRuntimes(): PaneRuntime[] {
@@ -546,8 +551,15 @@ struct Index {
   }
 
   private paneMode(paneId: string): TerminalMode {
-    let pane: PaneInfo | null = this.appVm.getPane(paneId)
-    return pane === null ? TerminalMode.IDLE : pane.mode
+    let tab: TabInfo | null = this.findTabForPane(paneId)
+    if (tab !== null) {
+      for (let pane of tab.panes) {
+        if (pane.id === paneId) {
+          return pane.mode
+        }
+      }
+    }
+    return TerminalMode.IDLE
   }
 
   private applyTheme(): void {
@@ -1229,7 +1241,14 @@ struct Index {
   }
 
   private findTabForPane(paneId: string): TabInfo | null {
-    return this.appVm.getTabForPane(paneId)
+    for (let tab of this.tabs) {
+      for (let pane of tab.panes) {
+        if (pane.id === paneId) {
+          return tab
+        }
+      }
+    }
+    return null
   }
 
   private async terminateApplication(paneId: string): Promise<void> {

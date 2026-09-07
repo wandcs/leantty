@@ -259,6 +259,20 @@ Invoke-RegressionCheck -Name 'mosh-owner-contracts' -Groups @('arkts') -Action {
     if ($LASTEXITCODE -ne 0) { throw 'Mosh owner contract tests failed' }
 }
 
+Invoke-RegressionCheck -Name 'performance-diagnostic-isolation' -Groups @('arkts') -Action {
+    $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
+    $diagnosticTest = Join-Path $repoRoot 'tools\test-performance-diagnostics.cjs'
+    & $nodeExe $diagnosticTest $typescript production
+    if ($LASTEXITCODE -ne 0) { throw 'Production performance diagnostic isolation failed' }
+    . (Join-Path $PSScriptRoot 'acceptance-source.ps1')
+    Invoke-WithLeanTTYAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
+        & $nodeExe $diagnosticTest $typescript enabled
+        if ($LASTEXITCODE -ne 0) { throw 'Development performance diagnostics failed' }
+    }
+    & $nodeExe $diagnosticTest $typescript production
+    if ($LASTEXITCODE -ne 0) { throw 'Performance diagnostic source restoration failed' }
+}
+
 Invoke-RegressionCheck -Name 'trusted-arkts-tests' -Groups @('arkts') -Action {
     Push-Location $repoRoot
     try {
@@ -339,6 +353,10 @@ Invoke-RegressionCheck -Name 'rust-core-tests-wsl' -Groups @('rust-core') -Actio
         'test', '--locked', '--manifest-path', './leantty_ssh/Cargo.toml',
         '-p', 'leantty-ssh-core'
     )
+}
+
+Invoke-RegressionCheck -Name 'mosh-input-rejection-native-trigger' -Groups @('rust-native') -Action {
+    & (Join-Path $PSScriptRoot 'test-mosh-input-rejection.ps1')
 }
 
 Invoke-RegressionCheck -Name 'ssh-auth-fixture-tests-wsl' -Groups @('ssh-fixture') -Action {

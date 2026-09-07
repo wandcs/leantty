@@ -172,15 +172,6 @@
     };
   }
 
-  function countPerfPayloadBytes(payload) {
-    if (typeof payload !== 'string') return 0;
-    var count = 0;
-    for (var i = 0; i < payload.length; i++) {
-      if (payload.charCodeAt(i) === 88) count++;
-    }
-    return count;
-  }
-
   function wheelGain(speedPixelsPerMs) {
     var speed = Math.abs(speedPixelsPerMs);
     if (speed <= 0.5) return 0.4;
@@ -324,7 +315,6 @@
     decodeOsc52: decodeOsc52,
     createOsc99CapabilityResponse: createOsc99CapabilityResponse,
     validateAttentionOsc: validateAttentionOsc,
-    countPerfPayloadBytes: countPerfPayloadBytes,
     createBellAttentionGate: createBellAttentionGate,
     createWheelState: createWheelState,
     enqueueWheel: enqueueWheel,

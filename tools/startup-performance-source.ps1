@@ -59,8 +59,11 @@ function Add-LeanTTYStartupPerformanceSource {
     $text.durableState = Set-LeanTTYAcceptanceSourceText $text.durableState `
         "import { DurableAssetStore } from './DurableAssetStore'" `
         ("import { DurableAssetStore } from './DurableAssetStore'`n" +
-            "import { Logger } from '../../common/logger/Logger'`n`n" +
-            "const startupPerformanceLogger: Logger = new Logger('StartupPerformance')")
+            "import { Logger } from '../../common/logger/Logger'")
+    $text.durableState = Set-LeanTTYAcceptanceSourceText $text.durableState `
+        "const INITIALIZED_PATH: string = '_meta/initialized'" `
+        ("const startupPerformanceLogger: Logger = new Logger('StartupPerformance')`n`n" +
+            "const INITIALIZED_PATH: string = '_meta/initialized'")
     $durableInitializeAnchor = @'
   static initialize(context: common.UIAbilityContext): void {
     DurableStateManager.context = context
@@ -84,8 +87,11 @@ function Add-LeanTTYStartupPerformanceSource {
     $text.terminalPane = Set-LeanTTYAcceptanceSourceText $text.terminalPane `
         "import { TerminalMode } from '../../common/types/TerminalTypes'" `
         ("import { TerminalMode } from '../../common/types/TerminalTypes'`n" +
-            "import { Logger } from '../../common/logger/Logger'`n`n" +
-            "const startupPerformanceLogger: Logger = new Logger('StartupPerformance')")
+            "import { Logger } from '../../common/logger/Logger'")
+    $text.terminalPane = Set-LeanTTYAcceptanceSourceText $text.terminalPane `
+        "@Component`nexport struct TerminalPane" `
+        ("const startupPerformanceLogger: Logger = new Logger('StartupPerformance')`n`n" +
+            "@Component`nexport struct TerminalPane")
     $text.terminalPane = Set-LeanTTYAcceptanceSourceText $text.terminalPane `
         "        .onPageEnd(() => {`n          this.onWebControllerReady(this.webCtrl)" `
         ("        .onPageEnd(() => {`n" +
@@ -93,8 +99,8 @@ function Add-LeanTTYStartupPerformanceSource {
             '          this.onWebControllerReady(this.webCtrl)')
 
     $text.bridgeProtocol = Set-LeanTTYAcceptanceSourceText $text.bridgeProtocol `
-        "  static readonly KIND_PERF_RENDER: string = 'perfRender'" `
-        ("  static readonly KIND_PERF_RENDER: string = 'perfRender'`n" +
+        "  static readonly KIND_RENDERER_STATE: string = 'rendererState'" `
+        ("  static readonly KIND_RENDERER_STATE: string = 'rendererState'`n" +
             "  static readonly KIND_STARTUP_PERF: string = 'startupPerf'")
     $text.bridgeProtocol = Set-LeanTTYAcceptanceSourceText $text.bridgeProtocol `
         "    if (kind === BridgeProtocol.KIND_OPEN_URL &&" `
@@ -103,29 +109,27 @@ function Add-LeanTTYStartupPerformanceSource {
             "    }`n" +
             '    if (kind === BridgeProtocol.KIND_OPEN_URL &&')
     $text.bridgeProtocol = Set-LeanTTYAcceptanceSourceText $text.bridgeProtocol `
-        "      kind === BridgeProtocol.KIND_PERF_RENDER ||" `
-        ("      kind === BridgeProtocol.KIND_PERF_RENDER ||`n" +
+        "      kind === BridgeProtocol.KIND_RENDERER_STATE ||" `
+        ("      kind === BridgeProtocol.KIND_RENDERER_STATE ||`n" +
             '      kind === BridgeProtocol.KIND_STARTUP_PERF ||')
 
     $terminalBridgeAnchor = @'
-    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_PERF_RENDER) {
+    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_RENDERER_STATE) {
 '@
     $terminalBridgeReplacement = @'
     if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_STARTUP_PERF) {
       this.logger.info('STARTUP_PERF phase=' + msg.payload)
       return
     }
-    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_PERF_RENDER) {
+    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_RENDERER_STATE) {
 '@
     $text.terminalBridge = Set-LeanTTYAcceptanceSourceText `
         $text.terminalBridge $terminalBridgeAnchor $terminalBridgeReplacement
 
     $terminalVariablesAnchor = @'
-    var perfPaintFrameScheduled = false;
     var bellAttentionGate = LeanTTYTerminalPolicy.createBellAttentionGate();
 '@
     $terminalVariablesReplacement = @'
-    var perfPaintFrameScheduled = false;
     var startupPromptPaintScheduled = false;
     var startupPromptPainted = false;
     var startupInputAwaitingEcho = false;
@@ -186,10 +190,9 @@ function Add-LeanTTYStartupPerformanceSource {
     $text.terminalHtml = Set-LeanTTYAcceptanceSourceText `
         $text.terminalHtml $terminalDataAnchor $terminalDataReplacement
     $text.terminalHtml = Set-LeanTTYAcceptanceSourceText $text.terminalHtml `
-        "      term.onRender(function() {`n        reportPerfAfterPaint();" `
+        '      term.onRender(function() {' `
         ("      term.onRender(function() {`n" +
-            "        reportStartupPaint();`n" +
-            '        reportPerfAfterPaint();')
+            '        reportStartupPaint();')
 
     $terminalWriteAnchor = @'
       term.write(terminalBytes, function() {

@@ -8,3 +8,15 @@ description = "Vendored xterm assets are pinned and verified by assets-manifest.
 paths = [
   '''^entry/src/main/resources/rawfile/(?:xterm\.js|xterm\.css|addon-fit\.js|addon-search\.js|addon-webgl\.js)$'''
 ]
+
+# Public masked-input fixture, not an authentication credential. Keep other
+# values in this source and the same value at other paths subject to the rule.
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Exact public input vector in the debug-only password comparison"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^tools/acceptance-source\.ps1$''']
+regexes = ['''^0123456789abcdefghijklmnopqrstuv$''']

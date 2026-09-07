@@ -17,8 +17,8 @@ function Add-LeanTTYStartupWarmSource {
     $text = [IO.File]::ReadAllText($terminalHtml)
 
     $text = Set-LeanTTYAcceptanceSourceText $text `
-        '    var perfPaintFrameScheduled = false;' `
-        ("    var perfPaintFrameScheduled = false;`n" +
+        '    var bellAttentionGate = LeanTTYTerminalPolicy.createBellAttentionGate();' `
+        ("    var bellAttentionGate = LeanTTYTerminalPolicy.createBellAttentionGate();`n" +
             "    var startupWarmArmed = false;`n" +
             "    var startupWarmPromptPainted = false;`n" +
             "    var startupWarmAwaitingEcho = false;`n" +
@@ -93,12 +93,10 @@ function Add-LeanTTYStartupWarmSource {
 
     $renderAnchor = @'
       term.onRender(function() {
-        reportPerfAfterPaint();
 '@
     $renderReplacement = @'
       term.onRender(function() {
         reportStartupWarmPaint();
-        reportPerfAfterPaint();
 '@
     $text = Set-LeanTTYAcceptanceSourceText $text $renderAnchor $renderReplacement
 

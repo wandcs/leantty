@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
 export const SESSION_BOUNDARY_RESET_SEQUENCE =
   '\u001b[?1049l\u001b[?1047l\u001b[?47l' +
@@ -37,6 +39,15 @@ function normalBufferLines(terminal) {
     lines.push(buffer.getLine(row)?.translateToString(true) ?? '');
   }
   return lines;
+}
+
+function visibleBufferText(terminal) {
+  const buffer = terminal.buffer.active;
+  const lines = [];
+  for (let row = 0; row < terminal.rows; row++) {
+    lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(false) ?? '');
+  }
+  return lines.join('\u0000');
 }
 
 function observeColorEvents(terminal) {
@@ -248,7 +259,15 @@ export async function runTerminalMoshPageTests(TerminalCtor, SerializeAddonCtor,
   terminal.getSelectionPosition = () => null;
   terminal.clearSelection = () => {};
 
-  await write(terminal, 'original-history-marker\r\noriginal-visible-marker');
+  const originalLines = ['original-history-marker'];
+  for (let index = 0; index < 14; index++) originalLines.push(`original-line-${index}`);
+  originalLines.push('original-visible-marker');
+  await write(terminal, originalLines.join('\r\n'));
+  terminal.scrollToTop();
+  const originalViewport = terminal.buffer.active.viewportY;
+  const originalVisiblePage = visibleBufferText(terminal);
+  assert.ok(originalViewport < terminal.buffer.active.baseY,
+    'the Mosh fixture must start from an original page scrolled above the bottom');
   const originalSnapshot = serializer.serialize({ scrollback: 40 });
   terminal.reset();
   await write(terminal, 'mosh-private-marker\u001b[?1049hvim-private-marker\u001b[?1049l');
@@ -263,6 +282,11 @@ export async function runTerminalMoshPageTests(TerminalCtor, SerializeAddonCtor,
     'a replacement Surface must recover the Mosh page independently');
   rebuilt.reset();
   await write(rebuilt, originalSnapshot);
+  rebuilt.scrollToLine(originalViewport);
+  assert.equal(rebuilt.buffer.active.viewportY, originalViewport,
+    'restoring the Mosh base snapshot must restore its saved viewport');
+  assert.equal(visibleBufferText(rebuilt), originalVisiblePage,
+    'restoring the Mosh base snapshot must restore the same visible page');
   assert.match(normalBufferText(rebuilt), /original-history-marker/,
     'ending Mosh after a Surface rebuild must restore the original page');
   assert.doesNotMatch(normalBufferText(rebuilt), /mosh-private-marker|vim-private-marker/,
@@ -270,6 +294,7 @@ export async function runTerminalMoshPageTests(TerminalCtor, SerializeAddonCtor,
 
   terminal.reset();
   await write(terminal, originalSnapshot);
+  terminal.scrollToLine(originalViewport);
   assert.equal(search.findNext('mosh-private-marker'), false,
     'search must not retain content from the discarded Mosh page');
   assert.equal(search.findNext('original-history-marker'), true,
@@ -277,4 +302,108 @@ export async function runTerminalMoshPageTests(TerminalCtor, SerializeAddonCtor,
   terminal.dispose();
   rebuilt.dispose();
   console.log('terminal Mosh page isolation matrix tests passed');
+}
+
+export async function runTerminalSnapshotResizeTests(TerminalCtor, SerializeAddonCtor, SearchAddonCtor) {
+  const html = readFileSync(new URL('../../entry/src/main/resources/rawfile/terminal.html', import.meta.url), 'utf8');
+  const productionFunction = name => {
+    const match = html.match(new RegExp(`(function ${name}\\([^]*?\\n    \\})`));
+    assert.ok(match, `${name} must be exercised from production source`);
+    return match[1];
+  };
+  for (const [savedCols, savedRows, cols, rows, activeWrappedCursor = false] of [
+    [144, 36, 144, 36], [144, 36, 71, 36], [71, 36, 144, 36],
+    [144, 36, 71, 18], [71, 18, 144, 36], [144, 36, 71, 36, true]
+  ]) {
+    const label = `${savedCols}x${savedRows} -> ${cols}x${rows}, wrappedCursor=${activeWrappedCursor}`;
+    const source = new TerminalCtor({ cols: savedCols, rows: savedRows, scrollback: 1000 });
+    const serializer = new SerializeAddonCtor();
+    source.loadAddon(serializer);
+    const lines = ['original-history-marker'];
+    for (let i = 0; i < 40; i++) {
+      lines.push(`line-${i}:` + '0123456789abcdef'.repeat(i % 3 === 0 ? 21 : 1) + ':end');
+    }
+    // Completed logical lines must retain all content. Separately compare an
+    // active wrapped cursor line with xterm's own resize/clamping semantics.
+    if (!activeWrappedCursor) lines.push('original-tail-marker');
+    await write(source, lines.join('\r\n'));
+    source.scrollToLine(15);
+    const viewport = source.buffer.active.viewportY;
+    const resizeReports = [];
+    let fitCount = 0;
+    const context = vm.createContext({
+      term: source, serializeAddon: serializer, TERMINAL_SCROLLBACK_LINES: 1000,
+      restoringSnapshot: false, closeSearch() {}, searchAddon: null,
+      reportResize() {}, reportInteractiveReadyAfterPaint() {},
+      resizeFrameScheduled: true, resizeForcePending: true, fitAddon: {}, nativePort: {},
+      lastReportedCols: 0, lastReportedRows: 0,
+      fitAndCenterTerminalGrid() { fitCount++; },
+      sendBridgeControl(kind, payload) { resizeReports.push([kind, payload]); }
+    });
+    for (const name of ['serializeTerminalSnapshot', 'restoreTerminalSnapshot', 'replaceTerminalPage', 'performResize']) {
+      vm.runInContext(productionFunction(name), context);
+    }
+    const snapshot = context.serializeTerminalSnapshot(1024 * 1024);
+    source.resize(cols, rows);
+
+    const target = new TerminalCtor({ cols, rows, scrollback: 1000, allowProposedApi: true });
+    const search = new SearchAddonCtor({ highlightLimit: 1000 });
+    target.loadAddon(search);
+    target.select = () => {};
+    target.getSelectionPosition = () => null;
+    target.clearSelection = () => {};
+    await write(target, 'mosh-private-marker');
+    context.term = target;
+    context.searchAddon = search;
+    const replacement = new Promise(resolve => context.replaceTerminalPage(snapshot, viewport, resolve));
+    context.performResize();
+    assert.equal(fitCount, 0, `${label}: fit must not interrupt asynchronous replay`);
+    assert.deepEqual(resizeReports, [], `${label}: source dimensions must not reach the Session`);
+    await replacement;
+    const state = term => {
+      const buffer = term.buffer.active;
+      return {
+        lines: normalBufferLines(term),
+        wraps: Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i).isWrapped),
+        cursor: [buffer.baseY + buffer.cursorY, buffer.cursorX],
+        viewport: buffer.viewportY, cols: term.cols, rows: term.rows
+      };
+    };
+    assert.deepEqual(state(target), state(source), `${label}: restore must equal a live xterm resize`);
+    if (!activeWrappedCursor) {
+      const logicalLines = [];
+      for (let i = 0; i < target.buffer.normal.length; i++) {
+        const line = target.buffer.normal.getLine(i);
+        if (line.isWrapped) logicalLines[logicalLines.length - 1] += line.translateToString(true);
+        else logicalLines.push(line.translateToString(true));
+      }
+      assert.deepEqual(logicalLines, lines, `${label}: every completed logical line must retain its text`);
+    }
+    assert.equal(context.restoringSnapshot, false, `${label}: restore must finish before ACK`);
+    context.performResize();
+    assert.equal(fitCount, 1, `${label}: fitting must resume after replay`);
+    assert.deepEqual(resizeReports, [['resize', `${cols},${rows}`]], `${label}: only current dimensions may be reported`);
+    assert.equal(search.findNext('mosh-private-marker'), false, `${label}: discarded page must not be searchable`);
+    assert.equal(search.findNext('original-history-marker'), true, `${label}: original history must remain searchable`);
+    target.scrollToLine(source.buffer.active.viewportY);
+    await write(target, 'X');
+    await write(source, 'X');
+    assert.deepEqual(state(target), state(source), `${label}: next write must use the restored cursor`);
+
+    // Surface rebuild consumes the same opaque snapshot, possibly followed by
+    // a native-owned VT reset suffix, but has no explicit saved viewport.
+    const rebuilt = new TerminalCtor({ cols, rows, scrollback: 1000 });
+    context.term = rebuilt;
+    await new Promise(resolve => context.restoreTerminalSnapshot(snapshot + '\x1b[?25h', null, resolve));
+    const beforeNextWrite = state(source);
+    await write(rebuilt, 'X');
+    rebuilt.scrollToLine(beforeNextWrite.viewport);
+    assert.deepEqual(state(rebuilt), state(source), `${label}: Surface restore must share geometry semantics`);
+    assert.throws(() => context.restoreTerminalSnapshot('LTTY1:0,36|invalid', null, () => {}),
+      /Invalid terminal snapshot geometry/);
+    rebuilt.dispose();
+    source.dispose();
+    target.dispose();
+  }
+  console.log('terminal snapshot resize/reflow production-path tests passed');
 }

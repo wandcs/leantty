@@ -7,6 +7,7 @@ import { runTerminalSearchTests } from './test-terminal-search.mjs';
 import {
   runTerminalMoshPageTests,
   runTerminalSessionResetTests,
+  runTerminalSnapshotResizeTests,
   SESSION_BOUNDARY_RESET_SEQUENCE
 } from './test-terminal-session-reset.mjs';
 import { XTERM_WEBGL_DEFAULT_BACKGROUND_PATCH } from './patches/xterm-webgl-default-background.mjs';
@@ -186,9 +187,6 @@ assert.equal(bellAttention.acknowledge(), false);
 assert.equal(bellAttention.isPending(), false);
 assert.equal(bellAttention.trigger(), true);
 
-assert.equal(policy.countPerfPayloadBytes('XXX'), 3);
-assert.equal(policy.countPerfPayloadBytes('XX\u001b[6nX\r\n'), 3);
-assert.equal(policy.countPerfPayloadBytes('中文 🚀'), 0);
 
 const wheel = policy.createWheelState();
 policy.enqueueWheel(wheel, 4, 0, 16, 40, 0);
@@ -468,7 +466,7 @@ assert.ok(snapshotSerializerSource,
   'the bounded snapshot serializer must remain executable in the regression harness');
 const attemptedScrollbacks = [];
 globalThis.TERMINAL_SCROLLBACK_LINES = 10000;
-globalThis.term = null;
+globalThis.term = { cols: 144, rows: 36 };
 globalThis.serializeAddon = {
   serialize: ({ scrollback }) => {
     attemptedScrollbacks.push(scrollback);
@@ -476,13 +474,15 @@ globalThis.serializeAddon = {
   }
 };
 vm.runInThisContext(snapshotSerializerSource[1]);
-const boundedSnapshot = globalThis.serializeTerminalSnapshot(4096);
-assert.equal(boundedSnapshot.length, 4096,
+const boundedSnapshot = globalThis.serializeTerminalSnapshot(4096 + 'LTTY1:144,36|'.length);
+assert.equal(boundedSnapshot.length, 4096 + 'LTTY1:144,36|'.length,
   'the snapshot budget must retain the largest successful candidate');
+assert.ok(boundedSnapshot.startsWith('LTTY1:144,36|'),
+  'the snapshot must carry its original geometry within the payload budget');
 assert.deepEqual(attemptedScrollbacks, [0, 64, 128, 256, 512, 1024, 2048, 4096],
   'snapshot work must grow from the visible screen and stop after one over-budget candidate');
 assert.match(terminalHtml,
-  /case 'restoreSnapshot':[\s\S]*?restoringSnapshot = true[\s\S]*?restoringSnapshot = false[\s\S]*?sendBridgeControl\('restoreComplete'[\s\S]*?term\.write\(message\.payload, completeRestore\)/,
+  /case 'restoreSnapshot':[\s\S]*?restoringSnapshot = true[\s\S]*?restoringSnapshot = false[\s\S]*?sendBridgeControl\('restoreComplete'[\s\S]*?restoreTerminalSnapshot\(message\.payload, null, completeRestore\)/,
   'a replacement xterm instance must suppress generated input until restoration completes');
 assert.match(terminalHtml,
   /term\.onData\(function\(data\)[\s\S]*?if \(!restoringSnapshot\)[\s\S]*?sendBridgeData\('terminal', data\)/,
@@ -525,8 +525,8 @@ assert.match(terminalHtml,
   'BEL must continue to use the shared attention gate');
 assert.doesNotMatch(terminalHtml, /term\.onBell\s*\(function\(\)\s*\{\s*sendBridgeControl\('bellAttention'/s,
   'bell attention must never be sent directly for every parsed BEL');
-assert.match(terminalHtml, /term\.onTitleChange\s*\(/,
-  'the local performance-marker parser must continue to observe title sequences');
+assert.doesNotMatch(terminalHtml, /term\.onTitleChange\s*\(/,
+  'performance title observation belongs only in the debug source transform');
 assert.doesNotMatch(terminalHtml, /sendBridgeControl\('title'/,
   'ordinary remote title changes must not cross the bridge when the product does not consume them');
 assert.match(terminalHtml, /new WebLinksAddon\.WebLinksAddon\(/,
@@ -709,6 +709,8 @@ await runTerminalSessionResetTests(globalThis.Terminal, globalThis.SerializeAddo
   policy.sessionOutputAnchorRow);
 await runTerminalMoshPageTests(globalThis.Terminal, globalThis.SerializeAddon.SerializeAddon,
   globalThis.SearchAddon.SearchAddon);
+await runTerminalSnapshotResizeTests(globalThis.Terminal, globalThis.SerializeAddon.SerializeAddon,
+  globalThis.SearchAddon.SearchAddon);
 
 const terminalBridge = readFileSync(
   new URL('../../entry/src/main/ets/model/bridge/TerminalBridge.ets', import.meta.url), 'utf8');
@@ -752,7 +754,7 @@ assert.match(terminalBridge,
   /private pumpSnapshotRequests[\s\S]*?pendingDataHead < this\.pendingData\.length \|\| this\.inFlightMessages > 0/,
   'a checkpoint request must wait until all earlier terminal output is acknowledged');
 assert.match(terminalBridge,
-  /replaceTerminalPage\(snapshot: string, onComplete:[\s\S]*?terminalPageReplacementCompletion = onComplete[\s\S]*?pumpTerminalPageReplacement\(\)[\s\S]*?KIND_TERMINAL_PAGE_REPLACE_COMPLETE[\s\S]*?completion\(true\)/,
+  /replaceTerminalPage\(snapshot: string, viewport: number, onComplete:[\s\S]*?terminalPageReplacementViewport = viewport[\s\S]*?terminalPageReplacementCompletion = onComplete[\s\S]*?pumpTerminalPageReplacement\(\)[\s\S]*?KIND_TERMINAL_PAGE_REPLACE_COMPLETE[\s\S]*?completion\(true\)/,
   'one page replacement must retain a bounded completion until ArkWeb acknowledges it');
 assert.match(terminalBridge,
   /private pumpTerminalPageReplacement[\s\S]*?pendingDataHead < this\.pendingData\.length \|\| this\.inFlightMessages > 0[\s\S]*?BridgeProtocol\.terminalPageReplace/,
@@ -799,6 +801,12 @@ assert.match(terminalSurface,
 
 const terminalSearchIndexPage = readFileSync(
   new URL('../../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
+assert.match(terminalSearchIndexPage,
+  /private activeTab\(\): TabInfo \| null \{(?:(?!\n  \}).)*this\.tabs\[this\.activeTabIndex\]/s,
+  'retained Pane visibility and focus must subscribe to the observed workspace projection');
+assert.match(terminalSearchIndexPage,
+  /private findTabForPane\(paneId: string\): TabInfo \| null \{(?:(?!\n  \}).)*this\.tabs/s,
+  'retained Pane width and position must subscribe to observed Tab/Pane changes');
 assert.match(terminalSearchIndexPage,
   /event\.keyCode === 2070[\s\S]*?activeRuntime\.surface\.isSearchOpen\(\)[\s\S]*?!activeRuntime\.surface\.isSearchComposing\(\)[\s\S]*?activeRuntime\.surface\.closeSearch\(\)/,
   'physical Escape must close active web search without stealing an IME composition escape');
@@ -929,7 +937,7 @@ assert.match(terminalSurfaceController,
   /bridge\.restoreSnapshot\(snapshot\)[\s\S]*?takeDetachedChunks/,
   'a replacement surface must restore its checkpoint before detached output');
 assert.match(terminalSurfaceController,
-  /msg\.kind === BridgeProtocol\.KIND_SNAPSHOT[\s\S]*?requestIdText[\s\S]*?lastCommittedSnapshotRequestId[\s\S]*?replaceSnapshot/,
+  /msg\.kind === BridgeProtocol\.KIND_SNAPSHOT[\s\S]*?requestIdText[\s\S]*?viewportText[\s\S]*?lastCommittedSnapshotRequestId[\s\S]*?replaceSnapshot\([^,]+, viewport\)/,
   'only a sequenced current-bridge checkpoint may replace the session recovery snapshot');
 assert.match(terminalSurfaceController,
   /beginMoshSessionPage\(\): void[\s\S]*?captureSnapshot[\s\S]*?beginSessionPage[\s\S]*?replaceMoshTerminalPage/,
@@ -950,8 +958,8 @@ assert.match(terminalHtml,
   /function positionSessionOutput[\s\S]*?sessionOutputAnchorRow\(term\.buffer\.active, term\.rows\)[\s\S]*?term\.write\([\s\S]*?anchorRow\.toString\(\)[\s\S]*?case 'sessionOutputAnchor':[\s\S]*?sessionOutputAnchorComplete/,
   'ArkWeb must position local close output after the last visible normal-buffer content before acknowledging');
 assert.match(terminalHtml,
-  /function replaceTerminalPage\(snapshot, onComplete\)[\s\S]*?closeSearch\(false\)[\s\S]*?term\.reset\(\)[\s\S]*?term\.write\(snapshot, completeReplacement\)[\s\S]*?case 'terminalPageReplace':[\s\S]*?terminalPageReplaceComplete/,
-  'ArkWeb must clear search and replace the whole xterm page before acknowledging');
+  /function replaceTerminalPage\(snapshot, viewport, onComplete\)[\s\S]*?closeSearch\(false\)[\s\S]*?term\.reset\(\)[\s\S]*?restoreTerminalSnapshot\(snapshot, viewport, completeReplacement\)[\s\S]*?case 'terminalPageReplace':[\s\S]*?terminalPageReplaceComplete/,
+  'ArkWeb must clear search, replace the whole xterm page and restore its viewport before acknowledging');
 
 const indexPage = readFileSync(
   new URL('../../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
@@ -1075,6 +1083,9 @@ assert.doesNotMatch(indexPage,
   'production Index source must exclude acceptance-only renderer and page rebuild triggers');
 const acceptanceSource = readFileSync(
   new URL('../acceptance-source.ps1', import.meta.url), 'utf8');
+await import('./test-terminal-input-metrics.mjs');
+await import('./test-terminal-input-order.mjs');
+await import('./test-terminal-input-attribution.mjs');
 assert.match(acceptanceSource, /Invoke-WithLeanTTYAcceptanceSource/,
   'debug build transformation wrapper must exist');
 assert.match(acceptanceSource, /Acceptance: Rebuild Renderer/,

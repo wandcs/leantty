@@ -58,7 +58,6 @@ export class BridgeProtocol {
   static readonly KIND_WRITE_ACK: string = 'writeAck'
   static readonly KIND_PONG: string = 'pong'
   static readonly KIND_CLIPBOARD_PASTE: string = 'clipboardPaste'
-  static readonly KIND_PERF_RENDER: string = 'perfRender'
   static readonly KIND_RENDERER_STATE: string = 'rendererState'
   static readonly KIND_OPEN_URL: string = 'openUrl'
   static readonly KIND_SNAPSHOT: string = 'snapshot'
@@ -124,6 +123,13 @@ export class BridgeProtocol {
     }
     if (kind === BridgeProtocol.KIND_COPY_OR_INTERRUPT && payload.length > 0) {
       return null
+    }
+    if (kind === BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE) {
+      let viewportEnd: number = payload.indexOf('|')
+      if (viewportEnd < 1 ||
+        !BridgeProtocol.isNonNegativeIntegerPayload(payload.substring(0, viewportEnd))) {
+        return null
+      }
     }
     if ((kind === BridgeProtocol.KIND_RESTORE_SNAPSHOT || kind === BridgeProtocol.KIND_SNAPSHOT ||
       kind === BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE) &&
@@ -209,8 +215,9 @@ export class BridgeProtocol {
     return BridgeProtocol.nativeControl(BridgeProtocol.KIND_SESSION_OUTPUT_ANCHOR)
   }
 
-  static terminalPageReplace(snapshot: string): BridgeMessage {
-    return BridgeProtocol.nativeControl(BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE, snapshot)
+  static terminalPageReplace(snapshot: string, viewport: number): BridgeMessage {
+    return BridgeProtocol.nativeControl(
+      BridgeProtocol.KIND_TERMINAL_PAGE_REPLACE, viewport.toString() + '|' + snapshot)
   }
 
   static searchOpen(): BridgeMessage {
@@ -260,6 +267,11 @@ export class BridgeProtocol {
     return !isNaN(value) && value > 0 && value.toString() === payload
   }
 
+  private static isNonNegativeIntegerPayload(payload: string): boolean {
+    let value: number = parseInt(payload, 10)
+    return !isNaN(value) && value >= 0 && value.toString() === payload
+  }
+
   private static isSupportedMessage(direction: string, channel: string, kind: string): boolean {
     if (channel === BridgeProtocol.CHANNEL_DATA) {
       return kind === BridgeProtocol.KIND_TERMINAL
@@ -295,7 +307,6 @@ export class BridgeProtocol {
       kind === BridgeProtocol.KIND_WRITE_ACK ||
       kind === BridgeProtocol.KIND_PONG ||
       kind === BridgeProtocol.KIND_CLIPBOARD_PASTE ||
-      kind === BridgeProtocol.KIND_PERF_RENDER ||
       kind === BridgeProtocol.KIND_RENDERER_STATE ||
       kind === BridgeProtocol.KIND_OPEN_URL ||
       kind === BridgeProtocol.KIND_RESTORE_COMPLETE ||

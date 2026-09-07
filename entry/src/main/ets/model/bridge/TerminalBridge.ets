@@ -36,6 +36,7 @@ export class TerminalBridge {
   private sessionResetViewportCompletion: ((completed: boolean) => void) | null = null
   private sessionResetViewportSent: boolean = false
   private terminalPageReplacementSnapshot: string = ''
+  private terminalPageReplacementViewport: number = 0
   private terminalPageReplacementCompletion: ((completed: boolean) => void) | null = null
   private terminalPageReplacementSent: boolean = false
   private readyHandlerNotified: boolean = false
@@ -117,6 +118,7 @@ export class TerminalBridge {
     this.sessionResetViewportCompletion = null
     this.sessionResetViewportSent = false
     this.terminalPageReplacementSnapshot = ''
+    this.terminalPageReplacementViewport = 0
     this.terminalPageReplacementCompletion = null
     this.terminalPageReplacementSent = false
     this.readyHandlerNotified = false
@@ -314,7 +316,7 @@ export class TerminalBridge {
     this.pumpSessionOutputAnchor()
   }
 
-  replaceTerminalPage(snapshot: string, onComplete: (completed: boolean) => void): void {
+  replaceTerminalPage(snapshot: string, viewport: number, onComplete: (completed: boolean) => void): void {
     if (snapshot.length > BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH ||
       this.terminalPageReplacementCompletion !== null) {
       this.logMetrics('terminal-page-replace-rejected')
@@ -322,6 +324,7 @@ export class TerminalBridge {
       return
     }
     this.terminalPageReplacementSnapshot = snapshot
+    this.terminalPageReplacementViewport = viewport
     this.terminalPageReplacementCompletion = onComplete
     this.terminalPageReplacementSent = false
     this.logMetrics('terminal-page-replace-queued')
@@ -382,11 +385,6 @@ export class TerminalBridge {
     }
     if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_CLIPBOARD_PASTE) {
       this.logger.info('Clipboard paste ' + msg.payload)
-      return
-    }
-    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_PERF_RENDER) {
-      this.logger.info('PERF render ' + msg.payload)
-      this.logMetrics('render')
       return
     }
     if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_RENDERER_STATE) {
@@ -473,6 +471,7 @@ export class TerminalBridge {
       this.logMetrics('terminal-page-replace-complete')
       let completion: ((completed: boolean) => void) | null = this.terminalPageReplacementCompletion
       this.terminalPageReplacementSnapshot = ''
+      this.terminalPageReplacementViewport = 0
       this.terminalPageReplacementCompletion = null
       this.terminalPageReplacementSent = false
       if (completion !== null) {
@@ -584,10 +583,12 @@ export class TerminalBridge {
       return
     }
     this.terminalPageReplacementSent = this.send(
-      BridgeProtocol.terminalPageReplace(this.terminalPageReplacementSnapshot))
+      BridgeProtocol.terminalPageReplace(
+        this.terminalPageReplacementSnapshot, this.terminalPageReplacementViewport))
     if (!this.terminalPageReplacementSent) {
       let completion: ((completed: boolean) => void) | null = this.terminalPageReplacementCompletion
       this.terminalPageReplacementSnapshot = ''
+      this.terminalPageReplacementViewport = 0
       this.terminalPageReplacementCompletion = null
       if (completion !== null) {
         completion(false)
