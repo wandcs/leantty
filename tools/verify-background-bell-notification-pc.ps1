@@ -446,10 +446,13 @@ try {
         if ($cleanupInputs.Count -ne 1) {
             throw "Expected one Pane after cleanup, found $($cleanupInputs.Count)"
         }
-        $result.cleanup = 'app-restored; notification-cancel-requested-by-visible-lifecycle; single-pane-confirmed'
+        $result.cleanup = [ordered]@{
+            result = 'passed'
+            detail = 'app-restored; notification-cancel-requested-by-visible-lifecycle; single-pane-confirmed'
+        }
     } catch {
         $cleanupFailure = $_.Exception.Message
-        $result.cleanup = 'failed: ' + $cleanupFailure
+        $result.cleanup = [ordered]@{ result = 'failed'; detail = $cleanupFailure }
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
     $result | ConvertTo-Json -Depth 8 | Set-Content `

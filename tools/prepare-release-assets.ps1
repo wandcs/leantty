@@ -70,7 +70,30 @@ function New-LeanTTYReleaseAssets {
         if (Test-Path -LiteralPath $target) { throw "Refusing to overwrite release asset: $target" }
     }
 
-    Compress-Archive -Path (Join-Path $licenseDirectory '*') -DestinationPath $licenseZip
+    $archiveTimestamp = [DateTimeOffset]::ParseExact(
+        $heading.Groups['date'].Value + 'T00:00:00Z',
+        'yyyy-MM-ddTHH:mm:ssZ',
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::AssumeUniversal
+    )
+    if ($env:SOURCE_DATE_EPOCH -match '^[0-9]+$') {
+        $archiveTimestamp = [DateTimeOffset]::FromUnixTimeSeconds([long]$env:SOURCE_DATE_EPOCH)
+    } elseif ($null -ne $manifest.git -and
+        -not [string]::IsNullOrWhiteSpace([string]$manifest.git.commit)) {
+        $commitTimestampOutput = @(
+            & git -C $checkoutFull show -s --format=%ct ([string]$manifest.git.commit) 2>&1
+        )
+        if ($LASTEXITCODE -eq 0 -and $commitTimestampOutput.Count -eq 1 -and
+            [string]$commitTimestampOutput[0] -match '^[0-9]+$') {
+            $archiveTimestamp = [DateTimeOffset]::FromUnixTimeSeconds(
+                [long]$commitTimestampOutput[0]
+            )
+        }
+    }
+    New-LeanTTYDeterministicZip `
+        -SourceDirectory $licenseDirectory `
+        -DestinationPath $licenseZip `
+        -Timestamp $archiveTimestamp
     Write-LeanTTYAtomicText -Path $releaseNotesPath -Content ("# LeanTTY $ReleaseId`n`n$section`n")
     Write-LeanTTYAtomicText -Path $archivedStoreCopy -Content ($storeCopy.TrimEnd() + "`n")
     $handoff = @"

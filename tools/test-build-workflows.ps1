@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'test-release-evidence.ps1')
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) (
@@ -247,6 +248,59 @@ try {
         "Release asset helper is missing: $releaseAssetsScript"
     )
     . $releaseAssetsScript
+    $deterministicZipSource = Join-Path $testRoot 'deterministic-zip-source'
+    New-Item -ItemType Directory -Path (Join-Path $deterministicZipSource 'nested') -Force | Out-Null
+    [IO.File]::WriteAllText(
+        (Join-Path $deterministicZipSource 'z.txt'),
+        'zeta',
+        [Text.UTF8Encoding]::new($false)
+    )
+    [IO.File]::WriteAllText(
+        (Join-Path $deterministicZipSource 'nested\a.txt'),
+        'alpha',
+        [Text.UTF8Encoding]::new($false)
+    )
+    $deterministicZipA = Join-Path $testRoot 'deterministic-a.zip'
+    $deterministicZipB = Join-Path $testRoot 'deterministic-b.zip'
+    $archiveTimestamp = [DateTimeOffset]'2026-08-28T00:00:00Z'
+    New-LeanTTYDeterministicZip `
+        -SourceDirectory $deterministicZipSource `
+        -DestinationPath $deterministicZipA `
+        -Timestamp $archiveTimestamp
+    Get-ChildItem -LiteralPath $deterministicZipSource -Recurse -File | ForEach-Object {
+        $_.LastWriteTimeUtc = [DateTime]'2031-03-04T05:06:07Z'
+    }
+    New-LeanTTYDeterministicZip `
+        -SourceDirectory $deterministicZipSource `
+        -DestinationPath $deterministicZipB `
+        -Timestamp $archiveTimestamp
+    Assert-True (
+        (Get-FileHash -LiteralPath $deterministicZipA -Algorithm SHA256).Hash -ceq
+        (Get-FileHash -LiteralPath $deterministicZipB -Algorithm SHA256).Hash
+    ) 'Deterministic ZIP changed after source mtime perturbation'
+    $deterministicArchive = [IO.Compression.ZipFile]::OpenRead($deterministicZipA)
+    try {
+        Assert-True (
+            ($deterministicArchive.Entries.FullName -join ',') -ceq 'nested/a.txt,z.txt'
+        ) 'Deterministic ZIP did not preserve all files in ordinal path order'
+        $expectedContents = @{ 'nested/a.txt' = 'alpha'; 'z.txt' = 'zeta' }
+        foreach ($entry in $deterministicArchive.Entries) {
+            Assert-True (
+                $entry.LastWriteTime.DateTime -eq $archiveTimestamp.DateTime -and
+                $entry.ExternalAttributes -eq 0
+            ) "Deterministic ZIP metadata differs for $($entry.FullName)"
+            $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
+            try {
+                Assert-True (
+                    $reader.ReadToEnd() -ceq $expectedContents[$entry.FullName]
+                ) "Deterministic ZIP contents differ for $($entry.FullName)"
+            } finally {
+                $reader.Dispose()
+            }
+        }
+    } finally {
+        $deterministicArchive.Dispose()
+    }
     $assetCheckout = Join-Path $testRoot 'asset-checkout'
     $assetReleaseDirectory = Join-Path $testRoot 'asset-release\releases\9.8.7'
     $assetPackageDirectory = Join-Path $assetReleaseDirectory 'package'
@@ -296,6 +350,11 @@ try {
             (Get-FileHash -LiteralPath $assetApp -Algorithm SHA256).Hash.ToLowerInvariant()
         )
     ) 'Release assets did not bind notes, licenses and AppGallery handoff to the package'
+    $releaseAssetsText = Get-Content -LiteralPath $releaseAssetsScript -Raw
+    Assert-True (
+        $releaseAssetsText.Contains('New-LeanTTYDeterministicZip') -and
+        -not $releaseAssetsText.Contains('Compress-Archive')
+    ) 'Release license archive still depends on nondeterministic Compress-Archive output'
 
     $statusUpdateScript = Join-Path $PSScriptRoot 'prepare-release-status-update.ps1'
     $statusUpdatePath = Join-Path $testRoot 'post-release-status.md'

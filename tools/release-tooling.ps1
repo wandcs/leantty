@@ -157,8 +157,78 @@ function Write-LeanTTYAtomicJson {
     )
 
     Write-LeanTTYAtomicText -Path $Path -Content (
-        ConvertTo-Json -InputObject $Value -Depth $Depth
+        # A depth warning means lossy evidence. Fail before replacing the last checkpoint.
+        ConvertTo-Json -InputObject $Value -Depth $Depth -WarningAction Stop
     )
+}
+
+function New-LeanTTYDeterministicZip {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDirectory,
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$Timestamp
+    )
+
+    $sourceRoot = [IO.Path]::GetFullPath($SourceDirectory).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
+        throw "Deterministic ZIP source directory is missing: $sourceRoot"
+    }
+    $destination = [IO.Path]::GetFullPath($DestinationPath)
+    if (Test-Path -LiteralPath $destination) {
+        throw "Refusing to overwrite deterministic ZIP: $destination"
+    }
+    $destinationParent = Split-Path $destination -Parent
+    New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+
+    $minimumZipTime = [DateTimeOffset]'1980-01-01T00:00:00Z'
+    $maximumZipTime = [DateTimeOffset]'2107-12-31T23:59:58Z'
+    $entryTimestamp = $Timestamp.ToUniversalTime()
+    if ($entryTimestamp -lt $minimumZipTime) { $entryTimestamp = $minimumZipTime }
+    if ($entryTimestamp -gt $maximumZipTime) { $entryTimestamp = $maximumZipTime }
+
+    $relativePaths = [string[]]@(
+        Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | ForEach-Object {
+            [IO.Path]::GetRelativePath($sourceRoot, $_.FullName).Replace('\', '/')
+        }
+    )
+    [Array]::Sort($relativePaths, [StringComparer]::Ordinal)
+
+    Add-Type -AssemblyName System.IO.Compression
+    $archiveStream = [IO.File]::Open($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+    try {
+        $archive = [IO.Compression.ZipArchive]::new(
+            $archiveStream,
+            [IO.Compression.ZipArchiveMode]::Create,
+            $false,
+            [Text.Encoding]::UTF8
+        )
+        try {
+            foreach ($relativePath in $relativePaths) {
+                $entry = $archive.CreateEntry(
+                    $relativePath,
+                    [IO.Compression.CompressionLevel]::Optimal
+                )
+                $entry.LastWriteTime = $entryTimestamp
+                $entry.ExternalAttributes = 0
+                $sourcePath = Join-Path $sourceRoot $relativePath.Replace('/', '\')
+                $sourceStream = [IO.File]::OpenRead($sourcePath)
+                $entryStream = $entry.Open()
+                try {
+                    $sourceStream.CopyTo($entryStream)
+                } finally {
+                    $entryStream.Dispose()
+                    $sourceStream.Dispose()
+                }
+            }
+        } finally {
+            $archive.Dispose()
+        }
+    } finally {
+        $archiveStream.Dispose()
+    }
 }
 
 function ConvertTo-LeanTTYPowerShellLiteral {
@@ -264,13 +334,18 @@ function Get-LeanTTYReleaseEvidenceMetadata {
     }
     $cleanup = 'not-separately-reported'
     if ($evidence.PSObject.Properties.Name -contains 'cleanup') {
+        # A declared cleanup requires a proved verdict. Missing legacy fields stay
+        # visibly unreported, but null, prose and unknown values must never become pass.
+        $cleanup = 'unknown'
         if ($evidence.cleanup -is [string]) {
             $cleanup = if ([string]$evidence.cleanup -match '(?i)^failed') {
                 'failed'
             } elseif ([string]$evidence.cleanup -match '(?i)^(pending|not-run)$') {
                 'pending'
-            } else {
+            } elseif ([string]$evidence.cleanup -ceq 'passed') {
                 'passed'
+            } else {
+                'unknown'
             }
         } elseif ($null -ne $evidence.cleanup -and
             $evidence.cleanup.PSObject.Properties.Name -contains 'result') {
@@ -317,7 +392,7 @@ function Get-LeanTTYReleaseEvidenceSummary {
     if ($metadata.outcome -ne 'passed') {
         throw "Release stage '$StageName' did not produce a passing result (got '$($metadata.outcome)')"
     }
-    if ($metadata.cleanup -in @('failed', 'pending')) {
+    if ($metadata.cleanup -cnotin @('passed', 'not-separately-reported')) {
         throw "Release stage '$StageName' did not complete cleanup (got '$($metadata.cleanup)')"
     }
     return $metadata

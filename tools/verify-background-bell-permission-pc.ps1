@@ -322,10 +322,13 @@ try {
         $cleanupInputs = @(Get-LeanTTYTerminalInputNodes -Layout $cleanupLayout)
         if ($cleanupInputs.Count -ne 1) { throw "Expected one Pane, found $($cleanupInputs.Count)" }
         $result.restoredOriginalSetting = $currentEnabled -eq $originalEnabled
-        $result.cleanup = 'original-notification-setting-restored; app-visible; notification-cancel-requested; single-pane-confirmed'
+        $result.cleanup = [ordered]@{
+            result = 'passed'
+            detail = 'original-notification-setting-restored; app-visible; notification-cancel-requested; single-pane-confirmed'
+        }
     } catch {
         $cleanupFailure = $_.Exception.Message
-        $result.cleanup = 'failed: ' + $cleanupFailure
+        $result.cleanup = [ordered]@{ result = 'failed'; detail = $cleanupFailure }
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
     [IO.File]::WriteAllText(

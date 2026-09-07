@@ -530,10 +530,13 @@ try {
         Remove-Item -LiteralPath $fixtureDirectory -Recurse -Force
     }
     if ($cleanupFailures.Count -eq 0) {
-        $result.cleanup = 'app-visible-single-pane; notification-cancel-requested; reverse-port-removed; ' +
-            'temporary-sshd-stopped; tmux-socket-removed; fixture-files-removed; app-identity-unchanged'
+        $result.cleanup = [ordered]@{
+            result = 'passed'
+            detail = 'app-visible-single-pane; notification-cancel-requested; reverse-port-removed; ' +
+                'temporary-sshd-stopped; tmux-socket-removed; fixture-files-removed; app-identity-unchanged'
+        }
     } else {
-        $result.cleanup = 'failed: ' + ($cleanupFailures -join '; ')
+        $result.cleanup = [ordered]@{ result = 'failed'; detail = ($cleanupFailures -join '; ') }
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
     Write-LeanTTYAtomicJson `
