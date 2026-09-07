@@ -1615,10 +1615,10 @@ function Write-AuthEvidence {
         }
         input = [ordered]@{
             method = 'harmony-uitest-text-and-raw-physical-special-keys'
-            secretInjection = 'harmony-uitest-targeted-inputText-runtime-generated-temporary-fixture-values'
+            secretInjection = 'harmony-uitest-focus-verified-inputText-runtime-generated-temporary-fixture-values'
             textCommandCharacters = 'complete-value'
-            ordinaryTextInjection = 'harmony-uitest-targeted-inputText'
-            postInputSettleMilliseconds = 500
+            ordinaryTextInjection = 'harmony-uitest-focus-verified-inputText'
+            postInputSettleMilliseconds = 0
             physicalKeyInjection = 'raw-key-events-special-keys-only'
             submitTelemetry = 'compile-time-acceptance-marker-with-sequence-and-kind-only'
             businessOutcomeRequired = $true

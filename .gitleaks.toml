@@ -20,3 +20,11 @@ condition = "AND"
 regexTarget = "secret"
 paths = ['''^tools/acceptance-source\.ps1$''']
 regexes = ['''^0123456789abcdefghijklmnopqrstuv$''']
+
+# Public verifier filename in the input-report metadata test, not a credential.
+[[rules.allowlists]]
+description = "Exact public verifier filename in the input metadata regression"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''^tools/test-device-regression\.ps1$''']
+regexes = ['''^verify-key-passphrase-pc\.ps1$''']

@@ -341,11 +341,23 @@ function Get-LeanTTYTerminalInputText {
 function Get-LeanTTYTerminalInputNodes {
     param([Parameter(Mandatory = $true)]$Layout)
 
-    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        [string]$_.attributes.hint -eq 'Terminal input'
-    } | Sort-Object {
-        (Get-LeanTTYBoundsCenter -Bounds ([string]$_.attributes.bounds)).x
-    })
+    # Index mounts each Tab's Panes in model order. Preserve their current
+    # layout traversal order: xterm moves the hidden textarea with the cursor.
+    # Geometry is not identity, and overlapping Panes require diagnosis.
+    $inputs = [Collections.Generic.List[object]]::new()
+    $visit = {
+        param($Node)
+        if ($null -eq $Node) { return }
+        # UiTest still exposes descendants of retained, hidden Tab wrappers.
+        # Do not filter the textarea's own opacity: xterm intentionally hides it.
+        if ([string]$Node.attributes.type -eq '__Common__' -and (
+                [string]$Node.attributes.opacity -eq '0.000000' -or
+                [string]$Node.attributes.hitTestBehavior -eq 'HitTestMode.None')) { return }
+        if ([string]$Node.attributes.hint -eq 'Terminal input') { $inputs.Add($Node) }
+        foreach ($child in @($Node.children)) { & $visit $child }
+    }
+    & $visit $Layout
+    return @($inputs)
 }
 
 function Set-LeanTTYTerminalInputFocus {
@@ -439,6 +451,156 @@ function Get-LeanTTYFocusedTextInputNodes {
     })
 }
 
+function Get-LeanTTYTerminalInputWebOwner {
+    param($Layout, $InputNode)
+
+    if ($null -eq $Layout -or $null -eq $InputNode) { return $null }
+    $owners = [Collections.Generic.List[object]]::new()
+    $visit = {
+        param($Node, $WebOwner)
+        if ($null -eq $Node) { return }
+        if ([string]$Node.attributes.type -eq '__Common__' -and (
+                [string]$Node.attributes.opacity -eq '0.000000' -or
+                [string]$Node.attributes.hitTestBehavior -eq 'HitTestMode.None')) { return }
+        if ([string]$Node.attributes.type -eq 'Web') { $WebOwner = $Node }
+        if ([object]::ReferenceEquals($Node, $InputNode)) {
+            if ($null -ne $WebOwner) { $owners.Add($WebOwner) }
+            return
+        }
+        foreach ($child in @($Node.children)) { & $visit $child $WebOwner }
+    }
+    & $visit $Layout $null
+    if ($owners.Count -ne 1) { return $null }
+    return $owners[0]
+}
+
+function Test-LeanTTYSameTextInputTarget {
+    param(
+        [Parameter(Mandatory = $true)]$ExpectedNode,
+        [Parameter(Mandatory = $true)]$CurrentNode,
+        $ExpectedLayout = $null,
+        $CurrentLayout = $null
+    )
+
+    $expectedAttributes = $ExpectedNode.attributes
+    $currentAttributes = $CurrentNode.attributes
+    foreach ($attributeName in @('type', 'id', 'hint')) {
+        $expectedValue = [string]$expectedAttributes.$attributeName
+        if (-not [string]::IsNullOrEmpty($expectedValue) -and
+            [string]$currentAttributes.$attributeName -cne $expectedValue) {
+            return $false
+        }
+    }
+
+    if ($null -ne $ExpectedLayout -and $null -ne $CurrentLayout -and
+        [string]$expectedAttributes.hint -eq 'Terminal input') {
+        $expectedWeb = Get-LeanTTYTerminalInputWebOwner -Layout $ExpectedLayout -InputNode $ExpectedNode
+        $currentWeb = Get-LeanTTYTerminalInputWebOwner -Layout $CurrentLayout -InputNode $CurrentNode
+        if ($null -ne $expectedWeb -or $null -ne $currentWeb) {
+            if ($null -eq $expectedWeb -or $null -eq $currentWeb) { return $false }
+            $expectedInputs = @(Get-LeanTTYTerminalInputNodes -Layout $expectedWeb)
+            $currentInputs = @(Get-LeanTTYTerminalInputNodes -Layout $currentWeb)
+            if ($expectedInputs.Count -ne 1 -or $currentInputs.Count -ne 1) { return $false }
+            # Virtual DOM containers and cursor-following textarea bounds can
+            # change during input. Bind to the unchanged native Web instance,
+            # never another Pane at coincident coordinates or just the window.
+            foreach ($name in @('hostWindowId', 'hierarchy', 'accessibilityId')) {
+                $expectedValue = [string]$expectedWeb.attributes.$name
+                if ([string]::IsNullOrEmpty($expectedValue) -or
+                    [string]$currentWeb.attributes.$name -cne $expectedValue) { return $false }
+            }
+            if ([string]$expectedAttributes.hostWindowId -cne [string]$expectedWeb.attributes.hostWindowId -or
+                [string]$currentAttributes.hostWindowId -cne [string]$currentWeb.attributes.hostWindowId) { return $false }
+            return $true
+        }
+    }
+
+    # This comparison is scoped to one input operation, not a cached locator
+    # across navigation/rebuilds. Geometry can coincide across separate Panes;
+    # the current window/tree target must win over bounds or regenerated IDs.
+    foreach ($attributeName in @('hostWindowId', 'hierarchy')) {
+        $expectedValue = [string]$expectedAttributes.$attributeName
+        $currentValue = [string]$currentAttributes.$attributeName
+        if ($expectedValue.Length -gt 0 -and $currentValue -cne $expectedValue) {
+            return $false
+        }
+    }
+    if (-not [string]::IsNullOrEmpty([string]$expectedAttributes.hierarchy)) {
+        return $true
+    }
+
+    $expectedAccessibilityId = [string]$expectedAttributes.accessibilityId
+    $currentAccessibilityId = [string]$currentAttributes.accessibilityId
+    $sameOpaqueId = -not [string]::IsNullOrEmpty($expectedAccessibilityId) -and
+        -not [string]::IsNullOrEmpty($currentAccessibilityId) -and
+        $expectedAccessibilityId -ceq $currentAccessibilityId
+    $expectedBounds = [string]$expectedAttributes.bounds
+    $currentBounds = [string]$currentAttributes.bounds
+    $sameGeometry = -not [string]::IsNullOrEmpty($expectedBounds) -and
+        $expectedBounds -ceq $currentBounds
+
+    # UiTest 6.0.2.3 regenerates accessibilityId between adjacent dumpLayout
+    # snapshots. Legacy nodes without a tree path require a matching ID or
+    # exact geometry; real current layouts also prove the tree target above.
+    return $sameOpaqueId -or $sameGeometry
+}
+
+function New-LeanTTYTextInputFailure {
+    param(
+        [Parameter(Mandatory = $true)][string]$Message,
+        [ValidateSet('before', 'after')][string]$Phase,
+        $ExpectedNode,
+        [AllowEmptyCollection()][object[]]$CurrentNodes = @()
+    )
+
+    # Exception.Data is visible to every caller. Construct a whitelist here,
+    # never attach a raw layout, field value, hint, identifier or content hash.
+    $targets = @($CurrentNodes | Select-Object -First 4 | ForEach-Object {
+        $currentNode = $_
+        $attributes = [ordered]@{}
+        foreach ($name in @('type', 'id', 'hint', 'hostWindowId', 'hierarchy', 'accessibilityId', 'bounds')) {
+            $expectedValue = [string]$ExpectedNode.attributes.$name
+            $currentValue = [string]$currentNode.attributes.$name
+            $attributes[$name] = [ordered]@{
+                expectedPresent = $expectedValue.Length -gt 0
+                currentPresent = $currentValue.Length -gt 0
+                equal = $(if ($null -ne $ExpectedNode -and
+                    ($expectedValue.Length -gt 0 -or $currentValue.Length -gt 0)) {
+                    $expectedValue -ceq $currentValue
+                } else { $null })
+            }
+        }
+        $paths = @($ExpectedNode, $currentNode | ForEach-Object {
+            $pathMatch = [regex]::Match([string]$_.attributes.hierarchy,
+                '^ROOT([0-9]{1,9})((?:,[0-9]{1,9}){0,64})$')
+            [pscustomobject]@{
+                valid = $pathMatch.Success
+                indices = @($(if ($pathMatch.Success -and $pathMatch.Groups[2].Length -gt 0) {
+                    $pathMatch.Groups[2].Value.Substring(1).Split(',') | ForEach-Object { [int]$_ }
+                }))
+            }
+        })
+        [ordered]@{
+            attributes = $attributes
+            expectedPath = $paths[0]
+            currentPath = $paths[1]
+            sameRoot = $(if ($paths[0].valid -and $paths[1].valid) {
+                ([string]$ExpectedNode.attributes.hierarchy).Split(',')[0] -ceq
+                    ([string]$currentNode.attributes.hierarchy).Split(',')[0]
+            } else { $null })
+        }
+    })
+    $failure = [InvalidOperationException]::new($Message)
+    $failure.Data['LeanTTYTextInputFailure'] = [ordered]@{
+        phase = $Phase
+        expectedPresent = $null -ne $ExpectedNode
+        focusedCount = $CurrentNodes.Count
+        targetsTruncated = $CurrentNodes.Count -gt 4
+        targets = $targets
+    }
+    return $failure
+}
+
 function Get-LeanTTYSingleFocusedTerminalInputNode {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
@@ -492,31 +654,62 @@ function Invoke-LeanTTYDeviceText {
         throw '[harness] HarmonyOS UI text input does not accept command separators'
     }
 
-    if ($null -eq $InputNode) {
-        $temporaryLayoutPath = Join-Path ([IO.Path]::GetTempPath()) (
-            'leantty-focused-input-' + [Guid]::NewGuid().ToString('N') + '.json'
-        )
-        try {
-            $layout = Get-LeanTTYDeviceLayout `
-                -Hdc $Hdc -Target $Target -LocalPath $temporaryLayoutPath
-            $focusedInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $layout)
-            if ($focusedInputs.Count -ne 1) {
-                throw '[environment] HarmonyOS text input requires one current focused text field'
-            }
-            $InputNode = $focusedInputs[0]
-        } finally {
-            Remove-Item -LiteralPath $temporaryLayoutPath -Force -ErrorAction SilentlyContinue
-        }
+    $temporaryLayoutPath = Join-Path ([IO.Path]::GetTempPath()) (
+        'leantty-focused-input-' + [Guid]::NewGuid().ToString('N') + '.json'
+    )
+    try {
+        Invoke-LeanTTYSerializedUiTest `
+            -Hdc $Hdc `
+            -Target $Target `
+            -Arguments @('focus-verified-inputText') `
+            -Operation 'HarmonyOS focus-verified targeted UI text input' `
+            -Action {
+                $layout = Get-HdcUiLayout `
+                    -Hdc $Hdc `
+                    -Target $Target `
+                    -LocalPath $temporaryLayoutPath `
+                    -BundleName 'com.leantty.app' `
+                    -Operation 'HarmonyOS pre-input focus layout capture'
+                $focusedInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $layout)
+                if ($focusedInputs.Count -ne 1) {
+                    throw (New-LeanTTYTextInputFailure -Phase before -ExpectedNode $InputNode `
+                        -CurrentNodes $focusedInputs `
+                        -Message '[harness] HarmonyOS text input requires one current focused text field')
+                }
+                if ($null -ne $InputNode) {
+                    if (-not (Test-LeanTTYSameTextInputTarget `
+                            -ExpectedNode $InputNode -CurrentNode $focusedInputs[0])) {
+                        throw (New-LeanTTYTextInputFailure -Phase before -ExpectedNode $InputNode `
+                            -CurrentNodes $focusedInputs `
+                            -Message '[harness] Intended HarmonyOS text target is no longer uniquely focused')
+                    }
+                }
+                $center = Get-LeanTTYBoundsCenter `
+                    -Bounds ([string]$focusedInputs[0].attributes.bounds)
+                Invoke-HdcChecked `
+                    -Hdc $Hdc `
+                    -Target $Target `
+                    -Arguments @(
+                        'shell', 'uitest', 'uiInput', 'inputText', $center.x, $center.y, $Text
+                    ) `
+                    -Operation 'HarmonyOS focus-verified targeted UI text input' `
+                    -FailureDomain 'environment' | Out-Null
+                $afterLayout = Get-HdcUiLayout `
+                    -Hdc $Hdc -Target $Target -LocalPath $temporaryLayoutPath `
+                    -BundleName 'com.leantty.app' `
+                    -Operation 'HarmonyOS post-input focus layout capture'
+                $afterInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $afterLayout)
+                if ($afterInputs.Count -ne 1 -or -not (Test-LeanTTYSameTextInputTarget `
+                        -ExpectedNode $focusedInputs[0] -CurrentNode $afterInputs[0] `
+                        -ExpectedLayout $layout -CurrentLayout $afterLayout)) {
+                    throw (New-LeanTTYTextInputFailure -Phase after -ExpectedNode $focusedInputs[0] `
+                        -CurrentNodes $afterInputs `
+                        -Message '[harness] HarmonyOS text input changed its intended target; refusing retry or Enter')
+                }
+            } | Out-Null
+    } finally {
+        Remove-Item -LiteralPath $temporaryLayoutPath -Force -ErrorAction SilentlyContinue
     }
-    $center = Get-LeanTTYBoundsCenter -Bounds ([string]$InputNode.attributes.bounds)
-    Invoke-LeanTTYSerializedUiTest `
-        -Hdc $Hdc `
-        -Target $Target `
-        -Arguments @('uiInput', 'inputText', $center.x, $center.y, $Text) `
-        -Operation 'HarmonyOS targeted UI text input' | Out-Null
-    # UiTest can return before ArkWeb consumes the final event. Callers that may
-    # press Enter must still use the verified command contract below.
-    Start-Sleep -Milliseconds 500
 }
 
 function Invoke-LeanTTYDeviceKey {
@@ -726,7 +919,7 @@ function Submit-LeanTTYDeviceCommand {
     $mismatches = [Collections.Generic.List[object]]::new()
     $observation = [ordered]@{
         stage = $Stage
-        inputMethod = 'harmony-uitest-targeted-inputText'
+        inputMethod = 'harmony-uitest-focus-verified-inputText'
         result = 'running'
         failureDomain = 'none'
         inputAttempts = 0
@@ -835,6 +1028,7 @@ function Submit-LeanTTYDeviceCommand {
         }
         throw '[harness] UiTest could not prepare the exact native command buffer before Enter'
     } catch {
+        $observation['textTargetFailure'] = $_.Exception.Data['LeanTTYTextInputFailure']
         if ($observation.result -eq 'running') {
             $message = $_.Exception.Message
             $observation.result = if ($message -match '^\[unknown\]') { 'unknown' } else { 'failed' }
@@ -895,7 +1089,7 @@ function Get-LeanTTYDeviceCommandAutomationSummary {
         businessVerdict = $BusinessVerdict
         businessPostcondition = $BusinessPostcondition
         harnessStability = $stability
-        inputMethod = 'harmony-uitest-targeted-inputText'
+        inputMethod = 'harmony-uitest-focus-verified-inputText'
         commandCount = $records.Count
         inputAttemptCount = [int](($records | Measure-Object -Property inputAttempts -Sum).Sum)
         inputMismatchCount = [int](($records | Measure-Object -Property inputMismatches -Sum).Sum)

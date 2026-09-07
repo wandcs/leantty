@@ -150,7 +150,7 @@ function New-LeanTTYAgentCompatibilityReadinessFixture {
             foreach ($phase in @('connect', 'launch', 'return', 'disconnect', 'reconnect')) {
                 $observations.Add([pscustomobject][ordered]@{
                     stage = "$stage-$phase"
-                    inputMethod = 'harmony-uitest-targeted-inputText'
+                    inputMethod = 'harmony-uitest-focus-verified-inputText'
                     result = 'passed'
                     failureDomain = 'none'
                     inputAttempts = 1
@@ -242,7 +242,7 @@ function New-LeanTTYAgentCompatibilityReadinessFixture {
                 businessVerdict = 'passed'
                 businessPostcondition = 'agent-compatibility-selected-checks'
                 harnessStability = 'stable'
-                inputMethod = 'harmony-uitest-targeted-inputText'
+                inputMethod = 'harmony-uitest-focus-verified-inputText'
                 commandCount = $observations.Count
                 inputAttemptCount = $observations.Count
                 inputMismatchCount = 0

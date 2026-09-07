@@ -3811,7 +3811,7 @@ try {
                 $resumeCaseId = if ($Scenario -eq 'operator-lid-recovery') {
                     'lid_' + $attemptId.Substring(0, 10)
                 } else { 'lock_' + $attemptId.Substring(0, 10) }
-                $recoveryInputMethod = 'harmony-uitest-targeted-inputText'
+                $recoveryInputMethod = 'harmony-uitest-focus-verified-inputText'
                 Submit-MoshInput -Text "ltty-mosh-check $resumeCaseId"
                 Wait-ControlFileMatch -Path $fixtureEvent `
                     -Pattern "(?ms)^case=$([regex]::Escape($resumeCaseId))$.*^result=passed$" `
