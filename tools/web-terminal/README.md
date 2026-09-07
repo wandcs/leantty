@@ -47,3 +47,37 @@ When upgrading xterm:
    input hash, then run the semantic matrix and physical WebGL scenario; and
 4. never carry the old minified replacement forward merely because it can be
    made to match.
+
+## Input-order patch
+
+`patches/xterm-input-order.mjs` applies a separate, hash-locked repair to xterm
+6.0.0's CoreBrowserTerminal and CompositionHelper. Non-composing `insertText`
+uses the input event instead of a held-key flag; it invalidates the helper's
+pending textarea diff before emitting. Other non-composing input flushes an
+existing legacy diff, preserving deletion before the next insertion. A helper
+owns one pending callback, so queued callbacks cannot duplicate input or share
+state across terminals. Composition and its pending final send keep ownership
+of composed text; screen-reader mode retains the legacy path.
+
+This is a generated-core patch, not an unmodified xterm asset. It adds no
+runtime private-object replacement, event synthesis, text deduplication or
+Bridge/native compensation. Its readable equivalent and exact audited sites
+live in the patch module. Remove it when an upstream release passes the same
+input-order cases; a dependency change must fail until explicitly re-audited.
+The upstream report is [xterm #6045](https://github.com/xtermjs/xterm.js/issues/6045),
+checked on 2026-09-06; its open related PR is not treated as a verified fix.
+
+`npm test` includes generated-owner behavior and patch-guard tests. The bounded
+browser check uses an existing local Playwright installation, not a product
+dependency:
+
+```powershell
+node tools/web-terminal/verify-xterm-input-order.mjs <absolute-playwright-index.mjs> upstream <red-evidence-directory>
+node tools/web-terminal/verify-xterm-input-order.mjs <absolute-playwright-index.mjs> packaged <green-evidence-directory>
+```
+
+Run these from the repository root. The upstream run deliberately fails correct
+input assertions; the packaged run must pass them. Both use the same synthetic
+event corpus, actual DOM listeners and real timers. Neither proves that the
+historical intermittent UiTest loss had this cause, nor replaces HarmonyOS PC
+input/IME validation.
