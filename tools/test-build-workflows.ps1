@@ -912,7 +912,7 @@ try {
             enterCount = 2
         }
         input = [ordered]@{
-            secretInjection = 'harmony-uitest-targeted-inputText-runtime-generated-temporary-fixture-values'
+            secretInjection = 'harmony-uitest-focus-verified-inputText-runtime-generated-temporary-fixture-values'
         }
         cleanup = [ordered]@{
             result = 'passed'

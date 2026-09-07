@@ -282,9 +282,9 @@ function Write-BehaviorEvidence {
             failure = $awakeLeaseFailure
         }
         input = [ordered]@{
-            commandInjection = 'harmony-uitest-targeted-inputText-with-pre-submit-buffer-verification'
-            secretInjection = 'harmony-uitest-targeted-inputText-runtime-generated-printable-ascii'
-            postInputSettleMilliseconds = 500
+            commandInjection = 'harmony-uitest-focus-verified-inputText-with-pre-submit-buffer-verification'
+            secretInjection = 'harmony-uitest-focus-verified-inputText-runtime-generated-printable-ascii'
+            postInputSettleMilliseconds = 0
             fixedDelayUsedAsVerdict = $false
         }
         automation = Get-LeanTTYDeviceCommandAutomationSummary `

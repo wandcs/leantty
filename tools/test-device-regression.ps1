@@ -81,8 +81,8 @@ $focusedTextLayout = @'
 {
   "attributes":{"type":"root","focused":"true","bounds":"[0,0][100,100]"},
   "children":[
-    {"attributes":{"type":"textField","hint":"Search text Find","focused":"true","bounds":"[10,10][50,30]"},"children":[]},
-    {"attributes":{"type":"textField","hint":"Terminal input","focused":"false","bounds":"[10,60][50,80]"},"children":[]}
+    {"attributes":{"type":"textField","accessibilityId":"search-node","hint":"Search text Find","focused":"true","bounds":"[10,10][50,30]"},"children":[]},
+    {"attributes":{"type":"textField","accessibilityId":"terminal-node","hint":"Terminal input","focused":"false","bounds":"[10,60][50,80]"},"children":[]}
   ]
 }
 '@ | ConvertFrom-Json -Depth 20
@@ -92,8 +92,24 @@ Assert-True (
     $focusedTextInputs[0].attributes.hint -eq 'Search text Find'
 ) 'Targeted text input did not select the unique focused text field'
 
+$warmPaneLayout = @'
+{"attributes":{},"children":[
+ {"attributes":{"type":"__Common__","opacity":"0.000000","hitTestBehavior":"HitTestMode.None"},"children":[
+  {"attributes":{"type":"textField","hint":"Terminal input","visible":"true","bounds":"[10,10][30,30]"},"children":[]}]},
+ {"attributes":{"type":"__Common__","opacity":"1.000000","hitTestBehavior":"HitTestMode.Default"},"children":[
+  {"attributes":{"type":"textField","hint":"Terminal input","opacity":"0.000000","visible":"true","bounds":"[40,10][60,30]"},"children":[]}]}
+]}
+'@ | ConvertFrom-Json -Depth 10
+Assert-True (@(Get-LeanTTYTerminalInputNodes -Layout $warmPaneLayout).Count -eq 1) (
+    'Hidden warm Tab inputs must be excluded without excluding the active xterm transparent textarea'
+)
+
 & {
     $script:capturedHdcCalls = [Collections.Generic.List[object]]::new()
+    function Get-HdcUiLayout {
+        param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
+        return $focusedTextLayout
+    }
     function Invoke-FakeHdc {
         $script:capturedHdcCalls.Add(@($args))
         $global:LASTEXITCODE = 0
@@ -104,7 +120,13 @@ Assert-True (
         -Target 'regression-device' `
         -Text 'ssh-keygen -p -f regression_key' `
         -InputNode ([pscustomobject]@{
-            attributes = [pscustomobject]@{ bounds = '[10,20][110,70]' }
+            attributes = [pscustomobject]@{
+                type = 'textField'
+                accessibilityId = 'search-node'
+                hint = 'Search text Find'
+                focused = 'true'
+                bounds = '[9,9][49,29]'
+            }
         })
     Assert-True (
         $script:capturedHdcCalls.Count -eq 1 -and
@@ -115,10 +137,219 @@ Assert-True (
         $script:capturedHdcCalls[0][3] -eq 'uitest' -and
         $script:capturedHdcCalls[0][4] -eq 'uiInput' -and
         $script:capturedHdcCalls[0][5] -eq 'inputText' -and
-        $script:capturedHdcCalls[0][6] -eq 60 -and
-        $script:capturedHdcCalls[0][7] -eq 45 -and
+        $script:capturedHdcCalls[0][6] -eq 30 -and
+        $script:capturedHdcCalls[0][7] -eq 20 -and
         $script:capturedHdcCalls[0][8] -eq 'ssh-keygen -p -f regression_key'
-    ) 'Device text did not target the selected terminal input through UiTest inputText'
+    ) 'Device text did not revalidate and target the current focused UiTest text field'
+}
+
+& {
+    $script:regeneratedIdentityHdcCalls = 0
+    function Get-HdcUiLayout {
+        param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
+        return $focusedTextLayout
+    }
+    function Invoke-FakeHdc {
+        $script:regeneratedIdentityHdcCalls++
+        $global:LASTEXITCODE = 0
+    }
+
+    Invoke-LeanTTYDeviceText `
+        -Hdc 'Invoke-FakeHdc' `
+        -Target 'regression-device' `
+        -Text 'same-target-after-layout-refresh' `
+        -InputNode ([pscustomobject]@{
+            attributes = [pscustomobject]@{
+                type = 'textField'
+                accessibilityId = 'previous-search-node'
+                hint = 'Search text Find'
+                focused = 'true'
+                bounds = '[10,10][50,30]'
+            }
+        })
+    Assert-True ($script:regeneratedIdentityHdcCalls -eq 1) (
+        'Device text rejected the same semantic and geometric target after UiTest regenerated its opaque ID'
+    )
+}
+
+& {
+    $script:staleTargetInputCalls = 0
+    function Get-HdcUiLayout {
+        param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
+        return $focusedTextLayout
+    }
+    function Invoke-FakeHdc {
+        $script:staleTargetInputCalls++
+        $global:LASTEXITCODE = 0
+    }
+
+    $targetFailure = $null
+    try {
+        Invoke-LeanTTYDeviceText `
+            -Hdc 'Invoke-FakeHdc' `
+            -Target 'regression-device' `
+            -Text 'must-not-reach-terminal' `
+            -InputNode ([pscustomobject]@{
+                attributes = [pscustomobject]@{
+                    type = 'textField'
+                    accessibilityId = 'terminal-node'
+                    hint = 'Terminal input'
+                    focused = 'true'
+                    bounds = '[10,60][50,80]'
+                }
+            })
+    } catch { $targetFailure = $_.Exception }
+    Assert-True ($null -ne $targetFailure) 'Device text accepted a target whose focus had moved to another field'
+    $detail = $targetFailure.Data['LeanTTYTextInputFailure']
+    Assert-True ($null -ne $detail -and $detail.phase -eq 'before' -and
+        $detail.focusedCount -eq 1 -and $detail.targets[0].attributes.hint.equal -eq $false) (
+        'Pre-input rejection lost its content-free target comparison'
+    )
+    $serializedDetail = $detail | ConvertTo-Json -Depth 12
+    Assert-True ($serializedDetail -notmatch 'Terminal input|Search text Find|terminal-node|must-not-reach-terminal') (
+        'Target rejection evidence retained field content or opaque identifiers'
+    )
+    Assert-True ($script:staleTargetInputCalls -eq 0) (
+        'Device text reached UiTest after the intended target lost focus'
+    )
+}
+
+& {
+    $script:ownerCheckLayouts = 0
+    $script:ownerCheckInputs = 0
+    function Get-HdcUiLayout {
+        param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
+        $script:ownerCheckLayouts++
+        $focusedIndex = if ($script:ownerCheckLayouts -eq 1) { 0 } else { 1 }
+        return [pscustomobject]@{ attributes = @{}; children = @(0, 1 | ForEach-Object {
+            [pscustomobject]@{ attributes = [pscustomobject]@{
+                type = 'textField'; hint = 'Terminal input'; bounds = '[10,10][30,30]'
+                hierarchy = "ROOT1,0,$_"; hostWindowId = '1'
+                focused = $(if ($_ -eq $focusedIndex) { 'true' } else { 'false' })
+            }; children = @() }
+        }) }
+    }
+    function Invoke-FakeHdc {
+        $script:ownerCheckInputs++
+        $global:LASTEXITCODE = 0
+    }
+    $targetFailure = $null
+    try {
+        Invoke-LeanTTYDeviceText -Hdc 'Invoke-FakeHdc' -Target 'regression-device' -Text 'probe'
+    } catch { $targetFailure = $_.Exception }
+    Assert-True ($null -ne $targetFailure) 'Text input must fail immediately when its click transfers focus to an overlapping Pane'
+    $detail = $targetFailure.Data['LeanTTYTextInputFailure']
+    Assert-True ($null -ne $detail -and $detail.phase -eq 'after' -and
+        $detail.targets[0].expectedPath.indices -join ',' -eq '0,0' -and
+        $detail.targets[0].currentPath.indices -join ',' -eq '0,1' -and
+        $detail.targets[0].sameRoot -eq $true -and
+        $detail.targets[0].attributes.bounds.equal -eq $true) (
+        'Post-input rejection lost the changed tree path at overlapping geometry'
+    )
+    Assert-True (($detail | ConvertTo-Json -Depth 12) -notmatch 'ROOT1|Terminal input|probe') (
+        'Post-input rejection exposed layout identifiers or content'
+    )
+    Assert-True ($script:ownerCheckInputs -eq 1 -and $script:ownerCheckLayouts -eq 2) (
+        'Owner loss must capture one post-input layout and never retry or send Enter'
+    )
+}
+
+& {
+    $expected = [pscustomobject]@{ attributes = [pscustomobject]@{
+        type='textField'; hint='Terminal input'; hierarchy='ROOT1,0,0'; hostWindowId='1'
+        accessibilityId='old'; bounds='[10,10][30,30]'
+    } }
+    $moved = [pscustomobject]@{ attributes = [pscustomobject]@{
+        type='textField'; hint='Terminal input'; hierarchy='ROOT1,0,0'; hostWindowId='1'
+        accessibilityId='new'; bounds='[40,10][60,30]'
+    } }
+    Assert-True (Test-LeanTTYSameTextInputTarget -ExpectedNode $expected -CurrentNode $moved) (
+        'Within one input operation, cursor movement and regenerated opaque IDs must preserve the same tree target'
+    )
+    $moved.attributes.hierarchy = 'ROOT1,0,1'
+    $moved.attributes.bounds = $expected.attributes.bounds
+    $moved.attributes.accessibilityId = $expected.attributes.accessibilityId
+    Assert-True (-not (Test-LeanTTYSameTextInputTarget -ExpectedNode $expected -CurrentNode $moved)) (
+        'Matching bounds or an opaque ID must not override a different current tree owner'
+    )
+    $moved.attributes.hierarchy = 'ROOT-private-host,secret-text'
+    $failure = New-LeanTTYTextInputFailure -Message 'test-only' -Phase after `
+        -ExpectedNode $expected -CurrentNodes @($moved)
+    $detail = $failure.Data['LeanTTYTextInputFailure']
+    Assert-True (-not $detail.targets[0].currentPath.valid -and $null -eq $detail.targets[0].sameRoot -and
+        ($detail | ConvertTo-Json -Depth 12) -notmatch 'private-host|secret-text|old|new') (
+        'Malformed hierarchy was leaked or treated as known structural identity'
+    )
+}
+
+& {
+    # The native Web owner survives a DOM renderer change; its virtual textarea
+    # path, opaque ID and cursor-following bounds do not have to survive it.
+    function New-WebOwnerLayout($after, $case) {
+        $webPath = if ($after -and $case -eq 'other-pane') { 'ROOT1,1' } else { 'ROOT1,0' }
+        $webId = if ($after -and $case -eq 'replaced-web') { 'web-new' } else { 'web-owner' }
+        $windowId = if ($after -and $case -eq 'other-window') { '2' } else { '1' }
+        $hint = if ($after -and $case -eq 'search') { 'Search text Find' } else { 'Terminal input' }
+        $leaf = [pscustomobject]@{attributes=[pscustomobject]@{
+            type='textField'; hint=$hint; focused='true'; hostWindowId=$windowId
+            hierarchy=($webPath + $(if ($after) { ',0,2,0,0' } else { ',0,0,2,0,0' }))
+            accessibilityId=$(if ($after) { 'input-new' } else { 'input-old' })
+            bounds=$(if ($after) { '[80,20][100,40]' } else { '[10,10][30,30]' })
+        };children=@()}
+        $children = @($leaf)
+        if ($after -and $case -eq 'ambiguous') {
+            $leaf.attributes.hierarchy = $webPath + ',0,0,2,0,0'
+            $children += [pscustomobject]@{attributes=@{type='textField';hint='Terminal input';focused='false'};children=@()}
+        }
+        $web = [pscustomobject]@{attributes=[pscustomobject]@{
+            type='Web'; hierarchy=$webPath; accessibilityId=$webId; hostWindowId=$windowId
+            bounds='[0,0][200,200]'
+        };children=$children}
+        return [pscustomobject]@{attributes=@{};children=@($web)}
+    }
+    foreach ($case in @('same-web', 'other-pane', 'replaced-web', 'other-window', 'search', 'ambiguous')) {
+        $script:webOwnerLayoutReads = 0
+        $script:webOwnerInputs = 0
+        function Get-HdcUiLayout {
+            param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
+            $script:webOwnerLayoutReads++
+            return New-WebOwnerLayout ($script:webOwnerLayoutReads -gt 1) $case
+        }
+        function Invoke-FakeHdc { $script:webOwnerInputs++; $global:LASTEXITCODE = 0 }
+        $failure = $null
+        try { Invoke-LeanTTYDeviceText -Hdc 'Invoke-FakeHdc' -Target 'regression-device' -Text 'public-owner-probe' }
+        catch { $failure = $_.Exception }
+        if ($case -eq 'same-web') {
+            Assert-True ($null -eq $failure) 'Same native Web owner must survive a virtual textarea subtree rebuild'
+        } else {
+            Assert-True ($null -ne $failure) "Terminal input must reject changed or ambiguous owner: $case"
+        }
+        Assert-True ($script:webOwnerInputs -eq 1 -and $script:webOwnerLayoutReads -eq 2) (
+            'Web owner comparison must not add input retries or Enter'
+        )
+    }
+}
+
+foreach ($focusCount in @(0, 5)) {
+    & {
+        function Get-HdcUiLayout {
+            return @{ attributes = @{}; children = @(for ($index = 0; $index -lt $focusCount; $index++) {
+                @{ attributes = @{ type = 'textField'; hint = 'private-hint'; focused = 'true';
+                    hierarchy = "ROOT123,$index"; bounds = '[0,0][20,20]' }; children = @() }
+            }) }
+        }
+        function Invoke-FakeHdc { throw 'Input must not be attempted for non-unique focus' }
+        $focusFailure = $null
+        try {
+            Invoke-LeanTTYDeviceText -Hdc Invoke-FakeHdc -Target regression-device -Text private-value
+        } catch { $focusFailure = $_.Exception.Data['LeanTTYTextInputFailure'] }
+        Assert-True ($null -ne $focusFailure -and $focusFailure.focusedCount -eq $focusCount -and
+            $focusFailure.targets.Count -eq [Math]::Min(4, $focusCount) -and
+            $focusFailure.targetsTruncated -eq ($focusCount -gt 4) -and
+            ($focusFailure | ConvertTo-Json -Depth 12) -notmatch 'ROOT123|private-hint|private-value') (
+            'Non-unique focus failure lost its count, exceeded the evidence bound or leaked content'
+        )
+    }
 }
 
 & {
@@ -476,14 +707,49 @@ Assert-True ($environmentSummary.harnessStability -eq 'not-assessed') (
     ) 'Prepared Tab/Unicode command did not reuse the exact pre-submit contract'
 }
 
+& {
+    $script:targetFailureResets = 0
+    $script:targetFailureEnters = 0
+    $observations = [Collections.Generic.List[object]]::new()
+    function Reset-LeanTTYDeviceCommandInput { $script:targetFailureResets++ }
+    function Clear-LeanTTYAppLogs {}
+    function Invoke-LeanTTYDeviceKey { $script:targetFailureEnters++ }
+    $expectedTarget = @{ attributes = @{ type='textField'; hint='private-hint'; hierarchy='ROOT9,0' } }
+    $currentTarget = @{ attributes = @{ type='textField'; hint='private-hint'; hierarchy='ROOT9,1' } }
+    $targetError = New-LeanTTYTextInputFailure -Message '[harness] Synthetic owner loss' -Phase after `
+        -ExpectedNode $expectedTarget -CurrentNodes @($currentTarget)
+    $caught = $null
+    try {
+        Submit-LeanTTYDeviceCommand -Hdc 'unused' -Target 'unused' -ProcessId '100' `
+            -Command 'public-input' -Stage 'owner-loss-before-submit' -ObservationSink $observations `
+            -InputNodeProvider { $expectedTarget } -InputPreparer { throw $targetError } | Out-Null
+    } catch { $caught = $_.Exception }
+    Assert-True ([object]::ReferenceEquals($caught, $targetError) -and $observations.Count -eq 1 -and
+        $observations[0].result -eq 'failed' -and $observations[0].failureDomain -eq 'harness' -and
+        $observations[0].textTargetFailure.phase -eq 'after' -and $observations[0].inputAttempts -eq 1 -and
+        $observations[0].enterCount -eq 0 -and $script:targetFailureEnters -eq 0 -and
+        $script:targetFailureResets -eq 1) 'Owner loss was not retained or triggered a retry, reset or Enter'
+    Assert-True (($observations | ConvertTo-Json -Depth 12) -notmatch 'private-hint|ROOT9|public-input') (
+        'Ordinary command failure evidence exposed target identifiers or input text'
+    )
+}
+
 $deviceTextSource = (Get-Command Invoke-LeanTTYDeviceText).Definition
+foreach ($evidenceOwner in @('verify-ssh-auth-pc.ps1', 'verify-key-passphrase-pc.ps1')) {
+    $evidenceSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot $evidenceOwner) -Raw
+    Assert-True ($evidenceSource.Contains('postInputSettleMilliseconds = 0')) (
+        "$evidenceOwner still reports a fixed input delay that the shared helper no longer applies"
+    )
+}
 $submitCommandParameters = (Get-Command Submit-LeanTTYDeviceCommand).Parameters.Keys
 $submitCommandSource = (Get-Command Submit-LeanTTYDeviceCommand).Definition
 $automationSummarySource = (Get-Command Get-LeanTTYDeviceCommandAutomationSummary).Definition
 Assert-True (
+    $deviceTextSource.Contains("'shell', 'uitest', 'uiInput', 'inputText', `$center.x, `$center.y, `$Text") -and
     -not $deviceTextSource.Contains("@('uiInput', 'text', `$Text)") -and
-    $deviceTextSource.Contains("@('uiInput', 'inputText', `$center.x, `$center.y, `$Text)")
-) 'Ordinary device text can still collide with the focused UiTest CLI text parser'
+    $deviceTextSource.Contains('Get-HdcUiLayout') -and
+    $deviceTextSource.Contains('[harness] Intended HarmonyOS text target is no longer uniquely focused')
+) 'Ordinary device text does not atomically revalidate and target its intended focus node'
 Assert-True (
     $submitCommandParameters -contains 'ProcessId' -and
     $submitCommandParameters -contains 'InputNodeProvider' -and
@@ -666,10 +932,10 @@ Assert-True (
     $deviceRegressionText -notmatch 'terminal-line cleanup|backspaceCount'
 ) 'Device input cleanup still uses inferred backspaces'
 Assert-True (
-    $deviceRegressionText.Contains("@('uiInput', 'inputText', `$center.x, `$center.y, `$Text)") -and
+    $deviceRegressionText.Contains("'shell', 'uitest', 'uiInput', 'inputText', `$center.x, `$center.y, `$Text") -and
     -not $deviceRegressionText.Contains('ConvertTo-LeanTTYDeviceTextKeyCommand') -and
-    $deviceRegressionText.Contains('Start-Sleep -Milliseconds 500')
-) 'Ordinary device text does not use the targeted serialized UiTest path'
+    $deviceRegressionText.Contains('HarmonyOS pre-input focus layout capture')
+) 'Ordinary device text does not use the focus-verified targeted UiTest path'
 Assert-True (
     $deviceRegressionText.Contains('function Invoke-LeanTTYSerializedUiTest') -and
     $deviceRegressionText.Contains('[Threading.Mutex]::new') -and
@@ -767,7 +1033,36 @@ Assert-True (
     $splitInputs.Count -eq 2 -and
     $splitInputs[0].attributes.bounds -eq '[127,495][145,536]' -and
     $splitInputs[1].attributes.bounds -eq '[1694,135][1712,176]'
-) 'Terminal input nodes are not sorted into stable left/right pane order'
+) 'Terminal input nodes did not preserve layout traversal order'
+
+# Web bounds can overlap in UiTest while each hidden textarea follows its own
+# cursor. Pane selection must survive both reversed and identical cursor X.
+$overlappingPaneLayout = @'
+{
+  "attributes": {"type":"Stack","bounds":"[0,0][2000,1000]"},
+  "children": [
+    {"attributes":{"type":"Web","bounds":"[1000,0][2000,1000]"},"children":[
+      {"attributes":{"type":"textField","bounds":"[1613,589][1632,630]","hint":"Terminal input","focused":"true"},"children":[]}
+    ]},
+    {"attributes":{"type":"Web","bounds":"[1000,0][2000,1000]"},"children":[
+      {"attributes":{"type":"textField","bounds":"[1541,749][1560,790]","hint":"Terminal input","focused":"false"},"children":[]}
+    ]}
+  ]
+}
+'@ | ConvertFrom-Json -Depth 20
+$orderedPaneInputs = @(Get-LeanTTYTerminalInputNodes -Layout $overlappingPaneLayout)
+Assert-True (
+    $orderedPaneInputs.Count -eq 2 -and
+    [object]::ReferenceEquals($orderedPaneInputs[0], $overlappingPaneLayout.children[0].children[0]) -and
+    [object]::ReferenceEquals($orderedPaneInputs[1], $overlappingPaneLayout.children[1].children[0]) -and
+    $orderedPaneInputs[0].attributes.focused -ceq 'true'
+) 'Pane order was reversed by hidden textarea cursor coordinates'
+$overlappingPaneLayout.children[1].children[0].attributes.bounds = '[1613,749][1632,790]'
+$orderedPaneInputs = @(Get-LeanTTYTerminalInputNodes -Layout $overlappingPaneLayout)
+Assert-True (
+    [object]::ReferenceEquals($orderedPaneInputs[0], $overlappingPaneLayout.children[0].children[0]) -and
+    [object]::ReferenceEquals($orderedPaneInputs[1], $overlappingPaneLayout.children[1].children[0])
+) 'Pane order changed when cursor X coordinates were identical'
 
 & {
     $script:focusLayoutIndex = 0
@@ -900,9 +1195,9 @@ foreach ($scriptName in @(
             ([regex]::Matches($content, 'Invoke-TemporaryFixtureAuthText').Count -ge 6) -and
             $content.Contains("'^[a-z0-9]+$'") -and
             $content.Contains('repository-only-test-values-not-user-or-production-credentials') -and
-            $content.Contains('harmony-uitest-targeted-inputText-runtime-generated-temporary-fixture-values') -and
+            $content.Contains('harmony-uitest-focus-verified-inputText-runtime-generated-temporary-fixture-values') -and
             $content.Contains("method = 'harmony-uitest-text-and-raw-physical-special-keys'") -and
-            $content.Contains("ordinaryTextInjection = 'harmony-uitest-targeted-inputText'") -and
+            $content.Contains("ordinaryTextInjection = 'harmony-uitest-focus-verified-inputText'") -and
             $content.Contains("physicalKeyInjection = 'raw-key-events-special-keys-only'") -and
             $content.Contains('Submit-FocusedDeviceCommand') -and
             $content.Contains('Submit-LeanTTYDeviceCommand') -and
@@ -1609,7 +1904,7 @@ foreach ($moshContract in @(
     'Write-LiveStatus -Stage "await-$operatorStage-open-unlock"',
     'OPERATOR ACTION REQUIRED:',
     "'lid_' + `$attemptId.Substring(0, 10)",
-    "`$recoveryInputMethod = 'harmony-uitest-targeted-inputText'",
+    "`$recoveryInputMethod = 'harmony-uitest-focus-verified-inputText'",
     'operatorLockObserved = $operatorLockObserved',
     'operatorUnlockObserved = $operatorUnlockObserved',
     'mosh-retry-interrupt-focus-$attempt.json',
@@ -1862,9 +2157,9 @@ Assert-True (
 ) 'Routine device layouts still request unused UiTest extended visual attributes'
 Assert-True (
     $deviceRegressionText.Contains("return 't' + [Guid]::NewGuid()") -and
-    $deviceRegressionText.Contains("@('uiInput', 'inputText', `$center.x, `$center.y, `$Text)") -and
-    $deviceRegressionText.Contains('Start-Sleep -Milliseconds 500')
-) 'Device secret injection is not restricted to stable lowercase input with targeted UiTest delivery'
+    $deviceTextSource.Contains("'shell', 'uitest', 'uiInput', 'inputText', `$center.x, `$center.y, `$Text") -and
+    -not $deviceTextSource.Contains('Start-Sleep -Milliseconds 500')
+) 'Device secret injection is not restricted to stable lowercase input with focus-verified targeted UiTest delivery'
 
 $sessionViewModel = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
