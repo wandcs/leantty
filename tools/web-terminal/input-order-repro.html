@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xterm 6.0.0 single-character input-order repro</title>
+<link rel="stylesheet" href="../../entry/src/main/resources/rawfile/xterm.css">
+<style>
+  body { max-width: 960px; margin: 28px auto; padding: 0 20px; font: 16px/1.5 system-ui; }
+  button { padding: 8px 16px; font: inherit; }
+  #surface { min-height: 100px; margin: 20px 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 8px; border: 1px solid #aaa; text-align: left; }
+  pre { white-space: pre-wrap; }
+</style>
+<h1>One character, two event orders</h1>
+<p>This deliberately schedules <strong>synthetic, untrusted</strong> events against unchanged
+  xterm 6.0.0. It reproduces a candidate mechanism, <strong>not a proven HarmonyOS failure</strong>.
+  There is no LeanTTY runtime, Bridge, SSH, Mosh, password, network request or modified xterm handler.</p>
+<p>The input is always the public character <code>a</code>. Every case gets a fresh surface.
+  A timer barrier registered after keydown lets xterm's earlier zero-delay diff run before insertion.</p>
+<button id="run">Run fixed cases</button>
+<p id="status" role="status">Ready. No events run until requested.</p>
+<div id="surface"></div>
+<table><thead><tr><th>Case</th><th>DOM value</th><th>Observed output</th><th>Exact</th></tr></thead>
+  <tbody id="results"></tbody></table>
+<details><summary>Public test trace</summary><pre id="trace"></pre></details>
+<script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script>
+'use strict';
+const cases = ['xterm-normal', 'xterm-delayed-input', 'xterm-keyup-before-input',
+  'xterm-input-only', 'textarea-delayed-input'];
+let running = false;
+window.reproResult = null;
+const barrier = () => new Promise(resolve => setTimeout(resolve, 0));
+
+async function runCase(name) {
+  const container = document.getElementById('surface');
+  const plain = name.startsWith('textarea-');
+  const term = plain ? null : new Terminal({ cols: 50, rows: 3 });
+  let output = '', listener, target;
+  const trace = [];
+  try {
+    if (plain) {
+      target = document.createElement('textarea');
+      container.appendChild(target);
+    } else {
+      term.open(container);
+      target = term.textarea;
+      listener = term.onData(data => { output += data; trace.push(['onData', data.length]); });
+    }
+    target.focus();
+    target.value = '';
+    const key = type => {
+      const event = new KeyboardEvent(type, { key: 'a', code: 'KeyA',
+        keyCode: type === 'keydown' ? 229 : 65,
+        bubbles: true, cancelable: true, composed: true });
+      if (event.keyCode !== (type === 'keydown' ? 229 : 65) || event.isTrusted) {
+        throw new Error('Browser did not honor the synthetic key contract');
+      }
+      trace.push([type, event.keyCode]);
+      target.dispatchEvent(event);
+    };
+    const insert = () => {
+      target.dispatchEvent(new InputEvent('beforeinput', {
+        inputType: 'insertText', data: 'a', bubbles: true, composed: true, cancelable: true }));
+      target.value += 'a';
+      trace.push(['DOM-insert', target.value.length]);
+      const event = new InputEvent('input', {
+        inputType: 'insertText', data: 'a', bubbles: true, composed: true });
+      if (event.isTrusted || !event.composed) throw new Error('Unexpected input event contract');
+      target.dispatchEvent(event);
+    };
+    if (name === 'xterm-input-only') {
+      insert();
+    } else {
+      key('keydown');
+      if (name !== 'xterm-normal') {
+        await barrier();
+        trace.push(['timer-barrier-before-input']);
+      }
+      if (name === 'xterm-keyup-before-input') key('keyup');
+      insert();
+      await barrier();
+      if (name !== 'xterm-keyup-before-input') key('keyup');
+    }
+    await barrier();
+    const actual = plain ? target.value : output;
+    return { name, expected: 'a', actual, domValue: target.value,
+      oracle: plain ? 'textarea.value' : 'Terminal.onData', exact: actual === 'a', trace };
+  } finally {
+    if (listener) listener.dispose();
+    if (term) term.dispose();
+    container.replaceChildren();
+  }
+}
+
+window.runInputOrderRepro = async function() {
+  if (running) throw new Error('A run is already active');
+  running = true;
+  window.reproResult = null;
+  document.getElementById('run').disabled = true;
+  document.getElementById('status').textContent = 'Running fixed synthetic cases…';
+  document.getElementById('results').replaceChildren();
+  try {
+    const results = [];
+    for (const name of cases) results.push(await runCase(name));
+    window.reproResult = { kind: 'synthetic-browser-input-order', deviceCauseProven: false, results };
+    for (const result of results) {
+      const row = document.createElement('tr');
+      for (const value of [result.name, JSON.stringify(result.domValue),
+        JSON.stringify(result.actual), result.exact ? 'yes' : 'NO — missing output']) {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        row.appendChild(cell);
+      }
+      document.getElementById('results').appendChild(row);
+    }
+    document.getElementById('trace').textContent = JSON.stringify(window.reproResult, null, 2);
+    document.getElementById('status').textContent = 'Finished. Synthetic scheduling only; device cause remains unproven.';
+    return window.reproResult;
+  } catch (error) {
+    document.getElementById('status').textContent = 'Invalid run: ' + error.message;
+    throw error;
+  } finally {
+    running = false;
+    document.getElementById('run').disabled = false;
+  }
+};
+document.getElementById('run').addEventListener('click', () => {
+  window.runInputOrderRepro().catch(() => {});
+});
+</script>
+</html>
