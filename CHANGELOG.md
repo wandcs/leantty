@@ -87,6 +87,9 @@ recorded on 2026-08-29.**
 
 ### Changed
 
+- Stop the initial Mosh connection-status poll after connection; leave the
+  protocol library's timers and authenticated reachability observer unchanged.
+
 - Add pre-release readiness drills, explicit product/harness identities,
   recoverable matrix checkpoints and earlier reversible asset preparation to
   the formal release tooling without weakening candidate or physical-PC gates.
@@ -177,6 +180,16 @@ recorded on 2026-08-29.**
 
 ### Fixed
 
+- Preserve the latest SSH/Mosh output pause state when the native consumer is
+  delayed, so a full control queue cannot discard the final resume request.
+- Stop a Mosh connection after native input admission is rejected, drain received
+  output and report the failure on the restored local page. Do not resend rejected
+  text or allow later input to submit an incomplete command.
+- Share one Mosh close completion across overlapping disconnect requests, keeping
+  every caller's wait bounded by the existing native close lifecycle.
+- Treat an ended native Mosh task or an already pending close request as an
+  idempotent close, retaining queued final output until ArkTS consumes transport
+  close instead of dropping it when late input is rejected.
 - Kept SSH session-boundary mode, cursor, color and alternate-buffer cleanup while placing
   `Connection closed` and the local prompt immediately after the last visible terminal content,
   instead of forcing them to the final screen row and exposing a large blank gap. Normal
