@@ -253,6 +253,12 @@ Invoke-RegressionCheck -Name 'offline-user-guide' -Groups @('web') -Action {
     if ($LASTEXITCODE -ne 0) { throw 'Offline user guide tests failed' }
 }
 
+Invoke-RegressionCheck -Name 'mosh-owner-contracts' -Groups @('arkts') -Action {
+    $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
+    & $nodeExe (Join-Path $repoRoot 'tools\test-mosh-client.cjs') $typescript
+    if ($LASTEXITCODE -ne 0) { throw 'Mosh owner contract tests failed' }
+}
+
 Invoke-RegressionCheck -Name 'trusted-arkts-tests' -Groups @('arkts') -Action {
     Push-Location $repoRoot
     try {

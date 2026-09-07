@@ -26,7 +26,8 @@ export enum MoshErrorCode {
   PROTOCOL = 5,
   RESOURCE_LIMIT = 6,
   INTERNAL = 7,
-  SESSION_CLOSED = 8
+  SESSION_CLOSED = 8,
+  INPUT_REJECTED = 9
 }
 
 export class MoshError extends Error {
@@ -150,6 +151,8 @@ export class MoshClient {
   private eventCallback: ((message: MoshClientMessage) => void) | null = null
   private dataCallback: ((data: Uint8Array) => void) | null = null
   private disconnectCompletion: (() => void) | null = null
+  private disconnectPromise: Promise<void> | null = null
+  private pendingInputError: MoshError | null = null
   private logger: Logger = new Logger('MoshClient')
 
   async connect(options: SshConnectOptions, serverPath: string,
@@ -282,12 +285,21 @@ export class MoshClient {
     return this.pendingKnownHostLine
   }
 
-  write(data: string): void {
-    if (!this.connected || this.sessionId.length === 0) { return }
+  // Success means native admission, not remote execution. A rejected frame must
+  // stop subsequent input (especially Enter), without retrying uncertain text.
+  write(data: string): boolean {
+    if (!this.connected || this.sessionId.length === 0) { return false }
     try {
       sshNative.moshWrite(this.sessionId, data)
+      return true
     } catch (e) {
       this.logger.warn('Mosh write request rejected')
+      this.pendingInputError = new MoshError(
+        MoshErrorCode.INPUT_REJECTED, 'Mosh input was not accepted.', '', 'client')
+      // Keep receiving output until native close; reporting ERROR now would
+      // release the Pane's Mosh page before its final received output drains.
+      this.disconnect()
+      return false
     }
   }
 
@@ -309,22 +321,27 @@ export class MoshClient {
     }
   }
 
-  async disconnect(): Promise<void> {
-    if (this.sessionId.length === 0) { return }
+  disconnect(): Promise<void> {
+    if (this.disconnectPromise !== null) { return this.disconnectPromise }
+    if (this.sessionId.length === 0) { return Promise.resolve() }
     let completion: Promise<void> = new Promise<void>((resolve: () => void) => {
       this.disconnectCompletion = resolve
     })
+    this.disconnectPromise = completion
+    this.connected = false
+    this.waitingAuth = false
+    this.pendingLayer = ''
     try {
       sshNative.moshDisconnect(this.sessionId)
     } catch (e) {
       this.logger.warn('Mosh disconnect request failed')
-      this.clearSession()
-      return
+      if (this.pendingInputError !== null) {
+        this.handleError(this.pendingInputError)
+      } else {
+        this.clearSession()
+      }
     }
-    this.connected = false
-    this.waitingAuth = false
-    this.pendingLayer = ''
-    await completion
+    return completion
   }
 
   onEvent(callback: (message: MoshClientMessage) => void): void {
@@ -362,6 +379,7 @@ export class MoshClient {
       return
     }
     if (event.kind === 'connected') {
+      if (this.disconnectPromise !== null) { return }
       this.connected = true
       this.finishAuthenticationSubmission()
       this.emitEvent(MoshClientMessage.simple(MoshClientEvent.CONNECTED))
@@ -382,6 +400,9 @@ export class MoshClient {
       }
     }
     if (event.kind === 'error') {
+      // The transport close is ordered after its final data callback. During
+      // rejected-input shutdown it owns completion, not the control channel.
+      if (this.pendingInputError !== null) { return }
       this.handleError(MoshClient.parseControlError(event))
       return
     }
@@ -479,6 +500,10 @@ export class MoshClient {
       return
     }
     if (event.kind === 'close') {
+      if (this.pendingInputError !== null) {
+        this.handleError(this.pendingInputError)
+        return
+      }
       if (event.code.length > 0) {
         this.handleError(new MoshError(
           MoshErrorCode.NETWORK, event.detail, event.detail, 'mosh_udp'))
@@ -559,6 +584,8 @@ export class MoshClient {
     this.pendingKnownHostLine = ''
     this.pendingAuthChallenge = null
     this.sessionId = ''
+    this.pendingInputError = null
+    this.disconnectPromise = null
     let completion: (() => void) | null = this.disconnectCompletion
     this.disconnectCompletion = null
     if (completion !== null) {

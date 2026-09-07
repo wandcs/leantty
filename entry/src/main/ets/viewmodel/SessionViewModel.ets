@@ -1057,8 +1057,13 @@ export class SessionViewModel {
       (['authentication', 'mosh_bootstrap', 'mosh_udp', 'client'].indexOf(error.stage) >= 0 ?
         error.stage : 'rejected'))
     this.finishMoshTerminalOwnership(() => {
-      this.writeError('The Mosh connection failed.',
-        'Check the Host, network, credentials and mosh-server, then try again.')
+      if (error.code === MoshErrorCode.INPUT_REJECTED) {
+        this.writeError('Mosh input was not accepted.',
+          'The connection has been stopped. Check the remote state before reconnecting.')
+      } else {
+        this.writeError('The Mosh connection failed.',
+          'Check the Host, network, credentials and mosh-server, then try again.')
+      }
       if (this.terminalSurface !== null) { this.terminalSurface.captureSnapshot() }
     })
   }
@@ -1331,15 +1336,16 @@ export class SessionViewModel {
   }
 
   private handleConnectedInput(data: string): void {
-    if (this.moshClient !== null) {
+    let moshClient: MoshClient | null = this.moshClient
+    if (moshClient !== null) {
       let result: MoshEscapeResult = this.moshEscapeParser.consume(data)
       for (let index: number = 0; index < result.events.length; index++) {
         let event: MoshEscapeEvent = result.events[index]
         if (event.kind === MoshEscapeEventKind.REMOTE_DATA) {
-          this.moshClient.write(event.data)
+          if (!moshClient.write(event.data)) { return }
         } else if (event.kind === MoshEscapeEventKind.DISCONNECT) {
           this.logger.info('Mosh escape action=disconnect')
-          this.moshClient.disconnect()
+          moshClient.disconnect()
           return
         } else if (event.kind === MoshEscapeEventKind.HELP) {
           this.writeTerminal('\r\nSupported Mosh escapes:\r\n' +

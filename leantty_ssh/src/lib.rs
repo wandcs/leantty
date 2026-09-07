@@ -35,7 +35,9 @@ type WriteSender = tokio::sync::mpsc::Sender<Vec<u8>>;
 type ResizeSender = tokio::sync::mpsc::Sender<(u32, u32)>;
 type AuthSender = tokio::sync::mpsc::Sender<LayeredAuthMethod>;
 type DisconnectSender = tokio::sync::mpsc::Sender<()>;
-type OutputPauseSender = tokio::sync::mpsc::Sender<bool>;
+// Flow control is desired state, not an ordered command history. A delayed
+// consumer must still see the final resume without an overflow/retry window.
+type OutputPauseSender = tokio::sync::watch::Sender<bool>;
 type JsControlCallback =
     Arc<ThreadsafeFunction<ControlEvent, (), ControlEvent, Status, false, false, 64>>;
 type JsTransportCallback =
@@ -997,7 +999,7 @@ struct SessionReceivers {
     disconnect_rx: tokio::sync::mpsc::Receiver<()>,
     auth_rx: tokio::sync::mpsc::Receiver<LayeredAuthMethod>,
     host_key_rx: Option<tokio::sync::mpsc::Receiver<HostKeyDecision>>,
-    output_pause_rx: tokio::sync::mpsc::Receiver<bool>,
+    output_pause_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 const INPUT_WRITE_CHUNK_BYTES: usize = 32 * 1024;
@@ -2286,7 +2288,8 @@ async fn run_connected_session(
     let mut metrics_tick = tokio::time::interval(Duration::from_secs(1));
     metrics_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     metrics_tick.tick().await;
-    let mut output_paused = false;
+    let mut output_paused = *output_pause_rx.borrow_and_update();
+    let mut output_pause_open = true;
     let mut delivery_metrics = OutputDeliveryMetrics::default();
     let mut exit_code: i32 = -1;
     let mut connection_task_ended = false;
@@ -2317,8 +2320,9 @@ async fn run_connected_session(
                 ),
             );
           }
-          paused = output_pause_rx.recv() => {
-            output_paused = paused.unwrap_or(false);
+          changed = output_pause_rx.changed(), if output_pause_open => {
+            output_pause_open = changed.is_ok();
+            output_paused = output_pause_open && *output_pause_rx.borrow_and_update();
             eprintln!(
                 "[LTTY_SSH] session={} output_paused={}",
                 context.session_id, output_paused
@@ -2909,7 +2913,8 @@ async fn run_mosh_protocol(
     let mut state_tick = tokio::time::interval(Duration::from_millis(100));
     state_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut connected_reported = false;
-    let mut output_paused = false;
+    let mut output_paused = *receivers.output_pause_rx.borrow_and_update();
+    let mut output_pause_open = true;
     let mut close_code = String::new();
     let mut close_detail = String::new();
     let mut close_reason = String::new();
@@ -2924,8 +2929,10 @@ async fn run_mosh_protocol(
 
     while close_code.is_empty() {
         tokio::select! {
-            _ = state_tick.tick() => {
-                if !connected_reported && session.state() == MoshProtocolState::Active {
+            // Only the initial Active notification is polled; established
+            // sessions use output, reachability and task/channel events below.
+            _ = state_tick.tick(), if !connected_reported => {
+                if session.state() == MoshProtocolState::Active {
                     connected_reported = true;
                     let _ = send_control(
                         &context.control_callback,
@@ -2995,9 +3002,10 @@ async fn run_mosh_protocol(
                     break;
                 }
             },
-            paused = receivers.output_pause_rx.recv(), if !graceful_close_requested => {
+            changed = receivers.output_pause_rx.changed(), if !graceful_close_requested && output_pause_open => {
                 let was_paused = output_paused;
-                output_paused = paused.unwrap_or(false);
+                output_pause_open = changed.is_ok();
+                output_paused = output_pause_open && *receivers.output_pause_rx.borrow_and_update();
                 if was_paused && !output_paused {
                     if let Err(error) = session.request_repaint().await {
                         close_code = "repaint".to_string();
@@ -3709,7 +3717,7 @@ pub fn ssh_connect(
     let (disconnect_tx, disconnect_rx) = tokio::sync::mpsc::channel(1);
     let (auth_tx, auth_rx) = tokio::sync::mpsc::channel(1);
     let (host_key_tx, host_key_rx) = tokio::sync::mpsc::channel(1);
-    let (output_pause_tx, output_pause_rx) = tokio::sync::mpsc::channel(8);
+    let (output_pause_tx, output_pause_rx) = tokio::sync::watch::channel(false);
     let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
 
     get_sessions()
@@ -3847,7 +3855,7 @@ pub fn mosh_connect(
     let (disconnect_tx, disconnect_rx) = tokio::sync::mpsc::channel(1);
     let (auth_tx, auth_rx) = tokio::sync::mpsc::channel(1);
     let (host_key_tx, host_key_rx) = tokio::sync::mpsc::channel(1);
-    let (output_pause_tx, output_pause_rx) = tokio::sync::mpsc::channel(8);
+    let (output_pause_tx, output_pause_rx) = tokio::sync::watch::channel(false);
     let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
     get_mosh_sessions()
         .lock()
@@ -4235,7 +4243,7 @@ pub fn ssh_set_output_paused(session_id: String, paused: bool) -> Result<()> {
         .ok_or_else(|| napi_error("session not found"))?;
     session
         .output_pause_tx
-        .try_send(paused)
+        .send(paused)
         .map_err(|error| napi_error(&format!("send failed: {}", error)))
 }
 
@@ -4295,7 +4303,7 @@ pub fn mosh_set_output_paused(session_id: String, paused: bool) -> Result<()> {
         .ok_or_else(|| napi_error("Mosh session not found"))?;
     session
         .output_pause_tx
-        .try_send(paused)
+        .send(paused)
         .map_err(|error| napi_error(&format!("send failed: {error}")))
 }
 
@@ -4305,13 +4313,18 @@ pub fn mosh_disconnect(session_id: String) -> Result<()> {
     let sessions = get_mosh_sessions()
         .lock()
         .map_err(|_| napi_error("Mosh session map lock poisoned"))?;
-    let session = sessions
-        .get(&id)
-        .ok_or_else(|| napi_error("Mosh session not found"))?;
-    session
-        .disconnect_tx
-        .try_send(())
-        .map_err(|error| napi_error(&format!("send failed: {error}")))
+    // Task/map lifetime ends before queued ArkTS callbacks are consumed. A
+    // missing task, closed receiver or pending request is already closing, not
+    // permission for the caller to discard final output. The ordered transport
+    // close callback owns completion; this result only acknowledges the request.
+    if let Some(session) = sessions.get(&id) {
+        match session.disconnect_tx.try_send(()) {
+            Ok(())
+            | Err(tokio::sync::mpsc::error::TrySendError::Full(()))
+            | Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => {}
+        }
+    }
+    Ok(())
 }
 
 #[napi]
@@ -4512,6 +4525,190 @@ mod tests {
     use tokio::sync::{mpsc, Notify};
 
     const ACTOR_TEST_WINDOW_BYTES: usize = 16 * 1024;
+
+    // Hold only the native control receiver, not a socket or the UI. This tests
+    // admission under a delayed consumer; it does not claim a field occurrence rate.
+    #[test]
+    fn output_pause_resume_is_not_lost_while_native_receiver_is_busy() {
+        for mosh in [true, false] {
+            let id = super::NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+            let (write_tx, _) = mpsc::channel(64);
+            let (resize_tx, _) = mpsc::channel(8);
+            let (disconnect_tx, _) = mpsc::channel(1);
+            let (auth_tx, _) = mpsc::channel(1);
+            let (host_key_tx, _) = mpsc::channel(1);
+            let (output_pause_tx, mut receiver) = tokio::sync::watch::channel(false);
+            let _ssh_cleanup = super::SessionCleanupGuard(id);
+            let _mosh_cleanup = super::MoshSessionCleanupGuard(id);
+            if mosh {
+                super::get_mosh_sessions().lock().unwrap().insert(
+                    id,
+                    super::MoshSession {
+                        generation: 1,
+                        write_tx,
+                        resize_tx,
+                        disconnect_tx,
+                        auth_tx,
+                        host_key_tx,
+                        output_pause_tx,
+                    },
+                );
+            } else {
+                super::get_sessions().lock().unwrap().insert(
+                    id,
+                    super::ShellSession {
+                        generation: 1,
+                        write_tx,
+                        resize_tx,
+                        disconnect_tx,
+                        auth_tx,
+                        host_key_tx,
+                        output_pause_tx,
+                    },
+                );
+            }
+            let send = if mosh {
+                super::mosh_set_output_paused
+            } else {
+                super::ssh_set_output_paused
+            };
+            // Initial connected state, then four pause/resume cycles. The last
+            // desired value must survive even if earlier transitions are pending.
+            for paused in [false, true, false, true, false, true, false, true] {
+                send(id.to_string(), paused).unwrap();
+            }
+            let final_resume = send(id.to_string(), false);
+            let native_paused = *receiver.borrow_and_update();
+            assert!(final_resume.is_ok(), "final resume rejected: {final_resume:?}; native_paused={native_paused}; mosh={mosh}");
+            assert!(
+                !native_paused,
+                "native must observe the final desired state"
+            );
+            send(id.to_string(), true).unwrap();
+            assert!(*receiver.borrow_and_update());
+            send(id.to_string(), false).unwrap();
+            assert!(!*receiver.borrow_and_update());
+            drop(receiver);
+            assert!(
+                send(id.to_string(), false).is_err(),
+                "closed consumer remains an explicit error"
+            );
+        }
+    }
+
+    // Exercise the actual N-API admission function without a socket or protocol
+    // task. Each fixture owns its map entry and a real bounded Tokio receiver.
+    fn mosh_input_fixture() -> (u32, mpsc::Receiver<Vec<u8>>, super::MoshSessionCleanupGuard) {
+        let id = super::NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst);
+        let (write_tx, write_rx) = mpsc::channel(64);
+        let (resize_tx, _) = mpsc::channel(8);
+        let (disconnect_tx, _) = mpsc::channel(1);
+        let (auth_tx, _) = mpsc::channel(1);
+        let (host_key_tx, _) = mpsc::channel(1);
+        let (output_pause_tx, _) = tokio::sync::watch::channel(false);
+        super::get_mosh_sessions().lock().unwrap().insert(
+            id,
+            super::MoshSession {
+                generation: 1,
+                write_tx,
+                resize_tx,
+                disconnect_tx,
+                auth_tx,
+                host_key_tx,
+                output_pause_tx,
+            },
+        );
+        (id, write_rx, super::MoshSessionCleanupGuard(id))
+    }
+
+    #[test]
+    fn mosh_input_admission_preserves_order_and_rejects_full_without_sending() {
+        let (id, mut receiver, _cleanup) = mosh_input_fixture();
+        for index in 0..64 {
+            super::mosh_write(id.to_string(), index.to_string()).unwrap();
+        }
+        let error = super::mosh_write(id.to_string(), "unaccepted-private-input".into())
+            .expect_err("a full queue must not acknowledge admission");
+        assert!(!error.reason.contains("unaccepted-private-input"));
+        for index in 0..64 {
+            assert_eq!(receiver.try_recv().unwrap(), index.to_string().into_bytes());
+        }
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        super::mosh_write(id.to_string(), "after-drain".into()).unwrap();
+        assert_eq!(receiver.try_recv().unwrap(), b"after-drain");
+    }
+
+    #[test]
+    fn mosh_input_admission_rejects_closed_without_affecting_another_session() {
+        let (closed_id, mut closed_rx, _closed_cleanup) = mosh_input_fixture();
+        let (active_id, mut active_rx, _active_cleanup) = mosh_input_fixture();
+        closed_rx.close();
+        let error = super::mosh_write(closed_id.to_string(), "unaccepted-private-input".into())
+            .expect_err("a closed queue must not acknowledge admission");
+        assert!(!error.reason.contains("unaccepted-private-input"));
+        assert!(matches!(
+            closed_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+        super::mosh_write(active_id.to_string(), "active".into()).unwrap();
+        assert_eq!(active_rx.try_recv().unwrap(), b"active");
+    }
+
+    #[test]
+    fn mosh_disconnect_after_native_cleanup_preserves_pending_callback_ownership() {
+        let (id, _receiver, cleanup) = mosh_input_fixture();
+        // The native task may have queued final data/close without ArkTS having
+        // consumed them yet. Removing the request owner must not fail shutdown.
+        drop(cleanup);
+        super::mosh_disconnect(id.to_string()).unwrap();
+        assert!(super::mosh_write(id.to_string(), "late-input".into()).is_err());
+        assert!(super::mosh_disconnect("invalid-id".into()).is_err());
+    }
+
+    #[test]
+    fn mosh_disconnect_is_idempotent_while_requested_and_after_receiver_closes() {
+        let (id, _receiver, _cleanup) = mosh_input_fixture();
+        let (disconnect_tx, mut disconnect_rx) = mpsc::channel(1);
+        super::get_mosh_sessions()
+            .lock()
+            .unwrap()
+            .get_mut(&id)
+            .unwrap()
+            .disconnect_tx = disconnect_tx;
+        super::mosh_disconnect(id.to_string()).unwrap();
+        super::mosh_disconnect(id.to_string()).unwrap();
+        disconnect_rx.try_recv().unwrap();
+        assert!(matches!(
+            disconnect_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        drop(disconnect_rx);
+        super::mosh_disconnect(id.to_string()).unwrap();
+    }
+
+    #[test]
+    fn mosh_disconnect_after_cleanup_does_not_close_another_session() {
+        let (closed_id, _closed_rx, cleanup) = mosh_input_fixture();
+        let (active_id, mut active_rx, _active_cleanup) = mosh_input_fixture();
+        let (disconnect_tx, mut disconnect_rx) = mpsc::channel(1);
+        super::get_mosh_sessions()
+            .lock()
+            .unwrap()
+            .get_mut(&active_id)
+            .unwrap()
+            .disconnect_tx = disconnect_tx;
+        drop(cleanup);
+        super::mosh_disconnect(closed_id.to_string()).unwrap();
+        super::mosh_write(active_id.to_string(), "active".into()).unwrap();
+        assert_eq!(active_rx.try_recv().unwrap(), b"active");
+        assert!(matches!(
+            disconnect_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
 
     #[test]
     fn mosh_prediction_mode_maps_only_the_standard_public_values() {
