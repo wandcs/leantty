@@ -10,6 +10,7 @@ param(
     [string]$Target = '',
     [string]$UnlockPasswordPath = '',
     [string]$HapPath = '',
+    [ValidateSet('acceptance', 'review-smoke')][string]$HapPurpose = 'acceptance',
     [switch]$Clean,
     [switch]$ForceNative,
     [switch]$SkipBuild,
@@ -28,6 +29,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
+. (Join-Path $PSScriptRoot 'device-package.ps1')
 
 Invoke-WithLeanTTYBuildLock -RepoRoot $repoRoot -Operation 'dev-pc' -Action {
 if ($LatestCandidate) {
@@ -97,7 +99,8 @@ if ((Split-Path $HapPath -Leaf) -match 'unsigned') {
     throw 'A physical HarmonyOS PC requires a signed HAP.'
 }
 
-$installOutput = (& $hdc -t $Target install -r $HapPath 2>&1) -join "`n"
+$packageAdmission = Assert-LeanTTYDeviceHap -HapPath $HapPath -Purpose $HapPurpose
+$installOutput = (& $hdc -t $Target install -r $packageAdmission.path 2>&1) -join "`n"
 if ($LASTEXITCODE -ne 0 -or $installOutput -match '(?i)\[Fail\]|error') {
     throw "HAP install failed: $installOutput"
 }

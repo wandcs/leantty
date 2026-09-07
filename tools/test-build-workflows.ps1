@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'test-device-package.ps1')
 & (Join-Path $PSScriptRoot 'test-release-evidence.ps1')
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

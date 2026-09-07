@@ -25,10 +25,15 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
+. (Join-Path $PSScriptRoot 'device-package.ps1')
 
 function Install-StartupUpgradeHap {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [ValidateSet('development', 'acceptance')][string]$Purpose = 'acceptance'
+    )
 
+    Assert-LeanTTYDeviceHap -HapPath $Path -Purpose $Purpose | Out-Null
     $output = @(& $script:hdc -t $script:target install -r -d $Path 2>&1) -join "`n"
     if ($LASTEXITCODE -ne 0 -or $output -match '(?i)\[Fail\]|error') {
         throw "HAP install failed: $output"
@@ -150,13 +155,14 @@ try {
     $awakeLease = $true
 
     & $script:hdc -t $script:target shell 'aa force-stop com.leantty.app' | Out-Null
-    Install-StartupUpgradeHap -Path $v13Hap
+    # The old baseline predates the candidate's command-observation markers.
+    Install-StartupUpgradeHap -Path $v13Hap -Purpose development
     $v13Start = Start-StartupUpgradeApp -LayoutName 'v13-ready.json'
     Start-Sleep -Milliseconds 1200
     $v13Projection = Get-StartupProjectionSnapshot
 
     & $script:hdc -t $script:target shell 'aa force-stop com.leantty.app' | Out-Null
-    Install-StartupUpgradeHap -Path $candidateHap
+    Install-StartupUpgradeHap -Path $candidateHap -Purpose acceptance
     Clear-LeanTTYAppLogs -Hdc $script:hdc -Target $script:target
     $candidateStart = Start-StartupUpgradeApp -LayoutName 'v14-ready.json'
     Submit-LeanTTYDeviceCommand `
