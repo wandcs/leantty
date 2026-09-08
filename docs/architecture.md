@@ -2,12 +2,13 @@
 
 > Status: current implementation baseline
 >
-> Last updated: 2026-09-02
+> Last updated: 2026-09-07
 >
 > Governing rules: [`project-principles.md`](project-principles.md)
 
 This document describes the architecture that exists in the current source
-tree. It is not a proposal for Mosh, HSL or a generic transport framework.
+tree, including the 1.6 Mosh integration. It is not a proposal for HSL or a
+generic transport framework, nor evidence of a published 1.6 release.
 Feature-specific future designs live in [`design/`](design/README.md), and only
 [`next-work.md`](next-work.md) authorizes current work.
 
@@ -23,8 +24,8 @@ HarmonyOS UIAbility / App Shell
                       ├─ SessionViewModel
                       │   ├─ local ltty command line and interaction mode
                       │   ├─ SshSession lifecycle
-                      │   └─ SshClient
-                      │       └─ N-API → Rust/russh → SSH server
+                      │   ├─ SshClient → N-API → Rust/russh → SSH server
+                      │   └─ MoshClient → N-API → SSH bootstrap + Rust/mosh-client → UDP server
                       └─ TerminalSurfaceController
                           ├─ TerminalOutputBuffer
                           └─ TerminalBridge → ArkWeb/xterm.js
@@ -52,6 +53,8 @@ Session.
 | SessionViewModel | `viewmodel/SessionViewModel.ets` | Local command/prompt interaction, terminal presentation and routing user actions to the owning Session | SSH lifecycle transitions, global Tab ordering or Web rendering internals |
 | SshSession | `model/ssh/SshSession.ets` | The allowed connection, authentication, host-verification, connected, failure, close, reconnect and transfer-handoff transitions for one Pane | Prompt text, terminal rendering or native transport decoding |
 | SshClient | `model/ssh/SshClient.ets` | One N-API session handle, native event decoding and request/response correlation | UI text, Tab/Pane ownership or persistent asset policy |
+| MoshClient | `model/mosh/MoshClient.ets` | One native Mosh handle, structured event correlation and shared bounded close completion | Protocol timers, prediction policy or terminal-page interpretation |
+| Rust Mosh layer | `leantty_ssh/src/lib.rs` | SSH bootstrap, validated IPv4 endpoint, one library Session, ordered input, output flow and close/cancel | Pane selection, UI text or a second reachability timer |
 | Rust SSH layer | `leantty_ssh/src/lib.rs` | Ordered jump/target connection phases, host-key callback, authentication transport, PTY, SSH channel, byte stream, cancellation, keepalive and route cleanup | ArkUI state and user-facing decisions |
 | TerminalSurfaceController | `model/terminal/TerminalSurfaceController.ets` | One terminal surface lifecycle, in-process snapshot and detached output buffer | SSH authentication or persistent terminal history |
 | TerminalBridge | `model/bridge/TerminalBridge.ets` | Validated ArkTS/ArkWeb message transport, output acknowledgements and backpressure | Session business state or terminal-content repair |
@@ -65,10 +68,10 @@ Session.
 - a Tab owns `panes[]` and one `activePaneId`;
 - a Pane has a stable ID and owns exactly one runtime;
 - at most two Panes are allowed in a Tab;
-- each runtime owns its own `SessionViewModel`, SSH client, output buffer and
+- each runtime owns its own `SessionViewModel`, active SSH or Mosh client, output buffer and
   Web terminal controller; and
 - removing a Pane or Tab unlinks and disposes its runtime through the same
-  owner, so switching or closing cannot reuse another Pane's SSH or terminal
+  owner, so switching or closing cannot reuse another Pane's connection or terminal
   state.
 
 `ApplicationWorkspace` owns one `AppViewModel` for the lifetime of the process.
@@ -131,7 +134,30 @@ input, and only connected PTY bytes reach Rust.
 
 Resize starts with the dimensions measured by xterm. The result crosses the
 validated Bridge, is routed to the owning Session, and becomes an SSH PTY
-resize. UI estimates are not an authoritative terminal size.
+resize (or Mosh resize for a Mosh Session). UI estimates are not an authoritative
+terminal size.
+
+### Mosh connection
+
+`mosh` resolves the existing Host and Identity configuration, then uses direct
+SSH for host verification, authentication and a bounded `mosh-server` bootstrap
+command. `MoshClient` binds the resulting native handle to the Pane's existing
+`SshSession` lifecycle owner. Rust validates bootstrap output and the IPv4 UDP
+endpoint before creating one `mosh-client` Session; this is a concrete path,
+not a generic Transport layer. ProxyJump and remote commands are rejected.
+
+The library owns prediction, initial attachment timeout and reachability.
+LeanTTY reads the independent observer's current state, then consumes changes.
+`Interrupted` is a warning, not an exit; `Responsive` restores the connected
+presentation without replacing the Session. Initial attachment times out after
+15 seconds. Native connected-state polling stops after the first connection.
+
+Every Mosh Session uses one temporary terminal page, entered before its first
+output. All repaints and Surface replay remain on that page. Close, cancellation,
+failure and Pane disposal drain accepted output before restoring the original
+page; generation/owner checks reject late callbacks. LeanTTY does not infer
+Vim or less lifecycles from state-sync output. The library's graceful close has
+a four-second ACK bound; immediate stop uses cancellation instead.
 
 ## File-transfer event chain
 
@@ -189,15 +215,23 @@ reconstructed from string prefixes, embedded layer labels or JSON payloads.
 
 The control protocol is `H2|direction|channel|kind|payload` with explicit
 direction, channel and message-kind allowlists. Terminal output uses binary
-packets containing a magic value, sequence and byte length so raw SSH bytes do
+packets containing a magic value, sequence and byte length so SSH/Mosh bytes do
 not need to be rewritten as control text.
 
 `TerminalBridge` limits in-flight messages and applies high/low-water
 backpressure. xterm acknowledges rendered output; backpressure propagates to
-the owning SSH session instead of letting unbounded output accumulate. If the
+the owning SSH or Mosh session instead of letting unbounded output accumulate.
+Pause/resume retains the latest desired state rather than queuing transitions.
+If the
 hard pending-data limit is nevertheless exceeded, the rejected bytes are
 counted and logged as dropped output; that path must not be treated as complete
 delivery.
+
+Mosh input is ordered and bounded. Rejected native admission stops the Session,
+drains received output and reports failure on the restored local page; it never
+resends text or accepts later input into a potentially incomplete command.
+Output-observer UTF-8 decoding exists only while a consumer such as Keypush is
+registered; ordinary terminal output remains on the binary path.
 
 Remote output, terminal titles, OSC sequences and Bridge messages are untrusted
 input. xterm handles terminal emulation, while ArkTS validates the limited
@@ -256,8 +290,9 @@ This is renderer recovery, not Session persistence:
 - durable shell work belongs in a remote tool such as tmux or screen.
 
 The UIAbility records foreground/background state, captures terminal
-checkpoints before relevant surface teardown, restores window geometry, and
-asks before terminating active sessions.
+checkpoints before relevant surface teardown, enables system geometry auto-save, and
+asks before terminating active sessions. Main-window geometry belongs to the
+system auto-save API, not to an application replayed rectangle.
 
 `PaneInfo.needsAttention` remains the sole authority for BEL attention. A
 background system notification is only a removable external side effect: it
@@ -301,16 +336,19 @@ SHA-256. All chunks are written and validated before the pointer is switched;
 old/incomplete generations are then collected.
 
 Application-private `.ssh` files and the font-size Preferences value are runtime
-projections. At startup, `DurableStateManager` materializes the durable SSH
-assets before normal use. Writes to Host configuration, host trust, keys, font
+projections. Startup initializes the durable authority and loads font size;
+SSH projections and verified-key loading are prepared lazily before the first
+command that needs them. Writes to Host configuration, host trust, keys and font
 size go through the durable authority. The first run after the storage change
 migrates verified legacy files and Preferences; later runs remove projections
 that no longer have a durable authority.
 
 Persistent assets are configured to survive an ordinary uninstall for the same
 application identity; exact asset/signature/lifecycle behavior remains a
-physical-device release gate. Passwords, passphrases, command history,
-Tab/Pane/Session state, terminal contents and transparency mode are excluded.
+physical-device release gate. Passwords, passphrases, command history, Session
+state and terminal contents are never durable recovery data. Tab/Pane structure
+uses only the separate app-private recovery record above; transparency uses
+local Preferences. Neither is an uninstall-surviving Asset Store asset.
 HarmonyOS owns main-window geometry through `setWindowRectAutoSave`; LeanTTY no
 longer maintains a second durable rectangle, and geometry is not retained
 across uninstall/reinstall.

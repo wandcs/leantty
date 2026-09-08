@@ -2,14 +2,14 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-08-31
+> Last updated: 2026-09-07
 >
 > Applies to: the current 1.6.0 development source. The 1.5.1 GitHub release is
 > the preceding published source; AppGallery availability is confirmed through
 > 1.5.1. Check the matching GitHub Release and AppGallery entry before relying
 > on later behavior in an installed build.
 
-LeanTTY is a keyboard-first SSH terminal for a physical ARM64 HarmonyOS PC. It
+LeanTTY is a keyboard-first SSH/Mosh terminal for a physical ARM64 HarmonyOS PC. It
 provides the TTY entry point; the shell, tmux, editor and Agent TUI continue to
 run in the selected execution environment.
 
@@ -79,7 +79,7 @@ remote `PATH`. The value must be one absolute POSIX executable path of at most
 extra server arguments before connecting. Omitting the option keeps the normal
 remote `PATH` lookup.
 
-Local prediction defaults to `adaptive`. Use `always` to show eligible confirmed-epoch ASCII
+Local prediction defaults to `adaptive`. Use `always` to show eligible plain ASCII
 predictions on every link, or `never` to wait for authenticated server state. Prediction does not
 cover paste, control sequences or arbitrary Unicode, and it never changes remote terminal authority.
 
@@ -90,9 +90,22 @@ SSH connection and reported server endpoint resolve to IPv4.
 
 During a temporary interruption, the pane shows a warning and keeps the Mosh
 session open. A responsive server restores the connected state automatically.
+After SSH bootstrap, failure to receive the first valid remote state within
+15 seconds is a connection failure, not an indefinite interruption warning.
 Use `Ctrl-^ .` to close the current Mosh session or `Ctrl-^ ?` for escape help.
-Keep durable work in remote tmux or screen: Mosh
-does not preserve a session after you close the pane or app.
+Press `Ctrl+Shift+6`, release it, then press `.` or `?`; unlike SSH's `~.`, this
+does not require a preceding newline.
+
+Mosh synchronizes the current remote screen, not a complete output history.
+LeanTTY puts the entire Mosh Session on a temporary page; search stays within
+that page. On exit, accepted output is drained and the original page and its
+search history return. Mosh repaints do not enter the original scrollback, and
+LeanTTY does not infer when Vim or less enters or leaves a temporary screen.
+Keep durable work in remote tmux or screen: Mosh does not preserve a Session
+after Pane/app close or system process reclamation.
+
+If LeanTTY reports that Mosh input was not accepted, it stops the connection.
+Check remote command state before reconnecting; do not blindly resend the text.
 
 ## Working with Agent TUIs
 
@@ -161,7 +174,8 @@ It does not silently rewrite unrelated OpenSSH configuration.
 
 `host add` and `host set` accept `-i <identity>` to save one key shown by
 `key list` as that Host's `IdentityFile`. The key is then reused by `ssh`,
-`put` and `get`; a command-local `-i` still overrides only that command. Use
+`mosh`, `put` and `get`; a command-local `-i` overrides only `ssh`, `put` or `get`.
+Mosh has no command-local `-i` option. Use
 `-i none` to remove the saved binding and return to the normal default-key
 selection. Updating another Host field without `-i` preserves the existing
 binding.
@@ -451,6 +465,7 @@ the file.
 | `help <command>`, `<command> --help` | Show short command help |
 | `ssh [-p port] [-i identity] user@host` | Connect directly |
 | `ssh [-p port] [-i identity] host-name` | Connect through saved configuration |
+| `mosh [-p port[:port]] [--server=path] [--predict=adaptive\|always\|never] target` | Bootstrap through SSH, then synchronize the terminal over IPv4 UDP |
 | `ssh -G host-name` | Show the supported effective configuration |
 | `ssh-keygen -t ...`, `-y`, `-l`, `-p`, `-c`, `-F`, `-R` | Generate, inspect or maintain SSH assets |
 | `ssh-copy-id -i ...` | Install one public key |
@@ -538,16 +553,23 @@ does not repeatedly request permission after that attempt.
 
 ## Data retention and uninstall
 
-LeanTTY keeps OpenSSH config, trusted host keys, verified key pairs, terminal
-font size and the main-window rectangle in encrypted persistent HarmonyOS Asset
+LeanTTY keeps OpenSSH config, trusted host keys, verified key pairs and terminal
+font size in encrypted persistent HarmonyOS Asset
 Store records. They are configured to survive a normal uninstall and be
 rematerialized for the same application identity after reinstall; the complete
 asset/signature/lifecycle matrix remains a physical-device release gate.
 
-Passwords, passphrases, authentication answers, command history, tabs, panes,
-sessions and terminal screen/scrollback are not intentionally persisted across
-application termination or reinstall. A terminal snapshot used to rebuild an
-ArkWeb surface exists only in the running process.
+After an unclean exit, a bounded app-private record restores only Tab/Pane
+layout, active positions and split ratio. Every restored Pane starts offline
+at `ltty>` with a new identity. Passwords, passphrases, authentication answers,
+commands, titles, Sessions and terminal screen/scrollback are never restored.
+A terminal snapshot used to rebuild an ArkWeb surface exists only in the
+running process. Transparency uses local Preferences, not the Asset Store.
+
+HarmonyOS owns window size and position through system auto-save. An abnormal
+exit may still cause a default window rectangle on the next launch; LeanTTY
+does not visibly move or resize the window to replay a second saved rectangle.
+Neither window geometry nor the recovery record survives uninstall by contract.
 
 Ordinary uninstall is not a complete data-erasure command. Before uninstall,
 use `key rm`, `host rm` and `ssh-keygen -R` for assets you can identify. The
@@ -570,7 +592,11 @@ record. See [the privacy policy](../PRIVACY.md) for the exact boundary.
   persistent shell session; use remote tmux or screen for durable work.
 - **SSH disconnected after sleep or network change:** use the visible reconnect
   path. LeanTTY does not claim transparent SSH session roaming.
-- **A remote shell ended:** `Connection closed` and the restored `ltty>` prompt
+- **The app was reclaimed:** only the saved layout returns; reconnect explicitly.
+  If the process survives but its Session graph is reclaimed, LeanTTY reports
+  that loss and returns affected Panes to local prompts. Use remote tmux or screen
+  for work that must outlive the app; no background-running guarantee is made.
+- **An SSH shell ended:** `Connection closed` and the restored `ltty>` prompt
   appear directly after the last visible terminal content. Existing scrollback
   remains available; the first local key is accepted only after the prompt is
   restored.

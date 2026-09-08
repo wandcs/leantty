@@ -23,6 +23,9 @@ assert.ok(source.length > 0 && source.length <= 100 * 1024, 'the guide must stay
 assert.match(html, /<!-- leantty-owned-user-guide -->/);
 assert.match(html, /<meta name="leantty-guide-revision" content="\d+">/);
 assert.ok(html.includes(`LeanTTY ${version}`), 'the guide must identify the application version');
+const editions = [...html.matchAll(/<span class="edition">([^<]+)<\/span>/g)].map(match => match[1]);
+assert.deepEqual(editions, [`使用指南 · ${version}`, `USER GUIDE · ${version}`],
+  'both language mastheads must match the application version');
 assert.ok(changelog.includes(`## [${version}] - In development`) ||
   new RegExp(`^## \\[${version.replaceAll('.', '\\.') }\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm').test(changelog),
   'the guide version must have a matching target-version Changelog section');
@@ -60,7 +63,8 @@ for (const command of [
   'ssh user@example.com', 'host add work user@example.com:2222', 'ssh-keygen -F example.com',
   'ssh-keygen -t ed25519 -f id_work -C work', 'ssh-copy-id -i id_work user@example.com',
   'put report.pdf user@example.com:/incoming/', 'get work:/reports/latest.csv reports/',
-  'config import workstation.conf', 'config export workstation-backup.conf'
+  'config import workstation.conf', 'config export workstation-backup.conf',
+  'mosh work', 'mosh -p 60042 work', 'mosh --predict=always work'
 ]) {
   assert.ok(html.includes(command), `missing command example: ${command}`);
 }
@@ -73,6 +77,16 @@ for (const agentContract of [
   'System notification is best effort, not task state'
 ]) {
   assert.ok(html.includes(agentContract), `missing bounded Agent guide contract: ${agentContract}`);
+}
+
+for (const language of ['zh', 'en']) {
+  const section = html.match(new RegExp(`<div id="${language}-mosh">([\\s\\S]*?)</div>`));
+  assert.ok(section, `missing ${language} Mosh instructions`);
+  for (const contract of ['UDP', 'IPv4', 'ProxyJump', '--server=', '--predict=', 'Ctrl-^ .']) {
+    assert.ok(section[1].includes(contract), `missing ${language} Mosh contract: ${contract}`);
+  }
+  assert.ok(html.includes(`id="${language}-recovery-layout"`),
+    `missing ${language} unexpected-exit recovery instructions`);
 }
 
 function luminance(hex) {

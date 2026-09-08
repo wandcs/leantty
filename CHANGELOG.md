@@ -33,23 +33,34 @@
 
 ### Changed
 
-- Avoid unused SSH/Mosh output-observer decoding while retaining the Keypush
-  marker stream and isolated debug probes.
+- Update both offline-guide languages for Mosh, temporary-page behavior and
+  layout-only recovery after an unexpected exit; align the 1.6 version labels.
+- Avoid unused SSH/Mosh output-observer decoding and stop the initial Mosh
+  connection-status poll after connection; retain Keypush and debug probe streams.
 
 ### Fixed
 
 - Exclude terminal-content performance probes from production builds while
   retaining bounded maintainer diagnostics in debug/test builds.
+- Preserve the latest SSH/Mosh output pause state when the native consumer is
+  delayed, so a full control queue cannot discard the final resume request.
+- Stop a Mosh connection after native input admission is rejected, drain received
+  output and report the failure on the restored local page. Do not resend rejected
+  text or allow later input to submit an incomplete command.
+- Share one Mosh close completion across overlapping disconnect requests, keeping
+  every caller's wait bounded by the existing native close lifecycle.
+- Treat an ended native Mosh task or an already pending close request as an
+  idempotent close, retaining queued final output until ArkTS consumes transport
+  close instead of dropping it when late input is rejected.
+- Coordinate non-composing xterm text input with its pending textarea diff to
+  prevent missing or duplicate characters during IME keyCode 229 interleaving.
+  The repair is a version/hash-locked build-time patch, with no input compensation
+  in LeanTTY's Bridge or transport layers.
 - Replay terminal checkpoints at their saved dimensions before fitting the
   current Pane, preserving xterm resize semantics across Mosh page restoration
   and Surface rebuilds.
 - Refresh retained Pane geometry, visibility and focus when splitting, closing
   a sibling or switching Tabs, without rebuilding the surviving terminal.
-
-- Coordinate non-composing xterm text input with its pending textarea diff to
-  prevent missing or duplicate characters during IME keyCode 229 interleaving.
-  The repair is a version/hash-locked build-time patch, with no input compensation
-  in LeanTTY's Bridge or transport layers.
 - Preserve an established Mosh Session across temporary local network-interface
   send errors through the pinned client revision, allowing reachability to report
   interruption and recovery without replacing the remote PTY.
@@ -99,9 +110,6 @@ recorded on 2026-08-29.**
   dedicated verified LeanTTY key without repeating `-i`.
 
 ### Changed
-
-- Stop the initial Mosh connection-status poll after connection; leave the
-  protocol library's timers and authenticated reachability observer unchanged.
 
 - Add pre-release readiness drills, explicit product/harness identities,
   recoverable matrix checkpoints and earlier reversible asset preparation to
@@ -193,16 +201,6 @@ recorded on 2026-08-29.**
 
 ### Fixed
 
-- Preserve the latest SSH/Mosh output pause state when the native consumer is
-  delayed, so a full control queue cannot discard the final resume request.
-- Stop a Mosh connection after native input admission is rejected, drain received
-  output and report the failure on the restored local page. Do not resend rejected
-  text or allow later input to submit an incomplete command.
-- Share one Mosh close completion across overlapping disconnect requests, keeping
-  every caller's wait bounded by the existing native close lifecycle.
-- Treat an ended native Mosh task or an already pending close request as an
-  idempotent close, retaining queued final output until ArkTS consumes transport
-  close instead of dropping it when late input is rejected.
 - Kept SSH session-boundary mode, cursor, color and alternate-buffer cleanup while placing
   `Connection closed` and the local prompt immediately after the last visible terminal content,
   instead of forcing them to the final screen row and exposing a large blank gap. Normal

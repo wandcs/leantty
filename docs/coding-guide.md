@@ -19,7 +19,7 @@ The domain model is:
 ```text
 App Shell
   └─ Tab → Pane → Session
-                 ├─ SSH Transport
+                 ├─ SSH / Mosh (concrete protocol owners)
                  ├─ Terminal Surface
                  └─ System Services
 ```
@@ -40,6 +40,8 @@ hint, not a reason to obscure state ownership.
 - **Session** owns connect, authenticate, host-key, cancel, disconnect and
   reconnect state.
 - **SSH Transport** owns russh, PTY and byte streams; it does not decide UI text.
+- **Mosh** owns SSH bootstrap and library-backed UDP state sync; it does not
+  emulate SSH scrollback or add a generic Transport interface.
 - **Terminal Surface** owns xterm display, input, selection and resize; it does
   not own business state.
 - **System Services** wrap HarmonyOS clipboard, preferences and window APIs.
@@ -110,8 +112,10 @@ messages explicitly.
 Failures must be observable and distinguishable. Do not swallow errors or map
 timeout, cancellation, disconnect and ordinary failure to one ambiguous result.
 Use stable event names and the minimum non-secret identifiers needed to trace a
-Session or Pane. Logs, diagnostics and fixtures must not expose credentials,
-private terminal content or unredacted host material.
+Session or Pane. Formal packages must not log terminal contents or secrets.
+Controlled development diagnostics may observe necessary contents and disposable
+fixture secrets under `security-model.md` → Logging boundary; real credentials
+remain excluded by default. Do not publish raw evidence or unredacted host material.
 
 ### Write durable comments
 
@@ -136,6 +140,28 @@ must not become a second source of truth.
   non-goals. Code written, tests passing, build success, package installation
   and a visible window are evidence of different scopes, not interchangeable
   definitions of completion.
+
+### Diagnose before fixing
+
+Before modifying behavior after a failure, write a compact diagnosis containing:
+
+1. the user-visible contract and exact expected result;
+2. the last boundary known correct and the first boundary known incorrect;
+3. the authoritative owner of every state used to decide recovery;
+4. one falsifiable root-cause hypothesis; and
+5. the smallest observation or test that distinguishes it from alternatives.
+
+Logs, projections, caches and UI labels are evidence, not ownership. Trace them
+back to the object that survives or ends the relevant lifecycle before adding a
+guard. Diagnostic instrumentation may remain on one focused branch until the
+hypothesis is confirmed; do not publish each observation as a separate product
+fix or create a formal candidate for it.
+
+After two materially different fixes fail for the same event chain, or when each
+fix moves the symptom to another layer, stop implementation. Reassess the state
+owner, event boundary, product contract and test oracle before a third change.
+The resulting PR should contain one coherent authoritative rule and its failing
+test, not a stack of guards accumulated from unsuccessful hypotheses.
 
 ### Keep changes locally reviewable
 
@@ -166,7 +192,7 @@ the ambiguity.
 | `entry/src/main/ets/` | ArkUI application, state and platform integration |
 | `entry/src/main/resources/` | HarmonyOS resources and ArkWeb terminal assets |
 | `entry/src/test/` | Trusted ArkTS logic tests |
-| `leantty_ssh/` | napi-ohos binding and SSH transport |
+| `leantty_ssh/` | napi-ohos bindings, SSH transport and Mosh integration |
 | `leantty_ssh/leantty-ssh-core/` | Host-testable pure Rust policies |
 | `tools/web-terminal/` | xterm source assembly and policy tests |
 | `tools/` | ARM64 build, deployment and verification scripts |

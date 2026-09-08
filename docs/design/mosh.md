@@ -1,18 +1,26 @@
 # Mosh 弱网连接技术方案
 
-> 状态：Implementing；维护者已授权本地纵向切片，正式候选仍取决于目标平台证据
+> 状态：1.6 开发验证已闭合；精确候选的正式验收与发布尚未完成
 >
 > 当前 milestone：1.6
 >
-> 更新日期：2026-09-03
+> 更新日期：2026-09-07
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已进入 [`next-work.md`](../next-work.md)；当前使用固定公共 Git revision 继续开发
+> 实现授权：已进入 [`next-work.md`](../next-work.md)；当前使用 `mosh-client` 0.1.0 正式版本继续开发
 
 > 命令面治理：[`command-system.md`](command-system.md)
 
 ## 用户问题与目标
+
+当前命令、限制与恢复行为以 [使用合同](../user-guide.md#mosh-connection) 为准，
+所有权见 [架构](../architecture.md#mosh-connection)。实现包含直接 IPv4 UDP、端口与
+server/prediction 选项、库驱动的中断提示，以及覆盖整个 Mosh Session 的独立临时页面。
+正常关闭、取消、失败和 Pane 销毁均在处理已接收输出后恢复原页；不猜测 Vim/less 生命周期。
+
+下文有日期的调查和测试保留当时的 revision、结果及限制，不替代当前候选证据。
+尚未完成的工作只在 [Next Work](../next-work.md) 中维护；开发验证不等于发布。
 
 SSH 可以检测半开连接并重连，但合盖、短暂离线、网络抖动或地址变化通常仍会终止
 当前远端 shell。Mosh 的价值候选是让交互式终端在这些变化后继续，而不是把 LeanTTY
@@ -21,7 +29,7 @@ SSH 可以检测半开连接并重连，但合盖、短暂离线、网络抖动�
 目标是在物理 ARM64 HarmonyOS PC 上确有持续弱网问题时，提供一个明确的 Mosh
 Session：SSH 只负责安全 bootstrap，Mosh 负责随后可恢复的交互式终端同步。
 
-## 进入前必须建立的证据
+## 进入前的证据门（历史）
 
 - 在目标 PC 的办公、合盖、锁屏、Wi-Fi 抖动和网络切换场景建立 SSH 断线分布与用户
   影响基线，证明问题持续存在且重连不能满足核心工作。
@@ -262,11 +270,20 @@ Wi-Fi network switch。每组都必须生成 `acceptanceEligible=true`、相同 
 ## 客户端依赖合同
 
 LeanTTY 选择 [`wandcs/mosh-client-rs`](https://github.com/wandcs/mosh-client-rs) 的
-`mosh-client` crate。依赖通过完整 Git `rev`
-`94f13225aba535c6645a9179e0ce9f00b156629e` 固定，包版本 `0.0.0`，许可证为
-`MIT OR Apache-2.0`。LeanTTY 不直接修改该仓库，也不维护协议 fork；发现的问题记录在
+`mosh-client` crate。依赖固定为 [0.1.0 正式版本](https://github.com/wandcs/mosh-client-rs/releases/tag/v0.1.0)：
+使用 Git `tag = "v0.1.0"` 和 `version = "=0.1.0"`，由 `Cargo.lock` 固定实际提交
+`aed5865c1d779a989a3b0cf0c84aa046313515ee`，不跟随 main/master。该版本尚未上传 crates.io，
+最低 Rust 版本为 1.88，许可证仍为 `MIT OR Apache-2.0`。
+LeanTTY 不直接修改该仓库，也不维护协议 fork；发现的问题记录在
 [`mosh-client-rs-integration-issues.md`](mosh-client-rs-integration-issues.md)，由库仓库独立修复、
 验证和升级。
+
+2026-09-05 升级检查：WSL Rust 1.96.0 下 tooling、格式、strict Clippy、生产 feature 隔离和
+50 项 native 测试通过，ARM64 OHOS `--locked --offline` release 编译通过。
+锁文件只改变 `mosh-client` 的版本和来源。报告为
+`build/verification/mosh-client-v0.1.0-software-20260905.json` 和
+`build/verification/mosh-client-v0.1.0-final-rust-20260905.json`；本轮未重建 HAP 或复跑真机，
+既有真机报告仍对应各自记录的旧 revision。
 
 依赖边界如下：
 
@@ -387,6 +404,19 @@ Transport。命令入口只接受下节定义的最小语法；连接成功后�
 命名真机场景随后闭合 stock server、真实 Shell/tmux/Vim、resize、持续流、网络暂停恢复、server
 消失、认证关闭和 secret 清理；这些开发期诊断仍不能替代正式候选的完整网络与生命周期矩阵。
 
+### 2026-09-06 输入接纳与重叠关闭
+
+`MoshClient.write` 返回的成功只代表 native 有界队列接纳，不代表远端执行。native 拒绝时，
+客户端立即停止接受后续输入，调用方也停止当前 parser 结果中剩余的操作，避免之后的 Enter
+提交缺字命令。不自动重发、增大队列或新增缓存；这与库拥有的临时网络中断/恢复无关。
+
+拒绝后的关闭继续复用 native 优雅关闭及输出消费。每个客户端保存一个待报告输入错误和
+共享关闭 Promise；重复 disconnect 不重复发送 native 请求，所有等待者由同一次终态完成。
+关闭期间晚到的 connected 不能重新开放输入。输入拒绝后的 control error 不抢先释放页面，
+最终错误由有序 transport close 触发；如果关闭请求本身失败，则立即报告安全的固定错误。
+两种终止路径均复用原页面恢复，文案不展示 native 异常或输入内容。软件反例及验证边界见
+[`../code-quality-diagnosis-1.6.md`](../code-quality-diagnosis-1.6.md)。
+
 ### 2026-08-30 固定 UDP port/range 结果
 
 LeanTTY 现在接受 `-p <port>` 或 `-p <low>:<high>`，并只把该选择传给 SSH bootstrap 启动的
@@ -440,7 +470,7 @@ Mosh UDP server 端点；`--server` 只选择一个受控远端 executable。
 `-4/-6`、文件传输或第二份 Mosh 配置。后续 option 必须按
 `next-work.md` 逐项获得证据和测试后加入。
 
-## 拟议范围
+## 当前实现范围
 
 - 使用现有 SSH Host、Identity、主机校验和多方法认证启动远端 `mosh-server`。
 - 解析结构化 bootstrap 结果后建立一个 Mosh UDP 会话；不把服务器输出当作任意 shell
@@ -459,7 +489,7 @@ Mosh UDP server 端点；`--server` 只选择一个受控远端 executable。
 - 不把 SSH 和 Mosh 抹平成一个隐藏真实差异的通用 Transport 接口。
 - 不实现通用 roaming VPN、端口转发、文件同步或后台任务平台。
 
-## 初步所有权与事件链
+## 所有权与事件链
 
 ```text
 Pane → Mosh Session
@@ -479,7 +509,9 @@ Mosh Session 是独立生命周期，因为它拥有 UDP、加密状态、序列
 - bootstrap 产生的临时连接秘密只存在于当前 Session 内存，不进入终端、日志、
   Preferences、持久资产或剪贴板，并在成功、失败或取消后清理。
 - UDP 端点、协议版本和服务器输出都视为不可信输入，必须校验长度、格式和允许范围。
-- 不记录终端内容；网络诊断只记录安全状态、时序和错误类别。
+- 正式提交与交付包不记录终端内容或秘密；开发诊断仅按
+  [日志边界](../security-model.md#logging-boundary) 采集受控数据。网络诊断默认只记录
+  安全状态、时序和错误类别，bootstrap 临时密钥不进入日志。
 
 ## 已验证的终端兼容边界
 
@@ -510,7 +542,7 @@ capture 只保留字节数、hash 和协议计数，原始输入、输出与 ter
 `build/verification/device-mosh-20260831T143219872Z/device-mosh.json`。该运行也通过认证关闭、
 Preferences、secret 和成对清理。
 
-## 待研究与讨论
+## 早期研究问题（历史，不是活动 TODO）
 
 - Mosh 对 OSC、标题、剪贴板、鼠标和现代 TUI 的实际兼容边界。
 - 远端 `mosh-server` 命令、端口范围、locale 与版本协商如何在不增加大量设置的情况
