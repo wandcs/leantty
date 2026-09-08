@@ -1871,12 +1871,8 @@ impl Handler for FixtureServer {
                     "perf case={} lines={} width={} bytes={} state=prepared",
                     request.case_id, request.lines, request.line_width, expected_bytes
                 );
-                let begin = format!(
-                    "\x1b]0;LTTY_PERF_BEGIN__:{}:{}\x07\r\nfixture> ",
-                    request.case_id, expected_bytes
-                );
                 self.pending_perf_request = Some(request);
-                session.data(channel, begin.into_bytes())?;
+                session.data(channel, b"\r\nfixture> ".as_slice())?;
             }
             Some(FixtureCommand::Perf(PerfCommand::Run(case_id))) => {
                 let Some(request) = self.pending_perf_request.take() else {
@@ -1888,17 +1884,27 @@ impl Handler for FixtureServer {
                 }
                 eprintln!("perf case={case_id} state=run");
                 let payload = build_perf_stream_payload(&request);
+                let begin = format!(
+                    "\x1b]0;LTTY_PERF_BEGIN__:{}:{}:{}\x07",
+                    request.case_id, request.lines, request.line_width
+                );
                 let end = format!(
                     "\x1b]0;LTTY_PERF_END__:{}\x07\r\nfixture> ",
                     request.case_id
                 );
                 let handle = session.handle();
+                // Input latency uses a declared paced load long enough for the
+                // bounded Web-input/remote-echo samples; it is not throughput.
+                let chunk_delay_ms = if case_id.starts_with("input") { 50 } else { 5 };
                 tokio::spawn(async move {
+                    if handle.data(channel, begin.into_bytes()).await.is_err() {
+                        return;
+                    }
                     for chunk in payload.chunks(PERF_OUTPUT_CHUNK_BYTES) {
                         if handle.data(channel, chunk.to_vec()).await.is_err() {
                             return;
                         }
-                        tokio::time::sleep(Duration::from_millis(5)).await;
+                        tokio::time::sleep(Duration::from_millis(chunk_delay_ms)).await;
                     }
                     let _ = handle.data(channel, end.into_bytes()).await;
                 });
@@ -2186,8 +2192,7 @@ fn build_perf_stream_payload(request: &PerfStreamRequest) -> Vec<u8> {
 }
 
 fn perf_stream_expected_bytes(request: &PerfStreamRequest) -> usize {
-    let prefix = format!("LTTY_PERF_{}_{:05} ", request.case_id, 0);
-    (request.line_width - prefix.len()) * request.lines
+    (request.line_width + 2) * request.lines
 }
 
 fn format_input_hex(data: &[u8]) -> String {
@@ -3137,10 +3142,7 @@ MOSH CONNECT 60043 4NeCCgvZFe2RnPgrcU1PQw\n",
         };
         let payload = build_perf_stream_payload(&request);
         assert_eq!(payload.len(), (64 + 2) * 3);
-        assert_eq!(
-            payload.iter().filter(|byte| **byte == b'X').count(),
-            perf_stream_expected_bytes(&request)
-        );
+        assert_eq!(payload.len(), perf_stream_expected_bytes(&request));
         for (index, line) in payload.chunks_exact(66).enumerate() {
             assert_eq!(&line[64..], b"\r\n");
             assert!(line.starts_with(format!("LTTY_PERF_sample01_{index:05} ").as_bytes()));

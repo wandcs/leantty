@@ -3217,4 +3217,57 @@ Assert-True ($chainMismatch.complete -and -not $chainMismatch.summary.exact) 'Mi
     }
 }
 
+& {
+    # Run the real performance submission and JSON reader, not a parallel validator.
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1'), [ref]$null, [ref]$null)
+    foreach ($name in @('Invoke-AuthPerfSample', 'Get-AuthPerfRenderRecord')) {
+        $definition = @($ast.FindAll({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true))
+        Assert-True ($definition.Count -eq 1) "Missing or ambiguous performance owner: $name"
+        Invoke-Expression $definition[0].Extent.Text
+    }
+    $state = @{ commands = [Collections.Generic.List[string]]::new(); failure = ''; waits = 0; logs = '' }
+    function Submit-ConnectedInput { param($Text) $state.commands.Add($Text) }
+    function Get-FixtureLogMatchCount { return 0 }
+    function Wait-FixtureLogMatchCount {
+        $state.waits++
+        if (($state.failure -eq 'prepare' -and $state.waits -eq 1) -or
+            ($state.failure -eq 'run' -and $state.waits -eq 2)) { throw 'controlled fixture timeout' }
+    }
+    function Clear-LeanTTYAppLogs {}
+    function Wait-AuthLog { if ($state.failure -eq 'render') { throw 'controlled render timeout' } }
+    function Get-LeanTTYAppLogs { return $state.logs }
+    $valid = @{ caseId = 'fixture_01'; schemaVersion = 2; contentOrdered = $true
+        visibleTailConfirmed = $true; mismatches = 0; completenessPercent = 100 }
+    $state.logs = 'PERF render ' + ($valid | ConvertTo-Json -Compress)
+    $record = Invoke-AuthPerfSample -CaseId fixture_01
+    Assert-True ($record.commandAttempts -eq 1 -and $state.commands.Count -eq 2) (
+        'Valid schema-2 evidence must prepare and run exactly once'
+    )
+    foreach ($case in @(
+        @{ field = 'schemaVersion'; value = 1 },
+        @{ field = 'contentOrdered'; value = $false },
+        @{ field = 'visibleTailConfirmed'; value = $false },
+        @{ field = 'mismatches'; value = 1 },
+        @{ field = 'mismatches'; value = $null },
+        @{ field = 'caseId'; value = 'another_case' }
+    )) {
+        $bad = $valid.Clone(); $bad[$case.field] = $case.value
+        $state.logs = 'PERF render ' + ($bad | ConvertTo-Json -Compress)
+        $state.commands.Clear(); $state.waits = 0
+        Assert-Throws { Invoke-AuthPerfSample -CaseId fixture_01 } (
+            "Headline completeness must not hide invalid evidence: $($case.field)"
+        )
+        Assert-True ($state.commands.Count -eq 2) 'Rejected evidence must not resubmit the stream'
+    }
+    foreach ($failure in @('prepare', 'run', 'render')) {
+        $state.failure = $failure; $state.commands.Clear(); $state.waits = 0
+        Assert-Throws { Invoke-AuthPerfSample -CaseId fixture_01 } 'Unknown outcomes must stop without retries'
+        $expectedCommands = if ($failure -eq 'prepare') { 1 } else { 2 }
+        Assert-True ($state.commands.Count -eq $expectedCommands) 'An uncertain stage dispatched more input'
+    }
+}
+
 Write-Host 'Device regression helper tests passed.' -ForegroundColor Green
