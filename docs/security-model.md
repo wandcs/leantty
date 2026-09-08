@@ -2,7 +2,7 @@
 
 > Status: current security architecture baseline
 >
-> Last updated: 2026-09-02
+> Last updated: 2026-09-07
 >
 > Public reporting policy: [`../SECURITY.md`](../SECURITY.md)
 >
@@ -52,6 +52,13 @@ A trusted host key authenticates an endpoint, not the safety of software on
 that endpoint. Remote shell output, titles, escape sequences, prompts and files
 remain untrusted input.
 
+Mosh first uses the same SSH trust and authentication boundary to bootstrap a
+UDP Session. Rust validates the bounded response and IPv4 endpoint; the library
+authenticates subsequent UDP state. The bootstrap key is Session-scoped and
+must not enter logs, errors, persistence or another Pane. `--server` accepts one
+validated absolute executable path, not arbitrary shell text. LeanTTY does not
+tunnel UDP through ProxyJump or configure a server firewall.
+
 ### HarmonyOS and application identity
 
 LeanTTY relies on HarmonyOS for application isolation, encrypted Asset Store
@@ -90,7 +97,8 @@ HAP must not be presented as an official LeanTTY release.
 ## Authentication-secret lifecycle
 
 Passwords and key passphrases are accumulated only in the active
-`SessionViewModel` input mode and submitted to its `SshClient`. They must be
+`SessionViewModel` input mode and submitted to the owning SSH, Mosh-bootstrap or
+file-transfer client. They must be
 cleared on submission, cancellation, disconnect, Pane close and error. Rust
 uses the value for the current authentication attempt and zeroizes it after use
 where supported.
@@ -100,13 +108,16 @@ Secrets must not enter:
 - the local command history or terminal PTY byte stream;
 - Preferences or persistent Asset Store metadata;
 - terminal snapshots or renderer replay;
-- logs, error snapshots, screenshots or test fixtures; or
+- logs, error snapshots, screenshots or shared test fixtures; or
 - another Session's event or answer channel.
 
-The 1.1 structured keyboard-interactive design adds a generation/round owner
-because the current string-event path is not sufficient for multi-round or
-multi-method authentication. Until that version is delivered, those methods
-are unsupported rather than inferred from prompt text.
+The controlled diagnostic exception below applies to isolated disposable fixture
+secrets, not to real credentials or to the authentication lifecycle above.
+
+Structured authentication events carry Session generation, layer and round.
+The current implementation supports keyboard-interactive prompts, multiple
+rounds and server-directed partial success/remaining methods. It rejects stale
+answers and never infers authentication method or ownership from prompt text.
 
 ## Host-key trust
 
@@ -135,7 +146,8 @@ refuse overwrite. A durable commit failure removes a newly generated or
 imported runtime pair instead of reporting success.
 
 The Asset Store contains integrity-checked generations. The application-private
-`.ssh` directory is materialized from that authority at startup. Host/config,
+`.ssh` directory is materialized lazily from that authority before the first
+command that needs SSH assets. Host/config,
 known-host and key deletion update the durable record and runtime projection so
 an explicitly deleted asset does not reappear on a later reinstall.
 
@@ -193,20 +205,39 @@ delete a partial file owned by an earlier process.
 
 ## Logging boundary
 
-Current logs are on-device and are not uploaded by LeanTTY. They intentionally
-avoid authentication secrets and terminal byte streams, but can include host
+Formal submission, release and user-delivered packages MUST NOT log terminal
+contents or secrets. Diagnostic probes that inspect payloads belong only in the
+maintainer-controlled debug/test source transformation, not in production source
+behind a runtime switch. Both unsigned and signed release packages are checked
+for their registered markers; test signing alone does not prove this isolation.
+
+Development and dedicated diagnostic builds may collect necessary terminal
+contents for a named investigation. Before collection, define the data scope,
+time/size limit, local retention and cleanup. Prefer public synthetic data;
+isolated disposable fixture secrets may be observed when needed. Real passwords,
+private keys and tokens remain excluded by default: using a debug build for real
+work does not grant permission to capture them. This exception changes neither
+authentication handling nor history, persistence or cross-Session boundaries.
+
+Raw diagnostic evidence stays local under maintainer control. Do not automatically
+upload it or put it in Git, PRs, public screenshots or an Agent context. Retain
+only what the investigation needs, then remove it under the agreed cleanup plan;
+share redacted summaries instead. An accidental real-credential capture is a
+security incident to contain, not an ordinary debug artifact.
+
+Current logs are on-device and are not uploaded by LeanTTY. They can include host
 endpoints, aliases, remote-controlled titles, application-private key paths,
 fingerprints, state transitions, session IDs, geometry, sizes, timings and
 errors. Therefore raw logs are sensitive operational data.
 
-Any test, issue or review evidence must redact those fields. New logging must
-prefer event kind, count and bounded state over payload content. A feature is
-not complete if its failure path can place a secret or terminal content in
-`hilog`.
+Shared test, issue and review evidence must redact those fields. New logging
+defaults to event kind, count and bounded state. A feature is not complete if a
+formal package's success or failure path can place secrets or terminal contents
+in `hilog`, or if its development probe escapes the controlled scope above.
 
 ## Dependency and protocol risk
 
-LeanTTY inherits risk from HarmonyOS, ArkWeb, xterm.js, russh, cryptographic
+LeanTTY inherits risk from HarmonyOS, ArkWeb, xterm.js, russh, mosh-client, cryptographic
 libraries and build dependencies. Lockfiles, Dependabot, pinned GitHub Actions,
 license inventory and public CI reduce but do not eliminate that risk.
 
@@ -233,8 +264,8 @@ evidence belong only in [`next-work.md`](next-work.md).
 ## Known limitations
 
 - The current ArkWeb CSP requires `unsafe-inline` and `unsafe-eval`.
-- The current authentication event model does not safely express standard
-  keyboard-interactive and multi-method authentication.
+- Mosh currently requires a directly reachable IPv4 UDP endpoint and does not
+  preserve a Session after process termination. It is not a background service.
 - Diagnostic logs can contain sensitive operational metadata even though they
   are not uploaded by LeanTTY.
 - Ordinary uninstall is not complete persistent-data erasure.

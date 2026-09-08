@@ -2,7 +2,7 @@
 
 > Status: mandatory cross-version engineering standard
 >
-> Last updated: 2026-08-22
+> Last updated: 2026-09-07
 >
 > Product acceptance: [`vision-acceptance.md`](vision-acceptance.md)
 
@@ -65,6 +65,44 @@ time, and verify on the physical ARM64 HarmonyOS PC when the claim is physical.
 Only then may the change proceed. If the evidence contradicts the planned task,
 update `next-work.md` and reframe the work rather than implementing the stale
 plan.
+
+### Root-cause and reframing gate
+
+A failed check authorizes investigation, not an immediate patch. Before the
+first behavior change, the task record MUST identify the expected contract, the
+last correct and first incorrect component boundary, the authoritative state
+owner, competing product/harness/environment hypotheses and the single
+hypothesis tested next. The next run MUST be the cheapest level that can
+distinguish those hypotheses.
+
+The enclosing formal matrix MUST stop at its first failure and MUST NOT be used
+as a reproduction loop. Earlier formal stages may be reused only under the
+checkpoint rules; diagnosis uses the failed named stage, a narrower diagnostic
+or a deterministic trigger. A new full matrix is forbidden while the failed
+precondition or oracle remains ambiguous.
+
+Reframing is mandatory at the earlier of these checkpoints:
+
+- two materially different implementation attempts fail to close the same
+  event chain;
+- each attempted fix exposes another owner, cache, projection or layer;
+- 90 minutes of active diagnosis pass without identifying one root cause; or
+- the proposed test observes the claim only through another feature whose own
+  state can fail independently.
+
+At the checkpoint, stop editing and expensive execution. Record which
+hypotheses were rejected, restate the authoritative owner and product contract,
+remove superseded assumptions, and select a new smallest diagnostic. A third
+implementation attempt requires this written reframe; elapsed time or previous
+investment never justifies another speculative guard.
+
+When the platform can produce several valid lifecycle outcomes and external
+automation cannot select one reliably, do not repeat the physical action to hunt
+the rarer branch. Use one real platform run to validate an actually observed
+documented outcome, and use the smallest compile-time-isolated acceptance trigger
+on the physical PC for every otherwise unselectable production recovery path.
+The trigger may start the path but must not simulate its result or create a
+second state model.
 
 ### Change-scoped feature and bug-fix verification
 
@@ -136,6 +174,22 @@ Only when preparing a formal new version MUST the maintainer enter L4:
 
 An earlier development full run, a set of diagnostics or an administrative
 bypass never waives this release gate.
+
+Before step 2, `prepare-formal-build-inputs.ps1` MUST prepare each networked
+toolchain once: clean npm install and Web build, stable OHPM lock resolution,
+and locked ARM64 Cargo fetch. It MUST hash tracked locks and generated inputs
+before and after preparation, restore their exact bytes on failure or drift,
+and retain the tool versions and input hashes. The full gate and candidate build
+then run offline. A missing cache is a preparation failure, not permission for a
+formal stage to fetch implicitly.
+
+Formal Hvigor runs MUST disable the daemon and capture stdout, stderr and exit
+code separately. The ArkTS warning gate accepts only an exact normalized
+warning count and fingerprint bound to the recorded DevEco/Hvigor versions;
+nonempty stderr is not itself a failure, and one added or changed warning is.
+Generated release ZIPs MUST use ordinal entry order, normalized entry names,
+one fixed timestamp and fixed external attributes. The workflow regression
+MUST build the archive twice after source-mtime perturbation and compare hashes.
 
 ## Quality model
 
@@ -215,10 +269,13 @@ can observe the result. Each failure must name the damaged responsibility.
 | Check | Focused group | Stable contract protected |
 | --- | --- | --- |
 | `check-public-source.ps1` | `policy` | Public-tree secret, generated-file and prohibited-artifact policy |
+| `test-mosh-client.cjs` | `arkts` | Current MoshClient admission/close and SessionViewModel input/error contracts with a substituted native boundary; host-only evidence, not ArkTS compilation or device scheduling |
 | `check-ssh-transport-flow.ps1` | `ssh-flow` | One generated N-API transport/control event schema across Rust typings and ArkTS, including removal of the retired split callbacks |
 | `check-keygen-async-flow.ps1` | `ssh-flow` | Cross-language asynchronous key-generation contract: blocking Rust work is isolated and the generated ArkTS API remains a Promise that callers await |
 | `test-terminal-policy.mjs` | `web` | Locked/generated Web assets, terminal policy behavior and necessary Web/ArkTS platform or security boundaries; product-private ArkTS control flow belongs in ArkTS or physical behavior tests |
+| `test-xterm-input-order-patch.mjs` | `web` | Version/hash-locked upstream transformation, generated-owner input/diff behavior and isolated callbacks; browser and PC tests prove event dispatch and IME integration |
 | `test-build-workflows.ps1` | `tooling` | Build/release locking, candidate identity, acceptance-source restoration, workflow failure and evidence contracts; product-private control flow is outside this check |
+| `test-release-evidence.ps1` (included by build-workflow tests) | `tooling` | Serialization overflow and failed replacement preserve the old checkpoint; unknown cleanup cannot pass the stage summary; original failures and actual versus planned model counts survive reporting |
 | `test-device-regression.ps1` | `tooling` | Physical-harness input, evidence, cleanup and secret-safety contracts, plus unavoidable public ArkUI/lifecycle registration and filesystem security flags |
 | Package-policy checks registered by `test-regression.ps1` | `tooling` and build stages | ABI, production/test-source isolation and release-package artifact boundaries |
 
@@ -226,6 +283,25 @@ Tests under `entry/src/test/` are organized by the owner or behavior they prove,
 such as SSH, workspace, terminal interaction, transfer, key management and
 formatting. A historical incident may explain why a test exists, but it does not
 define a permanent catch-all test suite.
+
+### Offline user-guide editorial gate
+
+`test-user-guide.mjs` protects packaged/source byte parity, offline resource
+policy and basic document contracts. `test-user-guide-preview.mjs`, registered
+in `web` and `tooling`, tests the real HTTP allowlist, loopback binding and
+listener cleanup. Neither test approves the guide's wording or task accuracy.
+
+Use the separate [browser review entry](../tools/web-terminal/README.md#offline-user-guide-review)
+while editing the guide. It previews only the fixed HTML snapshot, checks both
+languages and TOC/task navigation at wide and compact desktop widths, and saves
+screenshots plus versioned evidence. A reviewer MUST inspect the screenshots and
+check both languages against delivered behavior. The runner MUST NOT label its
+automatic result as editorial approval or physical acceptance. Source preview
+may precede packaged-copy synchronization; parity remains required before build.
+
+No HAP rebuild or full matrix is needed for changes confined to this host-side
+review tool. Changes to HarmonyOS guide export, permissions or system-browser
+routing still require their named physical event-chain checks.
 
 `dev-pc.ps1` is the normal build/install/launch loop when the affected behavior
 needs a device build; it is not an acceptance result. Before a named physical
@@ -263,10 +339,15 @@ existing evidence directory.
 
 The Mosh stage requires one already saved alternate Wi-Fi that can reach the
 same test LAN. The report stores only a hash identity for that SSID. It reports
-`completeApplicablePhysicalMatrixClaimed=true` only after the seven formal Mosh
+`completeApplicablePhysicalMatrixClaimed=true` only after the eight formal Mosh
 network/lifecycle scenarios and every other registered C3 stage pass against
 the same candidate and harness. Production/review artifacts, signing and
 publication remain C4 and later work in every case.
+
+The Mosh order has one owner, `Get-LeanTTYMoshFormalScenarios`: compatibility,
+runtime-reclaim, UDP pause, suspend, operator lock, operator lid, Wi-Fi pause,
+then Wi-Fi network switch. A saved seven-stage prefix is not resumable as this
+eight-stage matrix.
 
 The lower-level commands called by the current registry are:
 
@@ -359,6 +440,23 @@ only permits a partial evidence file to be retained without changing that
 meaning. The controlled server MUST set `LANG=C.UTF-8` and `LC_ALL=C.UTF-8`
 before its no-profile Bash starts, and the first connected session MUST record
 `locale charmap` as exactly `UTF-8` before any Agent result can be assessed.
+The SSH entry waits for either a host-key prompt or an observed connection;
+absence of a prompt is not an exception-recovery branch. Focus, text, key and
+log-query failures MUST propagate without being replaced by a later timeout.
+A missing app-log observation alone is `unknown`, not proof of a product defect.
+The harness records the current attempt's proven SSH boundary separately from
+the app's state: connection plus the fresh fixture marker grant `shell-ready`,
+and a fresh close observation grants `local`. It invalidates that evidence
+before a new connection or disconnect action. An uncertain Ctrl+D is not retried.
+The first failed selected check is persisted and stops subsequent Agent/mode
+checks and local cleanup submission. Unconfirmed resource cleanup remains a
+failure with its run-scoped identity; never claim removal or restart the entire
+application to make a failed isolated Tab look recovered.
+`test-agent-ssh-gate.ps1` executes these actual functions with external effects
+replaced, including failure propagation, stale-boundary rejection and selection
+stop. It runs through `test-agent-compatibility.ps1` in the `tooling` group; its
+optional `-EvidencePath` records a standalone no-device result. These tests do
+not prove physical SSH recovery or resource removal.
 The fixture MUST NOT rely on SSH client locale forwarding: OpenSSH does not
 accept client environment variables by default, and tmux replaces non-ASCII
 output with underscores when its client locale is not UTF-8. A missing or
@@ -578,6 +676,37 @@ affected stage, classify it and repair the harness outside the running matrix;
 then apply the C3 compatibility and R1-R4 rules instead of editing tools while
 unrelated stages continue.
 
+## Release-mode review smoke
+
+`verify-review-smoke-pc.ps1 -HapPath <test-signed release-mode HAP>` is a separate
+normal-product-path check. It installs and launches the selected ARM64 HAP,
+creates one disposable idle Tab, splits and closes a Pane by keyboard, then
+closes that Tab through its current UI control. It compares the surviving UI
+identities, persisted workspace-only record and Settings digest with the baseline.
+The report records package/harness identities, stage timings, cleanup and any
+previous failed attempt. Development runs remain `acceptanceEligible=false`;
+this script alone does not satisfy the formal C4 release gate.
+
+Signing purpose, build mode and test capabilities are separate checks owned by
+`device-package.ps1`. The SDK verifies the actual HAP signature; the extracted
+Profile must be `debug` for device testing, irrespective of the filename. APPs,
+production/unknown Profiles, wrong bundles and non-ARM64 packages are rejected
+before installation. A review smoke requires `app.debug=false` and the shared
+release-package audit must find no acceptance markers. Marker-based scenarios
+require `app.debug=true` plus the native-input/submission capabilities. The
+default `dev-pc.ps1` purpose is `acceptance`; the review script explicitly selects
+`-HapPurpose review-smoke`. Do not use a release-mode review HAP for the harness
+qualifier or other exact-command-input scenarios.
+
+The smoke sends no ordinary text or Enter and does not call acceptance-only
+commands, parse their log markers, access SSH credentials or change the network.
+UiTest node identity is valid only within this observed run; titles may repeat.
+The current persisted workspace supplies active Tab position because UiTest may
+omit accessibility labels. An ambiguous identity or unknown input outcome stops
+the attempt without repeating the action. Failed cleanup makes the run invalid.
+Use `policy,tooling` for the local contracts and this one named scenario for L3;
+do not start a full matrix to validate these tooling changes.
+
 ## Formal checkpoints and rerun policy
 
 Full release testing is checkpointed work, not one indivisible terminal command.
@@ -743,6 +872,16 @@ summaries carry only the minimum redacted identity and result.
 
 ## Physical automation protocol
 
+`verify-agent-compatibility-pc.ps1 -DiagnosticHap -SshPrerequisiteProbe` is the
+zero-model diagnostic for the Agent harness's SSH prerequisites. It skips Agent
+configuration, inventory and launch, reuses the normal connect/locale/close
+helpers, then runs the existing isolated-resource finalization. Fresh remote
+shell readiness and command output prove the connection; the current close
+event permits local cleanup. Failure stops the probe without retrying uncertain
+input. Its three ordinary local commands also provide the minimum UiTest input
+smoke when exact buffer, single Enter and resulting operation all pass. This
+does not replace Agent/IME acceptance or establish natural-input reliability.
+
 Shared verification primitives have one narrow owner. `candidate-store.ps1`
 resolves retained HAP identity and SHA-256 provenance; `hdc-common.ps1` owns
 checked HDC execution, confirmed non-empty device-file receive and the raw
@@ -782,15 +921,126 @@ Every automated physical scenario MUST:
   infrastructure stop, not authorization to restart HDC or repair the device;
 - locate UI controls from current layout semantics and native bounds, not stale
   screenshots or Windows-scaled coordinates;
+- preserve LeanTTY's current Pane subtree order when enumerating terminal
+  inputs. `Index` mounts each Tab's Panes in model order; xterm textarea bounds
+  follow each cursor and MUST NOT define left/right identity. A two-Pane focus
+  check requires exactly two inputs and exclusive focus on the requested Pane.
+  Exclude descendants of hidden/non-interactive retained Tab wrappers, but not
+  xterm's intentionally transparent textarea. Equal Pane bounds require a
+  geometry diagnostic; do not assume they are merely an accessibility artifact.
+  Re-read the layout for each observation and do not persist hierarchy paths
+  or accessibility IDs across a rebuild;
 - never run two physical scenarios against the same target concurrently;
-- inject ordinary terminal text as one complete, coordinate-targeted serialized
-  UiTest `inputText` operation against the current semantic input node. Do not use
-  focused `uiInput text` for arbitrary payloads: on UiTest 6.0.2.3 a payload such
-  as `help` is parsed as the CLI help subcommand and returns success without
-  delivering text. Reserve numeric physical-key events for shortcuts, modifiers
-  and special-key semantics. Common helper-driven layout, click, text, key and
-  screenshot operations MUST share one device-scoped UiTest mutex because the
-  platform interface is not concurrent;
+- inject ordinary terminal text as one focus-verified, coordinate-targeted
+  serialized UiTest `inputText` operation. Inside the same device mutex, capture
+  a fresh layout, require exactly one focused semantic text node, verify the
+  caller's intended target, derive coordinates from that current node, and then
+  inject the complete payload, then capture another layout under the same mutex
+  and verify that the same window/tree target retains exclusive focus. Scope
+  terminal post-input identity to the unchanged native Web instance (non-empty
+  window ID, native hierarchy and accessibility ID) with exactly one terminal
+  input in that Web. Its virtual DOM hierarchy and cursor-following textarea
+  bounds may change during rendering; they are not Pane identity. Another Web,
+  window, replaced native instance or ambiguous terminal remains a failure.
+  Other text controls keep their operation-scoped field identity checks. Scope
+  this identity to the current operation; never cache it across navigation or
+  rebuilds. Owner loss stops the operation before any retry, Ctrl+C or Enter;
+  only an inexact buffer with its original owner intact may be retried.
+  Do not use focused `uiInput text` for arbitrary
+  payloads: on UiTest 6.0.2.3 a payload such as `help` is parsed as the CLI help
+  subcommand and returns success without delivering text. Reserve numeric
+  physical-key events for shortcuts, modifiers and special-key semantics.
+  Common helper-driven layout, click, text, key and screenshot operations MUST
+  share the same device-scoped UiTest mutex because the platform interface is
+  not concurrent;
+- use `diagnose-text-input-pc.ps1 -Scenario pane-ownership -HapPath <signed HAP>`
+  for the no-network/no-Enter split/close-left/resplit input boundary. It checks
+  retained native input, full-width restoration, non-overlapping Web geometry
+  and isolation from the new Pane, then closes only its disposable Tab/Panes.
+  This is focused diagnostic evidence, not a release scenario;
+- use `diagnose-text-input-pc.ps1 -Scenario ime-input -HapPath <signed debug HAP>`
+  for the system-IME boundary without SSH or an Agent. One disposable local Tab
+  checks English keys, pinyin commit and repeated ASCII after composition against
+  the native input buffer. It uses system key events, not direct CJK text injection;
+  an English-mode baseline and the expected Chinese candidate are preconditions.
+  No Enter, network, model request or retry is allowed. A mismatch stops the probe
+  before attribution; restore input mode, remove the owned Tab and return the
+  screen-timeout policy. This is L3 system-IME evidence, not a human-keyboard
+  reliability sample or a replacement for formal remote TUI acceptance;
+- `diagnose-text-input-pc.ps1 -Scenario input-order -HapPath <signed debug HAP>`
+  is a one-shot public-vector diagnostic, not a reliability sampling loop. Its
+  per-Pane collector records numeric event metadata only, stops at 256 rows or
+  20 seconds, and reports after capture. Never submit the vector or infer loss
+  from input-event counts alone: ordinary keys can produce onData without an
+  input event. Missing/truncated chunks invalidate the trace; no bad sample
+  means insufficient causal evidence and no automatic retry;
+- `diagnose-text-input-pc.ps1 -Scenario input-attribution -AttributionMode <0-3>`
+  compares a test-only plain textarea and unchanged xterm handlers in the same
+  ArkWeb. Modes 0/1 use one UiTest vector; 2/3 require a real keyboard and MUST
+  announce READY only after arming. Each document accepts one arm, at most 256
+  numeric rows and 20 seconds (automatic) or 60 seconds (manual). Observe the
+  original deferred-diff callback without changing its delay or invocation count;
+  compare public-vector equality in memory and retain no contents. The plain
+  fixture owns test-only Bridge focus, not the normal terminal input path.
+  Stop on mismatch or owner loss. A passing cell is not reliability sampling or
+  causal proof; an operator key during setup invalidates that attempt. Arming
+  submission and probe/timeout cleanup have separate evidence. No authentication,
+  network change or vector submission belongs in this diagnostic;
+- `input-attribution -AttributionMode 4` extends that diagnostic with one
+  180-character UiTest call in a disposable idle xterm Tab. It observes the
+  original diff scheduling/execution, onData, WebMessagePort post attempts and
+  completion, owner-Surface receipt counts and native buffer equality. It keeps
+  only numeric metadata, stops at 20 seconds or 4096 rows, and never submits the
+  vector. Preserve the first mismatch trace; a clean trace does not authorize
+  further sampling. This test-only observer may affect timing, so neither a
+  clean result nor the synthetic browser reproduction proves a device cause;
+  the 2026-09-06 mode-4 run exhausted this cap at character 156. Before another
+  full-chain run, validate the vector/event budget in software and avoid relying
+  on the 500-line hilog tail for a full native timeline. The later 4096-row cap
+  has a 2365-row normal-vector regression; it does not validate the earlier run;
+- attribution profiles 5/6/7 isolate observer effects, not product fixes.
+  Profile 5 leaves detailed IDLE action/result logging on and the Web trace off;
+  6 disables only those two test logs; 7 adds the mode-4 Web trace to 6. Each uses
+  the same public 180-character call and one owner-buffer summary after a
+  23-second window. Read logs only after injection; do not insert per-character
+  queries or change injection pacing. Production/ACK logs, inactive observer
+  checks and the final timer remain present, so controls are not zero overhead.
+  Cancellation or Surface detach clears the temporary owner-local log gate;
+  non-idle final state is invalid and its buffer is never read. A fixed contrast
+  with no fault cannot rule out timing effects or justify repeated sampling;
+- `tools/web-terminal/input-order-repro.html` and `verify-input-order-repro.mjs`
+  isolate one synthetic input-order mechanism against the unchanged pinned npm
+  xterm in a desktop browser. The fixed ten-page check is not HDC/IME input,
+  physical acceptance, a frequency estimate or proof of LeanTTY's device fault.
+  Keep it outside the normal pass gate: its expected missing output characterizes
+  a candidate defect, not correct product behavior. See `input-order-repro.md`
+  beside the page for dependencies, controls, scope and upstream references;
+- `verify-xterm-input-order.mjs` is the separate correctness corpus for the
+  build-time input repair. Run `upstream` and `packaged` against the same cases:
+  pristine upstream must retain the known failures, and the repaired asset must
+  pass. It uses actual DOM/timers without runtime method replacement. The `web`
+  group also runs generated-owner unit cases and rejects patch/version/hash
+  drift. Physical validation reuses profile 8, the plain/masked pair, Pane
+  ownership and one zero-model physical IME TUI probe. Profile 8's old headline
+  classifies the defect signature, not repair success: correction requires all
+  50 DOM/output cases exact, 40 xterm/owner-Surface/native units, complete trace
+  and successful cleanup. A corrected synthetic run does not attribute historical
+  natural losses; `verify-input-synthetic-repro.mjs ... packaged` validates the
+  existing trigger and cancellation boundaries against the corrected asset;
+- attribution profile 8 is a controlled synthetic-order diagnostic on the
+  physical PC, not natural-input sampling. Ten fixed sets run normal, delayed,
+  early-keyup, input-only and plain-textarea controls. Use the actual disposable
+  idle Pane's xterm for terminal cases; reset only public textarea.value between
+  cases. Keep original xterm handlers and timers, no UiTest vector or vector
+  Enter. Observe per-case DOM/onData and owner-Surface/native totals; the expected
+  defect signature is ten missing outputs and forty successful controls, not
+  correct product behavior. Stop on owner/security/replay/interference change,
+  or the ten-second budget. A complete 51-row numeric report and the 23-second
+  native summary are both required. Completion polling may overlap synthetic
+  dispatch; do not claim zero observer overhead or equivalence to trusted input.
+  `verify-input-synthetic-repro.mjs` checks the same trigger in Chrome before
+  deployment and remains outside the normal correctness gate. A controlled
+  device reproduction does not establish the cause of earlier natural losses;
 - a disposable numeric password for an explicitly selected system-OpenSSH
   compatibility diagnostic may be entered as individual physical digit keys
   when the masked password buffer intentionally cannot be observed. Generate it
@@ -823,6 +1073,20 @@ Every automated physical scenario MUST:
   MAY pace polling but MUST NOT decide success. Full layout dumps and bounded
   HiLog snapshots are diagnostic observations: do not repeat them faster than
   their platform cost or request them when a cheaper stage postcondition exists;
+- drive a requested Wi-Fi change through the visible system Settings UI. Before
+  opening it, normalize the panel from its current semantic open/closed state;
+  never send a blind Back action. Use the exact operator-supplied saved SSID only
+  to select the row. Read the current target SSID from the checked
+  `hidumper -s WifiDevice` system-service state, not localized Settings text or
+  an acceptance-only product permission. The parser MUST require one active
+  state, one connection state and at most one connected SSID, and fail as a
+  harness error if that source schema drifts. Then judge readiness from the
+  target SSID, active WLAN link, assigned link address and direct endpoint
+  reachability. Record a longest-prefix classic route when the system exposes
+  one, but do not require it before probing: HarmonyOS policy routing may make
+  the endpoint reachable without listing that route in `netstat -rn`. A global
+  route-table digest is not a transition oracle. Record these states in order;
+  do not start the product recovery assertion until every required state holds;
 - request the default filtered UiTest layout for routine semantic selection.
   Extended visual attributes (`dumpLayout -a`) MAY be requested only by a named
   diagnostic that consumes them; routine focus, disclosure and state checks MUST
@@ -854,7 +1118,10 @@ Every automated physical scenario MUST:
 - remove disposable device state in `finally` through the product's create/delete
   semantics first, then independently verify absence in the application sandbox.
   Direct filesystem deletion is emergency recovery, not accepted cleanup, and
-  evidence promotion is forbidden when any run-scoped resource remains.
+  evidence promotion is forbidden when any run-scoped resource remains. A
+  failed restoration of pre-test Wi-Fi marks the environment dirty and blocks
+  another network scenario until recovered; it does not rewrite an already
+  observed product transport verdict. Record the two results separately;
 
 UI automation MUST model each consequential interaction as an explicit state
 transition: action, expected dialog, confirmation action and observable
@@ -871,10 +1138,38 @@ never a primary pass oracle. Add a second boundary observation only when risk or
 ambiguity requires it; collecting every expensive observation at every poll is
 not acceptance rigor.
 
+A composite scenario MUST give each independent product claim its own direct
+oracle. Do not infer terminal page restoration from Search UI state, Session
+ownership from a derived AppStorage projection, or network recovery from process
+survival. Test page restoration, discarded-session isolation, search-history
+isolation and transport recovery as separate postconditions, then aggregate
+their verdicts without letting one feature stand in for another.
+
+For Mosh page restoration, the baseline fingerprint MUST be captured in the
+same xterm write callback that produces the saved snapshot, after queued output
+has been parsed. The result fingerprint MUST be captured after replay and the
+saved viewport have both completed, but before the page-replacement ACK or any
+local recovery output. Compare buffer kind, dimensions, viewport and visible
+cell content. A marker captured before the `mosh` command and a later Search
+match are not page-restoration oracles.
+
+Bind the baseline and Mosh-page fingerprint to the exact connection being
+closed. A composite scenario that connects again in a surviving Pane must read
+that connection's saved snapshot, even when both connections have equal
+dimensions. Consume independent lifecycle evidence before fingerprint helpers
+clear its logs; a correct page comparison must not weaken Pane-isolation checks.
+
+Exact visible-page equality requires the same terminal dimensions. Different
+dimensions invalidate that comparison; they do not establish lost content.
+Resize coverage must separately compare replay with a live xterm resize,
+including framebuffer, wrapping, cursor, viewport, subsequent writes and search
+isolation. A composite network scenario may close its completed idle comparison
+Pane before the exact page check, but that does not replace resize coverage.
+
 Physical keyboard injection MAY be used only for a scenario whose contract is
 the physical shortcut or special-key path, after the script verifies the focused
 application and the resulting operation. Ordinary text uses the single UiTest
-text path. ArkWeb's accessibility textarea is useful for focus preflight and
+`inputText` path. ArkWeb's accessibility textarea is useful for focus preflight and
 disclosure scans, but is not exact input evidence: on the target PC it can omit
 rendered digits and diverge from the native buffer.
 
@@ -915,6 +1210,7 @@ selected scenario did not use that path.
 | --- | --- | --- |
 | Parser/help/config semantics | L0–L1 | Parser tests, help/reference update, supported/unsupported cases and no side effect before validation |
 | SSH host-key/auth/session lifecycle | L0–L3 | Controlled server, positive and negative protocol cases, cancellation/stale event cases, affected ARM64 boundary and named physical keyboard/session scenario |
+| Mosh bootstrap/UDP/session page | L0–L3 | Parser/library-owner tests, bounded input/output and close/cancel checks, plus only the affected named physical Mosh scenario below; complete lifecycle/network matrix is reserved for the exact formal candidate |
 | Terminal bytes/xterm/Bridge | L0–L3 | Raw-byte and malformed-message tests, flow-control/snapshot regression, large TUI output and affected physical renderer interaction |
 | Tab/Pane/focus/shortcuts | L0–L3 | Ownership tests plus named physical keyboard, system/IME conflict, selection or cross-Tab scenario affected by the change |
 | Clipboard or URL effects | L0–L3 | Policy tests for allowed/denied payloads plus affected physical system-service behavior and privacy/security review |
@@ -954,9 +1250,15 @@ production hosts, device identifiers and unredacted logs.
 An acceptance-only entry is permitted only when a required physical condition
 cannot be triggered or observed reliably through normal HarmonyOS/product
 interfaces. It MUST be guarded by the compile-time `ACCEPTANCE_TESTS` field,
-invoke the unchanged production event chain, expose no secret value, create no
+invoke the unchanged production event chain, expose no real credential, create no
 parallel business state and have a named regression owner. Runtime hiding alone
 is prohibited.
+
+Controlled development diagnostics may observe necessary terminal contents or
+isolated disposable fixture secrets under `security-model.md` → Logging boundary.
+Record the collection scope, bounds, retention and cleanup before running them.
+Ordinary debug use does not authorize real-secret capture. Shared evidence remains
+redacted; this exception does not relax authentication, history or persistence tests.
 
 Production ArkTS files MUST contain no acceptance-only entry or helper. The
 versioned `acceptance-source.ps1` transformation injects the minimal guarded
@@ -968,6 +1270,19 @@ acceptance marker and helper symbol. Finding one fails the formal build. New
 hooks MUST add a unique marker to that package policy, an injection/restoration
 test and a negative package test. Remove a hook when its associated gate
 disappears or normal system control becomes reliable.
+
+`performance-diagnostic-source.ps1` owns the debug ping/output probes. The
+`performance-diagnostic-isolation` ArkTS check executes the real input/output
+owners with public canaries, verifies debug metrics and production silence,
+preserves Keypush and SSH input, and checks source restoration. Tooling tests
+reject every registered performance marker in package entries. A hook-free
+development build or synthetic ZIP is not formal release-package acceptance.
+The bounded full-output oracle also rejects wrong content/order and ignores
+out-of-frame prompt bytes. Automatic public-vector input and WebGL context-loss
+triggers are disabled in ordinary debug packages. Enable them only for a dedicated
+fixture run during build, restore the source afterward, and verify the retained
+ordinary package disables them before returning the device to normal use. Remote
+terminal output is not authority to inject input in an ordinary development session.
 
 Acceptance configuration MUST NOT shorten or bypass the production timeout,
 retry, authentication or cleanup policy being claimed. A shorter diagnostic
@@ -1116,11 +1431,14 @@ other network identities in evidence.
 
 The Wi-Fi network-switch scenario requires one operator-supplied SSID that is already saved on the
 test PC. It first closes a recovered idle second Pane and verifies a one-Pane baseline. It discovers
-the current network through the system panel, runs one controlled Mosh Session and one direct-LAN
-OpenSSH Session against the same stable WSL host, then selects the saved alternate network. The SSH
+the current network through the read-only `WifiDevice` system-service dump, runs one controlled Mosh
+Session and one direct-LAN OpenSSH Session against the same stable WSL host, then uses the visible
+system panel only to select the saved alternate network. It normalizes that panel from an observed
+semantic state before opening or closing it and never infers connection state from localized text. The SSH
 comparison uses the existing product-managed identity and never exports its key. Each SSH probe waits
 for PTY resize, then requires an exact echoed marker in native output and the terminal search result.
-The switch is valid only when the device source IPv4 or routing digest changes. The scenario records
+The switch is valid only when the device source IPv4 or the matched endpoint-route identity changes,
+and the target SSID, active link and direct endpoint probe all agree. The scenario records
 each protocol's observed time, Session outcome, post-switch command and required reconnect action.
 An SSH Session is classified as preserved, automatically disconnected, or unresponsive; the last
 case is recovered through the product's local `~.` disconnect before reconnecting. A harmless empty
@@ -1130,10 +1448,11 @@ recovery clears the live buffer. A direct device-side TCP probe separates port r
 LeanTTY reconnect failure, and a terminal mode probe resolves a missing readiness log before
 classifying that failure. SSH reconnect and its exact post-switch command prove alternate-network
 access to the stable LAN host; the Mosh same-PTY command is the recovery oracle. The scenario restores
-the original network on success and failure. HDC is only the USB control channel. SSIDs,
-addresses, route contents and system-panel layouts stay in the run-owned temporary directory and are
-not retained as evidence. A password prompt is an environment failure: the harness never reads,
-accepts or stores Wi-Fi credentials.
+the original network on success and failure. HDC is only the USB control channel. Raw system dumps,
+SSIDs, addresses, route contents and system-panel layouts stay only in the run-owned temporary state
+needed for selection and cleanup and are not retained as evidence. Evidence keeps ordered transition
+names and redacted network identity only. A password prompt is an environment failure: the harness
+never reads, accepts or stores Wi-Fi credentials.
 
 The suspend scenario invokes the HarmonyOS test PC's `power-shell suspend`, waits five seconds,
 then invokes `power-shell wakeup`. It must retain the same LeanTTY process and controlled remote
@@ -1150,12 +1469,26 @@ execute a new exact command, close normally and complete the standard secret and
 It records the operator action and lock duration; it does not classify the lock as suspend, lid
 close or network loss.
 
+`-Scenario runtime-reclaim` deterministically drops the active Mosh Pane's ArkTS
+Session state through an acceptance-only trigger, leaving native cleanup to the
+production input-recovery path. It must preserve PID/start time and ordered
+Tab/Pane identities, withhold the first ordinary character, observe an empty
+local command buffer before any later command reset, request native cancellation,
+and prove the stock server/PTY are absent. The recovery warning and usable local
+command path must return without prior remote content in search history. Missing
+or ambiguous owner observations fail the scenario; a headline pass cannot replace
+the structured `runtimeReclaim` contract. The trigger and observations are removed
+from production packages. This proves controlled state-loss recovery, not system
+GC behavior, actual low-memory pressure or physical lid closure.
+
 `-Scenario operator-lid-recovery` is the separate operator-assisted physical-lid diagnostic.
 After the baseline command, the operator closes the test PC lid and leaves it closed until the
 harness observes either the platform lock boundary or temporary device unavailability, then opens
 and unlocks it. The scenario must regain an unlocked HDC control boundary and accept exactly one of
-two product outcomes. If LeanTTY retains the same process, the stock Mosh server and controlled
-remote terminal must survive, execute a new exact command and close normally. If HarmonyOS replaces
+three product outcomes. If LeanTTY retains the same process and Session graph, the stock Mosh server
+and controlled remote terminal must survive, execute a new exact command and close normally. If the
+process survives but the Session graph is lost, the production recovery path must preserve the
+workspace, withhold input, clean orphan native Sessions and return to local commands. If HarmonyOS replaces
 the process, LeanTTY must relaunch into the recovered local workspace, show the recovery warning,
 exclude the prior remote command and create no replacement Mosh Session; a local command must remain
 usable. Its controlled `MOSH_SERVER_NETWORK_TMOUT` is derived from the declared operator budget plus
@@ -1165,6 +1498,9 @@ restarted process may reuse the same numeric PID. Evidence records both values, 
 replacement, input method, operator action and whether the closed-lid boundary appeared as `locked`
 or `unavailable`; programmatic suspend and `Win+L` cannot substitute for this scenario. Command
 injection remains automated and is not delegated to the operator.
+Run the physical lid action once and record whichever supported outcome occurs.
+Do not repeat it to hunt the uncommon same-process state-loss branch already
+covered by runtime-reclaim.
 
 `-Scenario pane-close` splits the current tab, connects Mosh in the newly active Pane, proves one
 exact controlled PTY command, and closes that active Pane through the visible close button and
@@ -1206,6 +1542,22 @@ restore production source in `finally`; neither trigger may exist in a productio
 page/renderer triggers and the abnormal-exit scenario retain the standard Preferences, secret,
 process, fixture and temporary-directory audits.
 
+`-Scenario input-rejection` requires a dedicated test HAP built inside
+`Invoke-WithLeanTTYNativeAcceptanceSource -MoshInputRejectionOnly`; ordinary debug
+builds do not include its arm API. A one-shot reservation of the selected Session's
+entire empty input queue makes the unchanged native `try_send` return Full, then
+releases the unused permits immediately. Do not flood input, stop the receiver or
+replace the ArkTS write result. After actual remote output is received, the real
+input handler must reject its short frame, acknowledge pending output before
+restoring that Session's exact original page, show the fixed warning/advice and
+leave no rejected input at the remote PTY. The other Mosh Session must execute a
+new exact command on its original PTY. Search, secret and resource cleanup remain
+required. Build transformations must restore source bytes; production/review-smoke
+packages reject the arm and telemetry markers. Restore an ordinary test HAP after
+this diagnostic; neither its injected package nor this routine is release or
+performance evidence. Research and limits are recorded in
+[`code-quality-diagnosis-1.6.md`](code-quality-diagnosis-1.6.md).
+
 `-Scenario process-recovery` force-stops the LeanTTY application process while one controlled stock
 Mosh Session is active, then relaunches the same installed test package. It must observe a new PID,
 find the explicit workspace-recovered warning, prove the old remote command is absent from terminal
@@ -1241,6 +1593,13 @@ no-new-evidence reruns; an unplanned repeat with unchanged inputs and no new
 hypothesis is.
 
 ## Evidence record
+
+Atomic JSON writers MUST reject serialization-depth warnings before replacing
+the previous checkpoint. Stage summaries accept a declared cleanup only with a
+proved `passed` verdict; null, unknown and malformed values cannot qualify the
+stage. Cleanup producers use explicit `result`/`detail` fields, not success
+inferred from prose. An absent legacy field remains `not-separately-reported`,
+never proof that cleanup ran.
 
 Every release-candidate conclusion must be attributable to:
 

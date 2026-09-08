@@ -331,6 +331,15 @@ Invoke-RegressionCheck -Name 'trusted-arkts-tests' -Groups @('arkts') -Action {
         "; ArkTS warnings=$($warningState.warningCount), sha256=$($warningState.sha256)"
 }
 
+Invoke-RegressionCheck -Name 'offline-user-guide-preview' -Groups @('web', 'tooling') -Action {
+    # Tooling-only selection does not initialize DevEco. This HTTP test needs only Node.
+    $previewNode = if ([string]::IsNullOrWhiteSpace($nodeExe)) {
+        @(Get-Command node.exe -CommandType Application -ErrorAction Stop)[0].Source
+    } else { $nodeExe }
+    & $previewNode (Join-Path $repoRoot 'tools\web-terminal\test-user-guide-preview.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'Offline user guide preview tests failed' }
+}
+
 Invoke-RegressionCheck -Name 'xterm-input-order-patch' -Groups @('web') -Action {
     & $nodeExe (Join-Path $repoRoot 'tools\web-terminal\test-xterm-input-order-patch.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'xterm input ordering patch tests failed' }

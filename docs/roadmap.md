@@ -570,6 +570,9 @@ diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent �
 
 ## 当前 milestone：1.6 — Mosh 弱网连接
 
+2026-09-07：产品开发验证与性能/稳定性/代码质量诊断已闭合；当前进入文档收口与精确
+候选准备，正式验收和发布仍未完成。活动顺序只在 [Next Work](next-work.md) 中维护。
+
 ### 用户结果
 
 用户在 ARM64 HarmonyOS PC 合盖、短暂离线、网络抖动或地址变化后，可以继续一个
@@ -580,14 +583,14 @@ diagnostic HAP 和命名物理矩阵闭环。2026-08-24 重新打开的 Agent �
 2026-08-29 已闭合 Mosh bootstrap 将复用的 SSH Identity 解析：标准默认顺序、显式覆盖、
 重复 `IdentityFile` 拒绝和各连接入口使用同一结果。聚焦软件门和只授权 `id_ecdsa` 的物理
 OpenSSH 场景均通过；现有 `id_ed25519` 在测试前由产品导出，测试后由产品恢复并完成独立
-清理。该结果只授权进入 Mosh 可行性与用户价值门，不预先授权协议实现。
+清理。该结果当时只授权进入 Mosh 可行性与用户价值门；后续授权与证据见技术方案。
 
-### 拟议范围
+### 已授权范围
 
 - 通过 SSH 完成主机校验、认证和远端 `mosh-server` 启动，再使用 Mosh 协议承载一个
   交互式终端 Session。
 - 首版支持 `mosh [user@]host|alias`、固定 UDP port/range、受控 `--server=PATH`、
-  `--predict=adaptive/always/never`、IPv4 UDP endpoint 和 `Ctrl-^ .` 强制断开。IPv6 与
+  `--predict=adaptive/always/never`、IPv4 UDP endpoint 和 `Ctrl-^ .` 有界关闭。IPv6 与
   `-4/-6` 只有在公共客户端库和物理 PC 双栈 fixture 同时成立后重新进入，不属于 1.6 合同。
 - 明确展示 SSH bootstrap、UDP 建连、已连接、网络中断、恢复和不可恢复失败状态。
 - 复用现有 Tab、Pane、Terminal Surface 与用户输入边界，但按 Mosh 的真实生命周期
@@ -599,16 +602,16 @@ OpenSSH 场景均通过；现有 `id_ed25519` 在测试前由产品导出，测�
 - 不内置或自动安装服务器端 `mosh-server`，不把手机移动网络作为范围依据。
 - 不接受任意 `--ssh="..."` 或 `--client=PATH`，不建立第二套 Mosh Host/Identity 配置，
   不管理 firewall/NAT，也不承诺关闭客户端后重新附着旧 Mosh server。
-- ProxyJump 最多帮助 SSH bootstrap；目标 UDP 仍须能从 LeanTTY 直接到达，不能把
-  “SSH 经跳板成功”描述为“Mosh 一定可用”。
+- 首版 Mosh 拒绝 ProxyJump。即使以后支持经跳板 bootstrap，目标 UDP 仍须从 LeanTTY
+  直接可达，不能把“SSH 经跳板成功”描述为“Mosh 一定可用”。
 - 不为了 SSH/Mosh 两个实现提前建设通用传输插件框架。
 - 必须先在目标 PC 上建立休眠、短断网、网络切换、UDP 受限网络和终端兼容性基线，
   证明 Mosh 相比现有 SSH 重连提供持续、可测量的核心价值。
 - 新协议、密码学、Unicode/终端状态同步依赖必须通过许可证、供应链、ARM64 构建、
   安全和长期维护审查；收益不足时取消 milestone。
 
-技术草案：[`design/mosh.md`](design/mosh.md)。该 milestone 已进入 `next-work.md`；先执行
-用户价值、目标平台、真实网络和依赖维护性进入门。只有继续决定成立后，才授权产品实现。
+技术方案与历史进入门：[`design/mosh.md`](design/mosh.md)。开发结果不替代精确候选的
+正式验收，也不预先授权扩大上述范围。
 
 ## 阻塞的战略 milestone：2.0 — MatePad 实体键盘双模式
 

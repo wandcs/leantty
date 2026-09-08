@@ -2,6 +2,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'test-device-package.ps1')
+& (Join-Path $PSScriptRoot 'test-review-smoke.ps1')
 & (Join-Path $PSScriptRoot 'test-release-evidence.ps1')
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
@@ -1343,6 +1344,37 @@ try {
     $softwareGateText = Get-Content -LiteralPath (
         Join-Path $PSScriptRoot 'test-regression.ps1'
     ) -Raw
+    & {
+        # Exercise the registered action with two executable resolutions; a web group
+        # must not be needed to initialize a tooling-only HTTP check.
+        $registryAst = [Management.Automation.Language.Parser]::ParseInput(
+            $softwareGateText, [ref]$null, [ref]$null)
+        $previewCheck = $registryAst.Find({ param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -eq 'Invoke-RegressionCheck' -and
+            $node.Extent.Text.Contains("-Name 'offline-user-guide-preview'")
+        }, $true)
+        $previewAction = @($previewCheck.CommandElements | Where-Object {
+            $_ -is [Management.Automation.Language.ScriptBlockExpressionAst]
+        })[0].ScriptBlock.GetScriptBlock()
+        $previewCalls = @{ count = 0 }
+        function Invoke-ControlledPreviewNode {
+            param($Path)
+            Assert-True ($Path.EndsWith('test-user-guide-preview.mjs')) 'Preview must run the registered test'
+            $previewCalls.count++
+            $global:LASTEXITCODE = 0
+        }
+        function Get-Command {
+            [pscustomobject]@{ Source = 'Invoke-ControlledPreviewNode' }
+            [pscustomobject]@{ Source = 'Must-Not-Select-Second-Node' }
+        }
+        $nodeExe = $null
+        & $previewAction
+        $nodeExe = 'Invoke-ControlledPreviewNode'
+        function Get-Command { throw 'Configured Node must not be resolved again' }
+        & $previewAction
+        Assert-True ($previewCalls.count -eq 2) 'Preview must resolve one Node with and without DevEco initialization'
+    }
     Assert-True (
         $softwareGateText.Contains("[string[]]`$Group = @()") -and
         $softwareGateText.Contains("'policy'") -and

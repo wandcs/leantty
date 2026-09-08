@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="8">
+  <meta name="leantty-guide-revision" content="9">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LeanTTY 1.6.0 使用指南 / User Guide</title>
@@ -926,7 +926,7 @@
       <span class="brand-name">LeanTTY</span>
     </a>
     <div class="masthead-meta">
-      <span class="edition">使用指南 · 1.5.0</span>
+      <span class="edition">使用指南 · 1.6.0</span>
       <div class="language-switch" role="group" aria-label="指南语言">
         <a href="#guide-zh" aria-current="page">中文</a>
         <a href="#guide-en" lang="en">English</a>
@@ -1073,8 +1073,8 @@ ssh work</code></pre>
         </p>
         <p>
           <code>-i</code> 把 <code>key list</code> 中的一个 Identity 保存到该 Host；以后
-          <code>ssh</code>、<code>put</code> 和 <code>get</code> 都会复用它。命令自己的
-          <code>-i</code> 仍只覆盖当次操作。<code>-i none</code> 删除保存的绑定；修改其他 Host
+          <code>ssh</code>、<code>mosh</code>、<code>put</code> 和 <code>get</code> 都会复用它。
+          只有 ssh/put/get 提供当次操作的 <code>-i</code> 覆盖。<code>-i none</code> 删除保存的绑定；修改其他 Host
           字段而不写 <code>-i</code> 时，现有绑定保持不变。
         </p>
         <p>
@@ -1129,7 +1129,7 @@ ssh -J jump deploy@target.example.com</code></pre>
           <code>ltty</code>。
         </p>
         <p>
-          远端 Shell 退出或当前连接被断开后，<code>Connection closed</code> 和新的
+          SSH 远端 Shell 退出或连接被断开后，<code>Connection closed</code> 和新的
           <code>ltty&gt;</code> 会紧接最后一行可见内容显示，不会被推到窗口底部；原有滚动记录仍可查看。
         </p>
 
@@ -1140,6 +1140,44 @@ ssh -J jump deploy@target.example.com</code></pre>
           和连接状态，<code>~~</code> 向远端发送一个字面 <code>~</code>。行中的 tilde 和未知的
           行首组合（例如 <code>~x</code>）会原样发送；连接信息不包含密码、认证回答或私钥路径。
         </p>
+
+        <div id="zh-mosh">
+          <h3>使用 Mosh 应对短暂断网</h3>
+          <p>
+            远端需安装兼容的 <code>mosh-server</code>。Mosh 先通过 SSH 校验主机并认证，
+            再通过 UDP 同步终端；SSH 能连通不代表 UDP 可达。当前只支持 IPv4 直连，
+            不支持 ProxyJump、远端命令、文件传输或 <code>-4</code>/<code>-6</code>/<code>--family</code>。
+          </p>
+          <pre><code>mosh work
+mosh user@example.com
+mosh -p 60042 work
+mosh -p 60042:60044 work
+mosh --server=/home/user/.local/bin/mosh-server work
+mosh --predict=always work</code></pre>
+          <p>
+            Mosh 复用 Host 的用户名、Identity 和 SSH 配置。SSH 的 <code>Port</code> 只用于启动连接；
+            <code>mosh -p</code> 选择 UDP 端口或闭区间，不指定则由服务器选择默认端口。
+            请让服务器防火墙和 NAT 放行该 UDP 端点；LeanTTY 不自动设置转发。
+            <code>--server</code> 只接受一个绝对 POSIX 可执行文件路径，不接受空格、shell 片段或额外参数。
+          </p>
+          <p>
+            <code>--predict=adaptive</code> 为默认值；<code>always</code> 始终尝试预测符合条件的
+            普通 ASCII 输入，<code>never</code> 等待远端确认。预测不覆盖任意 Unicode、粘贴或控制序列。
+            暂时中断时请等待网络恢复，警告不会关闭 Session。SSH 启动成功后，首次有效远端状态
+            超过 15 秒仍未到达会报告连接失败。
+          </p>
+          <p>
+            按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>6</kbd>，松开后按 <kbd>.</kbd>
+            （<code>Ctrl-^ .</code>）关闭 Mosh；改按 <kbd>?</kbd> 查看帮助，无需先按 Enter。
+            若提示输入未被接受，连接会停止；重连前先核查远端命令状态，不要直接重发文本。
+          </p>
+          <p>
+            Mosh 同步当前画面，不承诺 SSH 式完整滚动记录。整个 Session 使用独立临时页面，
+            搜索也只在该页面中进行；结束时处理已接收输出并恢复原页面及其搜索历史。
+            LeanTTY 不猜测 Vim/less 的临时屏幕边界，也不把 Mosh 重绘混入原页面历史。
+            关闭分屏、退出应用或进程被回收后，Mosh 不会自动续接。
+          </p>
+        </div>
 
         <div class="callout">
           <strong>LeanTTY 负责连接，长期任务仍在远端运行。</strong>
@@ -1238,7 +1276,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         <p class="section-kicker">克制的工作区</p>
         <h2>用标签页区分上下文，需要对照时再使用双分屏。</h2>
         <p class="section-intro">
-          每个标签页可以放一个或两个分屏。每个分屏都有独立的 SSH 连接和终端，
+          每个标签页可以放一个或两个分屏。每个分屏都有独立的 SSH 或 Mosh 连接和终端，
           焦点、搜索、输出和连接状态互不干扰。
         </p>
 
@@ -1248,11 +1286,11 @@ ssh-copy-id -i id_work user@example.com</code></pre>
               <tr><th>任务</th><th>行为</th></tr>
             </thead>
             <tbody>
-              <tr><td>新建标签页</td><td>打开一个新的本地提示符，可独立建立 SSH 连接。</td></tr>
+              <tr><td>新建标签页</td><td>打开一个新的本地提示符，可独立建立 SSH 或 Mosh 连接。</td></tr>
               <tr><td>新建分屏</td><td>在当前标签页增加第二个分屏；LeanTTY 不创建更深的布局。</td></tr>
               <tr><td>搜索</td><td>只搜索当前分屏已经显示的终端内容；空查询和无结果均显示 <code>0/0</code>。</td></tr>
               <tr><td>终端提醒</td><td>BEL 或受支持的 OSC 9/99/777 会在前台短暂强调来源标签页，未查看的输出保留小型琥珀色标记；整个应用不可见时，每次连续后台停留最多尝试一次不含远端内容的系统通知，点击只返回仍待处理的来源分屏。</td></tr>
-              <tr><td>关闭</td><td>关闭已连接的分屏会断开其中的 SSH 连接。</td></tr>
+              <tr><td>关闭</td><td>关闭已连接的分屏会断开其中的 SSH 或 Mosh 连接。</td></tr>
             </tbody>
           </table>
         </div>
@@ -1358,6 +1396,7 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td><code>help</code>、<code>?</code></td><td>显示本地帮助，并在末尾给出这份完整指南的链接。</td></tr>
               <tr><td><code>help &lt;command&gt;</code></td><td>显示一个受支持命令的简短帮助。</td></tr>
               <tr><td><code>ssh …</code></td><td>直接连接，或通过保存的 OpenSSH Host / 单个 ProxyJump 连接。</td></tr>
+              <tr><td><code>mosh …</code></td><td>通过 SSH 启动，再用 UDP 同步终端；见<a href="#zh-mosh">连接条件与限制</a>。</td></tr>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>不连接服务器，只显示 LeanTTY 最终会采用的配置。</td></tr>
               <tr><td><code>ssh -v …</code></td><td>只为当前连接尝试显示固定、脱敏的分阶段诊断。</td></tr>
               <tr><td><code>put …</code></td><td>通过 SFTP 上传 Downloads 中的一个文件。</td></tr>
@@ -1373,7 +1412,7 @@ get work:/reports/latest.csv reports/</code></pre>
         </div>
 
         <p>
-          使用 <code>help ssh</code>、<code>help put</code>、<code>help get</code>、
+          使用 <code>help ssh</code>、<code>help mosh</code>、<code>help put</code>、<code>help get</code>、
           <code>help config</code>、<code>help host</code>、<code>help key</code>、
           <code>help ssh-keygen</code> 或 <code>&lt;command&gt; --help</code> 查看准确语法。
           不支持的选项会明确失败，不会被静默忽略。
@@ -1384,7 +1423,7 @@ get work:/reports/latest.csv reports/</code></pre>
         <p class="section-kicker">数据默认留在本地</p>
         <h2>LeanTTY 会保留哪些数据。</h2>
         <p class="section-intro">
-          LeanTTY 只保存下次安全连接确实需要的内容。终端输出、密码、口令和认证回答不会长期保存。
+          LeanTTY 保存连接配置和少量界面状态。终端输出、密码、口令和认证回答不会长期保存。
         </p>
 
         <div class="table-wrap">
@@ -1396,16 +1435,20 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td>OpenSSH Host 配置</td><td>密码和认证回答</td></tr>
               <tr><td>已经信任的主机密钥</td><td>口令和未提交的秘密输入</td></tr>
               <tr><td>已经验证的密钥对</td><td>命令历史</td></tr>
-              <tr><td>字号和主窗口位置</td><td>应用退出后的标签页、分屏、SSH 连接与终端滚动记录</td></tr>
+              <tr><td>字号；异常退出恢复用的标签页/分屏布局</td><td>SSH/Mosh 连接、远端标题与终端滚动记录</td></tr>
               <tr><td>所选透明度档位</td><td>账号、云工作区或使用情况遥测</td></tr>
             </tbody>
           </table>
         </div>
 
         <p>
-          Host 配置、可信主机密钥、已验证密钥对、字号和窗口位置使用加密的 HarmonyOS
-          Asset Store 记录，并设计为在同一应用身份下跨普通卸载保留。透明度会在正常重启后
-          恢复，但不属于跨卸载保留的资产。
+          Host 配置、可信主机密钥、已验证密钥对和字号使用加密的 HarmonyOS Asset Store，
+          并设计为在同一应用身份下跨普通卸载保留。透明度和异常退出恢复记录使用应用私有
+          Preferences，不属于跨卸载保留的资产。
+        </p>
+        <p>
+          窗口大小和位置交给系统自动保存，不写入 Asset Store。异常回收后系统仍可能使用默认
+          窗口；LeanTTY 不在启动后再次搬动窗口。窗口位置也不承诺跨卸载恢复。
         </p>
 
         <div class="callout warning">
@@ -1463,12 +1506,29 @@ get work:/reports/latest.csv reports/</code></pre>
         </details>
 
         <details>
-          <summary>连接在进入远端提示符前失败</summary>
+          <summary>SSH 在进入远端提示符前失败</summary>
           <div class="details-body">
             <p>
               先按原命令重试一次；仍失败时使用 <code>ssh -v …</code>，查看问题发生在跳板还是目标的
               域名解析、TCP、SSH 版本或密钥交换阶段。诊断不会显示主机名、凭据或终端内容。
             </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Mosh 首次连接失败或显示暂时中断</summary>
+          <div class="details-body">
+            <p>先区分 SSH 启动失败与 UDP 不可达。检查远端 server、IPv4 路由和 UDP 防火墙；
+              已连接后的中断警告不会退出 Session，网络恢复后可继续。详见<a href="#zh-mosh">Mosh 连接说明</a>。</p>
+          </div>
+        </details>
+
+        <details id="zh-recovery-layout">
+          <summary>应用被系统回收后，连接和正文不见了</summary>
+          <div class="details-body">
+            <p>异常退出后只恢复标签页顺序、分屏、活动位置和比例；每个分屏都以新身份离线进入
+              <code>ltty&gt;</code>，不会恢复连接、正文或命令历史。若进程还在但 Session 状态被回收，
+              LeanTTY 会提示连接丢失并返回本地。长期任务请交给远端 tmux 或 screen；应用不提供后台保活保证。</p>
           </div>
         </details>
 
@@ -1486,7 +1546,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.6.0</strong> · 离线使用指南 · 修订 8 · 版本日期 2026-08-28</div>
+    <div><strong>LeanTTY 1.6.0</strong> · 离线使用指南 · 修订 9 · 文档更新 2026-09-07</div>
     <div>先核对，再连接；先保留工作，再处理断线。</div>
   </footer>
   </div>
@@ -1523,7 +1583,7 @@ get work:/reports/latest.csv reports/</code></pre>
       <span class="brand-name">LeanTTY</span>
     </a>
     <div class="masthead-meta">
-      <span class="edition">USER GUIDE · 1.5.0</span>
+      <span class="edition">USER GUIDE · 1.6.0</span>
       <div class="language-switch" role="group" aria-label="Guide language">
         <a href="#guide-zh" lang="zh-CN">中文</a>
         <a href="#guide-en" aria-current="page">English</a>
@@ -1671,8 +1731,8 @@ ssh work</code></pre>
         </p>
         <p>
           <code>-i</code> saves one Identity shown by <code>key list</code> for that Host, so
-          <code>ssh</code>, <code>put</code> and <code>get</code> reuse it. A command-local
-          <code>-i</code> still overrides only that operation. <code>-i none</code> removes the saved
+          <code>ssh</code>, <code>mosh</code>, <code>put</code> and <code>get</code> reuse it. Only
+          ssh/put/get offer a command-local <code>-i</code> override. <code>-i none</code> removes the saved
           binding; changing another Host field without <code>-i</code> preserves it.
         </p>
         <p>
@@ -1732,7 +1792,7 @@ ssh -J jump deploy@target.example.com</code></pre>
           cancelled connection, the title returns to <code>ltty</code>.
         </p>
         <p>
-          When the remote shell exits or the current connection is closed, <code>Connection closed</code>
+          When an SSH shell exits or its connection is closed, <code>Connection closed</code>
           and the new <code>ltty&gt;</code> prompt appear directly after the last visible content instead of at
           the bottom of the window. Existing scrollback remains available.
         </p>
@@ -1745,6 +1805,49 @@ ssh -J jump deploy@target.example.com</code></pre>
           <code>~</code>. Mid-line tildes and unknown sequences such as <code>~x</code> are sent unchanged.
           Connection information never includes passwords, authentication answers or private-key paths.
         </p>
+
+        <div id="en-mosh">
+          <h3>Use Mosh for temporary network interruptions</h3>
+          <p>
+            Install a compatible <code>mosh-server</code> on the remote host. Mosh verifies and
+            authenticates through SSH, then synchronizes the terminal over UDP. Working SSH does not
+            prove UDP reachability. This version supports direct IPv4 only, not ProxyJump, remote
+            commands, file transfer or <code>-4</code>/<code>-6</code>/<code>--family</code>.
+          </p>
+          <pre><code>mosh work
+mosh user@example.com
+mosh -p 60042 work
+mosh -p 60042:60044 work
+mosh --server=/home/user/.local/bin/mosh-server work
+mosh --predict=always work</code></pre>
+          <p>
+            Mosh reuses the Host's user, Identity and SSH settings. SSH <code>Port</code> selects only
+            the bootstrap port; <code>mosh -p</code> selects a UDP port or inclusive range. Without it,
+            the server chooses its default port. Allow that UDP endpoint through the server firewall
+            and NAT; LeanTTY does not configure forwarding. <code>--server</code> accepts one absolute
+            POSIX executable path, not spaces, shell fragments or extra arguments.
+          </p>
+          <p>
+            <code>--predict=adaptive</code> is the default; <code>always</code> always attempts eligible
+            plain ASCII prediction, and <code>never</code> waits for server confirmation. Prediction
+            does not cover arbitrary Unicode, paste or control sequences. An interruption warning
+            keeps the Session open while the network recovers. After SSH bootstrap, no first valid
+            remote state within 15 seconds means connection failure.
+          </p>
+          <p>
+            Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>6</kbd>, release it, then press <kbd>.</kbd>
+            (<code>Ctrl-^ .</code>) to close Mosh, or <kbd>?</kbd> for help; no preceding Enter is needed.
+            If input is reported as not accepted, the connection stops. Check remote command state
+            before reconnecting; do not blindly resend the text.
+          </p>
+          <p>
+            Mosh synchronizes the current screen, not complete SSH-style scrollback. The whole Session
+            uses a temporary page, and search stays on that page. On exit, received output is drained
+            before the original page and its search history return. LeanTTY does not infer Vim/less
+            temporary-screen boundaries or mix Mosh repaints into the original history. Mosh cannot
+            automatically resume after Pane/app close or system process reclamation.
+          </p>
+        </div>
 
         <div class="callout">
           <strong>LeanTTY is the entry point.</strong>
@@ -1846,7 +1949,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         <p class="section-kicker">A bounded workspace</p>
         <h2>Tabs for context. Two panes when comparison helps.</h2>
         <p class="section-intro">
-          A tab owns one or two panes. Every pane owns an independent SSH session and terminal surface,
+          A tab owns one or two panes. Every pane owns an independent SSH or Mosh session and terminal surface,
           so focus, search, output and connection state do not leak across the workspace.
         </p>
 
@@ -1860,7 +1963,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
               <tr><td>Split pane</td><td>Adds one second pane to the current tab. LeanTTY does not create deeper layouts.</td></tr>
               <tr><td>Search</td><td>Searches only the active pane's in-memory terminal surface. Empty and no-result queries show <code>0/0</code>.</td></tr>
               <tr><td>Terminal attention</td><td>BEL or accepted OSC 9/99/777 briefly emphasizes the source tab and keeps a small amber marker for unattended output. While the whole app is hidden, each continuous background episode permits at most one generic notification attempt; a click returns only to the existing source pane if it still owns attention.</td></tr>
-              <tr><td>Close</td><td>Closing a connected pane disconnects that pane's SSH session.</td></tr>
+              <tr><td>Close</td><td>Closing a connected pane disconnects that pane's SSH or Mosh session.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1971,6 +2074,7 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td><code>help</code>, <code>?</code></td><td>Show local help and the link to this complete guide.</td></tr>
               <tr><td><code>help &lt;command&gt;</code></td><td>Show concise help for one supported command.</td></tr>
               <tr><td><code>ssh …</code></td><td>Connect directly or through a saved OpenSSH Host / single ProxyJump.</td></tr>
+              <tr><td><code>mosh …</code></td><td>Bootstrap through SSH, then synchronize over UDP; see <a href="#en-mosh">requirements and limits</a>.</td></tr>
               <tr><td><code>ssh -G &lt;host-name&gt;</code></td><td>Show the supported effective configuration without connecting.</td></tr>
               <tr><td><code>ssh -v …</code></td><td>Show fixed, redacted stage diagnostics for this connection attempt only.</td></tr>
               <tr><td><code>put …</code></td><td>Upload one Downloads file through SFTP.</td></tr>
@@ -1986,7 +2090,7 @@ get work:/reports/latest.csv reports/</code></pre>
         </div>
 
         <p>
-          Use <code>help ssh</code>, <code>help put</code>, <code>help get</code>,
+          Use <code>help ssh</code>, <code>help mosh</code>, <code>help put</code>, <code>help get</code>,
           <code>help config</code>, <code>help host</code>, <code>help key</code>,
           <code>help ssh-keygen</code> or <code>&lt;command&gt; --help</code> for exact syntax.
           Unsupported options fail explicitly instead of being silently ignored.
@@ -1997,7 +2101,7 @@ get work:/reports/latest.csv reports/</code></pre>
         <p class="section-kicker">Local by default</p>
         <h2>What stays. What does not.</h2>
         <p class="section-intro">
-          LeanTTY keeps the minimum durable state required to reconnect safely. Terminal content and
+          LeanTTY keeps connection assets and a little UI state. Terminal content and
           authentication secrets are not part of that durable state.
         </p>
 
@@ -2010,16 +2114,22 @@ get work:/reports/latest.csv reports/</code></pre>
               <tr><td>OpenSSH host configuration</td><td>Passwords and authentication answers</td></tr>
               <tr><td>Trusted host keys</td><td>Passphrases and partial secret input</td></tr>
               <tr><td>Verified key pairs</td><td>Command history</td></tr>
-              <tr><td>Font size and window rectangle</td><td>Tabs, panes, sessions and terminal scrollback after exit</td></tr>
+              <tr><td>Font size; Tab/Pane layout for unexpected-exit recovery</td><td>SSH/Mosh sessions, remote titles and terminal scrollback</td></tr>
               <tr><td>Selected transparency level</td><td>Account, cloud workspace or usage telemetry</td></tr>
             </tbody>
           </table>
         </div>
 
         <p>
-          Host configuration, trusted host keys, verified key pairs, font size and window geometry use
+          Host configuration, trusted host keys, verified key pairs and font size use
           encrypted HarmonyOS Asset Store records designed to survive a normal uninstall for the same app
-          identity. Transparency is restored after restart but is not an uninstall-surviving asset.
+          identity. Transparency and the unexpected-exit recovery record use app-private Preferences,
+          not uninstall-surviving assets.
+        </p>
+        <p>
+          HarmonyOS auto-saves window size and position, not the Asset Store. After an abnormal exit,
+          the system may still choose a default rectangle; LeanTTY does not move the window again
+          after launch. Window geometry is not guaranteed to survive uninstall.
         </p>
 
         <div class="callout warning">
@@ -2079,13 +2189,33 @@ get work:/reports/latest.csv reports/</code></pre>
         </details>
 
         <details>
-          <summary>Connection fails before the remote prompt appears</summary>
+          <summary>SSH fails before the remote prompt appears</summary>
           <div class="details-body">
             <p>
               Retry the original command once. If it still fails, use <code>ssh -v …</code> to see whether
               the jump or target stopped at name resolution, TCP, SSH version or key exchange. Diagnostics
               do not reveal host names, credentials or terminal content.
             </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Mosh fails to connect or shows an interruption warning</summary>
+          <div class="details-body">
+            <p>Distinguish SSH bootstrap failure from unreachable UDP. Check the remote server, IPv4
+              route and UDP firewall. An established Session stays open during a temporary interruption
+              and can continue after recovery. See <a href="#en-mosh">Mosh connection instructions</a>.</p>
+          </div>
+        </details>
+
+        <details id="en-recovery-layout">
+          <summary>The system reclaimed the app; connections and content are gone</summary>
+          <div class="details-body">
+            <p>An unclean exit restores only Tab order, panes, active positions and split ratio. Each
+              Pane gets a new identity and starts offline at <code>ltty&gt;</code>, without connections,
+              terminal content or command history. If the process survives but Session state is reclaimed,
+              LeanTTY reports the loss and returns to local prompts. Keep durable work in remote tmux
+              or screen; the app does not guarantee background execution.</p>
           </div>
         </details>
 
@@ -2103,7 +2233,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.6.0</strong> · Offline user guide · Revision 8 · Version date 2026-08-28</div>
+    <div><strong>LeanTTY 1.6.0</strong> · Offline user guide · Revision 9 · Updated 2026-09-07</div>
     <div>Verify first. Keep work durable. Recover deliberately.</div>
   </footer>
   </div>

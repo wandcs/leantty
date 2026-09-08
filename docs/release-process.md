@@ -35,6 +35,14 @@ acceptance and review media. It is not an AppGallery upload artifact. Production
 and review builds must have the same commit, tree, version, ABI and native
 library hash.
 
+Logging restrictions follow package purpose, not its signature: the AppGallery
+artifact and publicly delivered user packages must exclude terminal-content and
+secret diagnostics. Internal review-test/diagnostic packages may use the bounded
+development exception in `security-model.md`; captured review media must still
+be redacted. Release-mode review-smoke packages follow production isolation.
+Check both unsigned and signed formal HAPs for diagnostic markers; do not promote
+an internal diagnostic HAP to a public package merely by re-signing it.
+
 The generated `entry/libs/arm64-v8a/libleantty_ssh.so` is ignored and must
 never be tracked. A clean clone rebuilds it from the locked Rust source before
 packaging; generated native output must not make the release checkout dirty.
