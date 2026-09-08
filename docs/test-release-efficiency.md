@@ -2147,5 +2147,79 @@ PR #171 冻结 1.6.0 的 Changelog 日期，四项 CI 通过；所有版本源�
 修复让回调返回摘要，由报告所有者接收。新增测试运行实际入口、Agent 结果构造器和原子
 JSON 写入器，只替换外部构建/软件命令；修复前复现空摘要，修复后成功及后续包拒绝两条
 路径均保留正确 hash、大小、计数、零模型和原失败，且失败后不运行签名前置检查。
-证据根为 `build/verification/release-1.6.0-20260908/`。原失败保留；本轮尚无 C1/C2/C3/C4
-通过结果可复用，须从修复后的干净远端身份重新完成 readiness，再开始正式软件和候选门。
+证据根为 `build/verification/release-1.6.0-20260908/`。原失败保留；该次预检失败时尚无
+C1/C2/C3/C4 通过结果可复用。修复后的候选及正式批次续接见下一节。
+
+### 8.33 精确候选与正式密钥场景停止（2026-09-08）
+
+**结论：候选构建与正式 QH 通过；C3 因报告契约错误暂停，不是发布 GO。** PR #172 合并后，
+独立 production/review checkout 均干净固定到 `28b104991c300fe1909f2b490c1d7b64b1fba86e`，
+tree 为 `fa736ca4ea5bcc5687b5775f09cb00c552c310f6`。证据根仍为上一节目录。
+
+当前源码的新 release-mode 测试签名包通过 marker 门和 SDK 签名检查；readiness 8 项通过，
+53,840-byte Agent 合成结果摘要完整，零模型调用。该包 SHA-256 为
+`30a04cb53cab0e0813a60a6e2852d253b8c50241f26539651aec724219e2a01b`，其配套 APP 仍为
+测试 Profile，不作生产交付。`release-mode-package/manifest.json` 记录包角色和身份。
+
+正式入口完成 C1 全部 26 项和 C2 clean ARM64 构建、测试签名、安装与启动。留存 C2 HAP
+SHA-256 为 `b83f2218c274c7329d9138e980014f0e40512c9aa419481e5f3d2db5465d981e`；它是
+acceptance-enabled 包，与上述 readiness 包不同。两包内提取/读取的指南均为 97,952 bytes，
+匹配维护者确认的 revision 9 / `a6c680b669b3be2459de74f61343bb92cd4a89ce4917d0dc1b27c22938cb8ac4`。
+
+正式 QH 绑定同一 C2 和干净 harness，通过三条普通命令、三次首次精确输入、零 mismatch、
+三次 Enter、临时非回显 secret、串行 layout 和清理审计。随后 `key-passphrase` 的九项
+检查均通过：加密、两类错误输入不修改、错误后恢复、Ctrl+C 清空、移除口令、删除临时密钥。
+八条普通命令均一次提交，零 mismatch。真实文件缺席检查通过，awake lease 已恢复；没有
+重试密钥命令，没有动现有 `id_ed25519`。
+
+正式批次在约 598 秒时停止：生产者发布 `cleanup.result="verified-absent"`，共享汇总器
+只接受标准 `passed`，因而 `formal/release-report.json` 为 failed；后续 17 个注册阶段仍
+为 pending。Mosh、完整 Agent/IME、模型请求和 C4 尚未执行。candidate store 的
+`device-behavior` 标签仅反映单场景报告，不能解释为完整 C3 通过。
+
+**失败诊断。** 预期是清理的判定与细节分开；最后正确边界是实际密钥缺席检查，首个错误
+边界是 `verify-key-passphrase-pc.ps1` 将成功细节写入结果枚举。真实汇总器对原报告的只读
+重放复现同一拒绝，故归为宿主工具的生产者/消费者契约缺口，不涉及产品、输入时序或
+HarmonyOS 清理失败。`audit-formal-stop.ps1` / `formal-stop-audit.json` 固定报告哈希，
+确认原报告和候选未变，诊断未操作设备或调用模型。本次未修此错误，也未重启矩阵。
+
+**下一批边界。** 在开发分支修生产者，保留实际缺席审计，并补正常删除、已不存在、失败、
+未执行和未知值经真实报告到汇总器的反例；不增加成功字符串特判。一次检查注册场景的
+cleanup 接口与精确候选兼容路径，防止逐项上机发现静态契约错误。旧 `-Resume` 明确拒绝
+不同 harness；SSH 等脚本还有独立 allowlist，目前不能假定密钥工具修改后整轮自动兼容。
+待这些前置条件证明后，优先按 R3 保留相同 C0–C2，以新干净工具重新 QH/C3，不手改失败
+报告或拼接诊断结果。只有产品/构建输入或候选身份改变才按 R4 重建；当前未证明需要改产品。
+
+### 8.34 密钥报告契约修复与候选重建取舍（2026-09-09）
+
+密钥报告生产者保留实际缺席审计：只有清理已完成且细节为 `verified-absent` 或
+`already-absent` 才输出 `cleanup.result=passed`；失败、剩余清理和未知值不通过，awake
+恢复失败也不能被密钥删除成功掩盖。原细节单独保留，共享汇总器、设备操作和产品均未改动。
+
+本轮先运行真实报告 writer、正常删除及 finally 清理分支，替换的只有设备副作用；实际
+JSON 经原汇总器读取。旧实现 9/47 失败，修复后 47/47 通过。补齐注册生产者检查后覆盖
+58 项：删除成功、已不存在、文件仍在、探测失败、未执行、无进程、环境恢复失败、未知
+值及正常/失败报告。没有真实设备、模型或凭据参与，也没有把单场景报告改判成完整验收。
+
+**注册输出检查。** 20 个阶段由 12 个脚本产生报告。密钥、SSH auth、Host Identity、两类
+BEL、长任务、Agent 和 Mosh 汇总的判定均经实际生产者表达式到原消费者检查；uninstall
+的布尔清理对象在 awake 未恢复时被拒绝、实际赋值恢复后被接受。C1、QH 和 SSH 汇总无
+顶层 cleanup，仍明确显示 unreported；后两者的嵌套清理由各自现有门负责。测试固定了这份
+注册覆盖，新增报告所有者时必须重新审查；这些软件检查不代替真实清理的物理证据。
+
+**调研边界。** 2026-09-09 核查的 [JSON Schema enum](https://json-schema.org/understanding-json-schema/reference/enum)
+将判定限制在声明的值集合，[pytest 安全清理](https://docs.pytest.org/en/stable/how-to/fixtures.html#safe-teardowns)
+说明清理须与真实状态变更和异常路径配对。它们仅支持报告/测试设计，不证明鸿蒙行为。
+Huawei/OpenHarmony UiTest 清理结果及该字面量的定向检索未发现匹配平台报告；字面量来自
+本仓库。执行环境为 PowerShell 7.6.3，不改 SDK、输入等待或平台恢复策略。
+
+**选择 R4，不扩张兼容规则。** 精确补丁经五个现有白名单检查，SSH auth、terminal search、
+Mosh、长任务和 Agent 均拒绝工具/记录差异。上轮“优先 R3”以兼容性证明为前提，现有
+入口不满足；跨新 harness 的旧 `-Resume` 也不合法。为了省一次构建去扩大五个独立场景的
+接纳范围，会增加与本次报告修复无关的规则。上一轮 C1/C2 共约 248 秒，目前也没有已被
+汇总器接受的 C3 前缀，故选择合并后从新身份完成 readiness/C1/C2/QH/C3。保留旧证据，
+不解释为产品退化或清理失败，不新建兼容框架，不手改 JSON。
+
+证据根为 `build/verification/key-cleanup-contract-20260909/`：`red.json`、`green.json`、
+`registered-cleanup.json`、`compatibility.json` 和聚焦 `policy,tooling` 软件报告。
+修复通过的是宿主工具层；新候选的完整正式验收仍在 Next Work，不在本次软件结果中宣告完成。

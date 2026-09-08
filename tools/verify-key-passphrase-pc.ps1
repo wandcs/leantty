@@ -293,7 +293,14 @@ function Write-BehaviorEvidence {
             -BusinessPostcondition 'key-passphrase-checks-and-cleanup'
         checks = @($checks)
         cleanup = [ordered]@{
-            result = $cleanupResult
+            # Only completed absence audits prove cleanup; detail is not a verdict.
+            result = $(if ($cleanupResult -ceq 'failed' -or $cleanupFailure -or $awakeLeaseFailure) {
+                'failed'
+            } elseif (-not $keyCleanupRequired -and
+                $cleanupResult -cin @('verified-absent', 'already-absent')) {
+                'passed'
+            } else { 'unknown' })
+            detail = $cleanupResult
             failure = $cleanupFailure
         }
         failure = $failure
