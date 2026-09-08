@@ -21,6 +21,7 @@ param(
     [switch]$Osc99CapabilityProbe,
     [switch]$InteractionOnlyProbe,
     [switch]$ProtocolInteractionProbe,
+    [switch]$SshPrerequisiteProbe,
     [switch]$OpenCodeForceOsc99Protocol,
     [switch]$DiagnosticHap,
     [string]$CandidateBasePath = '',
@@ -28,6 +29,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($SshPrerequisiteProbe -and -not $DiagnosticHap) {
+    throw '-SshPrerequisiteProbe is a diagnostic-only prerequisite, not Agent acceptance'
+}
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
@@ -95,11 +99,11 @@ if ((Split-Path $HapPath -Leaf) -match 'unsigned') {
 }
 if ($Port -eq 0) { $Port = Get-Random -Minimum 30000 -Maximum 45000 }
 $probeModeCount = 0
-foreach ($probeEnabled in @($Osc99CapabilityProbe, $InteractionOnlyProbe, $ProtocolInteractionProbe)) {
+foreach ($probeEnabled in @($Osc99CapabilityProbe, $InteractionOnlyProbe, $ProtocolInteractionProbe, $SshPrerequisiteProbe)) {
     if ($probeEnabled) { $probeModeCount++ }
 }
 if ($probeModeCount -gt 1) {
-    throw '-Osc99CapabilityProbe, -InteractionOnlyProbe and -ProtocolInteractionProbe are mutually exclusive'
+    throw '-Osc99CapabilityProbe, -InteractionOnlyProbe, -ProtocolInteractionProbe and -SshPrerequisiteProbe are mutually exclusive'
 }
 if ($ProtocolInteractionProbe -and
     ($Agents.Count -ne 1 -or $Agents[0] -ne 'qwen')) {
@@ -149,13 +153,21 @@ $panelOpen = $false
 $appProcessId = ''
 $knownHostCleanupAttempted = $false
 $isolatedTabCreated = $false
+$isolatedTabId = ''
+$knownHostRemoved = $false
+$primaryFailure = $null
 $cleanupFailures = [Collections.Generic.List[string]]::new()
 $commandObservations = [Collections.Generic.List[object]]::new()
 $connectedCommandObservations = [Collections.Generic.List[object]]::new()
 $controlledLocaleChecked = $false
+# Last proven boundary of this isolated attempt, not a substitute for app SSH state.
+# Only Connect/Disconnect grant shell-ready/local after observing their postconditions.
+$agentSshBoundary = 'unconfirmed'
 
 $result = New-LeanTTYAgentCompatibilityResult `
-    -Scenario $(if ($Osc99CapabilityProbe) {
+    -Scenario $(if ($SshPrerequisiteProbe) {
+        'zero-model-ssh-prerequisite-over-default-wsl-openssh'
+    } elseif ($Osc99CapabilityProbe) {
         'osc99-capability-response-over-default-wsl-openssh'
     } elseif ($InteractionOnlyProbe) {
         'zero-model-agent-tui-interaction-over-default-wsl-openssh'
@@ -193,9 +205,9 @@ $result = New-LeanTTYAgentCompatibilityResult `
         authentication = 'existing-app-ed25519-public-key-only'
         terminalLocale = 'pending'
     }) `
-    -SelectedAgents $(if ($Osc99CapabilityProbe) { @() } else { @($Agents) }) `
-    -SelectedModes $(if ($Osc99CapabilityProbe) { @() } else { @($Modes) }) `
-    -PlannedModelRequests $(if ($Osc99CapabilityProbe -or $InteractionOnlyProbe) {
+    -SelectedAgents $(if ($Osc99CapabilityProbe -or $SshPrerequisiteProbe) { @() } else { @($Agents) }) `
+    -SelectedModes $(if ($Osc99CapabilityProbe -or $SshPrerequisiteProbe) { @() } else { @($Modes) }) `
+    -PlannedModelRequests $(if ($Osc99CapabilityProbe -or $InteractionOnlyProbe -or $SshPrerequisiteProbe) {
         0
     } else {
         $Agents.Count * $Modes.Count
@@ -205,9 +217,31 @@ $result = New-LeanTTYAgentCompatibilityResult `
     } else {
         @()
     })
+if ($SshPrerequisiteProbe) {
+    $result | Add-Member -NotePropertyName actualModelRequests -NotePropertyValue 0
+}
+$result.resources = [ordered]@{
+    fixtureDirectory = $fixtureDirectory
+    wslFixtureDirectory = $wslFixtureDirectory
+    sshdConfigPath = $sshdConfigPath
+    sshdPidPath = $sshdPidPath
+    knownHostEndpoint = "[127.0.0.1]:$Port"
+    isolatedTabId = ''
+}
 
 function Write-AgentCompatibilityProgress {
     param([Parameter(Mandatory = $true)][string]$Stage)
+    # A completed check is not necessarily a pass. Persist its verdict before
+    # later commands or cleanup can fail, including enough identity for recovery.
+    $result.resources.isolatedTabId = $isolatedTabId
+    $result.resources.mappingActive = $mappingActive
+    $result.resources.awakeLeaseAcquired = $awakeLeaseAcquired
+    $result.resources.isolatedTabCreated = $isolatedTabCreated
+    $result.resources.knownHostRemoved = $knownHostRemoved
+    $result.resources.appProcessId = $appProcessId
+    $result.resources.sshBoundary = $agentSshBoundary
+    $null = Write-LeanTTYAgentCompatibilityResult `
+        -Path (Join-Path $EvidenceDirectory 'result.json') -Result $result
     Write-LeanTTYAtomicJson -Path (Join-Path $EvidenceDirectory 'progress.json') -Value ([ordered]@{
         schemaVersion = 1
         scenario = $result.scenario
@@ -215,7 +249,7 @@ function Write-AgentCompatibilityProgress {
         previousAttemptId = $PreviousAttemptId
         stage = $Stage
         completedCheckCount = @($result.checks).Count
-        plannedCheckCount = $(if ($Osc99CapabilityProbe) { 1 } else { $Agents.Count * $Modes.Count })
+        plannedCheckCount = $(if ($Osc99CapabilityProbe -or $SshPrerequisiteProbe) { 1 } else { $Agents.Count * $Modes.Count })
         updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
         contentRecorded = $false
     })
@@ -307,7 +341,8 @@ function Wait-AppLog {
         if ($logs -match $Pattern) { return $logs }
         Start-Sleep -Milliseconds 500
     } while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
-    throw "[product] Timed out waiting for app log: $Pattern"
+    # Missing observation cannot distinguish product, control-channel or fixture failure.
+    throw "[unknown] Timed out waiting for app log: $Pattern"
 }
 
 function Wait-File {
@@ -360,6 +395,7 @@ function Submit-ConnectedCommand {
 
 function Connect-AgentServer {
     param([Parameter(Mandatory = $true)][string]$Stage)
+    $script:agentSshBoundary = 'unconfirmed'
     if (Test-Path -LiteralPath $shellReadyPath) {
         Remove-Item -LiteralPath $shellReadyPath -Force
     }
@@ -367,16 +403,16 @@ function Connect-AgentServer {
     Submit-LocalCommand `
         -Command "ssh -p $Port -i id_ed25519 $($result.server.user)@127.0.0.1" `
         -Stage "$Stage-connect"
-    try {
-        Wait-AppLog -Pattern 'native control event: host_key_prompt:' -TimeoutSeconds 5 | Out-Null
+    $connectionLogs = Wait-AppLog `
+        -Pattern 'native control event: host_key_prompt:|SSH session connected' -TimeoutSeconds 30
+    if ($connectionLogs -notmatch 'SSH session connected') {
         $inputNode = Focus-TerminalInput -Name "$Stage-host-key"
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'yes' -InputNode $inputNode
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    } catch {
-        # A trusted key for this run-scoped endpoint skips the prompt.
+        Wait-AppLog -Pattern 'SSH session connected' -TimeoutSeconds 30 | Out-Null
     }
-    Wait-AppLog -Pattern 'SSH session connected' -TimeoutSeconds 30 | Out-Null
     Wait-File -Path $shellReadyPath -TimeoutSeconds 10
+    $script:agentSshBoundary = 'shell-ready'
     if (-not $script:controlledLocaleChecked) {
         if (Test-Path -LiteralPath $localeProbePath) {
             Remove-Item -LiteralPath $localeProbePath -Force
@@ -396,8 +432,15 @@ function Connect-AgentServer {
 }
 
 function Disconnect-AgentServer {
+    if ($script:agentSshBoundary -ne 'shell-ready') {
+        throw '[harness] SSH shell is unconfirmed; refusing Ctrl+D and leaving isolated-tab cleanup to finalization'
+    }
+    # Invalidate before dispatch: an ambiguous Ctrl+D must not be retried by a caller's catch.
+    $script:agentSshBoundary = 'unconfirmed'
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-LeanTTYDeviceCtrlD -Hdc $hdc -Target $Target
     Wait-AppLog -Pattern 'SSH closed, exitCode=' -TimeoutSeconds 20 | Out-Null
+    $script:agentSshBoundary = 'local'
 }
 
 function Get-MinimizeButton {
@@ -579,23 +622,6 @@ function Resume-AgentAfterAttention {
     if ($Agent -ne 'qwen') { return }
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     Start-Sleep -Milliseconds 700
-}
-
-function Reset-AppAfterAgentFailure {
-    & $hdc -t $Target shell 'aa force-stop com.leantty.app' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw '[environment] LeanTTY force-stop failed during recovery' }
-    Start-Sleep -Milliseconds 500
-    & $hdc -t $Target shell 'aa start -a EntryAbility -b com.leantty.app' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw '[environment] LeanTTY restart failed during recovery' }
-    Start-Sleep -Milliseconds 700
-    $script:appProcessId = (@(& $hdc -t $Target shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
-    if ($script:appProcessId -notmatch '^\d+$') {
-        throw '[environment] LeanTTY PID is unavailable after failure recovery'
-    }
-    Wait-LeanTTYTerminalInputLayout `
-        -Hdc $hdc -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory 'failure-recovery-layout.json') `
-        -TimeoutSeconds 20 | Out-Null
 }
 
 function Save-CurrentAppLogs {
@@ -848,14 +874,11 @@ function Invoke-AgentModeCheck {
         } else {
             'unknown'
         }
-        try {
-            Reset-AppAfterAgentFailure
-            $check.recovery = 'application-restarted-to-local-command-state'
-            if (Test-Path -LiteralPath $captureResultPath -PathType Leaf) {
-                $check.captureSummary = "results/$stage-notification.json"
-            }
-        } catch {
-            $check.recovery = 'failed: ' + $_.Exception.Message
+        # This check owns one Tab, not the whole application's other sessions.
+        # Stop the selection and let finalization close only the isolated Tab.
+        $check.recovery = 'deferred-to-isolated-tab-cleanup'
+        if (Test-Path -LiteralPath $captureResultPath -PathType Leaf) {
+            $check.captureSummary = "results/$stage-notification.json"
         }
     }
     return [pscustomobject]$check
@@ -1221,20 +1244,107 @@ function Invoke-Osc99CapabilityProbeCheck {
     return [pscustomobject]$check
 }
 
+function Invoke-AgentSshPrerequisiteCheck {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $check = [ordered]@{
+        name = 'ssh-prerequisite'; status = 'failed'; failureDomain = ''; failure = ''
+        lastProvenBoundary = $script:agentSshBoundary; durationMs = 0
+    }
+    try {
+        Connect-AgentServer -Stage 'ssh-prerequisite'
+        Disconnect-AgentServer
+        $check.status = 'passed'
+    } catch {
+        $check.failure = $_.Exception.Message
+        $check.failureDomain = Get-LeanTTYAgentNotificationFailureDomain -Failure $check.failure
+        # Leave uncertain connection cleanup to the existing isolated-tab owner.
+    } finally {
+        $check.lastProvenBoundary = $script:agentSshBoundary
+        $check.durationMs = $watch.ElapsedMilliseconds
+    }
+    return [pscustomobject]$check
+}
+
+function Invoke-AgentSelectedChecks {
+    if ($SshPrerequisiteProbe) {
+        $result.checks += Invoke-AgentSshPrerequisiteCheck
+        Write-AgentCompatibilityProgress -Stage 'ssh-prerequisite-complete'
+    } elseif ($Osc99CapabilityProbe) {
+        $result.checks += Invoke-Osc99CapabilityProbeCheck
+        Write-AgentCompatibilityProgress -Stage 'osc99-capability-complete'
+    } else {
+        $missingAuthentication = [Collections.Generic.List[string]]::new()
+        foreach ($agent in $Agents) {
+            $agentInventory = $inventory.tools.$agent
+            $authReady = [bool]$inventory.authenticationReady.$agent
+            if (-not $agentInventory.installed) {
+                foreach ($mode in $Modes) {
+                    $result.checks += [pscustomobject]@{
+                        agent = $agent; mode = $mode; status = 'not-assessed'
+                        authentication = 'not-checked'; failure = 'Agent is not installed'
+                    }
+                    Write-AgentCompatibilityProgress -Stage "$agent-$mode-not-assessed"
+                }
+                continue
+            }
+            if (-not $authReady) {
+                $missingAuthentication.Add($agent)
+                foreach ($mode in $Modes) {
+                    $result.checks += [pscustomobject]@{
+                        agent = $agent; mode = $mode; status = 'not-assessed'
+                        authentication = 'missing'; failure = 'Interactive Agent authentication is required'
+                    }
+                    Write-AgentCompatibilityProgress -Stage "$agent-$mode-not-assessed"
+                }
+                continue
+            }
+            foreach ($mode in $Modes) {
+                $modeCheck = $null
+                if ($InteractionOnlyProbe) {
+                    $modeCheck = Invoke-AgentInteractionOnlyCheck -Agent $agent -Mode $mode
+                } elseif ($ProtocolInteractionProbe) {
+                    $modeCheck = Invoke-AgentProtocolInteractionCheck -Agent $agent -Mode $mode
+                } else {
+                    $modeCheck = Invoke-AgentModeCheck -Agent $agent -Mode $mode
+                }
+                $result.checks += $modeCheck
+                Write-AgentCompatibilityProgress -Stage "$agent-$mode-complete"
+                if ($modeCheck.status -eq 'failed') { return }
+            }
+        }
+    }
+
+    if (@($result.checks | Where-Object status -eq 'failed').Count -gt 0) { return }
+    if ($script:agentSshBoundary -ne 'local') {
+        throw '[harness] Local command state is unconfirmed; refusing known-host cleanup submission'
+    }
+    Submit-LocalCommand `
+        -Command "ssh-keygen -R [127.0.0.1]:$Port" `
+        -Stage 'known-host-post-clean'
+    $script:knownHostRemoved = $true
+}
+
 try {
+    Write-AgentCompatibilityProgress -Stage 'starting'
     & (Join-Path $PSScriptRoot 'preflight-device.ps1') `
         -Target $Target `
         -EvidencePath (Join-Path $EvidenceDirectory 'device-preflight.json')
     if ($LASTEXITCODE -ne 0) { throw '[infrastructure] Device preflight failed' }
     Start-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $Target -TimeoutMilliseconds 3600000
     $awakeLeaseAcquired = $true
+    Write-AgentCompatibilityProgress -Stage 'screen-timeout-acquired'
 
     & (Join-Path $PSScriptRoot 'dev-pc.ps1') -Target $Target -HapPath $HapPath -SkipBuild
     if ($LASTEXITCODE -ne 0) { throw '[infrastructure] Exact diagnostic HAP deployment failed' }
     $appProcessId = (@(& $hdc -t $Target shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
     if ($appProcessId -notmatch '^\d+$') { throw '[environment] LeanTTY process is not running' }
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-AgentWorkspaceChord -Action 'new-tab'
     $isolatedTabCreated = $true
+    $createdLogs = Wait-AppLog -Pattern 'Tab added: ' -TimeoutSeconds 5
+    $isolatedTabId = [regex]::Match($createdLogs, 'Tab added: (\S+) title=').Groups[1].Value
+    if ($isolatedTabId.Length -eq 0) { throw '[harness] Isolated Agent Tab identity missing' }
+    Write-AgentCompatibilityProgress -Stage 'isolated-tab-created'
     Start-Sleep -Milliseconds 500
     Wait-LeanTTYTerminalInputLayout `
         -Hdc $hdc -Target $Target `
@@ -1257,7 +1367,7 @@ try {
 
     & wsl.exe --exec bash $wslToolPath prepare $wslFixtureDirectory
     if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to prepare WSL Agent fixture' }
-    if (-not $Osc99CapabilityProbe) {
+    if (-not $Osc99CapabilityProbe -and -not $SshPrerequisiteProbe) {
         & wsl.exe --exec bash $wslToolPath configure $wslFixtureDirectory
         if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to configure WSL Agent fixture' }
         & wsl.exe --exec bash $wslToolPath environment $wslFixtureDirectory
@@ -1372,66 +1482,24 @@ try {
         throw '[infrastructure] Unable to create HDC reverse mapping'
     }
     $mappingActive = $true
+    Write-AgentCompatibilityProgress -Stage 'reverse-port-created'
 
     Submit-LocalCommand `
         -Command "ssh-keygen -R [127.0.0.1]:$Port" `
         -Stage 'known-host-pre-clean'
     $knownHostCleanupAttempted = $true
+    $script:agentSshBoundary = 'local'
 
-    if ($Osc99CapabilityProbe) {
-        $result.checks += Invoke-Osc99CapabilityProbeCheck
-        Write-AgentCompatibilityProgress -Stage 'osc99-capability-complete'
-    } else {
-        $missingAuthentication = [Collections.Generic.List[string]]::new()
-        foreach ($agent in $Agents) {
-            $agentInventory = $inventory.tools.$agent
-            $authReady = [bool]$inventory.authenticationReady.$agent
-            if (-not $agentInventory.installed) {
-                foreach ($mode in $Modes) {
-                    $result.checks += [pscustomobject]@{
-                        agent = $agent; mode = $mode; status = 'not-assessed'
-                        authentication = 'not-checked'; failure = 'Agent is not installed'
-                    }
-                    Write-AgentCompatibilityProgress -Stage "$agent-$mode-not-assessed"
-                }
-                continue
-            }
-            if (-not $authReady) {
-                $missingAuthentication.Add($agent)
-                foreach ($mode in $Modes) {
-                    $result.checks += [pscustomobject]@{
-                        agent = $agent; mode = $mode; status = 'not-assessed'
-                        authentication = 'missing'; failure = 'Interactive Agent authentication is required'
-                    }
-                    Write-AgentCompatibilityProgress -Stage "$agent-$mode-not-assessed"
-                }
-                continue
-            }
-            foreach ($mode in $Modes) {
-                $modeCheck = $null
-                if ($InteractionOnlyProbe) {
-                    $modeCheck = Invoke-AgentInteractionOnlyCheck -Agent $agent -Mode $mode
-                } elseif ($ProtocolInteractionProbe) {
-                    $modeCheck = Invoke-AgentProtocolInteractionCheck -Agent $agent -Mode $mode
-                } else {
-                    $modeCheck = Invoke-AgentModeCheck -Agent $agent -Mode $mode
-                }
-                $result.checks += $modeCheck
-                Write-AgentCompatibilityProgress -Stage "$agent-$mode-complete"
-            }
-        }
-    }
-
-    Submit-LocalCommand `
-        -Command "ssh-keygen -R [127.0.0.1]:$Port" `
-        -Stage 'known-host-post-clean'
+    Invoke-AgentSelectedChecks
     $failedChecks = @($result.checks | Where-Object { $_.status -eq 'failed' })
     $notAssessed = @($result.checks | Where-Object { $_.status -eq 'not-assessed' })
     $result.commandAutomation = [ordered]@{
         local = Get-LeanTTYDeviceCommandAutomationSummary `
             -Observations $commandObservations `
             -BusinessVerdict $(if ($failedChecks.Count -eq 0) { 'passed' } else { 'failed' }) `
-            -BusinessPostcondition $(if ($Osc99CapabilityProbe) {
+            -BusinessPostcondition $(if ($SshPrerequisiteProbe) {
+                'ssh-prerequisite-connect-command-close-cleanup'
+            } elseif ($Osc99CapabilityProbe) {
                 'osc99-capability-response'
             } elseif ($InteractionOnlyProbe) {
                 'zero-model-agent-tui-raw-alternate-resize'
@@ -1454,18 +1522,38 @@ try {
     } else {
         $result.status = 'passed'
     }
+} catch {
+    $primaryFailure = $_
+    $result.status = 'invalid/interrupted'
+    # Keep only safe error metadata; check failures already carry scoped messages.
+    $result.failure = [ordered]@{
+        exceptionType = $_.Exception.GetType().FullName
+        scriptLineNumber = $_.InvocationInfo.ScriptLineNumber
+        domain = Get-LeanTTYAgentNotificationFailureDomain -Failure $_.Exception.Message
+    }
 } finally {
+  try {
+    Write-AgentCompatibilityProgress -Stage 'cleanup-starting'
+  } catch {
+    $cleanupFailures.Add('Pre-cleanup result persistence failed')
+  }
+  try {
     if ($panelOpen) {
         & $hdc -t $Target shell 'uitest uiInput keyEvent Back' 2>$null | Out-Null
     }
     try {
         & wsl.exe --exec bash $wslToolPath cleanup $wslFixtureDirectory 2>$null
-    } catch {}
+        if ($LASTEXITCODE -ne 0) { throw 'WSL fixture cleanup failed' }
+    } catch { $cleanupFailures.Add('WSL fixture cleanup failed') }
     if ($isolatedTabCreated) {
         try {
+            if ($isolatedTabId.Length -eq 0) { throw '[harness] Cannot close an unidentified Agent Tab' }
             & $hdc -t $Target shell 'aa start -a EntryAbility -b com.leantty.app' | Out-Null
             Start-Sleep -Milliseconds 500
+            Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
             Invoke-AgentWorkspaceChord -Action 'close-active'
+            Wait-AppLog -Pattern ('Tab removed: ' + [regex]::Escape($isolatedTabId)) `
+                -TimeoutSeconds 5 | Out-Null
             $isolatedTabCreated = $false
         } catch {
             $cleanupFailures.Add('Isolated Agent test tab cleanup failed')
@@ -1563,6 +1651,13 @@ try {
             $cleanupFailures.Add('Fixture cleanup target failed validation')
         }
     }
+    if ($knownHostCleanupAttempted -and -not $knownHostRemoved) {
+        $cleanupFailures.Add('Run-scoped known-host removal was not confirmed')
+    }
+  } catch {
+    $cleanupFailures.Add('Cleanup interrupted: ' + $_.Exception.GetType().FullName +
+        ' at line ' + $_.InvocationInfo.ScriptLineNumber)
+  } finally {
     if ($cleanupFailures.Count -eq 0) {
         $result.cleanup = [ordered]@{
             result = 'passed'
@@ -1576,12 +1671,16 @@ try {
         $result.status = 'invalid/interrupted'
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
-    $null = Write-LeanTTYAgentCompatibilityResult `
-        -Path (Join-Path $EvidenceDirectory 'result.json') `
-        -Result $result
-    Write-AgentCompatibilityProgress -Stage 'complete'
+    try {
+        Write-AgentCompatibilityProgress -Stage 'complete'
+    } catch {
+        $cleanupFailures.Add('Final result persistence failed; retain the last checkpoint')
+        Write-Warning $cleanupFailures[$cleanupFailures.Count - 1]
+    }
+  }
 }
 
+if ($null -ne $primaryFailure) { throw $primaryFailure }
 if ($cleanupFailures.Count -gt 0) {
     throw '[cleanup] ' + ($cleanupFailures -join '; ')
 }
