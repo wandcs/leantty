@@ -56,7 +56,7 @@ try {
         & (Join-Path $PSScriptRoot 'test-agent-compatibility.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'Offline Agent compatibility replay failed' }
     }
-    Add-ReadinessCheck -Name 'zero-model-agent-result-round-trip' -Action {
+    $agentResultReadiness = Add-ReadinessCheck -Name 'zero-model-agent-result-round-trip' -Action {
         $syntheticResult = New-LeanTTYAgentCompatibilityReadinessFixture -StartedAt $startedAt
         $syntheticPath = Join-Path (Split-Path $EvidencePath -Parent) (
             [IO.Path]::GetFileNameWithoutExtension($EvidencePath) + '-agent-result.json'
@@ -75,7 +75,7 @@ try {
             $persisted.cleanup.result -ne 'passed') {
             throw 'Synthetic Agent result did not survive the complete readiness round trip'
         }
-        $agentResultReadiness = [ordered]@{
+        [ordered]@{
             path = $roundTrip.path
             sha256 = $roundTrip.sha256
             byteLength = $roundTrip.byteLength
