@@ -40,6 +40,7 @@ function New-LeanTTYAgentCompatibilityResult {
         schemaVersion = 2
         scenario = $Scenario
         startedAt = $StartedAt.ToString('o')
+        completedAt = $null
         attemptId = $AttemptId
         previousAttemptId = $PreviousAttemptId
         runMode = $RunMode
@@ -56,6 +57,8 @@ function New-LeanTTYAgentCompatibilityResult {
         checks = @($Checks)
         commandAutomation = $CommandAutomation
         cleanup = $Cleanup
+        resources = [ordered]@{}
+        failure = $null
         status = $Status
     }
 }
@@ -259,8 +262,7 @@ function New-LeanTTYAgentCompatibilityReadinessFixture {
             detail = 'synthetic-readiness-created-no-device-or-fixture-resources'
         }) `
         -Status passed
-    $result | Add-Member -NotePropertyName completedAt `
-        -NotePropertyValue $StartedAt.AddSeconds(1).ToString('o')
+    $result.completedAt = $StartedAt.AddSeconds(1).ToString('o')
     return $result
 }
 

@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
 . (Join-Path $PSScriptRoot 'agent-compatibility-policy.ps1')
+. (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
 function Assert-True {
     param(
@@ -18,6 +19,73 @@ $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) (
 )
 New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
 try {
+    # Exercise the device caller's object lifecycle, not the readiness fixture's
+    # historical Add-Member workaround or the writer's source text.
+    $report = New-LeanTTYAgentCompatibilityResult `
+        -Scenario 'controlled-report-lifecycle' -StartedAt ([DateTimeOffset]::UtcNow) `
+        -AttemptId 'controlled-attempt' -RunMode diagnostic -ReleaseEligible $false `
+        -Target 'no-device' -Candidate @{ sha256 = ('a' * 64) } `
+        -Harness @{ gitDirty = $true } -Server @{ port = 39999 }
+    $reportPath = Join-Path $temporaryDirectory 'report-lifecycle.json'
+    $report.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    $roundTrip = Write-LeanTTYAgentCompatibilityResult -Path $reportPath -Result $report
+    Assert-True ($roundTrip.result.completedAt -eq $report.completedAt) `
+        'The device result must allow completion assignment and retain it across JSON'
+    $readiness = New-LeanTTYAgentCompatibilityReadinessFixture -StartedAt ([DateTimeOffset]::UtcNow)
+    Assert-True ($null -ne $readiness.completedAt) 'Readiness must share the completed result schema'
+
+    # Execute the actual progress writer without HDC/WSL. A failed check must
+    # survive an interruption before finalization; counts alone lose the cause.
+    $deviceAst = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1'), [ref]$null, [ref]$null
+    )
+    $progressFunction = $deviceAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Write-AgentCompatibilityProgress'
+    }, $true)
+    . ([scriptblock]::Create($progressFunction.Extent.Text))
+    $result = $report
+    $result.completedAt = $null
+    $result.resources = [ordered]@{ knownHostEndpoint = '[127.0.0.1]:39999' }
+    $result.checks = @([pscustomobject]@{
+        status = 'failed'; failureDomain = 'harness'; failure = '[harness] controlled-check-failure'
+    })
+    $EvidenceDirectory = $temporaryDirectory
+    $attemptId = $report.attemptId
+    $PreviousAttemptId = ''
+    $Agents = @('codex')
+    $Modes = @('direct')
+    $Osc99CapabilityProbe = $false
+    $isolatedTabId = 'controlled-tab'
+    $mappingActive = $true
+    $awakeLeaseAcquired = $true
+    $isolatedTabCreated = $true
+    $knownHostRemoved = $false
+    $appProcessId = '1234'
+    $agentSshBoundary = 'unconfirmed'
+    Write-AgentCompatibilityProgress -Stage 'codex-direct-complete'
+    $checkpoint = Get-Content -LiteralPath (Join-Path $temporaryDirectory 'result.json') -Raw |
+        ConvertFrom-Json -Depth 20
+    Assert-True (
+        $null -eq $checkpoint.completedAt -and
+        $checkpoint.status -eq 'invalid/interrupted' -and
+        $checkpoint.checks[0].failure -eq '[harness] controlled-check-failure' -and
+        $checkpoint.resources.isolatedTabId -eq 'controlled-tab' -and
+        $checkpoint.resources.knownHostEndpoint -eq '[127.0.0.1]:39999' -and
+        $checkpoint.resources.sshBoundary -eq 'unconfirmed' -and
+        $checkpoint.resources.mappingActive
+    ) 'An unfinished checkpoint must preserve the real failed check and owned resources, not claim pass'
+    $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
+    $result.cleanup = @{ result = 'failed'; detail = 'controlled-cleanup-failure' }
+    Write-AgentCompatibilityProgress -Stage 'complete'
+    $finalReport = Get-Content -LiteralPath (Join-Path $temporaryDirectory 'result.json') -Raw |
+        ConvertFrom-Json -Depth 20
+    Assert-True (
+        $null -ne $finalReport.completedAt -and
+        $finalReport.cleanup.result -eq 'failed' -and
+        $finalReport.checks[0].failure -eq $checkpoint.checks[0].failure
+    ) 'Final cleanup failure must not replace the original check failure'
+
     $strictPass = Resolve-LeanTTYAgentNotificationAssessment `
         -Agent codex -Mode direct `
         -NativeAttentionObserved $true `
@@ -369,7 +437,6 @@ try {
         $deviceScript.Contains("'opencode' { return 'osc-99' }") -and
         $deviceScript.Contains("'pi' { return 'osc-777' }") -and
         $deviceScript.Contains("'qwen' { return 'bel' }") -and
-        $deviceScript.Contains('Reset-AppAfterAgentFailure') -and
         $deviceScript.Contains('Restore-AgentAppForContinuation') -and
         $deviceScript.Contains('Save-CurrentAppLogs') -and
         $deviceScript.Contains('rawCaptureDeletedBeforeEvidenceCopy') -and
@@ -383,7 +450,7 @@ try {
         $deviceScript.Contains('sudo kill -0 -- $wslSshdPid') -and
         $deviceScript.Contains("-Text '/exit'") -and
         $deviceScript.Contains('Stop-AgentTui -Agent $Agent') -and
-        $deviceScript.Contains("'aa force-stop com.leantty.app'") -and
+        -not $deviceScript.Contains("'aa force-stop com.leantty.app'") -and
         $deviceScript.Contains("Join-Path `$EvidenceDirectory 'captures'") -and
         -not $deviceScript.Contains("'claude'") -and
         -not $deviceScript.Contains("'gemini'")
@@ -400,4 +467,6 @@ try {
     }
 }
 
+& (Join-Path $PSScriptRoot 'test-agent-ssh-gate.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Agent SSH gate fault injection failed' }
 Write-Host 'Agent compatibility helper tests passed.'
