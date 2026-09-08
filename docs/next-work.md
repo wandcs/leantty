@@ -58,13 +58,18 @@ manifest、附件和哈希保持不变。
 
 ## 1. 精确候选构建与正式验收
 
-- [ ] 先按 release-process 经 PR 完成版本元数据和 Changelog 日期冻结，确认精确远端
-  release commit，再从干净隔离 checkout 完成离线构建输入和
-  release-readiness 预检，只构建一轮 production/review candidate。历史 1.5.1 环境预检及
+- [ ] 版本元数据和 Changelog 日期已由 PR #171 冻结；首次预检的旧包拒绝与报告摘要修复见
+  [预检记录](test-release-efficiency.md#832-精确版本预检的失败与报告修复2026-09-08)。确认修复后的
+  精确远端 release commit，再从干净隔离 checkout 完成离线构建输入。先用当前源码
+  生成符合诊断隔离策略的 release-mode 包作为 readiness 输入；旧 review 和 1.5.1
+  production HAP 均被现有 marker 门拒绝，不继续换旧包试过关。保留新包及其构建身份，
+  供后续交付按正式复用规则检查；未通过 C3 前不声明 C4。完成 readiness 和正式候选构建。
+  历史 1.5.1 环境预检及
   旧 review HAP smoke 不作当前候选证明。打包后提取离线指南，与已审查源码/rawfile 的精确
   hash 比较；当前源码副本一致不能代替正式 HAP 内字节一致性。
-- [ ] C2 后完成正式 QH 与完整 Agent/IME 验收，再按 compatibility、runtime-reclaim、
-  UDP pause、suspend、lock、lid、Wi-Fi pause、Wi-Fi network switch 固定顺序执行完整矩阵。
+- [ ] C2 后按已注册发布入口完成正式 QH、完整 Agent/IME 及其余 C3 场景。Mosh 子矩阵
+  按 compatibility、runtime-reclaim、UDP pause、suspend、lock、lid、Wi-Fi pause、
+  Wi-Fi network switch 固定顺序执行。
   首个失败立即停止，后续只做 failed-stage 诊断并按 R1–R4 决定复用范围；只有同一
   candidate/harness 的全部场景和 cleanup 通过才能声明完整 C3，再完成其余交付门。
 

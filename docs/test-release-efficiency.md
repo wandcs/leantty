@@ -2126,3 +2126,26 @@ Chrome 152.0.7977.76 的指南检查 63 项通过，20 张中英文、宽/窄截
 
 本批未构建或部署 HAP，没有 HDC、SSH、切网或模型调用。旧 review smoke 保留原候选
 身份，未改写成当前正式验收。聚焦软件检查和浏览器通过均不等于 C2/C3/C4 或发布就绪。
+
+### 8.32 精确版本预检的失败与报告修复（2026-09-08）
+
+PR #171 冻结 1.6.0 的 Changelog 日期，四项 CI 通过；所有版本源原已一致，无产品或指南
+字节变更。两个独立发布 checkout 已定位到该提交，设备只读预检通过。首次 readiness
+在 64 秒后拒绝旧 review HAP 中的 `LTTY_PERF_PING_`。该包早于 PR #159 的诊断隔离
+修复，拒绝正确；不得降低 marker 门或将旧包 smoke 当作当前包验证。对原预检所用的
+1.5.1 production HAP 单独检查也命中同一标记，故停止寻找其他旧包。这个结果只证明
+包内保留该字面量，不证明运行时记录了真实正文或 secret。后续预检需使用当前隔离策略
+下新建的 release-mode 包；旧“readiness 通过”不能覆盖后来增加的包边界。
+
+同次报告暴露一个真实工具缺陷：53,840-byte Agent 合成结果写入和读回成功，最终摘要却
+为 `null`；旧 2026-09-05 报告也受影响。PowerShell 7.6.3 的回调创建子作用域，普通赋值
+没有更新外层报告所有者，与当日核查的
+[Microsoft 作用域说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_scopes?view=powershell-7.6)
+和 [script block 说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_script_blocks?view=powershell-7.6)
+一致。问题限于宿主脚本，不涉及鸿蒙接口、输入时序或模型行为。
+
+修复让回调返回摘要，由报告所有者接收。新增测试运行实际入口、Agent 结果构造器和原子
+JSON 写入器，只替换外部构建/软件命令；修复前复现空摘要，修复后成功及后续包拒绝两条
+路径均保留正确 hash、大小、计数、零模型和原失败，且失败后不运行签名前置检查。
+证据根为 `build/verification/release-1.6.0-20260908/`。原失败保留；本轮尚无 C1/C2/C3/C4
+通过结果可复用，须从修复后的干净远端身份重新完成 readiness，再开始正式软件和候选门。
