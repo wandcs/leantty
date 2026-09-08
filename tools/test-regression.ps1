@@ -331,6 +331,11 @@ Invoke-RegressionCheck -Name 'trusted-arkts-tests' -Groups @('arkts') -Action {
         "; ArkTS warnings=$($warningState.warningCount), sha256=$($warningState.sha256)"
 }
 
+Invoke-RegressionCheck -Name 'xterm-input-order-patch' -Groups @('web') -Action {
+    & $nodeExe (Join-Path $repoRoot 'tools\web-terminal\test-xterm-input-order-patch.mjs')
+    if ($LASTEXITCODE -ne 0) { throw 'xterm input ordering patch tests failed' }
+}
+
 $formalRustEnvironment = @{}
 if ($script:regressionMode -eq 'full') {
     $formalRustEnvironment['CARGO_NET_OFFLINE'] = 'true'

@@ -594,6 +594,15 @@ try {
         $startupPerformanceText = $startupPerformancePaths | ForEach-Object {
             Get-Content -LiteralPath $_ -Raw
         }
+        foreach ($source in $startupPerformanceText) {
+            $loggerDeclaration = [regex]::Match($source, '(?m)^const startupPerformanceLogger\b')
+            if ($loggerDeclaration.Success) {
+                $imports = [regex]::Matches($source, '(?m)^import\s')
+                Assert-True ($imports.Count -gt 0 -and $imports[-1].Index -lt $loggerDeclaration.Index) (
+                    'Startup performance logger declaration must follow all static imports (arkts-no-misplaced-imports)'
+                )
+            }
+        }
         Assert-True (($startupPerformanceText -join "`n").Contains('STARTUP_PERF phase=T1')) (
             'Startup performance injection omitted the Ability entry marker'
         )
@@ -901,7 +910,10 @@ try {
     foreach ($archiveCase in @(
         @{ path = $safeHap; content = 'ordinary release bytecode' },
         @{ path = $unsafeHap; content = 'ACCEPTANCE_INPUT_SUBMIT must not ship' }
-    )) {
+    ) + @(foreach ($marker in @('CHECKPOINT_DIAG', 'LTTY_PERF_PING_', 'LTTY_PERF_BEGIN__:', 'LTTY_PERF_END__:',
+            'observePerfInput', 'observePerfOutput', 'reportPerfResult', 'perfRender')) {
+        @{ path = $unsafeHap; content = $marker }
+    })) {
         $archiveStream = [IO.File]::Open($archiveCase.path, [IO.FileMode]::Create)
         try {
             $zip = [IO.Compression.ZipArchive]::new(
@@ -923,6 +935,11 @@ try {
             }
         } finally {
             $archiveStream.Dispose()
+        }
+        if ($archiveCase.path -eq $unsafeHap) {
+            Assert-Throws -Action {
+                Assert-LeanTTYReleasePackageExcludesAcceptanceMarkers -PackagePath $unsafeHap
+            } -Message ('Release package accepted diagnostic marker: ' + $archiveCase.content)
         }
     }
     Assert-LeanTTYReleasePackageExcludesAcceptanceMarkers -PackagePath $safeHap

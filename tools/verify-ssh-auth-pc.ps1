@@ -1374,6 +1374,10 @@ function Invoke-AuthPerfSample {
         -Pattern ('PERF render .*"caseId":"' + $CaseId + '".*"completenessPercent":100') `
         -TimeoutSeconds 30
     $record = Get-AuthPerfRenderRecord -CaseId $CaseId
+    if ($record.schemaVersion -ne 2 -or -not $record.contentOrdered -or
+        -not $record.visibleTailConfirmed -or $record.mismatches -ne 0) {
+        throw "[product] Ordered output or parsed visible tail did not match the fixture for $CaseId"
+    }
     $record | Add-Member -NotePropertyName commandAttempts -NotePropertyValue 1
     return $record
 }
