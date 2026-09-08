@@ -32,15 +32,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
-$scenarios = @(
-    'compatibility',
-    'pause-recovery',
-    'suspend-recovery',
-    'operator-lock-recovery',
-    'operator-lid-recovery',
-    'wifi-pause-recovery',
-    'wifi-network-switch'
-)
+$scenarios = @(Get-LeanTTYMoshFormalScenarios)
 if ($FixtureBackendPort -eq $FixturePort) {
     throw 'FixtureBackendPort must differ from the external FixturePort'
 }
@@ -209,6 +201,16 @@ function Assert-MoshScenarioEvidence {
     if ($Scenario -eq 'wifi-network-switch' -and
         -not [bool]$evidence.networkSwitchComparison.originalNetworkRestored) {
         throw 'Mosh network-switch scenario did not restore the original Wi-Fi network'
+    }
+    if ($Scenario -eq 'runtime-reclaim') {
+        if ($null -eq $evidence.runtimeReclaim) { throw 'Runtime-reclaim contract is missing from formal evidence' }
+        Assert-LeanTTYRuntimeReclaimEvidence -Evidence $evidence.runtimeReclaim
+        foreach ($field in @('exercised', 'runtimeReclaimed', 'workspaceWarningObserved',
+            'remoteContentAbsent', 'sessionNotRestored')) {
+            if ($evidence.processRecovery.$field -isnot [bool] -or -not $evidence.processRecovery.$field) {
+                throw "Runtime-reclaim local recovery assertion failed: $field"
+            }
+        }
     }
     return $evidence
 }

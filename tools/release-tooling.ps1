@@ -1,3 +1,40 @@
+function Get-LeanTTYMoshFormalScenarios {
+    # One owner for admission, execution order and resume's fixed-order identity.
+    @('compatibility', 'runtime-reclaim', 'pause-recovery', 'suspend-recovery',
+        'operator-lock-recovery', 'operator-lid-recovery', 'wifi-pause-recovery', 'wifi-network-switch')
+}
+
+function Assert-LeanTTYRuntimeReclaimEvidence {
+    param([Parameter(Mandatory = $true)][object]$Evidence)
+    if ($Evidence.contractVersion -ne 1 -or
+        $Evidence.trigger -cne 'acceptance-only-runtime-state-reclaim') {
+        throw '[harness] Missing runtime-reclaim evidence contract'
+    }
+    foreach ($field in @('graphDropped', 'firstInputWithheld', 'workspaceIdentityPreserved',
+        'serverAbsent', 'ptyAbsent', 'localCommandPassed')) {
+        if ($Evidence.$field -isnot [bool] -or -not $Evidence.$field) {
+            throw "[product] Runtime-reclaim assertion failed: $field"
+        }
+    }
+    foreach ($field in @('localBufferUnits', 'recoveredPaneCount', 'nativeCancelRequests')) {
+        if ($Evidence.$field -isnot [int] -and $Evidence.$field -isnot [long]) {
+            throw "[harness] Runtime-reclaim observation is not an integer: $field"
+        }
+    }
+    if ($null -eq $Evidence.localBufferUnits -or $Evidence.localBufferUnits -ne 0 -or
+        $null -eq $Evidence.recoveredPaneCount -or $Evidence.recoveredPaneCount -lt 1 -or
+        $null -eq $Evidence.nativeCancelRequests -or $Evidence.nativeCancelRequests -lt 1) {
+        throw '[product] Runtime-reclaim input isolation or native cleanup was not proved'
+    }
+    foreach ($field in @('processId', 'startTimeTicks')) {
+        $before = [string]$Evidence.beforeProcess.$field
+        $after = [string]$Evidence.afterProcess.$field
+        if ($before -cnotmatch '^[1-9][0-9]*$' -or $before -cne $after) {
+            throw '[product] Runtime-reclaim must preserve PID and process start time'
+        }
+    }
+}
+
 function Resolve-LeanTTYGitSigningBackend {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
