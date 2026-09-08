@@ -565,11 +565,14 @@ try {
     )
     $acceptanceArkTsPaths = @(
         Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets'
         Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\model\mosh\MoshClient.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\transfer\FileTransferClient.ets'
+        Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
     )
     $acceptanceSourceHashes = @{}
     foreach ($path in $acceptanceArkTsPaths) {
@@ -684,6 +687,23 @@ try {
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_SUBMIT')) (
             'Debug acceptance source injection omitted input telemetry'
         )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_RUNTIME_RECOVERY workspaceSame=') -and
+            ($injectedText -join "`n").Contains('this.observeRuntimeRecoveryForAcceptance()') -and
+            ($injectedText -join "`n").Contains('return this.commandLine.getText().length') -and
+            ($injectedText -join "`n").Contains('this.acceptanceRuntimeWorkspace = workspaceIdentity')) (
+            'Runtime reclaim must observe the owning workspace and input buffer before later command reset'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_NATIVE receivedUnits=') -and
+            ($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_WEB ') -and
+            ($injectedText -join "`n").Contains("cmd === '__acceptance_input_probe'") -and
+            ($injectedText -join "`n").Contains('installAcceptanceInputMetrics();')) (
+            'Debug input probe must observe the real masked chain without a connection'
+        )
+        Assert-True (($injectedText -join "`n").Contains('installAcceptanceInputOrder();') -and
+            ($injectedText -join "`n").Contains('KIND_ACCEPTANCE_INPUT_ORDER') -and
+            ($injectedText -join "`n").Contains('this.terminalSurface.stopInputOrderForAcceptance()')) (
+            'Bounded input order collector or mode-boundary disarm missing from debug transform'
+        )
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_BACKGROUND_BELL')) (
             'Debug acceptance source injection omitted the delayed background BEL trigger'
         )
@@ -759,6 +779,14 @@ try {
         Assert-True (($injectedText -join "`n").Contains('pasteClipboardForAcceptance')) (
             'Debug acceptance source injection omitted clipboard paste trigger'
         )
+        Assert-True (-not ($injectedText -join "`n").Contains('ACCEPTANCE_MOSH_INPUT_REJECTION')) (
+            'Routine acceptance build must not include the dedicated native Mosh fault trigger'
+        )
+        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_TERMINAL_FINGERPRINT') -and
+            ($injectedText -join "`n").Contains("KIND_ACCEPTANCE_SEARCH_RESULT: string = 'acceptanceSearchResult'") -and
+            ($injectedText -join "`n").Contains("sendBridgeControl('acceptanceSearchResult'")) (
+            'Debug acceptance source injection omitted direct terminal-page or SearchAddon evidence'
+        )
     }
     foreach ($path in $acceptanceArkTsPaths) {
         Assert-True (
@@ -819,6 +847,28 @@ try {
         Assert-True (
             (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $nativeAcceptanceHashes[$path]
         ) "Native acceptance source injection did not restore $path byte-for-byte"
+    }
+
+    Invoke-WithLeanTTYNativeAcceptanceSource -RepoRoot $repoRoot -MoshInputRejectionOnly -Action {
+        $moshNative = [IO.File]::ReadAllText((Join-Path $repoRoot 'leantty_ssh/src/lib.rs'))
+        Assert-True ($moshNative.Contains('try_reserve_many(session.write_tx.max_capacity())') -and
+            -not $moshNative.Contains('ACCEPTANCE_LOCAL_DISK_FULL')) (
+            'Mosh fault package must reserve its actual queue without unrelated native fault transforms'
+        )
+        Invoke-WithLeanTTYAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
+            $moshProbe = [IO.File]::ReadAllText((Join-Path $repoRoot 'entry/src/main/ets/model/mosh/MoshClient.ets'))
+            Assert-True ($moshProbe.Contains('sshNative.moshArmInputRejectionForAcceptance(this.sessionId)')) (
+                'Dedicated Mosh fault package omitted its native-backed client trigger'
+            )
+        }
+    }
+    foreach ($path in $nativeAcceptancePaths + $acceptanceArkTsPaths) {
+        $expectedHash = if ($nativeAcceptanceHashes.ContainsKey($path)) {
+            $nativeAcceptanceHashes[$path]
+        } else { $acceptanceSourceHashes[$path] }
+        Assert-True ((Get-FileHash -LiteralPath $path).Hash -ceq $expectedHash) (
+            "Mosh input-rejection transform did not restore $path byte-for-byte"
+        )
     }
 
     $sshAuthHarnessText = [IO.File]::ReadAllText(

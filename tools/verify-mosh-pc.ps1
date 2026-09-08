@@ -17,7 +17,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'runtime-reclaim', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]
+    [ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'runtime-reclaim', 'abnormal-exit', 'input-rejection', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]
     [string]$Scenario = 'compatibility',
     [string]$Target = '',
     [string]$HapPath = '',
@@ -51,15 +51,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
-$formalScenarios = @(
-    'compatibility',
-    'pause-recovery',
-    'suspend-recovery',
-    'operator-lock-recovery',
-    'operator-lid-recovery',
-    'wifi-pause-recovery',
-    'wifi-network-switch'
-)
+$formalScenarios = @(Get-LeanTTYMoshFormalScenarios)
 $harnessStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the Mosh harness source state' }
 $harnessDirty = $harnessStatus.Count -gt 0
@@ -252,6 +244,7 @@ $remoteShellAliveBeforeRecoveryInput = $false
 $serverAliveBeforeRecoveryInput = $false
 $terminalEofObservedBeforeRecoveryInput = $false
 $processRecoveryWorkspaceRestored = $false
+$runtimeReclaimEvidence = $null
 $processRecoveryRemoteContentAbsent = $false
 $processRecoverySessionNotRestored = $false
 $runtimeWorkspaceRecovered = $false
@@ -280,6 +273,9 @@ $wifiNetworkSwitchedByScenario = $false
 $wifiOriginalNetworkRestored = $true
 $wifiSourceAddressChanged = $false
 $wifiRoutingChanged = $false
+$wifiTransitionHistory = @()
+$wifiProductVerdict = 'not-assessed'
+$wifiEnvironmentDirtyPath = ''
 $networkSwitchElapsedMs = -1
 $moshSwitchRecoveryElapsedMs = -1
 $sshSwitchDisconnectElapsedMs = -1
@@ -317,7 +313,13 @@ $alternateScreenClosedScreenshot = ''
 $originalPageMarker = "LTTY_MOSH_ORIGINAL:$caseId"
 $originalPageHiddenDuringSession = $false
 $originalPageRestoredAfterSession = $false
+$originalPageExactFingerprintRestoredAfterSession = $false
 $moshPageDiscardedAfterSession = $false
+$originalPageFingerprint = $null
+$moshPageFingerprint = $null
+$restoredPageFingerprint = $null
+$postExitPageFingerprint = $null
+$inputRejectionEvidence = $null
 $agentCompatibilityPassed = $false
 $agentVersion = ''
 $agentCaptureSummary = $null
@@ -976,14 +978,23 @@ function Submit-MoshInput {
         lastProvenBoundary = 'none'
     }
     try {
+        $intendedNode = $null
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             $observation.inputAttempts = $attempt
             $node = Focus-ActiveTerminalInput -Name "mosh-connected-focus-$attempt.json"
+            if ($null -eq $intendedNode) { $intendedNode = $node }
+            if (-not (Test-LeanTTYSameTextInputTarget -ExpectedNode $intendedNode -CurrentNode $node)) {
+                throw '[harness] Controlled Mosh input lost its original Pane before retry'
+            }
             Invoke-LeanTTYDeviceText -Hdc $hdc -Target $targetId -Text $Text -InputNode $node
             $snapshot = Wait-MoshInputSnapshot -Expected $Text `
                 -ControlDirectory $ControlDirectory
             $actual = if ($snapshot.observed) { [string]$snapshot.value } else { '' }
             $observation.actualLength = $actual.Length
+            $currentNode = Focus-ActiveTerminalInput -Name "mosh-input-owner-$attempt.json"
+            if (-not (Test-LeanTTYSameTextInputTarget -ExpectedNode $intendedNode -CurrentNode $currentNode)) {
+                throw '[harness] Controlled Mosh input lost its original Pane; refusing retry or Enter'
+            }
             if ($actual -ceq $Text) {
                 $observation.lastProvenBoundary = 'server-input-exact-before-enter'
                 Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2054
@@ -1002,8 +1013,8 @@ function Submit-MoshInput {
             $observation.firstMismatchIndex = Get-LeanTTYTextMismatchIndex `
                 -Expected $Text -Actual $actual
             if ($attempt -lt 3) {
-                Focus-ActiveTerminalInput `
-                    -Name "mosh-retry-interrupt-focus-$attempt.json" | Out-Null
+                # The original owner was just checked above. Do not reacquire
+                # a new current focus and silently adopt it as this Session.
                 Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $targetId
                 $cleared = Wait-MoshInputSnapshot -Expected '' `
                     -ControlDirectory $ControlDirectory
@@ -1336,6 +1347,286 @@ function Get-MoshTerminalSearchResultLabel {
     return [string]$nodes[0].attributes.originalText
 }
 
+function Get-MoshAcceptanceTextHash {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+
+    $first = [uint64]2166136261
+    $second = [uint64]5381
+    $mask32 = [uint64][uint32]::MaxValue
+    foreach ($byte in [Text.Encoding]::UTF8.GetBytes($Value)) {
+        $first = (($first -bxor [uint64]$byte) * [uint64]16777619) -band $mask32
+        $second = (($second * [uint64]33) -bxor [uint64]$byte) -band $mask32
+    }
+    return ('{0:x8}{1:x8}' -f [uint32]$first, [uint32]$second)
+}
+
+function Get-MoshTerminalFingerprint {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    Focus-ActiveTerminalInput -Name "$Name-focus.json" | Out-Null
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    Invoke-LeanTTYSerializedUiTest `
+        -Hdc $hdc -Target $targetId -Arguments @('acceptance-terminal-fingerprint') `
+        -Operation 'Capture direct xterm page fingerprint' `
+        -Action {
+            & $hdc -t $targetId shell (
+                'uinput -K -d 2072 -d 2045 -d 2047 -d 2037 ' +
+                '-u 2037 -u 2047 -u 2045 -u 2072'
+            ) | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw '[environment] Unable to invoke the acceptance terminal fingerprint shortcut'
+            }
+        } | Out-Null
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'ACCEPTANCE_TERMINAL_FINGERPRINT [0-9]+,(normal|alternate),' `
+        -TimeoutSeconds 15 | Out-Null
+    $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    [IO.File]::WriteAllText(
+        (Join-Path $EvidenceDirectory "$Name.log"),
+        $logs + "`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    $matches = [regex]::Matches(
+        $logs,
+        'ACCEPTANCE_TERMINAL_FINGERPRINT (?<generation>[0-9]+),(?<buffer>normal|alternate),' +
+        '(?<cols>[0-9]+),(?<rows>[0-9]+),(?<viewport>[0-9]+),(?<hash>[0-9a-f]{16})'
+    )
+    if ($matches.Count -ne 1) {
+        throw '[harness] Direct xterm page fingerprint was missing or ambiguous'
+    }
+    $match = $matches[0]
+    $fingerprint = [pscustomobject][ordered]@{
+        generation = [int]$match.Groups['generation'].Value
+        buffer = $match.Groups['buffer'].Value
+        cols = [int]$match.Groups['cols'].Value
+        rows = [int]$match.Groups['rows'].Value
+        viewport = [int]$match.Groups['viewport'].Value
+        hash = $match.Groups['hash'].Value
+    }
+    $fingerprint | Add-Member -NotePropertyName identity -NotePropertyValue (
+        '{0},{1},{2},{3},{4}' -f $fingerprint.buffer, $fingerprint.cols,
+        $fingerprint.rows, $fingerprint.viewport, $fingerprint.hash
+    )
+    return $fingerprint
+}
+
+function Test-MoshPageFingerprintRestored {
+    param(
+        [Parameter(Mandatory = $true)][object]$Original,
+        [Parameter(Mandatory = $true)][object]$Restored
+    )
+
+    if ($Original.cols -ne $Restored.cols -or $Original.rows -ne $Restored.rows) {
+        throw '[harness] Exact page fingerprint comparison requires matching terminal geometry; use a resize/reflow control for changed dimensions'
+    }
+    return $Original.identity -ceq $Restored.identity
+}
+
+function Get-MoshPageReplacementFingerprint {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$Logs = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Logs)) {
+        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+            -Pattern 'ACCEPTANCE_PAGE_REPLACED_FINGERPRINT [0-9]+,(normal|alternate),' `
+            -TimeoutSeconds 15 | Out-Null
+        $Logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    }
+    $matches = [regex]::Matches(
+        $Logs,
+        'ACCEPTANCE_PAGE_REPLACED_FINGERPRINT (?<generation>[0-9]+),(?<buffer>normal|alternate),' +
+        '(?<cols>[0-9]+),(?<rows>[0-9]+),(?<viewport>[0-9]+),(?<hash>[0-9a-f]{16})'
+    )
+    if ($matches.Count -ne 1) {
+        throw '[harness] Acknowledged Mosh page-replacement fingerprint was missing or ambiguous'
+    }
+    [IO.File]::WriteAllText(
+        (Join-Path $EvidenceDirectory "$Name.log"),
+        $matches[0].Value + "`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    $match = $matches[0]
+    $fingerprint = [pscustomobject][ordered]@{
+        generation = [int]$match.Groups['generation'].Value
+        buffer = $match.Groups['buffer'].Value
+        cols = [int]$match.Groups['cols'].Value
+        rows = [int]$match.Groups['rows'].Value
+        viewport = [int]$match.Groups['viewport'].Value
+        hash = $match.Groups['hash'].Value
+    }
+    $fingerprint | Add-Member -NotePropertyName identity -NotePropertyValue (
+        '{0},{1},{2},{3},{4}' -f $fingerprint.buffer, $fingerprint.cols,
+        $fingerprint.rows, $fingerprint.viewport, $fingerprint.hash
+    )
+    return $fingerprint
+}
+
+function Get-MoshSnapshotFingerprint {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    $matches = [regex]::Matches(
+        $logs,
+        'ACCEPTANCE_SNAPSHOT_FINGERPRINT (?<generation>[0-9]+),(?<buffer>normal|alternate),' +
+        '(?<cols>[0-9]+),(?<rows>[0-9]+),(?<viewport>[0-9]+),(?<hash>[0-9a-f]{16})'
+    )
+    if ($matches.Count -ne 1) {
+        throw '[harness] Saved Mosh page snapshot fingerprint was missing or ambiguous'
+    }
+    [IO.File]::WriteAllText(
+        (Join-Path $EvidenceDirectory "$Name.log"),
+        $matches[0].Value + "`n",
+        [Text.UTF8Encoding]::new($false)
+    )
+    $match = $matches[0]
+    $fingerprint = [pscustomobject][ordered]@{
+        generation = [int]$match.Groups['generation'].Value
+        buffer = $match.Groups['buffer'].Value
+        cols = [int]$match.Groups['cols'].Value
+        rows = [int]$match.Groups['rows'].Value
+        viewport = [int]$match.Groups['viewport'].Value
+        hash = $match.Groups['hash'].Value
+    }
+    $fingerprint | Add-Member -NotePropertyName identity -NotePropertyValue (
+        '{0},{1},{2},{3},{4}' -f $fingerprint.buffer, $fingerprint.cols,
+        $fingerprint.rows, $fingerprint.viewport, $fingerprint.hash
+    )
+    return $fingerprint
+}
+
+function Get-MoshSessionPageBaseline {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    # The snapshot belongs to this connection, not a previous Pane/Session.
+    # Read it before the direct fingerprint helper clears the connection logs.
+    $original = Get-MoshSnapshotFingerprint -Name "$Name-original-page-snapshot-fingerprint"
+    $mosh = Get-MoshTerminalFingerprint -Name "$Name-session-page-fingerprint"
+    $hidden = $mosh.generation -gt $original.generation -and $mosh.identity -cne $original.identity
+    if (-not $hidden) {
+        throw '[product] Mosh Session did not replace the original xterm page'
+    }
+    return [pscustomobject]@{ original = $original; mosh = $mosh; originalHidden = $hidden }
+}
+
+function Get-MoshInputRejectionObservation {
+    param([Parameter(Mandatory = $true)][string]$Logs)
+
+    # Get-LeanTTYAppLogs concatenates tag groups, not chronological streams.
+    $stamp = '(?m)^(?<timestamp>\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[^\r\n]*'
+    $received = [regex]::Matches($Logs, $stamp + 'ACCEPTANCE_MOSH_INPUT_REJECTION receivedBytes=(?<bytes>[1-9][0-9]*)')
+    $full = [regex]::Matches($Logs, $stamp + 'ACCEPTANCE_MOSH_INPUT_REJECTION kind=full')
+    $restored = [regex]::Matches($Logs, $stamp + 'ACCEPTANCE_PAGE_REPLACED_FINGERPRINT ')
+    if ($received.Count -ne 1 -or $full.Count -ne 1 -or $restored.Count -ne 1 -or
+        $Logs -match 'ACCEPTANCE_MOSH_INPUT_REJECTION (state=precondition-failed|kind=unexpected)') {
+        throw '[harness] Input rejection lacks one real Full, received output or page restoration'
+    }
+    $receivedAt = ConvertFrom-MoshHilogTimestamp $received[0].Groups['timestamp'].Value
+    $fullAt = ConvertFrom-MoshHilogTimestamp $full[0].Groups['timestamp'].Value
+    $restoredAt = ConvertFrom-MoshHilogTimestamp $restored[0].Groups['timestamp'].Value
+    $acks = @([regex]::Matches($Logs, $stamp + 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=[1-9][0-9]*') | Where-Object {
+        $ackAt = ConvertFrom-MoshHilogTimestamp $_.Groups['timestamp'].Value
+        $ackAt -gt $receivedAt -and $ackAt -lt $restoredAt
+    })
+    if ($fullAt -lt $receivedAt -or $fullAt -gt $restoredAt -or $acks.Count -eq 0) {
+        throw '[harness] Input rejection lacks an unambiguous ACK-before-restoration timeline'
+    }
+    return [pscustomobject]@{
+        nativeErrorKind = 'Full'
+        receivedOutputBytes = [int]$received[0].Groups['bytes'].Value
+        outputAcknowledgedBeforeRestore = $true
+    }
+}
+
+function Invoke-MoshInputRejection {
+    # Keep the first Session connected as the independent peer; only the new
+    # right Pane receives the one-shot fault. Its page baseline is connection-local.
+    $peerControl = $activeMoshControlDirectory
+    $peerServer = $moshServerPid
+    $peerPty = $fixtureTerminalPid
+    Write-LiveStatus -Stage 'input-rejection-second-session'
+    Split-MoshPane
+    Clear-MoshLatestSessionMetadata
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    Submit-LocalCommand -Command "mosh $alias" -Stage 'input-rejection-connect'
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'Mosh auth event kind=password' -TimeoutSeconds 15 | Out-Null
+    Submit-InteractiveValue -Value $fixturePassword -Name 'input-rejection-password'
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'Mosh Session connected' -TimeoutSeconds 30 | Out-Null
+    $faultSession = Read-MoshSession
+    $faultControl = $faultSession.controlDirectory
+    Wait-ControlFile -Path (Join-Path $faultControl 'mosh-terminal-ready') -TimeoutSeconds 30 | Out-Null
+    $faultPty = Read-ControlledLinuxPid -Path (Join-Path $faultControl 'mosh-terminal-pid')
+    $faultBaseline = Get-MoshSessionPageBaseline -Name 'input-rejection'
+    $faultCase = 'reject_' + $attemptId.Substring(0, 12)
+    Submit-MoshInput -Text "ltty-mosh-check $faultCase" -ControlDirectory $faultControl
+    Wait-ControlFileMatch -Path (Join-Path $faultControl 'mosh-event') `
+        -Pattern "(?ms)^case=$([regex]::Escape($faultCase))$.*^result=passed$" -TimeoutSeconds 15 | Out-Null
+    $empty = Wait-MoshInputSnapshot -Expected '' -ControlDirectory $faultControl
+    if (-not $empty.observed -or $empty.value -cne '') { throw '[harness] Fault PTY input was not empty' }
+
+    Write-LiveStatus -Stage 'input-rejection-arm-and-output'
+    Focus-ActiveTerminalInput -Name 'input-rejection-focus.json' | Out-Null
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    Invoke-LeanTTYSerializedUiTest -Hdc $hdc -Target $targetId `
+        -Arguments @('acceptance-mosh-input-rejection') -Operation 'Arm one Mosh input rejection' -Action {
+            & $hdc -t $targetId shell (
+                'uinput -K -d 2072 -d 2045 -d 2047 -d 2041 -u 2041 -u 2047 -u 2045 -u 2072') | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to arm Mosh input rejection' }
+        } | Out-Null
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'ACCEPTANCE_MOSH_INPUT_REJECTION state=armed' -TimeoutSeconds 10 | Out-Null
+    # Only the tracked disposable PTY is writable. This produces actual remote
+    # output through stock mosh-server, not synthetic ArkTS callback data.
+    $prefix = Get-LeanTTYWslPrefix -Distribution $Distribution
+    & wsl.exe @prefix --exec sh -c 'case "$(readlink /proc/"$1"/fd/1)" in /dev/pts/[0-9]*) printf "\r\nLTTY_MOSH_REJECT_OUTPUT\r\n" > /proc/"$1"/fd/1;; *) exit 42;; esac' sh $faultPty
+    if ($LASTEXITCODE -ne 0) { throw '[infrastructure] Unable to write the controlled Mosh PTY output' }
+    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        -Pattern 'MOSH_PAGE stage=ownership-released' -TimeoutSeconds 20 | Out-Null
+    $faultLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'input-rejection-device-app.log'), $faultLogs)
+    $observation = Get-MoshInputRejectionObservation -Logs $faultLogs
+    $faultRestored = Get-MoshPageReplacementFingerprint -Name 'input-rejection-restored' -Logs $faultLogs
+    $exact = Test-MoshPageFingerprintRestored -Original $faultBaseline.original -Restored $faultRestored
+    if (-not $exact) { throw '[product] Input rejection did not restore its original page exactly' }
+    Wait-WslProcessAbsent -LinuxPid $faultSession.pid -TimeoutSeconds 8 | Out-Null
+    Wait-WslProcessAbsent -LinuxPid $faultPty -TimeoutSeconds 8 | Out-Null
+    $empty = Wait-MoshInputSnapshot -Expected '' -ControlDirectory $faultControl
+    if (-not $empty.observed -or $empty.value -cne '') { throw '[product] Rejected input reached the controlled PTY' }
+    $warning = Test-MoshTerminalSearch -Query 'Mosh input was not accepted.' `
+        -ExpectMatch $true -Name 'input-rejection-warning'
+    $advice = Test-MoshTerminalSearch -Query 'Check the remote state before reconnecting.' `
+        -ExpectMatch $true -Name 'input-rejection-advice'
+    $discarded = Test-MoshTerminalSearch -Query "LTTY_MOSH_CHECK_OK:$faultCase" `
+        -ExpectMatch $false -Name 'input-rejection-discarded'
+    Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
+    Initialize-MoshSinglePaneWorkspace
+
+    Write-LiveStatus -Stage 'input-rejection-peer-command'
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    $peerCase = 'reject_peer_' + $attemptId.Substring(0, 8)
+    Submit-MoshInput -Text "ltty-mosh-check $peerCase" -ControlDirectory $peerControl
+    Wait-ControlFileMatch -Path (Join-Path $peerControl 'mosh-event') `
+        -Pattern "(?ms)^case=$([regex]::Escape($peerCase))$.*^result=passed$" -TimeoutSeconds 15 | Out-Null
+    $peer = Get-MoshLifecycleObservation
+    if ($peer.closed -or $peer.error -or -not (Test-WslProcessPresent -LinuxPid $peerServer) -or
+        -not (Test-WslProcessPresent -LinuxPid $peerPty)) {
+        throw '[product] Input rejection affected the other Mosh Session'
+    }
+    return [pscustomobject]@{
+        native = $observation
+        original = $faultBaseline.original
+        restored = $faultRestored
+        originalPageRestored = $exact
+        rejectedInputAbsentFromServer = $true
+        fixedWarningVisible = $warning -and $advice
+        sessionPageDiscarded = $discarded
+        peerPtyPreservedAndCommandPassed = $true
+    }
+}
+
 function Test-MoshTerminalSearch {
     param(
         [Parameter(Mandatory = $true)][string]$Query,
@@ -1359,20 +1650,56 @@ function Test-MoshTerminalSearch {
         Start-Sleep -Milliseconds 200
     }
     if ($null -eq $input) { throw '[product] Terminal search did not open over Mosh output' }
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $targetId -Text $Query -InputNode $input
-    $expected = if ($ExpectMatch) { '^[1-9][0-9]*/[1-9][0-9]*$' } else { '^(?:No results|未找到结果)$' }
-    $matchedState = $false
-    $stopwatch.Restart()
-    while ($stopwatch.Elapsed.TotalSeconds -lt 15) {
-        $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $targetId `
-            -LocalPath (Join-Path $EvidenceDirectory "$Name-result.json")
-        $label = Get-MoshTerminalSearchResultLabel -Layout $layout
-        if ($label -match $expected) { $matchedState = $true; break }
-        Start-Sleep -Milliseconds 200
-    }
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
-    if (-not $matchedState) {
-        throw "[product] Terminal search result did not satisfy the Mosh query contract: $Name"
+    $inputBounds = [string]$input.attributes.bounds
+    $queryHash = Get-MoshAcceptanceTextHash -Value $Query
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    try {
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $targetId -Text $Query -InputNode $input
+        $queryExact = $false
+        $stopwatch.Restart()
+        while ($stopwatch.Elapsed.TotalSeconds -lt 5) {
+            $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $targetId `
+                -LocalPath (Join-Path $EvidenceDirectory "$Name-query.json")
+            $currentInputs = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+                [string]$_.attributes.type -eq 'textField' -and
+                [string]$_.attributes.hint -match '^(?:Find text|Search text|查找内容)' -and
+                [string]$_.attributes.visible -eq 'true'
+            })
+            if ($currentInputs.Count -ne 1 -or
+                [string]$currentInputs[0].attributes.bounds -cne $inputBounds -or
+                [string]$currentInputs[0].attributes.focused -ne 'true') {
+                throw '[harness] Intended terminal Search field lost focus before query delivery'
+            }
+            $actualQuery = [string]$currentInputs[0].attributes.originalText
+            if ([string]::IsNullOrEmpty($actualQuery)) {
+                $actualQuery = [string]$currentInputs[0].attributes.text
+            }
+            if ($actualQuery -ceq $Query) {
+                $queryExact = $true
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not $queryExact) {
+            throw '[harness] Terminal Search did not receive the exact query before result evaluation'
+        }
+        $searchPattern = 'ACCEPTANCE_SEARCH_RESULT ' + $Query.Length + ',' + $queryHash + ','
+        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+            -Pattern ([regex]::Escape($searchPattern)) -TimeoutSeconds 15 | Out-Null
+        $searchLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+        $resultMatches = [regex]::Matches(
+            $searchLogs,
+            [regex]::Escape($searchPattern) + '(?<index>-?[0-9]+),(?<count>[0-9]+)'
+        )
+        if ($resultMatches.Count -lt 1) {
+            throw '[harness] SearchAddon did not emit a result for the exact query'
+        }
+        $resultCount = [int]$resultMatches[$resultMatches.Count - 1].Groups['count'].Value
+        if (($ExpectMatch -and $resultCount -lt 1) -or (-not $ExpectMatch -and $resultCount -ne 0)) {
+            throw "[product] Terminal SearchAddon result did not satisfy the Mosh query contract: $Name"
+        }
+    } finally {
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
     }
     return $true
 }
@@ -1509,7 +1836,117 @@ function Get-MoshWifiToggle {
     })
 }
 
+function ConvertTo-MoshIpv4Number {
+    param([Parameter(Mandatory = $true)][string]$Address)
+
+    $bytes = [Net.IPAddress]::Parse($Address).GetAddressBytes()
+    if ($bytes.Length -ne 4) { throw '[harness] Expected one IPv4 address' }
+    return ([uint64]$bytes[0] -shl 24) -bor ([uint64]$bytes[1] -shl 16) -bor
+        ([uint64]$bytes[2] -shl 8) -bor [uint64]$bytes[3]
+}
+
+function Get-MoshEndpointRoute {
+    param(
+        [Parameter(Mandatory = $true)][string]$RouteTable,
+        [Parameter(Mandatory = $true)][string]$Endpoint
+    )
+
+    $endpointNumber = ConvertTo-MoshIpv4Number -Address $Endpoint
+    $matchingRoutes = [Collections.Generic.List[object]]::new()
+    foreach ($line in @($RouteTable -split '\r?\n')) {
+        $parts = @($line.Trim() -split '\s+')
+        if ($parts.Count -lt 4 -or
+            $parts[0] -notmatch '^\d{1,3}(?:\.\d{1,3}){3}$' -or
+            $parts[1] -notmatch '^\d{1,3}(?:\.\d{1,3}){3}$' -or
+            $parts[2] -notmatch '^\d{1,3}(?:\.\d{1,3}){3}$') {
+            continue
+        }
+        try {
+            $destinationNumber = ConvertTo-MoshIpv4Number -Address $parts[0]
+            $maskNumber = ConvertTo-MoshIpv4Number -Address $parts[2]
+        } catch {
+            continue
+        }
+        if (($destinationNumber -band $maskNumber) -ne ($endpointNumber -band $maskNumber)) {
+            continue
+        }
+        $prefixLength = 0
+        for ($bit = 31; $bit -ge 0; $bit--) {
+            if (($maskNumber -band ([uint64]1 -shl $bit)) -ne 0) { $prefixLength++ }
+        }
+        $matchingRoutes.Add([pscustomobject][ordered]@{
+            destination = $parts[0]
+            gateway = $parts[1]
+            mask = $parts[2]
+            interface = $parts[$parts.Count - 1]
+            prefixLength = $prefixLength
+        })
+    }
+    $route = @($matchingRoutes | Sort-Object prefixLength -Descending | Select-Object -First 1)
+    if ($route.Count -ne 1) { return $null }
+    $route[0] | Add-Member -NotePropertyName identity -NotePropertyValue (
+        '{0},{1},{2},{3}' -f $route[0].destination, $route[0].gateway,
+        $route[0].mask, $route[0].interface
+    )
+    return $route[0]
+}
+
+function ConvertFrom-MoshWifiDeviceDump {
+    param([Parameter(Mandatory = $true)][string]$Dump)
+
+    $activeMatches = [regex]::Matches(
+        $Dump,
+        '(?m)^WiFi active state: (?<state>activated|inactive)[ \t]*\r?$'
+    )
+    $connectionMatches = [regex]::Matches(
+        $Dump,
+        '(?m)^WiFi connection status: (?<state>connected|not connected)[ \t]*\r?$'
+    )
+    $ssidMatches = [regex]::Matches(
+        $Dump,
+        '(?m)^\s{2}Connection\.ssid: (?<ssid>[^\r\n]*)\r?$'
+    )
+    if ($activeMatches.Count -ne 1 -or $connectionMatches.Count -ne 1) {
+        throw '[harness] HarmonyOS WifiDevice dump did not contain one authoritative state'
+    }
+
+    $connected = $connectionMatches[0].Groups['state'].Value -ceq 'connected'
+    if (($connected -and $ssidMatches.Count -ne 1) -or
+        (-not $connected -and $ssidMatches.Count -ne 0)) {
+        throw '[harness] HarmonyOS WifiDevice dump contained an ambiguous connected SSID'
+    }
+    $ssid = if ($connected) { $ssidMatches[0].Groups['ssid'].Value } else { '' }
+    if ($connected -and [string]::IsNullOrEmpty($ssid)) {
+        throw '[harness] HarmonyOS WifiDevice dump reported an empty connected SSID'
+    }
+
+    return [pscustomobject]@{
+        active = $activeMatches[0].Groups['state'].Value -ceq 'activated'
+        connected = $connected
+        ssid = $ssid
+    }
+}
+
+function Get-MoshWifiDeviceState {
+    $dump = Invoke-HdcChecked `
+        -Hdc $hdc -Target $targetId `
+        -Arguments @('shell', 'hidumper', '-s', 'WifiDevice') `
+        -Operation 'HarmonyOS WifiDevice service state query' `
+        -FailureDomain 'environment'
+    return ConvertFrom-MoshWifiDeviceDump -Dump $dump
+}
+
+function Get-MoshConnectedWifiSsid {
+    $state = Get-MoshWifiDeviceState
+    if (-not [bool]$state.active -or -not [bool]$state.connected) {
+        throw '[environment] HarmonyOS WifiDevice service reports no connected Wi-Fi network'
+    }
+    return [string]$state.ssid
+}
+
 function Get-MoshWifiNetworkState {
+    param([switch]$ProbeEndpoint)
+
     $ifconfig = Invoke-HdcChecked `
         -Hdc $hdc -Target $targetId `
         -Arguments @('shell', 'ifconfig') `
@@ -1522,15 +1959,21 @@ function Get-MoshWifiNetworkState {
         -Hdc $hdc -Target $targetId `
         -Arguments @('shell', 'netstat', '-rn') `
         -Operation 'HarmonyOS Wi-Fi route query'
-    $routeBytes = [Text.Encoding]::UTF8.GetBytes(($routes -replace '\s+', ' ').Trim())
-    $routeDigest = [Convert]::ToHexString(
-        [Security.Cryptography.SHA256]::HashData($routeBytes)
-    ).ToLowerInvariant()
+    $endpointRoute = Get-MoshEndpointRoute -RouteTable $routes -Endpoint $resolvedServerAddress
+    $linkActive = $wlan.Success -and -not [string]::IsNullOrWhiteSpace($address) -and
+        $wlan.Value.Contains('UP')
+    $endpointReachable = $null
+    if ($ProbeEndpoint) {
+        $endpointReachable = $false
+        if ($linkActive) {
+            $endpointReachable = Test-MoshDeviceTcpReachable
+        }
+    }
     return [pscustomobject]@{
-        active = $wlan.Success -and -not [string]::IsNullOrWhiteSpace($address) -and
-            $wlan.Value.Contains('UP')
+        active = $linkActive
         address = $address
-        routeDigest = $routeDigest
+        endpointRoute = $(if ($null -eq $endpointRoute) { $null } else { $endpointRoute.identity })
+        endpointReachable = $endpointReachable
     }
 }
 
@@ -1538,68 +1981,95 @@ function Test-MoshWifiIpv4Active {
     return [bool](Get-MoshWifiNetworkState).active
 }
 
-function Open-MoshWifiPanel {
-    param([Parameter(Mandatory = $true)][string]$Name)
+function Get-MoshWifiPanelButton {
+    param([Parameter(Mandatory = $true)]$Layout)
 
-    $layout = Get-MoshWifiLayout -Name "$Name-before"
-    $toggles = @(Get-MoshWifiToggle -Layout $layout)
-    if ($toggles.Count -gt 0) { return $layout }
-    $panelButtons = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
         [string]$_.attributes.id -eq 'PluginRootComponent_Stack_status_bar_wifi_panel' -and
         [string]$_.attributes.visible -eq 'true' -and
         [string]$_.attributes.clickable -eq 'true'
     })
+}
+
+function Get-MoshWifiPanelState {
+    param([Parameter(Mandatory = $true)]$Layout)
+
+    $toggles = @(Get-MoshWifiToggle -Layout $Layout)
+    $panelButtons = @(Get-MoshWifiPanelButton -Layout $Layout)
+    if ($toggles.Count -gt 1 -or $panelButtons.Count -gt 1) {
+        throw '[harness] HarmonyOS Wi-Fi panel state was ambiguous'
+    }
+    if ($toggles.Count -eq 1) { return 'open' }
+    if ($panelButtons.Count -eq 1) { return 'closed' }
+    return 'unknown'
+}
+
+function Normalize-MoshWifiPanelClosed {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $backSent = $false
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $layout = Get-MoshWifiLayout -Name "$Name-normalize"
+        $panelState = Get-MoshWifiPanelState -Layout $layout
+        if ($panelState -ceq 'closed') {
+            return $layout
+        }
+        if ($panelState -ceq 'open' -and -not $backSent) {
+            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+            $backSent = $true
+        }
+        Start-Sleep -Milliseconds 500
+    } while ($stopwatch.Elapsed.TotalSeconds -lt 6)
+    throw '[environment] HarmonyOS Wi-Fi panel could not reach a known closed state'
+}
+
+function Open-MoshWifiPanel {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $layout = Normalize-MoshWifiPanelClosed -Name $Name
+    $panelButtons = @(Get-MoshWifiPanelButton -Layout $layout)
     if ($panelButtons.Count -ne 1) {
-        throw '[environment] HarmonyOS Wi-Fi panel button was unavailable'
+        throw '[harness] Normalized HarmonyOS Wi-Fi panel button was not unique'
     }
     $panelCenter = Get-LeanTTYBoundsCenter -Bounds ([string]$panelButtons[0].attributes.bounds)
     Invoke-LeanTTYDeviceClick `
         -Hdc $hdc -Target $targetId -X $panelCenter.x -Y $panelCenter.y `
         -Operation 'Open HarmonyOS Wi-Fi panel'
-    Start-Sleep -Milliseconds 500
-    return Get-MoshWifiLayout -Name "$Name-panel"
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        Start-Sleep -Milliseconds 500
+        $panelLayout = Get-MoshWifiLayout -Name "$Name-panel"
+        $toggles = @(Get-MoshWifiToggle -Layout $panelLayout)
+        if ($toggles.Count -gt 1) {
+            throw '[harness] HarmonyOS Wi-Fi panel exposed multiple toggle owners'
+        }
+        if ($toggles.Count -eq 1) { return $panelLayout }
+    } while ($stopwatch.Elapsed.TotalSeconds -lt 6)
+    throw '[environment] HarmonyOS Wi-Fi panel did not reach its open state'
 }
 
-function Get-MoshConnectedWifiSsid {
-    param([Parameter(Mandatory = $true)]$Layout)
+function Close-MoshWifiPanel {
+    param([Parameter(Mandatory = $true)][string]$Name)
 
-    $nodes = @(Get-LeanTTYLayoutNodes -Node $Layout)
-    $labels = @($nodes | Where-Object {
-        [string]$_.attributes.originalText -eq '已连接 WLAN' -and
+    Normalize-MoshWifiPanelClosed -Name $Name | Out-Null
+}
+
+function Assert-MoshWifiPasswordPromptAbsent {
+    param(
+        [Parameter(Mandatory = $true)]$Layout,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    $passwordInputs = @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
+        [string]$_.attributes.id -eq 'wifi_password_input' -and
         [string]$_.attributes.visible -eq 'true'
     })
-    if ($labels.Count -ne 1) {
-        throw '[environment] HarmonyOS connected Wi-Fi section was unavailable'
+    if ($passwordInputs.Count -gt 0) {
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+        Normalize-MoshWifiPanelClosed -Name "$Name-password" | Out-Null
+        throw '[environment] Alternate Wi-Fi must be saved before automated network switching'
     }
-    $parts = ([string]$labels[0].attributes.hierarchy).Split(',')
-    if ($parts.Count -lt 4) {
-        throw '[harness] HarmonyOS connected Wi-Fi hierarchy was malformed'
-    }
-    $sectionHierarchy = $parts[0..($parts.Count - 3)] -join ','
-    $rows = @($nodes | Where-Object {
-        [string]$_.attributes.type -eq 'Row' -and
-        [string]$_.attributes.visible -eq 'true' -and
-        [string]$_.attributes.clickable -eq 'true' -and
-        ([string]$_.attributes.hierarchy).StartsWith(
-            "$sectionHierarchy,1", [StringComparison]::Ordinal
-        )
-    } | Sort-Object { ([string]$_.attributes.hierarchy).Length })
-    if ($rows.Count -lt 1) {
-        throw '[environment] HarmonyOS did not report one connected Wi-Fi network'
-    }
-    $rowHierarchy = [string]$rows[0].attributes.hierarchy
-    $texts = @($nodes | Where-Object {
-        [string]$_.attributes.type -eq 'Text' -and
-        [string]$_.attributes.visible -eq 'true' -and
-        -not [string]::IsNullOrWhiteSpace([string]$_.attributes.originalText) -and
-        ([string]$_.attributes.hierarchy).StartsWith(
-            "$rowHierarchy,", [StringComparison]::Ordinal
-        )
-    } | Sort-Object { [string]$_.attributes.hierarchy })
-    if ($texts.Count -lt 1) {
-        throw '[environment] HarmonyOS connected Wi-Fi name was unavailable'
-    }
-    return [string]$texts[0].attributes.originalText
 }
 
 function Get-MoshWifiNetworkRow {
@@ -1633,56 +2103,83 @@ function Set-MoshWifiNetwork {
         [switch]$AllowUnchangedNetwork
     )
 
-    $layout = Open-MoshWifiPanel -Name $Name
-    $beforeSsid = Get-MoshConnectedWifiSsid -Layout $layout
-    $beforeState = Get-MoshWifiNetworkState
+    $beforeSsid = Get-MoshConnectedWifiSsid
+    $beforeState = Get-MoshWifiNetworkState -ProbeEndpoint
+    $transitionHistory = [Collections.Generic.List[object]]::new()
+    if (-not [bool]$beforeState.active -or -not [bool]$beforeState.endpointReachable) {
+        throw '[environment] Current Wi-Fi has no ready path to the controlled endpoint'
+    }
     if ($beforeSsid -ceq $Ssid) {
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
         if (-not $AllowUnchangedNetwork) {
             throw '[environment] AlternateWifiSsid names the currently connected Wi-Fi network'
         }
         return [pscustomobject]@{
-            changed = $false; addressChanged = $false; routingChanged = $false
+            changed = $false
+            addressChanged = $false
+            routingChanged = $false
+            endpointReachable = [bool]$beforeState.endpointReachable
+            transitionHistory = @()
         }
     }
+    $layout = Open-MoshWifiPanel -Name $Name
     $rows = @(Get-MoshWifiNetworkRow -Layout $layout -Ssid $Ssid)
     if ($rows.Count -ne 1) {
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+        Close-MoshWifiPanel -Name "$Name-missing-network"
         throw '[environment] The requested alternate Wi-Fi network is not currently available'
     }
     $center = Get-LeanTTYBoundsCenter -Bounds ([string]$rows[0].attributes.bounds)
     Invoke-LeanTTYDeviceClick -Hdc $hdc -Target $targetId -X $center.x -Y $center.y `
         -Operation 'Connect to the requested alternate Wi-Fi network'
+    $transitionHistory.Add([pscustomobject]@{
+        state = 'network-row-selected'; elapsedMs = 0
+    }) | Out-Null
+
+    Start-Sleep -Milliseconds 750
+    $selectionLayout = Get-MoshWifiLayout -Name "$Name-selection"
+    Assert-MoshWifiPasswordPromptAbsent -Layout $selectionLayout -Name $Name
+    Close-MoshWifiPanel -Name "$Name-after-selection"
 
     $connected = $false
     $afterState = $null
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     do {
         Start-Sleep -Milliseconds 750
-        $stateLayout = Get-MoshWifiLayout -Name "$Name-state"
-        $passwordInputs = @(Get-LeanTTYLayoutNodes -Node $stateLayout | Where-Object {
-            [string]$_.attributes.id -eq 'wifi_password_input' -and
-            [string]$_.attributes.visible -eq 'true'
-        })
-        if ($passwordInputs.Count -gt 0) {
-            Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
-            throw '[environment] Alternate Wi-Fi must be saved before automated network switching'
+        $wifiDeviceState = Get-MoshWifiDeviceState
+        $ssidConnected = [bool]$wifiDeviceState.active -and [bool]$wifiDeviceState.connected -and
+            [string]$wifiDeviceState.ssid -ceq $Ssid
+        if ($ssidConnected -and -not ($transitionHistory.state -contains 'target-ssid-connected')) {
+            $transitionHistory.Add([pscustomobject]@{
+                state = 'target-ssid-connected'; elapsedMs = [long]$stopwatch.Elapsed.TotalMilliseconds
+            }) | Out-Null
         }
-        try {
-            $connectedSsid = Get-MoshConnectedWifiSsid -Layout $stateLayout
-        } catch {
-            $connectedSsid = ''
+        $afterState = Get-MoshWifiNetworkState -ProbeEndpoint:$ssidConnected
+        if ([bool]$afterState.active -and
+            -not ($transitionHistory.state -contains 'wlan-link-active')) {
+            $transitionHistory.Add([pscustomobject]@{
+                state = 'wlan-link-active'; elapsedMs = [long]$stopwatch.Elapsed.TotalMilliseconds
+            }) | Out-Null
         }
-        $afterState = Get-MoshWifiNetworkState
-        $connected = $connectedSsid -ceq $Ssid -and [bool]$afterState.active
+        if (-not [string]::IsNullOrWhiteSpace([string]$afterState.endpointRoute) -and
+            -not ($transitionHistory.state -contains 'endpoint-route-resolved')) {
+            $transitionHistory.Add([pscustomobject]@{
+                state = 'endpoint-route-resolved'; elapsedMs = [long]$stopwatch.Elapsed.TotalMilliseconds
+            }) | Out-Null
+        }
+        if ([bool]$afterState.endpointReachable -and
+            -not ($transitionHistory.state -contains 'endpoint-reachable')) {
+            $transitionHistory.Add([pscustomobject]@{
+                state = 'endpoint-reachable'; elapsedMs = [long]$stopwatch.Elapsed.TotalMilliseconds
+            }) | Out-Null
+        }
+        $connected = $ssidConnected -and [bool]$afterState.active -and
+            [bool]$afterState.endpointReachable
         if ($connected) { break }
     } while ($stopwatch.Elapsed.TotalSeconds -lt 35)
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
     if (-not $connected) {
         throw '[environment] HarmonyOS did not connect to the requested alternate Wi-Fi network'
     }
     $addressChanged = [string]$beforeState.address -cne [string]$afterState.address
-    $routingChanged = [string]$beforeState.routeDigest -cne [string]$afterState.routeDigest
+    $routingChanged = [string]$beforeState.endpointRoute -cne [string]$afterState.endpointRoute
     if (-not $addressChanged -and -not $routingChanged) {
         throw '[environment] Wi-Fi changed names but neither source address nor routing changed'
     }
@@ -1690,6 +2187,8 @@ function Set-MoshWifiNetwork {
         changed = $true
         addressChanged = $addressChanged
         routingChanged = $routingChanged
+        endpointReachable = [bool]$afterState.endpointReachable
+        transitionHistory = @($transitionHistory)
     }
 }
 
@@ -1875,6 +2374,29 @@ function Invoke-MoshPageRebuild {
     return [pscustomobject]@{ before = $before; after = $after }
 }
 
+function Get-MoshRuntimeReclaimObservation {
+    param([Parameter(Mandatory = $true)][string]$Logs)
+    $recovery = [regex]::Matches($Logs,
+        'Runtime session state reclaimed; workspace-only recovery=true,panes=(\d+),nativeCancelRequests=(-?\d+)')
+    $inputState = [regex]::Matches($Logs,
+        'ACCEPTANCE_RUNTIME_RECOVERY workspaceSame=(true|false),localBufferUnits=(-?\d+)')
+    if ($recovery.Count -ne 1 -or $inputState.Count -ne 1) {
+        throw '[harness] Runtime-reclaim owner observations are missing or ambiguous'
+    }
+    return [ordered]@{
+        contractVersion = 1
+        trigger = 'acceptance-only-runtime-state-reclaim'
+        graphDropped = $Logs.Contains('ACCEPTANCE_RUNTIME_RECLAIM state=dropped,')
+        firstInputWithheld = $Logs.Contains('Terminal input withheld for runtime recovery')
+        workspaceIdentityPreserved = $inputState[0].Groups[1].Value -ceq 'true'
+        localBufferUnits = [int]$inputState[0].Groups[2].Value
+        recoveredPaneCount = [int]$recovery[0].Groups[1].Value
+        nativeCancelRequests = [int]$recovery[0].Groups[2].Value
+        beforeProcess = $null; afterProcess = $null
+        serverAbsent = $false; ptyAbsent = $false; localCommandPassed = $false
+    }
+}
+
 function Invoke-MoshRuntimeReclaim {
     Focus-ActiveTerminalInput -Name 'mosh-runtime-reclaim-before.json' | Out-Null
     $before = Get-MoshAppProcessIdentity
@@ -1913,7 +2435,10 @@ function Invoke-MoshRuntimeReclaim {
     if ($null -eq $after -or [string]$after.key -cne [string]$before.key) {
         throw '[product] Acceptance runtime reclaim changed the LeanTTY process'
     }
-    return [pscustomobject]@{ before = $before; after = $after }
+    $observation = Get-MoshRuntimeReclaimObservation -Logs $runtimeLogs
+    $observation.beforeProcess = $before
+    $observation.afterProcess = $after
+    return $observation
 }
 
 function Split-MoshPane {
@@ -2174,6 +2699,7 @@ function Write-Evidence {
         'pane-close' {
             'active-mosh-pane-closed-and-surviving-pane-started-an-isolated-session'
         }
+        'input-rejection' { 'native-input-full-drained-restored-and-other-mosh-session-preserved' }
         'session-isolation' {
             'two-mosh-and-ssh-mosh-concurrent-sessions-kept-state-terminal-input-output-and-cleanup-isolated'
         }
@@ -2307,8 +2833,10 @@ function Write-Evidence {
         networkSwitchComparison = [ordered]@{
             exercised = ($Scenario -eq 'wifi-network-switch')
             networkIdentityRetention = 'redacted'
+            productVerdict = $wifiProductVerdict
             sourceAddressChanged = $wifiSourceAddressChanged
             routingChanged = $wifiRoutingChanged
+            transitionHistory = @($wifiTransitionHistory)
             switchObservedByHarnessMs = $networkSwitchElapsedMs
             originalNetworkRestored = $wifiOriginalNetworkRestored
             mosh = [ordered]@{
@@ -2330,7 +2858,7 @@ function Write-Evidence {
                 postSwitchCommandPassed = $sshSwitchPostSwitchCommandPassed
                 requiredUserAction = $sshSwitchUserAction
             }
-            primaryOracle = 'changed-device-source-or-route-app-lifecycle-logs-same-mosh-pty-command-and-direct-lan-ssh-command'
+            primaryOracle = 'changed-device-source-or-matched-endpoint-route-app-lifecycle-logs-same-mosh-pty-command-and-direct-lan-ssh-command'
         }
         lifecycleBehavior = [ordered]@{
             exercised = ($Scenario -in @(
@@ -2409,6 +2937,7 @@ function Write-Evidence {
             closedPaneServerExitElapsedMs = $paneCloseOldServerExitElapsedMs
             primaryOracle = 'surviving-pane-terminal-search-plus-second-controlled-pty-command'
         }
+        inputRejection = $inputRejectionEvidence
         sessionIsolation = [ordered]@{
             exercised = ($Scenario -eq 'session-isolation')
             twoMoshServerPidsDistinct = $sessionIsolationServerPidsDistinct
@@ -2446,7 +2975,7 @@ function Write-Evidence {
             moshErrorObserved = $abnormalExitObserved
             originalPageRestored = $originalPageRestoredAfterSession
             moshPageDiscarded = $moshPageDiscardedAfterSession
-            primaryOracle = 'acceptance-only-viewmodel-error-log-page-replacement-ack-and-terminal-search'
+            primaryOracle = 'acceptance-only-viewmodel-error-log-acknowledged-pre-local-output-xterm-fingerprint-and-search-addon-negative-event'
         }
         processRecovery = [ordered]@{
             exercised = ($Scenario -in @('process-recovery', 'runtime-reclaim') -or
@@ -2464,6 +2993,7 @@ function Write-Evidence {
             sessionNotRestored = $processRecoverySessionNotRestored
             primaryOracle = 'pid-or-runtime-recovery-log-plus-terminal-search-positive-warning-and-negative-old-output-plus-local-command'
         }
+        runtimeReclaim = $runtimeReclaimEvidence
         checks = [ordered]@{
             bootstrapAuthenticated = ($moshServerPid -gt 0)
             udpConnected = ($lastProvenBoundary -match 'connected|command|disconnect|cleanup')
@@ -2507,6 +3037,14 @@ function Write-Evidence {
             bootstrapTextAbsentFromTerminal = $bootstrapTerminalAbsent
             preferencesUnchanged = $preferencesUnchanged
             secretPatternAbsent = $secretAuditPassed
+        }
+        terminalPageFingerprints = [ordered]@{
+            contentPersisted = $false
+            exactFingerprintRestored = $originalPageExactFingerprintRestoredAfterSession
+            original = $originalPageFingerprint
+            mosh = $moshPageFingerprint
+            restoredBeforeLocalOutput = $restoredPageFingerprint
+            postExit = $postExitPageFingerprint
         }
         compatibility = [ordered]@{
             shell = 'GNU Bash 5.3'
@@ -2568,6 +3106,32 @@ try {
     $resolvedRemoteScope = Resolve-MoshRemoteScope
     if ($Scenario -eq 'wifi-network-switch') {
         $resolvedSshComparisonUser = Resolve-MoshSshComparisonUser
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $targetHash = [Convert]::ToHexString(
+                $sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($targetId.ToLowerInvariant()))
+            ).Substring(0, 16).ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+        $wifiEnvironmentDirtyPath = Join-Path $repoRoot (
+            'build\verification\mosh-environment-dirty-' + $targetHash + '.json'
+        )
+        if (Test-Path -LiteralPath $wifiEnvironmentDirtyPath -PathType Leaf) {
+            $dirtyState = Get-Content -LiteralPath $wifiEnvironmentDirtyPath -Raw | ConvertFrom-Json
+            if ([string]::IsNullOrWhiteSpace([string]$dirtyState.originalSsid)) {
+                throw '[environment] Prior Wi-Fi scenario left an unreadable dirty-environment marker'
+            }
+            try {
+                Set-MoshWifiNetwork -Ssid ([string]$dirtyState.originalSsid) `
+                    -Name 'mosh-network-switch-prior-dirty-restore' `
+                    -AllowUnchangedNetwork | Out-Null
+                Remove-Item -LiteralPath $wifiEnvironmentDirtyPath -Force
+            } catch {
+                throw ('[environment] Prior Wi-Fi scenario cleanup is still incomplete: ' +
+                    $_.Exception.Message)
+            }
+        }
     }
     Write-LiveStatus -Stage 'network-fixture-check'
     Assert-MoshTestNetworkReady
@@ -2630,6 +3194,7 @@ try {
     Submit-LocalCommand -Command "host add $alias mosh@${fixtureSshAddress}:$FixturePort" `
         -Stage 'mosh-host-setup'
     Submit-LocalCommand -Command $originalPageMarker -Stage 'mosh-original-page-marker'
+    $originalPageFingerprint = Get-MoshTerminalFingerprint -Name 'mosh-original-page-fingerprint'
     if ($Scenario -eq 'pane-close') {
         Write-LiveStatus -Stage 'pane-close-split'
         Split-MoshPane
@@ -2689,8 +3254,10 @@ try {
         throw '[product] Mosh server exited before the interactive session became ready'
     }
     $lastProvenBoundary = 'mosh-udp-connected'
-    $originalPageHiddenDuringSession = Test-MoshTerminalSearch `
-        -Query $originalPageMarker -ExpectMatch $false -Name 'mosh-original-page-hidden-search'
+    $sessionPageBaseline = Get-MoshSessionPageBaseline -Name 'mosh'
+    $originalPageFingerprint = $sessionPageBaseline.original
+    $moshPageFingerprint = $sessionPageBaseline.mosh
+    $originalPageHiddenDuringSession = $sessionPageBaseline.originalHidden
 
     $shellCommand = "$([string]'ltty-mosh-check') $caseId"
     if ($Scenario -ne 'prediction') {
@@ -2736,9 +3303,7 @@ try {
             throw '[product] SSH baseline command failed before the physical network switch'
         }
 
-        $wifiLayout = Open-MoshWifiPanel -Name 'mosh-network-switch-original'
-        $wifiOriginalSsid = Get-MoshConnectedWifiSsid -Layout $wifiLayout
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
+        $wifiOriginalSsid = Get-MoshConnectedWifiSsid
         if ($wifiOriginalSsid -ceq $AlternateWifiSsid) {
             throw '[environment] AlternateWifiSsid names the currently connected Wi-Fi network'
         }
@@ -2749,11 +3314,17 @@ try {
         $switchStopwatch = [Diagnostics.Stopwatch]::StartNew()
         $wifiOriginalNetworkRestored = $false
         $wifiNetworkSwitchedByScenario = $true
+        Write-LeanTTYAtomicJson -Path $wifiEnvironmentDirtyPath -Value ([ordered]@{
+            schemaVersion = 1
+            originalSsid = $wifiOriginalSsid
+            createdAt = [DateTimeOffset]::UtcNow.ToString('o')
+        }) -Depth 4
         $switchResult = Set-MoshWifiNetwork `
             -Ssid $AlternateWifiSsid -Name 'mosh-network-switch-alternate'
         $networkSwitchElapsedMs = [long]$switchStopwatch.Elapsed.TotalMilliseconds
         $wifiSourceAddressChanged = [bool]$switchResult.addressChanged
         $wifiRoutingChanged = [bool]$switchResult.routingChanged
+        $wifiTransitionHistory = @($switchResult.transitionHistory)
 
         $sshClosed = $false
         $switchLifecycleLogs = ''
@@ -2908,8 +3479,12 @@ try {
         Submit-MoshChildInput -Text 'exit' -Name 'network-switch-ssh-exit'
         Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
             -Pattern 'SSH closed, exitCode=0' -TimeoutSeconds 20 | Out-Null
-        Focus-MoshPane -Side 'left' -Name 'network-switch-mosh-final-focus'
+        # Both transport comparisons are complete. Close only the now-idle
+        # comparison Pane so exact restoration uses the original geometry.
+        Initialize-MoshSinglePaneWorkspace
+        Focus-ActiveTerminalInput -Name 'network-switch-mosh-final-focus.json' | Out-Null
         $observedErrorCategory = 'none'
+        $wifiProductVerdict = 'passed'
         $lastProvenBoundary = 'physical-wifi-network-switch-mosh-ssh-comparison-passed'
         [IO.File]::WriteAllText(
             (Join-Path $EvidenceDirectory 'network-behavior-device-app.log'),
@@ -3172,6 +3747,11 @@ try {
         $lastProvenBoundary = 'controlled-mosh-prediction-modes-visible-and-isolated'
     }
 
+    if ($Scenario -eq 'input-rejection') {
+        $inputRejectionEvidence = Invoke-MoshInputRejection
+        $lastProvenBoundary = 'input-rejection-restored-with-peer-command-passed'
+    }
+
     if ($Scenario -eq 'surface-rebuild') {
         Write-LiveStatus -Stage 'surface-rebuild'
         Invoke-MoshSurfaceRebuild
@@ -3223,11 +3803,11 @@ try {
 
     if ($Scenario -eq 'runtime-reclaim') {
         Write-LiveStatus -Stage 'runtime-reclaim'
-        $runtimeIdentity = Invoke-MoshRuntimeReclaim
+        $runtimeReclaimEvidence = Invoke-MoshRuntimeReclaim
         $sameAppProcessAfterResume =
-            [string]$runtimeIdentity.before.key -ceq [string]$runtimeIdentity.after.key
-        $resumedAppProcessId = [string]$runtimeIdentity.after.processId
-        $resumedAppProcessStartTimeTicks = [string]$runtimeIdentity.after.startTimeTicks
+            [string]$runtimeReclaimEvidence.beforeProcess.key -ceq [string]$runtimeReclaimEvidence.afterProcess.key
+        $resumedAppProcessId = [string]$runtimeReclaimEvidence.afterProcess.processId
+        $resumedAppProcessStartTimeTicks = [string]$runtimeReclaimEvidence.afterProcess.startTimeTicks
         $runtimeWorkspaceRecovered = $true
         $processRecoveryWorkspaceRestored = Test-MoshTerminalSearch `
             -Query 'Workspace layout was kept' -ExpectMatch $true `
@@ -3237,9 +3817,14 @@ try {
             -Name 'mosh-runtime-reclaim-old-output-negative-search'
         Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
         Submit-LocalCommand -Command 'help' -Stage 'mosh-runtime-reclaim-local-command'
+        $runtimeReclaimEvidence.localCommandPassed = Test-MoshTerminalSearch `
+            -Query 'Syntax:' -ExpectMatch $true -Name 'mosh-runtime-reclaim-help-output-search'
         $localPromptReady = $true
         Wait-WslProcessAbsent -LinuxPid $moshServerPid -TimeoutSeconds 8 | Out-Null
         Wait-WslProcessAbsent -LinuxPid $fixtureTerminalPid -TimeoutSeconds 8 | Out-Null
+        $runtimeReclaimEvidence.serverAbsent = -not (Test-WslProcessPresent -LinuxPid $moshServerPid)
+        $runtimeReclaimEvidence.ptyAbsent = -not (Test-WslProcessPresent -LinuxPid $fixtureTerminalPid)
+        Assert-LeanTTYRuntimeReclaimEvidence -Evidence $runtimeReclaimEvidence
         $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
         $processRecoverySessionNotRestored =
             $processRecoveryRemoteContentAbsent -and -not $remoteShellAliveAfter -and
@@ -3274,11 +3859,15 @@ try {
         Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
             -Pattern 'MOSH_PAGE stage=ownership-released' -TimeoutSeconds 15 | Out-Null
         $abnormalExitObserved = $true
+        $restoredPageFingerprint = Get-MoshPageReplacementFingerprint `
+            -Name 'mosh-abnormal-original-page-restored-before-local-output-fingerprint'
+        $originalPageExactFingerprintRestoredAfterSession = Test-MoshPageFingerprintRestored `
+            -Original $originalPageFingerprint -Restored $restoredPageFingerprint
+        $originalPageRestoredAfterSession = $originalPageExactFingerprintRestoredAfterSession
         Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
         $localPromptReady = $true
-        $originalPageRestoredAfterSession = Test-MoshTerminalSearch `
-            -Query $originalPageMarker -ExpectMatch $true `
-            -Name 'mosh-abnormal-original-page-restored-search'
+        $postExitPageFingerprint = Get-MoshTerminalFingerprint `
+            -Name 'mosh-abnormal-post-exit-fingerprint'
         $moshPageDiscardedAfterSession = Test-MoshTerminalSearch `
             -Query $shellCommand -ExpectMatch $false `
             -Name 'mosh-abnormal-session-page-discarded-search'
@@ -3406,6 +3995,12 @@ try {
         $sessionStayedConnected = $remoteShellAliveAfter
         $observedErrorCategory = 'none'
         $lastProvenBoundary = 'pane-close-surviving-session-command-passed'
+
+        # Capture only after isolation checks consume the lifecycle logs it clears.
+        $sessionPageBaseline = Get-MoshSessionPageBaseline -Name 'mosh-pane-close-survivor'
+        $originalPageFingerprint = $sessionPageBaseline.original
+        $moshPageFingerprint = $sessionPageBaseline.mosh
+        $originalPageHiddenDuringSession = $sessionPageBaseline.originalHidden
     }
 
     if ($Scenario -eq 'session-isolation') {
@@ -4012,6 +4607,12 @@ try {
             $lastProvenBoundary = 'ctrl-caret-disconnect-and-server-exit'
         }
         $disconnectLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+        $restoredPageFingerprint = Get-MoshPageReplacementFingerprint `
+            -Name 'mosh-original-page-restored-before-local-output-fingerprint' `
+            -Logs $disconnectLogs
+        $originalPageExactFingerprintRestoredAfterSession = Test-MoshPageFingerprintRestored `
+            -Original $originalPageFingerprint -Restored $restoredPageFingerprint
+        $originalPageRestoredAfterSession = $originalPageExactFingerprintRestoredAfterSession
         $localCloseElapsedMs = Get-MoshCloseProtocolElapsedMs `
             -Logs $disconnectLogs -FallbackElapsedMs $localCloseElapsedMs
         if ($Scenario -eq 'server-disappearance' -and $localCloseElapsedMs -gt 4250) {
@@ -4033,8 +4634,8 @@ try {
             throw '[product] Mosh closed but the local prompt did not become input-ready'
         }
         $localPromptReady = $true
-        $originalPageRestoredAfterSession = Test-MoshTerminalSearch `
-            -Query $originalPageMarker -ExpectMatch $true -Name 'mosh-original-page-restored-search'
+        $postExitPageFingerprint = Get-MoshTerminalFingerprint `
+            -Name 'mosh-post-exit-fingerprint'
         if ($Scenario -ne 'prediction') {
             $moshPageDiscardedAfterSession = Test-MoshTerminalSearch `
                 -Query $shellCommand -ExpectMatch $false -Name 'mosh-session-page-discarded-search'
@@ -4054,6 +4655,9 @@ try {
         $wifiOriginalNetworkRestored = $true
         $wifiControlCleanupVerified = $true
         $wifiNetworkSwitchedByScenario = $false
+        if (Test-Path -LiteralPath $wifiEnvironmentDirtyPath -PathType Leaf) {
+            Remove-Item -LiteralPath $wifiEnvironmentDirtyPath -Force
+        }
     }
 
     Write-LiveStatus -Stage 'cleanup'
@@ -4133,6 +4737,9 @@ try {
             $wifiOriginalNetworkRestored = $true
             $wifiControlCleanupVerified = $true
             $wifiNetworkSwitchedByScenario = $false
+            if (Test-Path -LiteralPath $wifiEnvironmentDirtyPath -PathType Leaf) {
+                Remove-Item -LiteralPath $wifiEnvironmentDirtyPath -Force
+            }
         } catch {
             $wifiOriginalNetworkRestored = $false
             $wifiControlCleanupVerified = $false

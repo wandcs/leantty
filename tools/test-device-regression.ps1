@@ -6,6 +6,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 
 & (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1') -SelfTest
+& (Join-Path $PSScriptRoot 'test-mosh-runtime-contract.ps1')
 
 function Assert-True {
     param(
@@ -1811,9 +1812,346 @@ foreach ($predictionContract in @(
     )
 }
 
-$moshVerifier = Get-Content -LiteralPath (
-    Join-Path $PSScriptRoot 'verify-mosh-pc.ps1'
-) -Raw
+$moshVerifierPath = Join-Path $PSScriptRoot 'verify-mosh-pc.ps1'
+$moshVerifier = Get-Content -LiteralPath $moshVerifierPath -Raw
+$moshVerifierTokens = $null
+$moshVerifierParseErrors = $null
+$moshVerifierAst = [Management.Automation.Language.Parser]::ParseFile(
+    $moshVerifierPath,
+    [ref]$moshVerifierTokens,
+    [ref]$moshVerifierParseErrors
+)
+Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be parsed for helper tests'
+& {
+    $timestampDefinition = $moshVerifierAst.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'ConvertFrom-MoshHilogTimestamp'
+    }, $true) | Select-Object -First 1
+    Invoke-Expression $timestampDefinition.Extent.Text
+    $definition = $moshVerifierAst.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-MoshInputRejectionObservation'
+    }, $true) | Select-Object -First 1
+    Invoke-Expression $definition.Extent.Text
+    $logs = @('09-06 23:03:16.554 6549 6549 I tag: ACCEPTANCE_MOSH_INPUT_REJECTION receivedBytes=42',
+        '09-06 23:03:16.555 6549 6549 I tag: ACCEPTANCE_MOSH_INPUT_REJECTION kind=full',
+        '09-06 23:03:16.557 6549 6549 I tag: ACCEPTANCE_TERMINAL_WRITE_ACK bytes=42',
+        '09-06 23:03:16.597 6549 6549 I tag: ACCEPTANCE_PAGE_REPLACED_FINGERPRINT 2,normal,71,36,0,0123456789abcdef') -join "`n"
+    $observation = Get-MoshInputRejectionObservation -Logs $logs
+    Assert-True ($observation.nativeErrorKind -ceq 'Full' -and $observation.receivedOutputBytes -eq 42 -and
+        $observation.outputAcknowledgedBeforeRestore) 'Input rejection lost its actual drain observations'
+    $grouped = ($logs -split "`n")[@(0, 2, 3, 1)] -join "`n"
+    $observation = Get-MoshInputRejectionObservation -Logs $grouped
+    Assert-True $observation.outputAcknowledgedBeforeRestore (
+        'Tag-grouped logs must use device event time, not concatenated file order'
+    )
+    foreach ($invalid in @('', $logs.Replace('kind=full', 'kind=unexpected'),
+        $logs.Replace('bytes=42', 'bytes=0'), $logs.Replace('receivedBytes=42', 'receivedBytes=0'),
+        ($logs + "`n" + $logs),
+        $logs.Replace('23:03:16.557', '23:03:16.598'),
+        $logs.Replace('23:03:16.557', '23:03:16.553'),
+        $logs.Replace('23:03:16.555', '23:03:16.553'),
+        $logs.Replace('23:03:16.555', '23:03:16.598'),
+        $logs.Replace('09-06 23:03:16.555', 'missing timestamp'),
+        $logs.Replace('23:03:16.597', '23:03:16.557'),
+        ($logs + "`nACCEPTANCE_MOSH_INPUT_REJECTION state=precondition-failed"))) {
+        Assert-Throws { Get-MoshInputRejectionObservation -Logs $invalid } (
+            'Input rejection accepted missing, ambiguous, synthetic or out-of-order evidence'
+        )
+    }
+}
+& {
+    $fingerprintFunction = $moshVerifierAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Test-MoshPageFingerprintRestored'
+    }, $true) | Select-Object -First 1
+    Invoke-Expression $fingerprintFunction.Extent.Text
+    $original = [pscustomobject]@{ cols = 144; rows = 36; identity = 'normal,144,36,15,aaa' }
+    $same = [pscustomobject]@{ cols = 144; rows = 36; identity = 'normal,144,36,15,aaa' }
+    $changed = [pscustomobject]@{ cols = 144; rows = 36; identity = 'normal,144,36,15,bbb' }
+    Assert-True (Test-MoshPageFingerprintRestored $original $same) 'Equal geometry and framebuffer must pass'
+    Assert-True (-not (Test-MoshPageFingerprintRestored $original $changed)) 'Changed framebuffer must fail'
+    foreach ($geometry in @(@(71, 36), @(144, 18))) {
+        $changed.cols = $geometry[0]
+        $changed.rows = $geometry[1]
+        $failure = ''
+        try { Test-MoshPageFingerprintRestored $original $changed | Out-Null } catch { $failure = $_.Exception.Message }
+        Assert-True ($failure.StartsWith('[harness] Exact page fingerprint comparison')) `
+            'Different geometry must reject the comparison, not claim content loss or a pass'
+    }
+}
+& {
+    # Execute the real survivor reconnect branch; substitute only device/fixture boundaries.
+    $paneCloseBranches = @($moshVerifierAst.FindAll({ param($node)
+        $node -is [Management.Automation.Language.IfStatementAst] -and
+            $node.Clauses[0].Item1.Extent.Text -ceq '$Scenario -eq ''pane-close''' -and
+            $node.Clauses[0].Item2.Extent.Text.Contains('$closedPaneServerPid =')
+    }, $true))
+    Assert-True ($paneCloseBranches.Count -eq 1) 'Missing or ambiguous Pane-close survivor branch'
+    $paneCloseBody = [scriptblock]::Create((
+        $paneCloseBranches[0].Clauses[0].Item2.Statements.Extent.Text -join "`n"
+    ))
+    foreach ($definition in $moshVerifierAst.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -in @('Get-MoshSessionPageBaseline', 'Test-MoshPageFingerprintRestored')
+    }, $true)) { Invoke-Expression $definition.Extent.Text }
+    function Write-LiveStatus {}
+    function Clear-LeanTTYAppLogs {}
+    function Close-ActiveMoshPane {}
+    function Test-MoshTerminalSearch { return $true }
+    function Reset-LeanTTYDeviceCommandInput {}
+    function Clear-MoshSessionControlFiles {}
+    function Submit-LocalCommand {}
+    function Wait-LeanTTYAppLog {}
+    function Submit-InteractiveValue {}
+    function Wait-ControlFile {}
+    function Read-ControlledLinuxPid { return 202 }
+    function Read-MoshSession { return @{ pid = 201; port = 60042; serverPort = 60042 } }
+    function Submit-MoshInput { $observations.commands++ }
+    function Wait-ControlFileMatch {}
+    function Wait-WslProcessAbsent { return 10 }
+    function Test-WslProcessPresent { return $true }
+    function Get-MoshLifecycleObservation { return @{ closed = $observations.closed; error = $false } }
+    function Get-MoshSnapshotFingerprint {
+        if ($observations.missingSnapshot -or $observations.visiblePageRead) {
+            throw '[harness] Saved Mosh page snapshot fingerprint was missing or ambiguous'
+        }
+        return $survivorOriginal
+    }
+    function Get-MoshTerminalFingerprint {
+        $observations.visiblePageRead = $true
+        $observations.closed = $false
+        return $survivorMosh
+    }
+    $attemptId = '0123456789abcdef'
+    $survivorOriginal = [pscustomobject]@{
+        generation = 1; cols = 144; rows = 36; identity = 'normal,144,36,8,survivor'
+    }
+    $survivorMosh = [pscustomobject]@{
+        generation = 2; cols = 144; rows = 36; identity = 'normal,144,36,0,remote'
+    }
+    foreach ($oldCols in @(71, 144)) {
+        $originalPageFingerprint = [pscustomobject]@{
+            generation = 7; cols = $oldCols; rows = 36; identity = "normal,$oldCols,36,0,closed-pane"
+        }
+        $moshPageFingerprint = $null
+        $originalPageHiddenDuringSession = $false
+        $observations = @{ commands = 0; missingSnapshot = $false; visiblePageRead = $false }
+        . $paneCloseBody
+        Assert-True ($originalPageFingerprint.identity -ceq $survivorOriginal.identity) (
+            'Survivor reconnect retained the closed Pane baseline, including when geometry matches'
+        )
+        Assert-True ($moshPageFingerprint.identity -ceq $survivorMosh.identity -and
+            $originalPageHiddenDuringSession -and $observations.commands -eq 1) (
+            'Original and Mosh fingerprints must both belong to the surviving Session'
+        )
+        Assert-True (Test-MoshPageFingerprintRestored $originalPageFingerprint $survivorOriginal) (
+            'Survivor restoration did not compare with its own baseline'
+        )
+    }
+    $observations = @{ commands = 0; missingSnapshot = $true; visiblePageRead = $false }
+    Assert-Throws { . $paneCloseBody } 'Reconnect must reject missing snapshot evidence, not reuse an old baseline'
+    $observations = @{ commands = 0; missingSnapshot = $false; visiblePageRead = $false }
+    $survivorMosh.generation = $survivorOriginal.generation
+    Assert-Throws { . $paneCloseBody } 'Reconnect must still prove a new Mosh page generation'
+    $survivorMosh.generation = 2
+    $observations = @{ commands = 0; missingSnapshot = $false; visiblePageRead = $false; closed = $true }
+    Assert-Throws { . $paneCloseBody } 'Fingerprint capture must not erase a pre-existing survivor close event'
+    Assert-True (-not $observations.visiblePageRead) 'Observe survivor lifecycle before fingerprint capture clears logs'
+}
+& {
+    $focusFunction = $moshVerifierAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Focus-MoshPane'
+    }, $true) | Select-Object -First 1
+    Invoke-Expression $focusFunction.Extent.Text
+    $paneLayout = $overlappingPaneLayout | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $paneLayout.children[1].children[0].attributes.bounds = '[1541,749][1560,790]'
+    $script:paneFocusLayoutsRead = 0
+    $script:paneFocusShortcuts = [Collections.Generic.List[string]]::new()
+    function Invoke-MoshFocusHdc {
+        $script:paneFocusShortcuts.Add(($args -join ' '))
+        $global:LASTEXITCODE = 0
+    }
+    function Get-LeanTTYDeviceLayout {
+        param($Hdc, $Target, $LocalPath)
+        $script:paneFocusLayoutsRead++
+        if ($script:paneFocusLayoutsRead -gt 1) {
+            throw 'Pane focus did not accept the first correct owner snapshot'
+        }
+        return $paneLayout
+    }
+    $hdc = 'Invoke-MoshFocusHdc'
+    $targetId = 'unused'
+    $EvidenceDirectory = 'unused'
+    foreach ($side in @('left', 'right')) {
+        $leftFocused = $side -ceq 'left'
+        $paneLayout.children[0].children[0].attributes.focused = $leftFocused.ToString().ToLowerInvariant()
+        $paneLayout.children[1].children[0].attributes.focused = (-not $leftFocused).ToString().ToLowerInvariant()
+        $script:paneFocusLayoutsRead = 0
+        Focus-MoshPane -Side $side -Name 'owner-order'
+        Assert-True ($script:paneFocusLayoutsRead -eq 1) 'Mosh Pane focus retried a correct snapshot'
+    }
+    Assert-True (
+        $script:paneFocusShortcuts.Count -eq 2 -and
+        $script:paneFocusShortcuts[0].Contains('-d 2014 -u 2014') -and
+        $script:paneFocusShortcuts[1].Contains('-d 2015 -u 2015')
+    ) 'Mosh Pane focus did not send exactly one correct shortcut per side'
+    $paneLayout.children[0].children[0].attributes.focused = 'true'
+    $paneLayout.children[1].children[0].attributes.focused = 'true'
+    $script:paneFocusLayoutsRead = 0
+    Assert-Throws -Action {
+        Focus-MoshPane -Side 'left' -Name 'ambiguous-focus'
+    } -Message 'Mosh Pane focus accepted two focused owners'
+}
+$moshHashFunction = $moshVerifierAst.FindAll({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-MoshAcceptanceTextHash'
+}, $true) | Select-Object -First 1
+Assert-True ($null -ne $moshHashFunction) 'Mosh verifier search hash helper is missing'
+Invoke-Expression $moshHashFunction.Extent.Text
+Assert-True (
+    (Get-MoshAcceptanceTextHash -Value 'help') -ceq '3871a3fa7c715c94'
+) 'Mosh verifier search hash does not match the acceptance Web implementation'
+foreach ($functionName in @(
+    'ConvertTo-MoshIpv4Number',
+    'Get-MoshEndpointRoute',
+    'ConvertFrom-MoshWifiDeviceDump',
+    'Get-MoshWifiToggle',
+    'Get-MoshWifiPanelButton',
+    'Get-MoshWifiPanelState',
+    'Normalize-MoshWifiPanelClosed'
+)) {
+    $functionDefinition = $moshVerifierAst.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq $functionName
+    }, $true) | Select-Object -First 1
+    Assert-True ($null -ne $functionDefinition) "Missing Mosh verifier helper: $functionName"
+    Invoke-Expression $functionDefinition.Extent.Text
+}
+$connectedWifi = ConvertFrom-MoshWifiDeviceDump -Dump @'
+WiFi active state: activated
+
+WiFi connection status: connected
+  Connection.ssid: saved-network
+  Connection.rssi: -48
+
+Country Code: CN
+'@
+Assert-True (
+    $connectedWifi.active -and $connectedWifi.connected -and
+    $connectedWifi.ssid -ceq 'saved-network'
+) 'Mosh Wi-Fi service dump parser did not return the current connected SSID'
+$disconnectedWifi = ConvertFrom-MoshWifiDeviceDump -Dump @'
+WiFi active state: activated
+
+WiFi connection status: not connected
+
+Country Code: CN
+'@
+Assert-True (
+    $disconnectedWifi.active -and -not $disconnectedWifi.connected -and
+    [string]::IsNullOrEmpty($disconnectedWifi.ssid)
+) 'Mosh Wi-Fi service dump parser did not preserve a disconnected state'
+$crlfWifiDump = @(
+    'WiFi active state: activated',
+    '',
+    'WiFi connection status: connected',
+    '  Connection.ssid: saved-network',
+    ''
+) -join "`r`n"
+$crlfWifi = ConvertFrom-MoshWifiDeviceDump -Dump $crlfWifiDump
+Assert-True (
+    $crlfWifi.active -and $crlfWifi.connected -and
+    $crlfWifi.ssid -ceq 'saved-network'
+) 'Mosh Wi-Fi service dump parser rejected CRLF output'
+Assert-Throws -Action {
+    ConvertFrom-MoshWifiDeviceDump -Dump @'
+WiFi active state: activated
+WiFi connection status: connected
+  Connection.ssid: first
+  Connection.ssid: second
+'@ | Out-Null
+} -Message 'Mosh Wi-Fi service dump parser accepted an ambiguous SSID'
+$wifiPanelOpenLayout = @'
+{
+  "attributes": {"id":"","type":"root","visible":"true","clickable":"false"},
+  "children": [
+    {"attributes":{"id":"PluginRootComponent_Stack_status_bar_wifi_panel","type":"Stack","visible":"true","clickable":"true"},"children":[]},
+    {"attributes":{"id":"entry_toggle_wifi_switch","type":"Toggle","visible":"true","clickable":"true"},"children":[]}
+  ]
+}
+'@ | ConvertFrom-Json -Depth 10
+$wifiPanelClosedLayout = @'
+{
+  "attributes": {"id":"","type":"root","visible":"true","clickable":"false"},
+  "children": [
+    {"attributes":{"id":"PluginRootComponent_Stack_status_bar_wifi_panel","type":"Stack","visible":"true","clickable":"true"},"children":[]}
+  ]
+}
+'@ | ConvertFrom-Json -Depth 10
+$wifiPanelUnknownLayout = @'
+{
+  "attributes": {"id":"","type":"root","visible":"true","clickable":"false"},
+  "children": []
+}
+'@ | ConvertFrom-Json -Depth 10
+Assert-True (
+    (Get-MoshWifiPanelState -Layout $wifiPanelOpenLayout) -ceq 'open' -and
+    (Get-MoshWifiPanelState -Layout $wifiPanelClosedLayout) -ceq 'closed' -and
+    (Get-MoshWifiPanelState -Layout $wifiPanelUnknownLayout) -ceq 'unknown'
+) 'Mosh Wi-Fi panel state did not distinguish open, closed and unknown layouts'
+$ambiguousWifiPanelLayout = @'
+{
+  "attributes": {"id":"","type":"root","visible":"true","clickable":"false"},
+  "children": [
+    {"attributes":{"id":"entry_toggle_wifi_switch","type":"Toggle","visible":"true","clickable":"true"},"children":[]},
+    {"attributes":{"id":"entry_toggle_wifi_switch","type":"Toggle","visible":"true","clickable":"true"},"children":[]}
+  ]
+}
+'@ | ConvertFrom-Json -Depth 10
+Assert-Throws -Action {
+    Get-MoshWifiPanelState -Layout $ambiguousWifiPanelLayout | Out-Null
+} -Message 'Mosh Wi-Fi panel state accepted multiple toggle owners'
+$script:wifiPanelNormalizeLayouts = [Collections.Generic.Queue[object]]::new()
+$script:wifiPanelNormalizeLayouts.Enqueue($wifiPanelOpenLayout)
+$script:wifiPanelNormalizeLayouts.Enqueue($wifiPanelClosedLayout)
+$script:wifiPanelBackCount = 0
+function Get-MoshWifiLayout {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    if ($script:wifiPanelNormalizeLayouts.Count -gt 0) {
+        return $script:wifiPanelNormalizeLayouts.Dequeue()
+    }
+    return $wifiPanelClosedLayout
+}
+function Invoke-LeanTTYDeviceKey {
+    param(
+        [string]$Hdc,
+        [string]$Target,
+        [int]$KeyCode
+    )
+    if ($KeyCode -ne 2070) { throw 'Unexpected Wi-Fi panel normalization key' }
+    $script:wifiPanelBackCount++
+}
+$hdc = 'unused'
+$targetId = 'unused'
+$normalizedWifiPanel = Normalize-MoshWifiPanelClosed -Name 'regression'
+Assert-True (
+    (Get-MoshWifiPanelState -Layout $normalizedWifiPanel) -ceq 'closed' -and
+    $script:wifiPanelBackCount -eq 1
+) 'Mosh Wi-Fi panel normalization did not close one known open panel exactly once'
+$route = Get-MoshEndpointRoute -Endpoint '192.168.1.4' -RouteTable @'
+Destination Gateway Genmask Flags Metric Ref Use Iface
+0.0.0.0 192.168.1.1 0.0.0.0 UG 0 0 0 wlan0
+192.168.1.0 0.0.0.0 255.255.255.0 U 0 0 0 wlan0
+'@
+Assert-True ($null -ne $route -and
+    $route.identity -ceq '192.168.1.0,0.0.0.0,255.255.255.0,wlan0') `
+    'Mosh endpoint route helper did not select the longest matching prefix'
 Assert-True ($moshVerifier.Contains("-Text 'x' -InputNode `$inputNode") -and
     $moshVerifier.Contains('Terminal input withheld for runtime recovery')) `
     'Mosh runtime-reclaim verifier does not exercise the post-visibility first-input guard'
@@ -1870,7 +2208,7 @@ foreach ($moshContract in @(
     "'-MoshNetworkTimeoutSeconds', `$moshNetworkTimeoutSeconds",
     'serverNetworkTimeoutSeconds = $moshNetworkTimeoutSeconds',
     'FixtureBackendPort must differ from the external FixturePort',
-    "[ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'runtime-reclaim', 'abnormal-exit', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]",
+    "[ValidateSet('compatibility', 'agent-tui', 'fixed-endpoint', 'server-path', 'prediction', 'surface-rebuild', 'page-rebuild', 'runtime-reclaim', 'abnormal-exit', 'input-rejection', 'process-recovery', 'pane-close', 'session-isolation', 'pause-recovery', 'wifi-pause-recovery', 'wifi-network-switch', 'suspend-recovery', 'operator-lock-recovery', 'operator-lid-recovery', 'server-disappearance')]",
     "'mosh-session-isolation'",
     'controlName=',
     'mosh-session-[1-9][0-9]*',
@@ -2004,6 +2342,9 @@ foreach ($moshContract in @(
     'physical-wifi-pause-reported-interrupted-then-recovered-with-remote-shell-preserved',
     '[string]$AlternateWifiSsid',
     'Get-MoshConnectedWifiSsid',
+    "@('shell', 'hidumper', '-s', 'WifiDevice')",
+    'ConvertFrom-MoshWifiDeviceDump',
+    'Normalize-MoshWifiPanelClosed',
     "-LocalPath (Join-Path `$fixtureRoot `"`$Name.json`")",
     'Alternate Wi-Fi must be saved before automated network switching',
     'neither source address nor routing changed',
@@ -2068,7 +2409,8 @@ foreach ($moshContract in @(
     "`$recoveryInputMethod = 'harmony-uitest-focus-verified-inputText'",
     'operatorLockObserved = $operatorLockObserved',
     'operatorUnlockObserved = $operatorUnlockObserved',
-    'mosh-retry-interrupt-focus-$attempt.json',
+    'mosh-input-owner-$attempt.json',
+    'Controlled Mosh input lost its original Pane; refusing retry or Enter',
     'Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $targetId',
     'interruptionObserved = $interruptionObserved',
     'interruptionReason = $interruptionReason',
@@ -2104,6 +2446,47 @@ foreach ($moshContract in @(
         "Mosh physical diagnostic omitted contract: $moshContract"
     )
 }
+Assert-True (-not $moshVerifier.Contains('已连接 WLAN')) `
+    'Mosh Wi-Fi switching still infers connection state from localized system UI text'
+
+Assert-True (
+    $acceptanceSource.Contains('acceptancePageReplacedFingerprint') -and
+    $acceptanceSource.Contains('acceptanceSnapshotFingerprint') -and
+    $acceptanceSource -match
+      '(?s)\$snapshotReplacement\s*=.*?if \(snapshot !== null\).*?reportAcceptanceSnapshotFingerprint\(\).*?for \(var j = 0;' -and
+    $acceptanceSource -match
+      '(?s)\$pageReplacementReplacement\s*=.*?var completeReplacement = function\(\).*?reportAcceptancePageReplacedFingerprint\(\).*?onComplete\(\)' -and
+    $moshVerifier.Contains('function Get-MoshSnapshotFingerprint') -and
+    $moshVerifier.Contains('ACCEPTANCE_SNAPSHOT_FINGERPRINT') -and
+    $moshVerifier.Contains('function Get-MoshPageReplacementFingerprint') -and
+    $moshVerifier.Contains('ACCEPTANCE_PAGE_REPLACED_FINGERPRINT') -and
+    $moshVerifier.Contains('restoredBeforeLocalOutput = $restoredPageFingerprint') -and
+    $moshVerifier.Contains('postExit = $postExitPageFingerprint')
+) 'Mosh page restoration lacks an acknowledged pre-local-output xterm fingerprint oracle'
+Assert-True (
+    $moshVerifier.Contains('function Get-MoshTerminalFingerprint') -and
+    $moshVerifier.Contains('ACCEPTANCE_TERMINAL_FINGERPRINT') -and
+    $moshVerifier.Contains('ACCEPTANCE_SEARCH_RESULT') -and
+    $moshVerifier.Contains('Intended terminal Search field lost focus before query delivery') -and
+    -not $moshVerifier.Contains("-Name 'mosh-original-page-restored-search'") -and
+    -not $moshVerifier.Contains("-Name 'mosh-abnormal-original-page-restored-search'")
+) 'Mosh page restoration and Search must retain independent direct oracles'
+Assert-True (
+    $moshVerifier.Contains('function Get-MoshEndpointRoute') -and
+    $moshVerifier.Contains('endpointRoute') -and
+    $moshVerifier.Contains('endpointReachable') -and
+    $moshVerifier.Contains('transitionHistory') -and
+    $moshVerifier.Contains('mosh-environment-dirty-') -and
+    $moshVerifier.Contains('if ($route.Count -ne 1) { return $null }') -and
+    $moshVerifier.Contains('if ($linkActive)') -and
+    -not $moshVerifier.Contains('if ($linkActive -and $null -ne $endpointRoute)') -and
+    $moshVerifier.Contains("@('shell', 'hidumper', '-s', 'WifiDevice')") -and
+    $moshVerifier.Contains('Normalize-MoshWifiPanelClosed') -and
+    -not $moshVerifier.Contains('已连接 WLAN') -and
+    $moshVerifier.Contains('if (-not [bool]$beforeState.active -or -not [bool]$beforeState.endpointReachable)') -and
+    -not $moshVerifier.Contains('[string]::IsNullOrWhiteSpace([string]$beforeState.endpointRoute) -or') -and
+    -not $moshVerifier.Contains('routeDigest')
+) 'Mosh Wi-Fi switching lacks the system-state, direct-endpoint or dirty-state guards'
 Assert-True (
     -not $moshVerifier.Contains('Submit-MoshVerifiedChildCommand') -and
     -not $moshVerifier.Contains('Get-MoshTerminalSearchMatch') -and
@@ -2160,13 +2543,8 @@ Assert-True (Test-Path -LiteralPath $moshMatrixPath -PathType Leaf) (
 )
 $moshMatrix = Get-Content -LiteralPath $moshMatrixPath -Raw
 foreach ($formalMoshContract in @(
-    "'compatibility'",
-    "'pause-recovery'",
-    "'suspend-recovery'",
-    "'operator-lock-recovery'",
-    "'operator-lid-recovery'",
-    "'wifi-pause-recovery'",
-    "'wifi-network-switch'",
+    'Get-LeanTTYMoshFormalScenarios',
+    'Assert-LeanTTYRuntimeReclaimEvidence -Evidence $evidence.runtimeReclaim',
     'Formal = $true',
     'acceptanceEligible = ($matrixResult',
     'Assert-MoshScenarioEvidence',
