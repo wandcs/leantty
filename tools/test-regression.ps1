@@ -167,6 +167,11 @@ Invoke-RegressionCheck -Name 'device-regression-helpers' -Groups @('tooling') -A
     if ($LASTEXITCODE -ne 0) { throw 'Device regression helper tests failed' }
 }
 
+Invoke-RegressionCheck -Name 'host-identity-downloads' -Groups @('tooling') -Action {
+    & (Join-Path $PSScriptRoot 'test-host-identity-downloads.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Host Identity Downloads tests failed' }
+}
+
 Invoke-RegressionCheck -Name 'agent-compatibility-helpers' -Groups @('tooling') -Action {
     & (Join-Path $PSScriptRoot 'test-agent-compatibility.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Agent compatibility helper tests failed' }

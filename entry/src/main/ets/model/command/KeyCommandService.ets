@@ -355,6 +355,7 @@ export class KeyCommandService {
     let exportFileName: string = result.destinationName.length > 0 ? result.destinationName : keyName
     try {
       await SshKeyManager.exportKeyPair(ctx.context, keyName, exportFileName)
+      logger.info('KEY_EXPORT result=success')
       ctx.writeOutput('\r\n' + LocalCommandOutput.success('Exported key pair to Downloads.') +
         '\r\n  ' + KeyCommandService.safeText(exportFileName) + '\r\n  ' +
         KeyCommandService.safeText(exportFileName + '.pub') + '\r\n' + LocalCommandOutput.prompt())
