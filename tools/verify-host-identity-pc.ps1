@@ -40,6 +40,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+. (Join-Path $PSScriptRoot 'host-identity-downloads.ps1')
 
 $startedAt = [DateTimeOffset]::UtcNow
 if (-not $Port) { $Port = Get-Random -Minimum 32000 -Maximum 45000 }
@@ -84,6 +85,11 @@ $ed25519BackupName = 'leantty-id-ed25519-backup-' + $runSuffix
 $ed25519BackupPath = "$downloadsDirectory/$ed25519BackupName"
 $ed25519BackupPublicPath = "$ed25519BackupPath.pub"
 $ed25519ExportAttempted = $false
+$ed25519ExportCompleted = $false
+$ed25519RemovalVerified = $false
+$downloadsPermissionOriginal = $null
+$downloadsPermissionPrepared = $false
+$downloadsPermissionRestored = $false
 $ed25519ExportVerified = $false
 $ed25519BackupExported = $false
 $ed25519Removed = $false
@@ -438,6 +444,7 @@ function Export-And-Remove-HostIdentityEd25519 {
     Submit-HostIdentityCommand `
         -Command "key export id_ed25519 $ed25519BackupName" `
         -Stage 'preserve-ed25519-export'
+    Wait-HostIdentityExportComplete
     if ((Invoke-HostIdentityKeyBackupAcceptance -Action observe) -ne 'observed') {
         throw 'Exported id_ed25519 backup did not match the active identity'
     }
@@ -460,6 +467,7 @@ function Export-And-Remove-HostIdentityEd25519 {
         throw 'Product deletion left id_ed25519 active after a verified export'
     }
     $script:ed25519Removed = $true
+    $script:ed25519RemovalVerified = $true
     Add-HostIdentityCheck -Name 'existing-id-ed25519-exported-and-removed'
 }
 
@@ -627,6 +635,7 @@ try {
     Restart-HostIdentityApp -LayoutName 'initial-layout'
 
     if ($PreserveExistingEd25519) {
+        Start-HostIdentityDownloadsFixture
         Export-And-Remove-HostIdentityEd25519
     }
 
@@ -811,7 +820,7 @@ try {
     if ($connected) {
         try { Close-HostIdentitySession } catch { $cleanupFailures.Add($_.Exception.Message) }
     }
-    if ($appPid -match '^\d+$' -and ($hostCreated -or $keyCreated -or $ed25519BackupExported)) {
+    if ($appPid -match '^\d+$' -and ($hostCreated -or $keyCreated -or $ed25519ExportAttempted)) {
         try {
             Restart-HostIdentityApp -LayoutName 'cleanup-reset-layout'
         } catch {
@@ -852,10 +861,12 @@ try {
                 $keyCreated = $false
             } catch { $cleanupFailures.Add('Disposable key cleanup failed') }
         }
-        try {
-            Submit-HostIdentityCommand `
-                -Command "ssh-keygen -R [127.0.0.1]:$Port" -Stage 'cleanup-known-host'
-        } catch { $cleanupFailures.Add('Known-host cleanup failed') }
+        if ($mappingActive) {
+            try {
+                Submit-HostIdentityCommand `
+                    -Command "ssh-keygen -R [127.0.0.1]:$Port" -Stage 'cleanup-known-host'
+            } catch { $cleanupFailures.Add('Known-host cleanup failed') }
+        }
         if ($DefaultEcdsa -and $ecdsaSlotOwned) {
             try {
                 if (Test-HostIdentityDefaultKeyFilesPresent -KeyName $keyName) {
@@ -872,6 +883,9 @@ try {
         if ($PreserveExistingEd25519 -and $ed25519ExportAttempted -and
             -not $ed25519BackupExported -and -not $ed25519BackupAbsenceAudited) {
             try {
+                # The stopped command may have written a backup even without an
+                # ACK. Restore only this fixture permission to audit; never export again.
+                Set-HostIdentityDownloadsPermission -Enabled $true
                 $backupState = Invoke-HostIdentityKeyBackupAcceptance -Action observe
                 if ($backupState -eq 'observed') {
                     $script:ed25519ExportVerified = $true
@@ -901,6 +915,10 @@ try {
     }
     if ($PreserveExistingEd25519 -and -not $ed25519ExportAttempted) {
         $script:ed25519BackupAbsenceAudited = $true
+    }
+    if ($PreserveExistingEd25519) {
+        try { Restore-HostIdentityDownloadsFixture }
+        catch { $cleanupFailures.Add('Downloads permission restoration failed: ' + $_.Exception.Message) }
     }
     if ($mappingActive) {
         & $hdc -t $Target fport rm "tcp:$Port" "tcp:$hostPort" 2>$null | Out-Null
@@ -989,11 +1007,12 @@ try {
             independentEcdsaSourceAbsenceAudit = $ecdsaSourceAbsenceAudited
             preservedEd25519 = [ordered]@{
                 selected = [bool]$PreserveExistingEd25519
+                exportCompletionAcknowledged = $ed25519ExportCompleted
                 productExportVerified = $(if ($PreserveExistingEd25519) {
                     $ed25519ExportVerified
                 } else { $null })
                 productRemovalVerified = $(if ($PreserveExistingEd25519) {
-                    $ed25519Removed -or $ed25519Restored
+                    $ed25519RemovalVerified
                 } else { $null })
                 restoredAfterRestart = $(if ($PreserveExistingEd25519) {
                     $ed25519Restored
@@ -1010,6 +1029,11 @@ try {
                 independentEd25519BackupAbsenceAudit = $ed25519BackupAbsenceAudited
                 backupRetainedForRecovery = $ed25519BackupExported
                 backupName = $(if ($ed25519BackupExported) { $ed25519BackupName } else { $null })
+            }
+            downloadsPermission = [ordered]@{
+                originalEnabled = $downloadsPermissionOriginal
+                fixturePrepared = $downloadsPermissionPrepared
+                originalStateRestored = $downloadsPermissionRestored
             }
         }
         checks = @($checks)

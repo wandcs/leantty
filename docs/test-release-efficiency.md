@@ -2420,3 +2420,164 @@ stable。截图复核了帮助滚屏、最终单 Pane 和重建后输入；像�
 合并后按 R4 建立新候选，再执行 readiness、C1/C2、QH 及完整 C3；不扩大白名单或新建
 兼容框架。本轮不重跑 QH 或正式矩阵，不将原 16 个通过阶段拼接到新报告；完整 C3 仍未
 通过，未执行 C4、tag、GitHub Release 或 AppGallery 操作。
+
+### 8.39 R4 密钥导出授权边界停止（2026-09-09）
+
+**结果与身份。** PR #175 合并后，两份独立发布 clone 干净固定到
+`3a71c1ad96fb771d2cfd5473a8b00258bf876651`，tree 为
+`01cb4ec59b7009f7be8cb3ff9ac4bf7d1111e466`。本地证据根为
+`build/verification/release-1.6.0-r4-pr175-20260909/`。release-mode 测试签名包通过签名
+及日志隔离检查，readiness 八项通过；合成 Agent 完整结果回读 53,840 字节、零模型。
+readiness HAP SHA-256 为
+`d4817e891ff0e4f56c07da67cf4ef3c28b820cb649509a7d257a40ed665d3132`，不是 C2 或上传包。
+
+C1 全部 26 项、C2 和正式 QH 通过；C2 HAP SHA-256 为
+`880c57f6ac999d46952b10ddfaec925b7b1d626fdf32c5bfc8d73717883c3733`。
+两种包中的指南均匹配已确认的 revision 9、97,952 字节及既有摘要。正式入口单次运行
+1,472,696 ms，约 24.5 分钟；7 阶段 passed、1 failed、12 pending，resume 次数为零。
+C1/C2 约 262 秒，QH 116 秒，五组密钥/Host 1,039 秒，失败阶段 55 秒。
+
+**通过与未运行范围。** HAD-W32 / ARM64 / USB 上，key-passphrase、key-comment-restart、
+ecdsa-import-restart、host-identity、host-identity-openssh 及各自清理通过。随后
+`host-identity-default-ecdsa` 停止；七组通知、卸载恢复、Mosh、长任务、Agent/IME 和 SSH
+阶段未运行。未切 WiFi、未合盖、未调用模型；原正式计量仍记录计划 9、实际 `unavailable`、
+自动重试 0，不用独立零模型检查改写汇总。持久测试网络保持原配置，未改变防火墙或代理。
+
+**最后正确与首个错误边界。** `preserve-ed25519-export` 精确输入 58/58 字符、一次 Enter，
+记录 `submission-acknowledged`。随后 `preserve-ed25519-observe` 尚未输入字符，就在
+`ACCEPTANCE_IDLE_INTERRUPT cleared=true` 超时；finally 的 known-host 清理和再次观察
+同样未输入或提交命令。报告为 `invalid/interrupted`、`failed-harness`，清理为 failed。
+默认 false 的删除、恢复及摘要检查尚未执行，不是密钥丢失的证据。注册入口属于本轮正式
+矩阵，但子脚本报告仍按其原格式记录 diagnostic / releaseEligible=false；不改写身份。
+
+系统全局布局 382 节点及截图显示“文件夹权限”、未勾选的 Downloads 和待处理的导出
+命令。截图已复核，仅本地保留。原失败日志因后续 reset 清空而不足以单独判断，完整
+`commandAutomation` 才证明导出已经提交。执行中曾误读空字段而说“尚未导出”，核查后
+立即更正：提交已发生，完成尚未确认。不得把输入 ACK 当成业务结果。
+
+**所有者与原因。** `verify-host-identity-pc.ps1` 的
+`Export-And-Remove-HostIdentityEd25519` 在提交导出后立即调用备份观察；观察的公共输入
+reset 需要终端接收 Ctrl+C，但系统授权界面此时占有交互。`SshKeyManager.exportKeyPair`
+先等待 `DownloadsAccessManager.ensure`，成功后才调用 native 导出写文件；key rm 则在
+脚本备份验证之后，故本轮未到删除边界。这里的 Downloads 是真实导出所需权限，不同于
+§8.38 已移除的无关帮助副作用；不能用换帮助命令或全局授权绕过。
+
+**补充恢复及证据限制。** 正式矩阵已停止，没有修冻结工具或再次提交导出。先确认原
+密钥对仍在，再关闭已识别的待处理授权界面一次；实际产品日志明确
+“Downloads access was not granted; no files were exported”。结合上述所有者顺序，
+可确认本次导出未到文件写入；未授权、未删除 key、未执行恢复导入。随后终端重新可见，
+真实 Ctrl+C 的 idle ACK 成功；公钥和 Host 配置在这次恢复前后摘要一致。
+
+普通 HDC 和应用调试命名空间均不可见 Downloads 父目录，因此不把 `No such file`
+当成备份缺席审计。私钥摘要读取被调试权限拒绝，未绕过权限、改变 ACL 或换渠道读取；
+没有私钥字节比对结论。收尾独立检查确认原密钥对存在、本轮 known-host 条目、反向映射
+和临时目录缺席。`post-stop-recovery.json` 是不可作为验收的补充证据，原 failed 与
+cleanup failed 保持不变；恢复前后摘要也不冒充整个场景前后的比对。
+
+**后续取舍。** 下一批先修复实际脚本的权限初始状态、异步导出完成边界和受阻清理，
+覆盖已有授权、待授权、拒绝、未知结果和清理失败反例，再做一次命名真机诊断。导出结果
+未知时不重发，不删除原 key；未证实备份可用前不得继续默认 ECDSA 切换。官方权限资料
+和现有实现需在修复时核查，不扩大本轮诊断成工具实现或整轮重试。
+
+原清理失败默认按 R3 评估；候选身份仍精确，但补充取消并不自动满足正式 resume 门。
+修复后由既有兼容门和 QH 判断能否保留 C0–C2，否则采用 R4；不放宽白名单、不拼接旧
+通过前缀。完整 C3 未通过，未进入 C4、tag、GitHub Release 或 AppGallery。
+
+收尾 `closing-audit.json` 确认两份冻结 clone 干净且身份精确、C2 字节和上一轮七份证据
+哈希未变，并固定本轮原报告、观察与恢复证据摘要。指南独立审计首次误用沙箱身份触发
+Git ownership 拒绝，改以桌面用户执行后通过；这是执行身份错误，没有改 safe.directory、
+ACL 或正式结果。仅更新活动清单和本记录，聚焦 policy 两项及文本差异检查通过，未追加
+物理矩阵；既有换行格式警告未作为产品故障处理。
+
+### 8.40 密钥导出验收的权限与完成边界修复（2026-09-09）
+
+**本轮结果。** 修复保存在独立开发 clone 的
+`codex/fix-key-export-permission-harness`，基线为 §8.39 的 PR #175 commit。
+35 项实际脚本边界回归通过；相关 policy/tooling/ArkTS 的 11 项注册软件检查和 ARM64 调试构建通过。
+权限独立往返通过：原始 Downloads 未授权，临时开启后恢复为未授权，终端返回正常，
+没有密钥操作。默认 ECDSA 完整命名诊断尚未开始：工具安全审批两次拒绝现有
+`id_ed25519` 的临时删除，第二次说明此前明确授权后仍被拒绝。未换渠道执行。
+需要维护者在当前交接中重新确认该具体操作；本轮未提交或合并 PR，未启动正式矩阵。
+
+**实现边界。** 仅默认 ECDSA 的原密钥保留路径临时准备 LeanTTY Downloads 权限，先保存
+原始状态，再经系统 UI 修改并以 scoped ATM 状态与 checkbox 双重回读。已有授权不操作。
+产品的按需权限策略不变，不全局预授权、不使用 root/grant/revoke 工具。
+产品导出所有者在 awaited export 成功后增加不含正文、路径或秘密的
+`KEY_EXPORT result=success`；场景等待该结果，再由既有备份所有者验证字节，最后才允许
+`key rm`。提交 ACK 不代表导出完成；拒绝或超时不重发、不删除。
+
+finally 对“已尝试导出”而非仅“备份验证成功”恢复输入状态；不对尚未创建的映射清理
+known-host。未知导出先停止原命令，再观察可能产生的备份，不重复导出。敏感备份未证明
+清理前保留所需 Downloads 访问并将清理记为失败，避免撤权后无法恢复。报告分开记录
+export completion、实际删除验证和权限恢复，未删除不能因为清理通过而报告删除通过。
+
+**调研与设备适用性。** 查阅 OpenHarmony
+[用户授权指南](https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/security/AccessToken/request-user-authorization.md)、
+[ATM 工具](https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/tools/atm-tool.md)、
+[UiTest 文档](https://raw.githubusercontent.com/openharmony/testfwk_arkxtest/master/README_zh.md)
+及 Huawei [Settings ability 标识](https://developer.huawei.com/consumer/cn/doc/content/themes-engine-next-base-intentcommand-0000002471235064)。
+HAD-W32 / ARM64 / USB，OpenHarmony 6.1.1.135、UiTest 6.0.2.3 的 ATM help 仅提供查询；
+未采用其他版本或 Android 权限修改命令。Privacy URI 的社区资料仅作为假设，当前 PC 的
+`aa start ... -U privacy_settings` 和实际页面才是采纳依据；不宣称它是稳定公共产品 API。
+
+**导航失败与重构判断。** 两次只读前置失败分别揭示 Settings 保留子页面、sidebar
+滚动使 Privacy 行不可见。检查点撤掉点击 sidebar 的假设，采用直达 Privacy 的已验证路径。
+随后一轮成功授权、恢复失败：Privacy 异步插入访问卡片，Folders 按钮从 y=818 移到
+y=1397；过期坐标点击未进入列表，下一次未限定页面的 LeanTTY 文本误选了访问记录。
+另一次补充撤权观察证明应用运行时还会弹出强制退出确认。没有把这些错误归为产品密钥问题。
+
+恢复时只确认当前系统对 LeanTTY Downloads 的精确撤权提示，原未授权状态已还原。
+第一次补充恢复记录误用启动函数参数而过早写入 app-return；原文件保留，独立
+`permission-recovery-closing-audit.json` 补齐真实终端可见证据，不将错误记录改为通过。
+最终路径在更改权限前停止测试应用，finally 重启；每次导航检查页面身份，并要求连续两次
+目标 bounds 一致，最多四次采样，未稳定不点击。这移除了运行中撤权确认分支，不增加
+通用 Settings 框架或盲目重试。最后一轮独立权限往返及清理单次通过。
+
+**证据及限制。** 本地根为 `build/verification/key-export-permission-20260909/`。
+最初四项真实导出函数负例在修复前失败；最终 35 项覆盖完成/拒绝/未知、不稳定或错误页面、
+权限状态歧义、停止失败、结果未知以及清理失败等边界。测试执行实际 PowerShell 函数或
+finally 的 reset 条件，设备 I/O 使用替身；不冒充完整 finally 或真机密钥恢复测试。
+软件负例中的 JSON 深度警告、输入重试输出不计为物理故障。
+`permission-fixture-stable-route/result.json` 是权限往返诊断，不是默认 ECDSA 或正式验收。
+原失败、补充恢复及最终诊断分别保留；含桌面信息的布局只在本地保存。
+
+正常 `dev-pc.ps1 -NoDaemon -Offline` 完成签名调试包构建、安装和启动；原 ARM64 native
+未变，复用经过增量校验的产物。新 HAP SHA-256 为
+`2133ab5779aee14ddb741063d3a5d7d7af305f317f0ed6979af97804d02550eb`。
+新增完成日志尚未得到真实导出路径的验证；构建和安装不替代该证据。由于修改了打包源码，
+命名诊断和 PR 通过后应选 R4，重新建立精确候选，不复用旧 C3 前缀或扩大兼容白名单。
+本轮零模型、未切 WiFi、未合盖、未运行 Mosh；未创建临时 ECDSA/WSL 账户或反向映射，
+未导出、删除或恢复现有密钥。C3/C4、tag、GitHub Release 和 AppGallery 未推进。
+
+收尾只读审计确认原密钥对存在、Downloads 已恢复未授权、终端输入可见；两份冻结 clone
+仍干净且 commit/tree 不变，原 C2 HAP 与 §8.39 七份证据哈希未变。新调试 HAP 已独立保留，
+本轮报告哈希写入 `closing-audit.json`。未读取或比较私钥正文，不将文件存在当成恢复验证。
+
+### 8.41 授权后默认 ECDSA 命名验证通过（2026-09-09）
+
+维护者在当前对话重新确认允许测试后，执行一次
+`verify-host-identity-pc.ps1 -OpenSshCompatibility -DefaultEcdsa -PreserveExistingEd25519`。
+使用 §8.40 已保留的精确调试 HAP，SHA-256 仍为
+`2133ab5779aee14ddb741063d3a5d7d7af305f317f0ed6979af97804d02550eb`。
+本地证据为 `build/verification/key-export-permission-20260909/default-ecdsa/`。
+单次约 286.6 秒完成，11 个业务检查和清理通过，未修改运行中的验收脚本、未追加重试。
+
+原 `id_ed25519` 先经产品导出，观察到 awaited export 成功标记；备份所有者确认私钥及公钥
+匹配后，才通过产品删除。受控 OpenSSH 临时账户只安装当前 ECDSA 公钥，Host 显式绑定、
+移除绑定后默认 ECDSA 的重启前后认证，以及恢复显式绑定均通过。
+finally 经产品导入原密钥并重启，私钥字节、公钥指纹和 Host 配置摘要一致；临时 ECDSA、
+导入源及敏感备份缺席审计通过。备份未保留，测试账户、Host/known-host、反向映射和屏幕
+超时策略已清理或恢复，Downloads 恢复原始未授权状态，终端输入可见。
+
+18 条普通命令均一次输入、一次 Enter、零不匹配，`harnessStability=stable`。成功记录为
+`diagnostic / releaseEligible=false`，不是原正式失败的补填，也不构成完整 C3。
+原报告 SHA-256 为
+`04f132d3cd40a98a7680f8768239288a2c36d31cc15d1f01ae69af844b5f33c6`。
+`authorized-run-closing-audit.json` 再次只读确认原密钥对存在、临时 ECDSA 缺席、
+Downloads 未授权、终端可见，以及两份冻结 clone、既有正式证据和本轮 HAP 身份不变。
+私钥字节一致性来自产品备份所有者，不从调试 shell 读取或打印私钥。
+
+本轮重新运行 35 项导出/权限边界反例；产品与验收代码未再改变。修复与 §8.39–8.41 记录
+组成同一个 PR，完成聚焦软件检查后合并。没有用户可见功能变化，不增改 Changelog 或指南。
+下一批按 R4 建立合并后的精确候选，不扩大工具兼容白名单。未运行 Mosh、切 WiFi、
+合盖或调用模型，未进入 C4、tag、GitHub Release 或 AppGallery。
