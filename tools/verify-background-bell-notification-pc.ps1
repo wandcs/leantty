@@ -21,6 +21,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
+. (Join-Path $PSScriptRoot 'notification-regression.ps1')
 
 $selectedModes = @($Suppression, $ColdStale, $LateHandled, $LateDestroyed, $ManualDismiss) |
     Where-Object { [bool]$_ }
@@ -58,84 +59,6 @@ if ($processId -notmatch '^\d+$') {
     throw '[environment] LeanTTY must be installed and launched before this scenario'
 }
 
-function Get-FullLayout {
-    param([Parameter(Mandatory = $true)][string]$Name)
-    return Get-LeanTTYDeviceLayout `
-        -Hdc $hdc -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory "$Name.json") `
-        -BundleName ''
-}
-
-function Find-OneNode {
-    param(
-        [Parameter(Mandatory = $true)]$Layout,
-        [Parameter(Mandatory = $true)][scriptblock]$Predicate,
-        [Parameter(Mandatory = $true)][string]$Description
-    )
-    $matches = @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object $Predicate)
-    if ($matches.Count -ne 1) {
-        throw "[harness] Expected one $Description node, found $($matches.Count)"
-    }
-    return $matches[0]
-}
-
-function Click-Node {
-    param(
-        [Parameter(Mandatory = $true)]$Node,
-        [Parameter(Mandatory = $true)][string]$Description
-    )
-    $center = Get-LeanTTYBoundsCenter -Bounds ([string]$Node.attributes.bounds)
-    Invoke-LeanTTYDeviceClick `
-        -Hdc $hdc -Target $Target -X $center.x -Y $center.y -Operation $Description
-}
-
-function Open-LeanTTYMenu {
-    $layout = Get-FullLayout -Name 'app-before-menu'
-    $appRoot = Find-OneNode -Layout $layout -Description 'LeanTTY root' -Predicate {
-        [string]$_.attributes.bundleName -eq 'com.leantty.app' -and
-        [string]$_.attributes.type -eq 'root'
-    }
-    $appWindowId = [string]$appRoot.attributes.hostWindowId
-    $minimize = Find-OneNode -Layout $layout -Description 'LeanTTY minimize button' -Predicate {
-        [string]$_.attributes.hostWindowId -eq $appWindowId -and
-        [string]$_.attributes.id -eq 'EnhanceMinimizeBtn'
-    }
-    $minimizeBounds = [regex]::Match([string]$minimize.attributes.bounds,
-        '^\[(?<x1>\d+),(?<y1>\d+)\]\[(?<x2>\d+),(?<y2>\d+)\]$')
-    $buttonCandidates = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
-        $bounds = [regex]::Match([string]$_.attributes.bounds,
-            '^\[(?<x1>\d+),(?<y1>\d+)\]\[(?<x2>\d+),(?<y2>\d+)\]$')
-        [string]$_.attributes.hostWindowId -eq $appWindowId -and
-        [string]$_.attributes.clickable -eq 'true' -and $bounds.Success -and
-        [string]$_.attributes.id -notmatch '^Enhance' -and
-        [int]$bounds.Groups['y1'].Value -lt [int]$minimizeBounds.Groups['y2'].Value -and
-        [int]$bounds.Groups['x2'].Value -le [int]$minimizeBounds.Groups['x1'].Value
-    } | Sort-Object {
-        [int]([regex]::Match([string]$_.attributes.bounds, '^\[(?<x1>\d+),').Groups['x1'].Value)
-    } -Descending)
-    if ($buttonCandidates.Count -eq 0) {
-        throw '[harness] LeanTTY menu button was not found before the window controls'
-    }
-    $button = $buttonCandidates[0]
-    Click-Node -Node $button -Description 'Open LeanTTY menu'
-    Start-Sleep -Milliseconds 250
-    return Get-FullLayout -Name 'app-menu'
-}
-
-function Get-RawAppLogs {
-    return (@(& $hdc -t $Target shell "hilog -z 1200 -t app -P $processId" 2>&1) -join "`n")
-}
-
-function Wait-RawAppLog {
-    param([Parameter(Mandatory = $true)][string]$Pattern)
-    for ($attempt = 0; $attempt -lt 12; $attempt++) {
-        $logs = Get-RawAppLogs
-        if ($logs -match $Pattern) { return $logs }
-        Start-Sleep -Milliseconds 500
-    }
-    throw "[product] Timed out waiting for app log: $Pattern"
-}
-
 $result = [ordered]@{
     target = $Target
     processId = $processId
@@ -149,7 +72,7 @@ $result = [ordered]@{
     lateHandled = [bool]$LateHandled
     lateDestroyed = [bool]$LateDestroyed
     manualDismiss = [bool]$ManualDismiss
-    notificationCardCount = 0
+    notificationCardCount = $null
     firedPaneIds = @()
     publishedPaneId = ''
     suppressedPaneId = ''
@@ -164,14 +87,25 @@ $result = [ordered]@{
 }
 $panelOpen = $false
 $cleanupFailure = ''
+$notificationState = @{originalEnabled=$null; settingsOpen=$false; promptRejected=$false; restored=$false}
+$awakeLease = $false
+$splitRequested = $false
+$fixtureReady = $false
 try {
+    Start-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $Target -TimeoutMilliseconds 600000
+    $awakeLease = $true
     $initial = Get-FullLayout -Name 'app-initial'
-    $terminalInputs = @(Get-LeanTTYLayoutNodes -Node $initial | Where-Object {
-        [string]$_.attributes.hint -eq 'Terminal input'
-    })
-    if ($terminalInputs.Count -eq 0) {
-        throw '[harness] No terminal input node was found'
+    $terminalInputs = @(Get-LeanTTYTerminalInputNodes -Layout $initial)
+    if ($terminalInputs.Count -ne 1) {
+        throw '[environment] Notification fixture requires one visible test Pane before mutation'
     }
+    $fixtureReady = $true
+    [void](Set-NotificationEnabled -Enabled $true -Stage 'publication-precondition')
+    $result.originalEnabled = $notificationState.originalEnabled
+    $result.permissionEnabledVerified = $true
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    $initial = Ensure-LeanTTYVisible -Stage 'publication-ready'
+    $terminalInputs = @(Get-LeanTTYTerminalInputNodes -Layout $initial)
     Click-Node -Node $terminalInputs[0] -Description 'Clear prior Pane attention'
     Start-Sleep -Milliseconds 200
     $menu = Open-LeanTTYMenu
@@ -179,6 +113,7 @@ try {
         $split = Find-OneNode -Layout $menu -Description 'split menu item' -Predicate {
             [string]$_.attributes.text -in @('Split Pane', '新建分屏')
         }
+        $splitRequested = $true
         Click-Node -Node $split -Description 'Create suppression test Pane'
         Start-Sleep -Milliseconds 400
         $menu = Open-LeanTTYMenu
@@ -202,14 +137,14 @@ try {
     Click-Node -Node $minimize -Description 'Minimize LeanTTY'
 
     $publishPattern = if ($needsSplit) {
-        'state=suppression-fired,paneId=pane-\d+'
+        'state=suppression-fired,paneId=pane-\d+(?:-\d+)?(?=[\s,]|$)'
     } else {
-        'state=fired,paneId=pane-\d+'
+        'state=fired,paneId=pane-\d+(?:-\d+)?(?=[\s,]|$)'
     }
     $logs = Wait-RawAppLog -Pattern $publishPattern
     $firedMatches = @([regex]::Matches(
         $logs,
-        'ACCEPTANCE_BACKGROUND_BELL state=(?:suppression-)?fired,paneId=(?<id>pane-\d+)'
+        'ACCEPTANCE_BACKGROUND_BELL state=(?:suppression-)?fired,paneId=(?<id>pane-\d+(?:-\d+)?)(?=[\s,]|$)'
     ))
     $requiredFireCount = if ($needsSplit) { 2 } else { 1 }
     if ($firedMatches.Count -lt $requiredFireCount) {
@@ -217,16 +152,16 @@ try {
     }
     $fired = @($firedMatches | Select-Object -Last $requiredFireCount |
         ForEach-Object { $_.Groups['id'].Value })
-    if ($logs -notmatch "notification published: paneId=$($fired[0])") {
-        throw "[product] Missing notification publication for $($fired[0])"
-    }
     $result.firedPaneIds = $fired
+    $sourcePattern = [regex]::Escape($fired[0]) + '(?=[\s,]|$)'
+    # fired is the input to an async queue, not its publication acknowledgement.
+    $logs = Wait-RawAppLog -Pattern ("notification published: paneId=" + $sourcePattern)
     $result.publishedPaneId = $fired[0]
     if ($needsSplit) {
-        if ($logs -notmatch "notification suppressed for current background episode: paneId=$($fired[1])") {
-            throw "[product] Missing background-episode suppression for $($fired[1])"
-        }
-        if ($logs -match "notification published: paneId=$($fired[1])") {
+        $suppressedPattern = [regex]::Escape($fired[1]) + '(?=[\s,]|$)'
+        $logs = Wait-RawAppLog -Pattern (
+            'notification suppressed for current background episode: paneId=' + $suppressedPattern)
+        if ($logs -match ('notification published: paneId=' + $suppressedPattern)) {
             throw "[product] Suppressed Pane unexpectedly published a notification: $($fired[1])"
         }
         $result.suppressedPaneId = $fired[1]
@@ -268,6 +203,7 @@ try {
         -LocalPath (Join-Path $EvidenceDirectory 'notification-panel.png')
 
     $expectedReturn = $fired[0]
+    $returnPattern = [regex]::Escape($expectedReturn) + '(?=[\s,]|$)'
     if ($ManualDismiss) {
         $cardBounds = [regex]::Match([string]$cards[0].attributes.bounds,
             '^\[(?<x1>\d+),(?<y1>\d+)\]\[(?<x2>\d+),(?<y2>\d+)\]$')
@@ -279,9 +215,9 @@ try {
         $swipeY = [int](
             ([int]$cardBounds.Groups['y1'].Value + [int]$cardBounds.Groups['y2'].Value) / 2
         )
-        & $hdc -t $Target shell (
-            "uitest uiInput swipe $swipeStartX $swipeY $swipeEndX $swipeY 400"
-        ) 2>$null | Out-Null
+        Invoke-LeanTTYSerializedUiTest -Hdc $hdc -Target $Target -Arguments @(
+            'uiInput', 'swipe', [string]$swipeStartX, [string]$swipeY, [string]$swipeEndX, [string]$swipeY, '400'
+        ) -Operation 'Dismiss LeanTTY notification card' | Out-Null
         Start-Sleep -Milliseconds 900
         $dismissedPanel = Get-FullLayout -Name 'notification-panel-after-manual-dismiss'
         $dismissedCards = @(Get-LeanTTYLayoutNodes -Node $dismissedPanel | Where-Object {
@@ -300,21 +236,15 @@ try {
             throw '[product] LeanTTY notification was retried after manual dismissal'
         }
         $result.noRetryAfterDismiss = $true
-        & $hdc -t $Target shell 'uitest uiInput keyEvent Back' 2>$null | Out-Null
+        Invoke-LeanTTYSerializedUiTest -Hdc $hdc -Target $Target -Arguments @('uiInput', 'keyEvent', 'Back') -Operation 'Close notification panel' | Out-Null
         $panelOpen = $false
     } elseif ($LateHandled -or $LateDestroyed) {
-        & $hdc -t $Target shell 'uitest uiInput keyEvent Back' 2>$null | Out-Null
+        Invoke-LeanTTYSerializedUiTest -Hdc $hdc -Target $Target -Arguments @('uiInput', 'keyEvent', 'Back') -Operation 'Close notification panel' | Out-Null
         $panelOpen = $false
         & $hdc -t $Target shell 'aa start -a EntryAbility -b com.leantty.app' 2>$null | Out-Null
         Start-Sleep -Milliseconds 600
         $visibleLayout = Get-FullLayout -Name 'app-before-late-return-setup'
-        $visibleInputs = @(Get-LeanTTYLayoutNodes -Node $visibleLayout | Where-Object {
-            [string]$_.attributes.hint -eq 'Terminal input'
-        } | Sort-Object {
-            [int]([regex]::Match(
-                [string]$_.attributes.bounds, '^\[(?<x1>\d+),'
-            ).Groups['x1'].Value)
-        })
+        $visibleInputs = @(Get-LeanTTYTerminalInputNodes -Layout $visibleLayout)
         $expectedPaneCount = if ($LateDestroyed) { 2 } else { 1 }
         if ($visibleInputs.Count -ne $expectedPaneCount) {
             throw "[harness] Expected $expectedPaneCount Pane(s) before stale-return setup, found $($visibleInputs.Count)"
@@ -341,9 +271,7 @@ try {
             throw '[product] Stale-return probe did not remain in the hot LeanTTY process'
         }
         $afterLateReturn = Get-FullLayout -Name 'app-after-late-return'
-        $afterLateInputs = @(Get-LeanTTYLayoutNodes -Node $afterLateReturn | Where-Object {
-            [string]$_.attributes.hint -eq 'Terminal input'
-        })
+        $afterLateInputs = @(Get-LeanTTYTerminalInputNodes -Layout $afterLateReturn)
         if ($afterLateInputs.Count -ne 1) {
             throw "[product] Stale return changed the workspace to $($afterLateInputs.Count) Panes"
         }
@@ -372,7 +300,7 @@ try {
         $result.processIdAfterClick = $processId
         $result.staleReturnIgnored = $true
     } elseif (-not ($LateHandled -or $LateDestroyed -or $ManualDismiss)) {
-        Wait-RawAppLog -Pattern "Background BEL return applied: paneId=$expectedReturn" | Out-Null
+        Wait-RawAppLog -Pattern "Background BEL return applied: paneId=$returnPattern" | Out-Null
         $result.returnedPaneId = $expectedReturn
     }
     if ($Suppression) {
@@ -393,8 +321,8 @@ try {
         Click-Node -Node $resetBell -Description 'Schedule reset background BEL'
         Start-Sleep -Milliseconds 250
         Click-Node -Node $resetMinimize -Description 'Minimize LeanTTY after visible reset'
-        $resetPattern = "state=reset-fired,paneId=$expectedReturn[\s\S]*" +
-            "notification published: paneId=$expectedReturn"
+        $resetPattern = "state=reset-fired,paneId=$returnPattern[\s\S]*" +
+            "notification published: paneId=$returnPattern"
         Wait-RawAppLog -Pattern $resetPattern | Out-Null
 
         $resetDesktop = Get-FullLayout -Name 'desktop-before-reset-notification-panel'
@@ -414,44 +342,56 @@ try {
         }
         Click-Node -Node $resetCards[0] -Description 'Activate reset background BEL notification'
         $panelOpen = $false
-        $resetReturnPattern = "state=reset-fired,paneId=$expectedReturn[\s\S]*" +
-            "Background BEL return applied: paneId=$expectedReturn"
+        $resetReturnPattern = "state=reset-fired,paneId=$returnPattern[\s\S]*" +
+            "Background BEL return applied: paneId=$returnPattern"
         Wait-RawAppLog -Pattern $resetReturnPattern | Out-Null
         $result.resetPublished = $true
     }
     $result.status = 'passed'
+} catch {
+    $result.failure = $_.Exception.Message
+    throw
 } finally {
     try {
         if ($panelOpen) {
-            & $hdc -t $Target shell 'uitest uiInput keyEvent Back' 2>$null | Out-Null
+            Invoke-LeanTTYSerializedUiTest -Hdc $hdc -Target $Target -Arguments @('uiInput', 'keyEvent', 'Back') -Operation 'Close notification panel for cleanup' | Out-Null
+            $panelOpen = $false
         }
-        & $hdc -t $Target shell 'aa start -a EntryAbility -b com.leantty.app' 2>$null | Out-Null
-        Start-Sleep -Milliseconds 500
-        $cleanupLayout = Get-FullLayout -Name 'cleanup-visible'
-        $cleanupInputs = @(Get-LeanTTYLayoutNodes -Node $cleanupLayout | Where-Object {
-            [string]$_.attributes.hint -eq 'Terminal input'
-        })
-        if ($cleanupInputs.Count -gt 1) {
-            $cleanupMenu = Open-LeanTTYMenu
-            $closePane = Find-OneNode -Layout $cleanupMenu -Description 'close split cleanup item' -Predicate {
-                [string]$_.attributes.text -in @('Close Pane', '关闭分屏')
+        Restore-NotificationPermission
+        $result.originalEnabled = $notificationState.originalEnabled
+        $result.restoredOriginalSetting = $notificationState.restored
+        $result.permissionPromptRejected = $notificationState.promptRejected
+        if ($fixtureReady) {
+            $cleanupLayout = Ensure-LeanTTYVisible -Stage 'cleanup-visible' -DismissPermissionPrompt
+            $cleanupInputs = @(Get-LeanTTYTerminalInputNodes -Layout $cleanupLayout)
+            if ($splitRequested -and $cleanupInputs.Count -eq 2) {
+                Click-Node -Node $cleanupInputs[1] -Description 'Focus the disposable second Pane for cleanup'
+                $cleanupMenu = Open-LeanTTYMenu
+                $closePane = Find-OneNode -Layout $cleanupMenu -Description 'close split cleanup item' -Predicate {
+                    [string]$_.attributes.text -in @('Close Pane', '关闭分屏')
+                }
+                Click-Node -Node $closePane -Description 'Remove notification test Pane'
             }
-            Click-Node -Node $closePane -Description 'Remove suppression test Pane'
-            Start-Sleep -Milliseconds 400
-            $cleanupLayout = Get-FullLayout -Name 'cleanup-after-pane-removal'
-            $cleanupInputs = @(Get-LeanTTYLayoutNodes -Node $cleanupLayout | Where-Object {
-                [string]$_.attributes.hint -eq 'Terminal input'
-            })
-        }
-        if ($cleanupInputs.Count -ne 1) {
-            throw "Expected one Pane after cleanup, found $($cleanupInputs.Count)"
-        }
-        $result.cleanup = [ordered]@{
-            result = 'passed'
-            detail = 'app-restored; notification-cancel-requested-by-visible-lifecycle; single-pane-confirmed'
+            $cleanupLayout = Assert-NotificationCleanup
+            $cleanupInputs = @(Get-LeanTTYTerminalInputNodes -Layout $cleanupLayout)
+            if ($cleanupInputs.Count -ne 1) {
+                throw "[cleanup] Expected one visible Pane after cleanup, found $($cleanupInputs.Count)"
+            }
         }
     } catch {
         $cleanupFailure = $_.Exception.Message
+    }
+    try {
+        if ($awakeLease) { Stop-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $Target }
+    } catch {
+        $cleanupFailure = $_.Exception.Message
+    }
+    if ([string]::IsNullOrWhiteSpace($cleanupFailure)) {
+        $result.cleanup = [ordered]@{
+            result = 'passed'
+            detail = 'original-notification-setting-verified; app-visible; notification-absence-audited; screen-timeout-restored'
+        }
+    } else {
         $result.cleanup = [ordered]@{ result = 'failed'; detail = $cleanupFailure }
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')

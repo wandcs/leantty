@@ -7,6 +7,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 
 & (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1') -SelfTest
 & (Join-Path $PSScriptRoot 'test-mosh-runtime-contract.ps1')
+& (Join-Path $PSScriptRoot 'test-notification-regression.ps1')
 
 function Assert-True {
     param(
@@ -2940,6 +2941,9 @@ foreach ($productionSource in @(
 $backgroundBellVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-background-bell-notification-pc.ps1'
 ) -Raw
+$backgroundBellVerifier += Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'notification-regression.ps1'
+) -Raw
 Assert-True (
     $backgroundBellVerifier.Contains('notificationCardCount') -and
     $backgroundBellVerifier.Contains("minimizeBounds.Groups['y2']") -and
@@ -2957,8 +2961,8 @@ Assert-True (
     $backgroundBellVerifier.Contains('source-pane-destroyed') -and
     $backgroundBellVerifier.Contains('notification-panel-after-manual-dismiss') -and
     $backgroundBellVerifier.Contains('notification-panel-after-dismiss-settle') -and
-    $backgroundBellVerifier.Contains('notification-cancel-requested-by-visible-lifecycle') -and
-    $backgroundBellVerifier.Contains('single-pane-confirmed') -and
+    $backgroundBellVerifier.Contains('Assert-NotificationCleanup') -and
+    $backgroundBellVerifier.Contains('Restore-NotificationPermission') -and
     $backgroundBellVerifier.Contains('[privacy]')
 ) 'Background BEL notification scenario lacks suppression, return, privacy, or cleanup oracles'
 
@@ -3014,6 +3018,9 @@ Assert-True (
 $backgroundBellPermissionVerifier = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'verify-background-bell-permission-pc.ps1'
 ) -Raw
+$backgroundBellPermissionVerifier += Get-Content -LiteralPath (
+    Join-Path $PSScriptRoot 'notification-regression.ps1'
+) -Raw
 Assert-True (
     $backgroundBellPermissionVerifier.Contains('originalEnabled') -and
     $backgroundBellPermissionVerifier.Contains("minimizeBounds.Groups['y2']") -and
@@ -3021,11 +3028,11 @@ Assert-True (
     $backgroundBellPermissionVerifier.Contains('disabledNotificationCardCount') -and
     $backgroundBellPermissionVerifier.Contains('permissionPromptObserved') -and
     $backgroundBellPermissionVerifier.Contains('Handle disabled background BEL attention') -and
-    $backgroundBellPermissionVerifier.Contains('Pane attention cleared: pane-') -and
+    $backgroundBellPermissionVerifier.Contains("'Pane attention cleared: ' + [regex]::Escape(") -and
     $backgroundBellPermissionVerifier.Contains('enabledPublished') -and
     $backgroundBellPermissionVerifier.Contains('enabledReturned') -and
     $backgroundBellPermissionVerifier.Contains('restore-original') -and
-    $backgroundBellPermissionVerifier.Contains('original-notification-setting-restored') -and
+    $backgroundBellPermissionVerifier.Contains('original-notification-setting-verified') -and
     -not $backgroundBellPermissionVerifier.Contains('bm clean') -and
     -not $backgroundBellPermissionVerifier.Contains('uninstall')
 ) 'Background BEL permission scenario lacks disabled, enabled, return, or restoration oracles'

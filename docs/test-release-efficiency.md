@@ -2223,3 +2223,85 @@ Mosh、长任务和 Agent 均拒绝工具/记录差异。上轮“优先 R3”�
 证据根为 `build/verification/key-cleanup-contract-20260909/`：`red.json`、`green.json`、
 `registered-cleanup.json`、`compatibility.json` 和聚焦 `policy,tooling` 软件报告。
 修复通过的是宿主工具层；新候选的完整正式验收仍在 Next Work，不在本次软件结果中宣告完成。
+
+### 8.35 R4 候选与后台通知场景停止（2026-09-09）
+
+**结论：新候选、正式 QH 和六组密钥/Host 场景通过；通知阶段停止，完整 C3 未通过。**
+PR #173 合并后的独立 production/review clone 均干净固定到
+`2063de224562e28ddcd7db98075d7db1a5ceb9ef`，tree 为
+`607b617f2f7d84759374fe34c229ce8ba80aaa7d`。本地证据根为
+`build/verification/release-1.6.0-r4-20260909/`，不覆盖上轮目录。
+
+release-mode 测试签名 HAP 通过 SDK 签名及 signed/unsigned 隔离检查，SHA-256 为
+`92ec02f4fc344afbf6b9da76d6357908018fd5cd5427e2bbf6df187c98c3c15e`。
+readiness 八项通过，合成 Agent 结果完整回读 53,840 字节，零模型调用。
+该包及配套测试 APP 单独留存，均不是 AppGallery 上传包。C1 全部 26 项通过，C2 HAP
+SHA-256 为 `bf7028f641baa617e6a2088cff20d14fde288160a7dee06c1d3a0a1f38c75b12`。
+两包内指南均匹配 revision 9 的 97,952 字节和既有 SHA-256。
+
+正式入口约 1,550 秒后停止：C1/C2 约 250 秒，QH 约 102 秒，六组密钥/Host 约
+1,180 秒，失败通知阶段约 17 秒。密钥口令九项检查及 `cleanup.result=passed` 被汇总器
+接受，证实 PR #173 的真实链路闭合。默认 ECDSA 场景完成现有 `id_ed25519` 的产品导出、
+临时移除和恢复；重启后的私钥字节、公钥指纹、Host 配置均一致，备份及测试材料缺席。
+后续 11 个注册阶段未执行，Mosh、Agent/IME 和模型请求未启动；汇总的模型用量仍按原
+schema 记为 `unavailable`，不手改成零。没有执行 C4、tag、Release 或 AppGallery 操作。
+
+**已定位边界。** 正向通知场景预期后台 BEL 后发布通知，但没有建立“系统通知已开启”
+前置条件。失败进程的固定日志显示 BEL fired，随后 `isNotificationEnabled()` 返回 false
+对应的 deferred 分支执行。`BackgroundBellNotification` 在该状态下安排前台申请并返回，
+未调用 publish；这符合产品合同，不能仅凭缺少发布日志判为产品退化。
+
+`verify-background-bell-notification-pc.ps1` 的最后正确观察是 fired，首个错误判断是立即
+要求同份日志已有 published。实际拒绝原因是权限关闭；异步发布等待缺口是源码发现，
+尚未独立复现。相同脚本的 `pane-\d+` 只截取当前双段 Pane ID 的前缀，也未单独触发
+一次实验；修复时需真实解析器反例，不能将这些静态发现都算成此次缺报的运行时原因。
+
+**原失败与恢复分开。** 原 cleanup 布局含系统通知授权弹窗而无应用根节点，工具将其
+写成“找到零 Pane”。独立清理使用新布局的唯一“不允许”按钮，保持原关闭状态，再通过
+真实焦点清除该 Pane 的 attention。补充检查最初错误地要求取消成功日志；未发布通知时
+这个要求不成立，未重发清理动作。改用通知中心的直接缺席检查，确认无 LeanTTY 卡片，
+关闭面板后一个终端可见。结果留在 `formal/stages/background-bell/post-stop-cleanup.json`；
+原 `attempt-1/result.json` 和正式总报告仍为失败。
+
+本轮只读取既有失败日志/布局、检查所有者源码并清理，没有修改产品或冻结工具，也没有
+重试 BEL、输入密钥或重启矩阵。下一批先做通知脚本的当日外部调研、实际入口反例及命名
+真机验证，再核对候选兼容和 QH。原 cleanup 失败先按 R3 保守处理，只有证明作用范围与
+恢复完整才能讨论更小续跑；若入口不支持兼容则 R4，不扩大白名单或改写失败证据。
+
+### 8.36 通知验收前置状态与异步边界修复（2026-09-09）
+
+**原因和方案。** 本轮只改宿主验收工具，未改产品、依赖、指南、版本或冻结候选。
+OpenHarmony 官方 [NotificationManager 文档](https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/reference/apis-notification-kit/js-apis-notificationManager.md)
+明确区分通知使能状态、异步 `publish` 和前台授权请求；拒绝后不能用同一请求接口再次
+拉起授权框，未存在的通知取消可返回 1600007。2026-09-09 查询的这些合同支持保留产品
+deferred 分支、独立等待发布、使用设置入口建立测试前置状态，以及直接观察卡片缺席。
+Huawei 指南页面未能完整获取，故不把搜索摘要当平台依据；平台实况由本轮真机补充。
+
+两个入口复用 `notification-regression.ps1`，收拢原本重复的通知设置、窗口恢复和观察。
+正向场景先保存系统开关，临时开启，确认后重新打开设置验证持久状态；失败清理也按
+原状态恢复，不依赖点击后的缓存布尔值。完整 Pane ID 带字段边界匹配，fired 和 published
+分别等待。已可见的单实例不再次启动；仅识别出的 LeanTTY 通知授权框可被拒绝，无关
+弹窗不点击。清理直接检查通知中心缺席，并恢复屏幕超时；split 清理只在本轮发起过
+创建时执行，不以全局隐藏 Tab 的输入数判定当前 Pane。
+
+**软件证据。** 真实脚本的原发布判断在完整 ID、异步发布和同 epoch 双 Pane 三项反例
+失败；修复后通过。新增 25 项宿主回归覆盖设置已开/已关、同值不切换、点击结果未知、
+确认失败、持久回读不符、权限弹窗、无关弹窗、已可见窗口、日志通道失败、通知残留，
+以及两个真实 finally 的正常、权限恢复失败和 awake 恢复失败。只替换设备 I/O，不复制
+被测判断。既有源码位置断言已跟随共享所有者调整，没有放宽清理消费者。
+
+**真机证据。** HAD-W32 / ARM64 / USB 使用原 C2 的精确签名 HAP，SHA-256 仍为
+`bf7028f641baa617e6a2088cff20d14fde288160a7dee06c1d3a0a1f38c75b12`。
+正向、权限开关、双 Pane suppression/reset 三组均单次通过，且原通知设置恢复为关闭、
+卡片缺席、可见单 Pane 和屏幕超时恢复均通过。权限组观察到关闭时 deferred/零卡片、
+开启后发布并返回；此次没有再次出现授权框，符合既有拒绝后的平台限制。弹窗恢复只有
+软件反例和 §8.35 的旧运行时证据，未冒充本轮新真机覆盖；不清除用户数据强造弹窗。
+ColdStale、LateHandled、LateDestroyed 和 ManualDismiss 未在本轮重跑，仍须正式验收。
+
+本地证据根为 `build/verification/notification-harness-20260909/`。聚焦软件执行曾在沙箱
+身份下无法调用已注册 WSL；这是执行身份错误，按规则切换桌面用户重跑，不修产品或
+重试物理场景。既有 JSON 深度警告是报告拒绝测试的预期输入，并非物理结果截断。
+
+**续跑边界。** 当前补丁被五个既有候选兼容门拒绝，旧正式报告也不允许跨 harness
+直接 resume。选择修复合并后按 R4 建立新精确候选，再执行 QH 和注册矩阵，不新增白名单
+或兼容框架。本轮是开发诊断闭合，未重写 §8.35 的正式失败，也未执行 C4 或发布操作。

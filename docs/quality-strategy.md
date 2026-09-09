@@ -1128,6 +1128,22 @@ transition: action, expected dialog, confirmation action and observable
 postcondition. Clicking a close/delete control without handling and verifying
 its confirmation state is incomplete automation.
 
+Background-BEL publication scenarios use the existing system notification
+settings entry to establish an enabled fixture. Capture the original toggle
+before mutation, confirm and reopen it to verify persistence, and restore that
+original state even if a later action fails. The permission scenario separately
+tests disabled/deferred and enabled/published behavior. Match complete runtime
+Pane IDs with field boundaries; a BEL `fired` marker does not acknowledge the
+asynchronous notification publication. A permission dialog is an obstructing
+system surface, not evidence of Pane loss. Reject only the identified LeanTTY
+notification prompt when returning from that fixture; never dismiss an unrelated
+dialog. A previous refusal can prevent the platform from showing the prompt
+again: report whether it appeared without clearing user data to force it.
+Cleanup requires direct notification-card absence and restored system settings,
+not a cancellation log for a notification that may never have existed.
+`test-notification-regression.ps1`, included in the `tooling` group, exercises
+the actual notification helpers and scenario publication/finally boundaries.
+
 Each named scenario declares one primary oracle for its claimed result. SSH and
 transfer claims use the controlled server or final file/state; input-integrity
 claims use actual echo or received bytes; UI/focus claims use the current layout
