@@ -7,6 +7,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 
 & (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1') -SelfTest
 & (Join-Path $PSScriptRoot 'test-mosh-runtime-contract.ps1')
+& (Join-Path $PSScriptRoot 'test-recovery-command-probes.ps1')
 & (Join-Path $PSScriptRoot 'test-notification-regression.ps1')
 
 function Assert-True {
@@ -1630,7 +1631,7 @@ foreach ($scriptName in @(
             $content.Contains("'TerminalBridge: Bridge initialized'") -and
             $content.Contains("'Acceptance: Rebuild Renderer'") -and
             $content.Contains("'EnhanceMinimizeBtn'") -and
-            $content.Contains("Invoke-LocalTerminalCommand -Command 'help'") -and
+            $content.Contains("Invoke-LocalTerminalCommand -Command 'help mosh'") -and
             $content.Contains('function Invoke-LocalTerminalCommand') -and
             $content.Contains('Get-LeanTTYActiveTerminalInputNodes -Layout $layout') -and
             $content.Contains('$contentTop = Get-LeanTTYTerminalContentTop -Layout $Layout') -and

@@ -830,16 +830,18 @@ try {
             -PaneCount 1 -TabCount 1 -SearchCount 0 `
             -LayoutName 'layout-ownership-single-pane.json' | Out-Null
 
-        Invoke-LocalTerminalCommand -Command 'help'
-        Invoke-LocalTerminalCommand -Command 'help'
+        # Topic help avoids Downloads authorization; six copies retain a scrollback fixture.
+        foreach ($copy in 1..6) {
+            Invoke-LocalTerminalCommand -Command 'help mosh'
+        }
 
         Invoke-TerminalSearchShortcut
         $searchClosed = $false
         Wait-TerminalSearchState `
             -Open $true -LayoutName 'layout-ownership-single-search.json' | Out-Null
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Syntax'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Usage: mosh'
         Wait-TerminalSearchQueryState `
-            -ExpectedQuery 'Syntax' `
+            -ExpectedQuery 'Usage: mosh' `
             -ExpectedResultPattern '^[1-9][0-9]*/[1-9][0-9]*$' `
             -LayoutName 'layout-ownership-single-query.json' | Out-Null
 
@@ -856,9 +858,9 @@ try {
         Wait-TerminalWorkspaceState `
             -PaneCount 2 -TabCount 1 -SearchCount 1 `
             -LayoutName 'layout-ownership-active-pane-search.json' | Out-Null
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Syntax'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Usage: mosh'
         Wait-TerminalSearchQueryState `
-            -ExpectedQuery 'Syntax' `
+            -ExpectedQuery 'Usage: mosh' `
             -ExpectedResultPattern '^(?:No results|未找到结果)$' `
             -LayoutName 'layout-ownership-right-no-result.json' | Out-Null
 
@@ -872,9 +874,9 @@ try {
         Wait-TerminalWorkspaceState `
             -PaneCount 2 -TabCount 1 -SearchCount 1 `
             -LayoutName 'layout-ownership-left-search.json' | Out-Null
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Syntax'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Usage: mosh'
         Wait-TerminalSearchQueryState `
-            -ExpectedQuery 'Syntax' `
+            -ExpectedQuery 'Usage: mosh' `
             -ExpectedResultPattern '^[1-9][0-9]*/[1-9][0-9]*$' `
             -LayoutName 'layout-ownership-left-match.json' | Out-Null
         Save-LeanTTYDeviceScreenshot `
@@ -899,9 +901,9 @@ try {
         Wait-TerminalWorkspaceState `
             -PaneCount 1 -TabCount 1 -SearchCount 1 `
             -LayoutName 'layout-ownership-before-new-tab.json' | Out-Null
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Syntax'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Usage: mosh'
         Wait-TerminalSearchQueryState `
-            -ExpectedQuery 'Syntax' `
+            -ExpectedQuery 'Usage: mosh' `
             -ExpectedResultPattern '^[1-9][0-9]*/[1-9][0-9]*$' `
             -LayoutName 'layout-ownership-first-tab-match.json' | Out-Null
         Invoke-TerminalWorkspaceChord -Action 'new-tab'
@@ -915,9 +917,9 @@ try {
         Wait-TerminalWorkspaceState `
             -PaneCount 1 -TabCount 2 -SearchCount 1 `
             -LayoutName 'layout-ownership-second-tab-search.json' | Out-Null
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Syntax'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Usage: mosh'
         Wait-TerminalSearchQueryState `
-            -ExpectedQuery 'Syntax' `
+            -ExpectedQuery 'Usage: mosh' `
             -ExpectedResultPattern '^(?:No results|未找到结果)$' `
             -LayoutName 'layout-ownership-second-tab-no-result.json' | Out-Null
         Invoke-TerminalWorkspaceChord -Action 'next-tab'
@@ -933,9 +935,9 @@ try {
         Wait-TerminalWorkspaceState `
             -PaneCount 1 -TabCount 2 -SearchCount 1 `
             -LayoutName 'layout-ownership-first-tab-reopened.json' | Out-Null
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Syntax'
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Usage: mosh'
         Wait-TerminalSearchQueryState `
-            -ExpectedQuery 'Syntax' `
+            -ExpectedQuery 'Usage: mosh' `
             -ExpectedResultPattern '^[1-9][0-9]*/[1-9][0-9]*$' `
             -LayoutName 'layout-ownership-first-tab-rematch.json' | Out-Null
         Invoke-TerminalWorkspaceChord -Action 'next-tab'
@@ -1066,7 +1068,7 @@ try {
             -RequireTerminalFocus $false `
             -TimeoutSeconds 30 | Out-Null
         $searchClosed = $true
-        Invoke-LocalTerminalCommand -Command 'help'
+        Invoke-LocalTerminalCommand -Command 'help mosh'
         $focusLogs = Wait-SearchAppLog `
             -Pattern 'ACCEPTANCE_INPUT_SUBMIT sequence=\d+,kind=command' `
             -TimeoutSeconds 20

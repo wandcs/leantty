@@ -1154,6 +1154,15 @@ never a primary pass oracle. Add a second boundary observation only when risk or
 ambiguity requires it; collecting every expensive observation at every poll is
 not acceptance rigor.
 
+Local commands used only to prove input or lifecycle recovery MUST avoid
+unrelated permission requests. Top-level `help` synchronizes the offline guide
+and may request Downloads access; use topic help for recovery and synthetic
+search content, with a matching output oracle and sufficient scrollback data.
+Actual guide/Downloads tests retain their permission contract. Do not grant a
+permission globally, increase layout retries or change product permission policy
+to make an unrelated recovery probe pass. `test-recovery-command-probes.ps1`
+executes the real scenario command boundaries in the `tooling` group.
+
 A composite scenario MUST give each independent product claim its own direct
 oracle. Do not infer terminal page restoration from Search UI state, Session
 ownership from a derived AppStorage projection, or network recovery from process

@@ -2305,3 +2305,118 @@ ColdStale、LateHandled、LateDestroyed 和 ManualDismiss 未在本轮重跑，�
 **续跑边界。** 当前补丁被五个既有候选兼容门拒绝，旧正式报告也不允许跨 harness
 直接 resume。选择修复合并后按 R4 建立新精确候选，再执行 QH 和注册矩阵，不新增白名单
 或兼容框架。本轮是开发诊断闭合，未重写 §8.35 的正式失败，也未执行 C4 或发布操作。
+
+### 8.37 R4 通知闭合与回收探针授权干扰（2026-09-09）
+
+**结果与身份。** PR #174 合并后，两份独立发布 clone 干净固定到
+`759937c3465692ef4f8539a6535f27041d4d2010`，tree 为
+`0d4ec5023efa351b3cf904da84342f1f9953b06f`。本地证据根为
+`build/verification/release-1.6.0-r4-pr174-20260909/`。新的 release-mode 测试签名包通过
+签名及日志隔离检查，readiness 八项通过，合成 Agent 完整结果回读 53,840 字节、零模型。
+该包只用于 readiness，不是 C2 或 production 交付包。
+
+C1 全部 26 项、C2 和正式 QH 通过；C2 HAP SHA-256 为
+`1331c584dbff2169f7cf01d62a6a4b967877e1329eafe032b89b386e4c4478d5`。
+两种新包中的指南均匹配维护者确认的 revision 9、97,952 字节及既有 SHA-256。
+正式入口运行约 3,007 秒：C1/C2 265 秒，QH 111 秒，六组密钥/Host 1,270 秒，七组通知
+683 秒，卸载恢复 15 秒，Mosh 子矩阵 662 秒。顶层共 16 阶段 passed、1 failed、3 pending。
+
+**通过范围。** 六组密钥/Host 场景及清理通过。现有 `id_ed25519` 的产品导出、临时移除、
+重启后恢复和独立备份缺席审计通过；私钥字节、公钥指纹及 Host 配置一致。七组通知包含
+正向、suppression、ColdStale、LateHandled、LateDestroyed、ManualDismiss 和权限开关，
+均通过且各自恢复原通知设置、确认卡片缺席、应用可见和屏幕超时恢复，闭合 §8.36 的正式
+补验范围。随后普通卸载/重装验证通过：普通偏好和工作区重置，精确候选重新安装；该脚本
+不读取或修改持久 Asset Store SSH 资产。不能把卸载前的权限恢复观察当成卸载后开关审计。
+
+Mosh `compatibility` 单次约 457 秒通过：Bash、tmux、Vim、less、512 字节输入、242 行
+输出、宽字符与组合字符、临时屏幕、resize、关闭及原页面/搜索隔离；实际 Codex 0.149.1
+TUI 零模型子探针也通过。Unicode、临时页活动和关闭截图已逐张复核；截图不单独证明
+原页恢复，后者仍依赖原场景断言。设备状态、fixture、反向映射、临时目录清理通过，
+持久测试网络保留。截图含其他桌面窗口，只保留本地，不作为可公开附件。
+
+**停止边界。** `runtime-reclaim` 单次失败于
+`[environment] HarmonyOS UI layout remained empty after two captures`。此前已观察到同一
+应用 PID、运行图丢弃、首次输入拦截、工作区身份保持、空本地缓冲及一次 native cancel。
+随后本地 `help` 精确输入 4/4 字符、一次 Enter、提交确认；日志中帮助正文已有输出 ACK。
+首个错误观察是搜索帮助输出之前的应用过滤布局根节点为空。后续 `localCommandPassed`、
+`serverAbsent`、`ptyAbsent` 尚未走到断言，其默认 false 不是对应产品行为失败的证据。
+原报告保持 failed/environment，不将已通过的前半链路写成完整回收通过。
+
+**一次最小诊断。** 源码所有者链为 `showTopLevelHelp → UserGuideManager.sync →
+DownloadsAccessManager.ensure → requestPermissionsFromUser/requestPermissionOnSetting`。
+顶层帮助会同步指南并申请 Downloads 权限；前序普通卸载已改变权限前置状态。
+2026-09-09 核查的 OpenHarmony 官方
+[用户授权说明](https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/security/AccessToken/request-user-authorization.md)
+说明 user-grant 权限通过系统 UI 动态请求，不能假定先前授权仍成立；具体界面影响以真机
+为准。Huawei 对应指南未成功获取，不将其搜索摘要当依据。
+
+停止后仅用同一候选执行一次本地 `help`：4/4 字符、一次 Enter，零网络会话、零模型、未
+发送允许或拒绝。全局布局含 382 节点及 LeanTTY 的 Downloads 授权说明，应用过滤布局
+却为零子节点；截图直接显示“文件夹权限”和未选中的“下载”文件夹。结果保存在独立的
+`help-permission-probe/result.json`，标记不可作为验收。它确认了测试探针的权限副作用及
+观察盲区，与原失败日志吻合；不证明 Mosh 本体有故障，也不回填原正式失败。
+
+**清理和后续取舍。** 原失败场景通过 `app-relaunch` 恢复清理，设备测试状态、fixture
+进程、反向映射和临时目录均报告缺席，持久测试网络保留。独立探针仅停止空闲测试应用以
+取消待处理授权，再启动并确认一个终端可见、屏幕超时恢复，没有替用户选择权限。
+本轮未修产品或冻结工具，未重跑 Mosh 或矩阵。后六个 Mosh 场景以及长任务、Agent/IME、
+SSH 未执行；未切 WiFi、未合盖。正式模型预算仍为 9，模型阶段尚未开始，原汇总的实际
+计量保持 `unavailable`；不将独立零模型检查冒充正式计量。完整 C3 未通过，未进入 C4、
+tag、GitHub Release 或商店提交。
+
+下一批先让恢复探针验证恢复本身：现有 `help mosh` 只输出命令帮助及提示符，不走指南
+同步。需用实际脚本反例证明替换效果，并检查其他生命周期探针是否误带权限依赖；真正
+验证顶层帮助/指南的场景保留其权限合同。不全局授权、不增加布局重试、不改产品策略。
+清理和影响范围证明、现有候选兼容门、QH 共同决定 R1–R4，不能承诺不同 harness 直接
+resume，也不因工具缺陷自动重建整个候选；停止报告与诊断证据保持各自身份。
+
+收尾只读审计确认两份冻结 clone 仍干净且身份精确、C2 字节未变、上一轮五份报告哈希
+未变，并固定本轮原报告哈希；`closing-audit.json` 不是新增验收资格。状态文档的聚焦
+`policy` 两项检查通过，未追加完整软件或物理矩阵。
+
+### 8.38 回收和搜索探针去除无关权限依赖（2026-09-09）
+
+**原因与取舍。** 本轮修复 §8.37 已定位的验收探针副作用，不改产品、依赖、指南或权限
+策略。当天核查的 OpenHarmony
+[用户授权说明](https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/security/AccessToken/request-user-authorization.md)
+要求在需要权限时动态请求，并重新检查权限状态；
+[UiTest 文档](https://github.com/openharmony/testfwk_arkxtest/blob/master/README_zh.md)
+说明 `dumpLayout -b` 仅返回指定应用窗口。两者与原真机“系统授权界面可见、应用过滤布局
+为空”的证据一致，不支持靠延长重试或假定卸载后仍有授权修复。未找到能直接解释并修复
+同一案例的上游 issue，未据此升级 SDK。测试只需证明本地输入和生命周期恢复，无需借道
+指南同步；真实顶层帮助和 Downloads 验证仍保留原权限合同。
+
+**变更范围。** Mosh 的运行时回收、受控进程恢复及合盖后的两条恢复分支改用 `help mosh`；
+运行时回收的输出断言同步改为 `Usage: mosh`。同类检查发现终端搜索的 Pane/Tab fixture
+和 renderer 重建探针也使用顶层帮助，故一并修复。搜索 fixture 使用六份 topic help，
+保留超过视口的内容，并成对调整六处查询输入及断言。不改 SSH `~?` 帮助、设备输入所有者、
+布局等待、重试预算或清理逻辑，不新建公共抽象。新增规则进入 `quality-strategy.md`。
+
+**软件证据。** 新增七项回归解析真实 PowerShell 场景并执行命令提交、fixture 构造和
+查询边界，只替换设备 I/O；旧脚本七项失败，修复后七项通过。测试不等同于整个场景或
+ArkTS 所有者执行；实际产品路径由下述真机补充。回归接入 `tooling`，聚焦 `policy,tooling`
+六项注册检查通过。既有 JSON 深度警告和输入重试输出来自软件负例，不是本轮物理异常。
+
+**真机证据。** HAD-W32 / ARM64 / USB，设备报告 OpenHarmony 6.1.1.135、UiTest 6.0.2.3，
+HDC 3.2.0d。原保留 C2 HAP 字节未变，SHA-256 仍为
+`1331c584dbff2169f7cf01d62a6a4b967877e1329eafe032b89b386e4c4478d5`。
+运行时回收单次约 205 秒通过：同一进程内运行图丢弃、首次输入拦截、工作区身份保留、
+本地缓冲清空、native cancel 一次、远端 server/PTY 缺席，以及新帮助输出可搜索均通过。
+偏好一致、秘密检查及完整清理通过，本次无需 `app-relaunch` 清理恢复。
+
+搜索 Pane/Tab 隔离与 renderer 生命周期单次合计约 161 秒通过。六份帮助提供滚屏命中，
+另一 Pane 和 Tab 不串入历史；查询按切换、最小化及 renderer 重建合同清除，重建后可提交
+本地命令。七次命令均一次输入、一次 Enter、零不匹配；运行时回收的自动化稳定性亦为
+stable。截图复核了帮助滚屏、最终单 Pane 和重建后输入；像素不替代场景的归属及进程断言。
+搜索关闭、单 Tab/Pane 和屏幕超时恢复通过。本轮零模型、未切 WiFi、未合盖，未重做密钥
+导出/删除/恢复；其他受控进程和合盖分支只有本轮软件覆盖，仍需正式矩阵验证。
+
+**证据身份与后续。** 本地证据根为 `build/verification/recovery-command-probes-20260909/`。
+两份真机报告均为诊断，不具备正式验收资格；搜索入口使用 `DiagnosticHap`，报告按该模式
+记录包来源，不因外层哈希审计而改写成正式 retained 验收。收尾审计确认候选字节、上一轮
+正式报告及失败报告均未变，并固定本轮报告哈希。截图含其他桌面内容，仅本地保存。
+
+五个现有候选兼容门均拒绝这七个变更路径，正式 resume 也要求相同 harness 身份。选择
+合并后按 R4 建立新候选，再执行 readiness、C1/C2、QH 及完整 C3；不扩大白名单或新建
+兼容框架。本轮不重跑 QH 或正式矩阵，不将原 16 个通过阶段拼接到新报告；完整 C3 仍未
+通过，未执行 C4、tag、GitHub Release 或 AppGallery 操作。

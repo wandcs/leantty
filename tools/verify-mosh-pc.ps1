@@ -3816,9 +3816,10 @@ try {
             -Query $shellCommand -ExpectMatch $false `
             -Name 'mosh-runtime-reclaim-old-output-negative-search'
         Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
-        Submit-LocalCommand -Command 'help' -Stage 'mosh-runtime-reclaim-local-command'
+        # Top-level help synchronizes the guide and may open a Downloads permission dialog.
+        Submit-LocalCommand -Command 'help mosh' -Stage 'mosh-runtime-reclaim-local-command'
         $runtimeReclaimEvidence.localCommandPassed = Test-MoshTerminalSearch `
-            -Query 'Syntax:' -ExpectMatch $true -Name 'mosh-runtime-reclaim-help-output-search'
+            -Query 'Usage: mosh' -ExpectMatch $true -Name 'mosh-runtime-reclaim-help-output-search'
         $localPromptReady = $true
         Wait-WslProcessAbsent -LinuxPid $moshServerPid -TimeoutSeconds 8 | Out-Null
         Wait-WslProcessAbsent -LinuxPid $fixtureTerminalPid -TimeoutSeconds 8 | Out-Null
@@ -3933,7 +3934,7 @@ try {
             -Query $shellCommand -ExpectMatch $false `
             -Name 'process-recovery-old-output-negative-search'
         Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
-        Submit-LocalCommand -Command 'help' -Stage 'process-recovery-local-command'
+        Submit-LocalCommand -Command 'help mosh' -Stage 'process-recovery-local-command'
         $localPromptReady = $true
         $recoveryLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
         $processRecoverySessionNotRestored =
@@ -4333,7 +4334,7 @@ try {
                 -Query $shellCommand -ExpectMatch $false `
                 -Name 'operator-lid-old-output-negative-search'
             Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
-            Submit-LocalCommand -Command 'help' -Stage 'operator-lid-local-command'
+            Submit-LocalCommand -Command 'help mosh' -Stage 'operator-lid-local-command'
             $localPromptReady = $true
             $recoveryLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
             $processRecoverySessionNotRestored =
@@ -4374,7 +4375,7 @@ try {
                     -Query $shellCommand -ExpectMatch $false `
                     -Name 'operator-lid-runtime-old-output-negative-search'
                 Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
-                Submit-LocalCommand -Command 'help' -Stage 'operator-lid-runtime-local-command'
+                Submit-LocalCommand -Command 'help mosh' -Stage 'operator-lid-runtime-local-command'
                 $localPromptReady = $true
                 $processRecoverySessionNotRestored =
                     $processRecoveryRemoteContentAbsent -and
