@@ -36,6 +36,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
+. (Join-Path $PSScriptRoot 'notification-regression.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
 . (Join-Path $PSScriptRoot 'agent-compatibility-policy.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
@@ -77,7 +78,17 @@ if ($DiagnosticHap) {
         -RepoRoot $repoRoot `
         -Candidate $candidate `
         -AllowedHarnessPaths @(
-            'tools/verify-agent-compatibility-pc.ps1',
+           'tools/verify-agent-compatibility-pc.ps1',
+            'tools/verify-mosh-pc.ps1',
+            'tools/verify-ssh-auth-pc.ps1',
+            'tools/verify-terminal-search-pc.ps1',
+            'docs/next-work.md',
+            'tools/verify-long-task-notification-pc.ps1',
+            'tools/notification-regression.ps1',
+            'tools/test-notification-regression.ps1',
+            'tools/test-agent-ssh-gate.ps1',
+            'tools/test-device-regression.ps1',
+            'docs/design/notification-fixture-permission-20260911.md',
             'tools/agent-compatibility-policy.ps1',
             'tools/agent-compatibility-wsl.sh',
             'tools/agent-compatibility/*',
@@ -151,6 +162,8 @@ $sshdProcess = $null
 $awakeLeaseAcquired = $false
 $panelOpen = $false
 $appProcessId = ''
+$processId = '' # Notification helper's log-owner contract.
+$notificationState = @{originalEnabled=$null;settingsOpen=$false;promptRejected=$false;restored=$false}
 $knownHostCleanupAttempted = $false
 $isolatedTabCreated = $false
 $isolatedTabId = ''
@@ -221,6 +234,7 @@ if ($SshPrerequisiteProbe) {
     $result | Add-Member -NotePropertyName actualModelRequests -NotePropertyValue 0
 }
 $result.resources = [ordered]@{
+    notificationPermission = $notificationState
     fixtureDirectory = $fixtureDirectory
     wslFixtureDirectory = $wslFixtureDirectory
     sshdConfigPath = $sshdConfigPath
@@ -253,37 +267,6 @@ function Write-AgentCompatibilityProgress {
         updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
         contentRecorded = $false
     })
-}
-
-function Get-FullLayout {
-    param([Parameter(Mandatory = $true)][string]$Name)
-    return Get-LeanTTYDeviceLayout `
-        -Hdc $hdc -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory "$Name.json") `
-        -BundleName ''
-}
-
-function Find-OneNode {
-    param(
-        [Parameter(Mandatory = $true)]$Layout,
-        [Parameter(Mandatory = $true)][scriptblock]$Predicate,
-        [Parameter(Mandatory = $true)][string]$Description
-    )
-    $matches = @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object $Predicate)
-    if ($matches.Count -ne 1) {
-        throw "[harness] Expected one $Description node, found $($matches.Count)"
-    }
-    return $matches[0]
-}
-
-function Click-Node {
-    param(
-        [Parameter(Mandatory = $true)]$Node,
-        [Parameter(Mandatory = $true)][string]$Description
-    )
-    $center = Get-LeanTTYBoundsCenter -Bounds ([string]$Node.attributes.bounds)
-    Invoke-LeanTTYDeviceClick `
-        -Hdc $hdc -Target $Target -X $center.x -Y $center.y -Operation $Description
 }
 
 function Focus-TerminalInput {
@@ -454,18 +437,6 @@ function Get-MinimizeButton {
         [string]$_.attributes.hostWindowId -eq $windowId -and
         [string]$_.attributes.id -eq 'EnhanceMinimizeBtn'
     }
-}
-
-function Open-NotificationPanel {
-    param([Parameter(Mandatory = $true)][string]$Stage)
-    $desktop = Get-FullLayout -Name "$Stage-desktop"
-    $button = Find-OneNode -Layout $desktop -Description 'system notification panel button' -Predicate {
-        [string]$_.attributes.id -eq 'PluginRootComponent_Stack_status_bar_notification_panel'
-    }
-    Click-Node -Node $button -Description 'Open HarmonyOS notification panel'
-    $script:panelOpen = $true
-    Start-Sleep -Milliseconds 700
-    return Get-FullLayout -Name "$Stage-notification-panel"
 }
 
 function Assert-NotificationAndReturn {
@@ -1321,6 +1292,7 @@ function Invoke-AgentSelectedChecks {
     Submit-LocalCommand `
         -Command "ssh-keygen -R [127.0.0.1]:$Port" `
         -Stage 'known-host-post-clean'
+    Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $Port
     $script:knownHostRemoved = $true
 }
 
@@ -1338,6 +1310,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw '[infrastructure] Exact diagnostic HAP deployment failed' }
     $appProcessId = (@(& $hdc -t $Target shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
     if ($appProcessId -notmatch '^\d+$') { throw '[environment] LeanTTY process is not running' }
+    $processId = $appProcessId
+    Ensure-LeanTTYVisible -Stage 'permission-prerequisite' -DismissPermissionPrompt | Out-Null
+    [void](Set-NotificationEnabled -Enabled $true -Stage 'agent-permission')
+    Write-AgentCompatibilityProgress -Stage 'notification-permission-ready'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-AgentWorkspaceChord -Action 'new-tab'
     $isolatedTabCreated = $true
@@ -1539,8 +1515,14 @@ try {
   }
   try {
     if ($panelOpen) {
-        & $hdc -t $Target shell 'uitest uiInput keyEvent Back' 2>$null | Out-Null
+        try {
+            Invoke-LeanTTYSerializedUiTest -Hdc $hdc -Target $Target -Arguments @('uiInput','keyEvent','Back') -Operation 'Close notification panel for cleanup' | Out-Null
+            $panelOpen = $false
+        } catch { $cleanupFailures.Add('Notification panel dismissal failed') }
     }
+    try {
+        if ($appProcessId -match '^\d+$') { Restore-NotificationPermission }
+    } catch { $cleanupFailures.Add('Notification permission restoration failed') }
     try {
         & wsl.exe --exec bash $wslToolPath cleanup $wslFixtureDirectory 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'WSL fixture cleanup failed' }
@@ -1548,8 +1530,7 @@ try {
     if ($isolatedTabCreated) {
         try {
             if ($isolatedTabId.Length -eq 0) { throw '[harness] Cannot close an unidentified Agent Tab' }
-            & $hdc -t $Target shell 'aa start -a EntryAbility -b com.leantty.app' | Out-Null
-            Start-Sleep -Milliseconds 500
+            Ensure-LeanTTYVisible -Stage 'isolated-tab-cleanup' -DismissPermissionPrompt | Out-Null
             Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
             Invoke-AgentWorkspaceChord -Action 'close-active'
             Wait-AppLog -Pattern ('Tab removed: ' + [regex]::Escape($isolatedTabId)) `
@@ -1559,6 +1540,9 @@ try {
             $cleanupFailures.Add('Isolated Agent test tab cleanup failed')
         }
     }
+    try {
+        if ($appProcessId -match '^\d+$') { Assert-NotificationCleanup | Out-Null }
+    } catch { $cleanupFailures.Add('Notification absence or visible Pane cleanup failed') }
     $captureEvidenceDirectory = Join-Path $EvidenceDirectory 'captures'
     $captureResultsDirectory = Join-Path $fixtureDirectory 'results'
     if (Test-Path -LiteralPath $captureResultsDirectory -PathType Container) {
@@ -1661,7 +1645,7 @@ try {
     if ($cleanupFailures.Count -eq 0) {
         $result.cleanup = [ordered]@{
             result = 'passed'
-            detail = 'tmux-stopped; reverse-port-removed; sshd-stopped; screen-timeout-restored; raw-captures-and-fixture-removed'
+            detail = 'original-notification-setting-restored; notification-absence-audited; tmux-stopped; reverse-port-removed; sshd-stopped; screen-timeout-restored; raw-captures-and-fixture-removed'
         }
     } else {
         $result.cleanup = [ordered]@{

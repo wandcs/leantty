@@ -14,14 +14,19 @@ param(
     [ValidateRange(20000, 40000)]
     [int]$Port = 23150,
     [switch]$DiagnosticHap,
+    [switch]$ShellOnlyProbe,
     [string]$CandidateBasePath = '',
     [string]$PreviousAttemptId = ''
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ShellOnlyProbe -and -not $DiagnosticHap) {
+    throw '-ShellOnlyProbe requires -DiagnosticHap; it is not long-task acceptance'
+}
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
+. (Join-Path $PSScriptRoot 'notification-regression.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
@@ -71,8 +76,17 @@ if ($DiagnosticHap) {
         -RepoRoot $repoRoot `
         -Candidate $candidate `
         -AllowedHarnessPaths @(
-            'tools/verify-long-task-notification-pc.ps1',
+           'tools/verify-long-task-notification-pc.ps1',
+            'tools/verify-mosh-pc.ps1',
+            'tools/verify-ssh-auth-pc.ps1',
+            'tools/verify-terminal-search-pc.ps1',
+            'docs/next-work.md',
             'tools/test-device-regression.ps1',
+            'tools/notification-regression.ps1',
+            'tools/test-notification-regression.ps1',
+            'tools/test-agent-ssh-gate.ps1',
+            'tools/verify-agent-compatibility-pc.ps1',
+            'docs/design/notification-fixture-permission-20260911.md',
             'tools/candidate-store.ps1',
             'tools/release-tooling.ps1',
             'tools/device-regression.ps1',
@@ -93,7 +107,6 @@ $temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '
 $fixtureDirectory = Join-Path $temporaryRoot (
     'leantty-long-task-' + [Guid]::NewGuid().ToString('N')
 )
-New-Item -ItemType Directory -Path $fixtureDirectory | Out-Null
 $wslFixtureDirectory = ConvertTo-LeanTTYWslPath -WindowsPath $fixtureDirectory
 $sshdConfigPath = Join-Path $fixtureDirectory 'sshd_config'
 $authorizedKeysPath = Join-Path $fixtureDirectory 'authorized_keys'
@@ -107,39 +120,14 @@ $sshdProcess = $null
 $panelOpen = $false
 $processId = ''
 $knownHostCleanupAttempted = $false
+$knownHostRemoved = $false
+$knownHostRemovalSubmitted = $false
+$sshMayBeActive = $false
+$primaryFailure = $null
+$awakeLeaseAcquired = $false
+$notificationState = @{originalEnabled=$null;settingsOpen=$false;promptRejected=$false;restored=$false}
 $cleanupFailures = [Collections.Generic.List[string]]::new()
 $commandObservations = [Collections.Generic.List[object]]::new()
-
-function Get-FullLayout {
-    param([Parameter(Mandatory = $true)][string]$Name)
-    return Get-LeanTTYDeviceLayout `
-        -Hdc $hdc -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory "$Name.json") `
-        -BundleName ''
-}
-
-function Find-OneNode {
-    param(
-        [Parameter(Mandatory = $true)]$Layout,
-        [Parameter(Mandatory = $true)][scriptblock]$Predicate,
-        [Parameter(Mandatory = $true)][string]$Description
-    )
-    $matches = @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object $Predicate)
-    if ($matches.Count -ne 1) {
-        throw "[harness] Expected one $Description node, found $($matches.Count)"
-    }
-    return $matches[0]
-}
-
-function Click-Node {
-    param(
-        [Parameter(Mandatory = $true)]$Node,
-        [Parameter(Mandatory = $true)][string]$Description
-    )
-    $center = Get-LeanTTYBoundsCenter -Bounds ([string]$Node.attributes.bounds)
-    Invoke-LeanTTYDeviceClick `
-        -Hdc $hdc -Target $Target -X $center.x -Y $center.y -Operation $Description
-}
 
 function Focus-TerminalInput {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -184,11 +172,15 @@ function Wait-AppLog {
     )
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
-        $logs = (@(& $hdc -t $Target shell "hilog -z 1200 -t app -P $processId" 2>&1) -join "`n")
+        $logs = Get-RawAppLogs
         if ($logs -match $Pattern) { return $logs }
+        if ($Pattern.StartsWith('Background BEL notification published:') -and
+            $logs -match 'notification deferred because notifications are disabled') {
+            throw '[environment] Notification permission was disabled during the workload'
+        }
         Start-Sleep -Milliseconds 500
     }
-    throw "[product] Timed out waiting for app log: $Pattern"
+    throw "[unknown] Timed out waiting for app log: $Pattern"
 }
 
 function Wait-FileText {
@@ -221,21 +213,12 @@ function Get-MinimizeButton {
     }
 }
 
-function Open-NotificationPanel {
-    param([Parameter(Mandatory = $true)][string]$Stage)
-    $desktop = Get-FullLayout -Name "$Stage-desktop"
-    $button = Find-OneNode -Layout $desktop -Description 'system notification panel button' -Predicate {
-        [string]$_.attributes.id -eq 'PluginRootComponent_Stack_status_bar_notification_panel'
-    }
-    Click-Node -Node $button -Description 'Open HarmonyOS notification panel'
-    $script:panelOpen = $true
-    Start-Sleep -Milliseconds 700
-    return Get-FullLayout -Name "$Stage-notification-panel"
-}
-
 function Connect-WorkloadServer {
     param([Parameter(Mandatory = $true)][string]$Stage)
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    $script:sshMayBeActive = $true
+    $script:knownHostRemoved = $false
+    $script:knownHostRemovalSubmitted = $false
     Submit-LocalCommand `
         -Command "ssh -p $Port -i id_ed25519 wandc@127.0.0.1" `
         -Stage "$Stage-connect"
@@ -255,7 +238,7 @@ function Disconnect-WorkloadServer {
         Invoke-LeanTTYDeviceCtrlD -Hdc $hdc -Target $Target
         Start-Sleep -Milliseconds 350
         $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $processId
-        if ($logs -match 'SSH closed, exitCode=') { return }
+        if ($logs -match 'SSH closed, exitCode=') { $script:sshMayBeActive = $false; return }
     }
     throw '[product] Long-task SSH session did not close cleanly'
 }
@@ -345,6 +328,13 @@ $result = [ordered]@{
         tmuxSocket = $tmuxSocket
     }
     workloads = @()
+    shellOnlyProbe = [bool]$ShellOnlyProbe
+    notificationPermission = $notificationState
+    modelUsage = [ordered]@{
+        plannedRequests = $(if ($ShellOnlyProbe) { 0 } else { 1 })
+        actualRequests = 0
+        automaticRetries = 0
+    }
     commandAutomation = $null
     cleanup = 'pending'
     status = 'failed'
@@ -352,6 +342,7 @@ $result = [ordered]@{
 
 function Write-LongTaskProgress {
     param([Parameter(Mandatory = $true)][string]$Stage)
+    Write-LeanTTYAtomicJson -Path (Join-Path $EvidenceDirectory 'result.json') -Value $result -Depth 10
     Write-LeanTTYAtomicJson -Path (Join-Path $EvidenceDirectory 'progress.json') -Value ([ordered]@{
         schemaVersion = 1
         scenario = 'long-task-notification'
@@ -359,13 +350,20 @@ function Write-LongTaskProgress {
         previousAttemptId = $PreviousAttemptId
         stage = $Stage
         completedWorkloadCount = @($result.workloads).Count
-        totalWorkloadCount = 3
+        totalWorkloadCount = $(if ($ShellOnlyProbe) { 1 } else { 3 })
         updatedAt = [DateTimeOffset]::UtcNow.ToString('o')
         contentRecorded = $false
     })
 }
 
 try {
+    Write-LongTaskProgress -Stage 'starting'
+    & (Join-Path $PSScriptRoot 'preflight-device.ps1') -Target $Target `
+        -EvidencePath (Join-Path $EvidenceDirectory 'device-preflight.json')
+    if ($LASTEXITCODE -ne 0) { throw '[infrastructure] Device preflight failed' }
+    Start-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $Target -TimeoutMilliseconds 900000
+    $awakeLeaseAcquired = $true
+    New-Item -ItemType Directory -Path $fixtureDirectory | Out-Null
     $publicKeyOutput = @(
         & $hdc -t $Target shell -b com.leantty.app `
             'cat /data/app/el2/100/base/com.leantty.app/haps/entry/files/.ssh/id_ed25519.pub' 2>&1
@@ -467,48 +465,75 @@ try {
     $processId = (@(& $hdc -t $Target shell 'pidof com.leantty.app' 2>&1) -join "`n").Trim()
     if ($processId -notmatch '^\d+$') { throw '[environment] LeanTTY process is not running' }
 
+    Ensure-LeanTTYVisible -Stage 'permission-prerequisite' -DismissPermissionPrompt | Out-Null
+    [void](Set-NotificationEnabled -Enabled $true -Stage 'workload-permission')
+    Write-LongTaskProgress -Stage 'notification-permission-ready'
+
+    $knownHostCleanupAttempted = $true
+    $knownHostRemovalSubmitted = $true
     Submit-LocalCommand `
         -Command "ssh-keygen -R [127.0.0.1]:$Port" `
         -Stage 'known-host-pre-clean'
-    $knownHostCleanupAttempted = $true
+    Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $Port
+    $knownHostRemoved = $true
 
     $result.workloads += Invoke-WorkloadScenario `
         -Name shell -Command $wslShellPath `
         -CompletionPath $shellCompletionPath -CompletionPattern '^shell-ok' -TimeoutSeconds 30
     Write-LongTaskProgress -Stage 'shell-complete'
-    $result.workloads += Invoke-WorkloadScenario `
-        -Name tmux -Command $wslTmuxPath `
-        -CompletionPath $tmuxCompletionPath -CompletionPattern '^tmux-ok' -TimeoutSeconds 30
-    Write-LongTaskProgress -Stage 'tmux-complete'
-    $result.workloads += Invoke-WorkloadScenario `
-        -Name codex -Command $wslCodexPath `
-        -CompletionPath $codexCompletionPath -CompletionPattern '^codex-exit=0' -TimeoutSeconds 180
-    Write-LongTaskProgress -Stage 'codex-complete'
+    if (-not $ShellOnlyProbe) {
+        $result.workloads += Invoke-WorkloadScenario `
+            -Name tmux -Command $wslTmuxPath `
+            -CompletionPath $tmuxCompletionPath -CompletionPattern '^tmux-ok' -TimeoutSeconds 30
+        Write-LongTaskProgress -Stage 'tmux-complete'
+        # Once dispatched, a request count is unknown until completion is proved.
+        $result.modelUsage.actualRequests = 'unavailable'
+        Write-LongTaskProgress -Stage 'codex-starting'
+        $result.workloads += Invoke-WorkloadScenario `
+            -Name codex -Command $wslCodexPath `
+            -CompletionPath $codexCompletionPath -CompletionPattern '^codex-exit=0' -TimeoutSeconds 180
+        $result.modelUsage.actualRequests = 1
+        Write-LongTaskProgress -Stage 'codex-complete'
+    }
 
-    Submit-LocalCommand `
-        -Command "ssh-keygen -R [127.0.0.1]:$Port" `
-        -Stage 'known-host-post-clean'
+    $knownHostRemovalSubmitted = $true
+    Submit-LocalCommand -Command "ssh-keygen -R [127.0.0.1]:$Port" -Stage 'known-host-post-clean'
+    Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $Port
+    $knownHostRemoved = $true
     $result.commandAutomation = Get-LeanTTYDeviceCommandAutomationSummary `
         -Observations $commandObservations `
         -BusinessVerdict 'passed' `
-        -BusinessPostcondition 'shell-tmux-codex-notification-return-and-session-cleanup'
+        -BusinessPostcondition $(if ($ShellOnlyProbe) { 'shell-notification-return-and-session-cleanup' }
+            else { 'shell-tmux-codex-notification-return-and-session-cleanup' })
     $result.status = 'passed'
+} catch {
+    $primaryFailure = $_
+    $result.failure = [ordered]@{
+        exceptionType = $_.Exception.GetType().FullName
+        scriptLineNumber = $_.InvocationInfo.ScriptLineNumber
+        domain = $(if ($_.Exception.Message -match '^\[(\w+)\]') { $Matches[1] } else { 'unknown' })
+    }
 } finally {
+  try {
     if ($panelOpen) {
-        & $hdc -t $Target shell 'uitest uiInput keyEvent Back' 2>$null | Out-Null
+        try {
+            Invoke-LeanTTYSerializedUiTest -Hdc $hdc -Target $Target -Arguments @('uiInput','keyEvent','Back') -Operation 'Close notification panel for cleanup' | Out-Null
+            $panelOpen = $false
+        } catch { $cleanupFailures.Add('Notification panel dismissal failed') }
     }
     try {
-        $cleanupLayout = Get-FullLayout -Name 'cleanup-before-activation'
-        $cleanupInputs = @(Get-LeanTTYTerminalInputNodes -Layout $cleanupLayout)
-        if ($cleanupInputs.Count -eq 0) {
-            & $hdc -t $Target shell 'aa start -a EntryAbility -b com.leantty.app' 2>$null | Out-Null
-            Start-Sleep -Milliseconds 500
-            $cleanupLayout = Get-FullLayout -Name 'cleanup-visible'
-            $cleanupInputs = @(Get-LeanTTYTerminalInputNodes -Layout $cleanupLayout)
-        }
-        if ($cleanupInputs.Count -ne 1) { throw "Expected one Pane, found $($cleanupInputs.Count)" }
+        if ($processId -match '^\d+$') { Restore-NotificationPermission }
     } catch {
-        $cleanupFailures.Add('LeanTTY visibility or single-Pane cleanup failed: ' + $_.Exception.Message)
+        $cleanupFailures.Add('Notification permission restoration failed')
+    }
+    try {
+        if ($processId -match '^\d+$') {
+            $cleanupLayout = Assert-NotificationCleanup
+            $cleanupInputs = @(Get-LeanTTYTerminalInputNodes -Layout $cleanupLayout)
+            if ($cleanupInputs.Count -ne 1) { throw 'Expected one visible Pane' }
+        }
+    } catch {
+        $cleanupFailures.Add('Notification absence or visible single-Pane cleanup failed')
     }
     if ($mappingActive) {
         & $hdc -t $Target fport rm "tcp:$Port" "tcp:$Port" 2>$null | Out-Null
@@ -524,15 +549,48 @@ try {
     } catch {}
     if ($null -ne $sshdProcess -and -not $sshdProcess.HasExited) {
         Stop-Process -Id $sshdProcess.Id -Force
-        $sshdProcess.WaitForExit(5000)
+        [void]$sshdProcess.WaitForExit(5000)
     }
+    try {
+        if ($knownHostCleanupAttempted -and -not $knownHostRemoved) {
+            Ensure-LeanTTYVisible -Stage 'known-host-cleanup' -DismissPermissionPrompt | Out-Null
+            if ($sshMayBeActive) {
+                Wait-AppLog -Pattern 'SSH closed, exitCode=' -TimeoutSeconds 8 | Out-Null
+                $sshMayBeActive = $false
+            }
+            if (-not $knownHostRemovalSubmitted) {
+                $knownHostRemovalSubmitted = $true
+                Submit-LocalCommand -Command "ssh-keygen -R [127.0.0.1]:$Port" -Stage 'known-host-failure-cleanup'
+            }
+            Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $Port
+            $knownHostRemoved = $true
+        }
+    } catch { $cleanupFailures.Add('Temporary known-host removal was not confirmed') }
+    $result.knownHostRemoved = $knownHostRemoved
     if (Test-Path -LiteralPath $fixtureDirectory) {
-        Remove-Item -LiteralPath $fixtureDirectory -Recurse -Force
+        $resolvedFixture = [IO.Path]::GetFullPath($fixtureDirectory)
+        $tempPrefix = $temporaryRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedFixture.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            (Split-Path $resolvedFixture -Leaf) -notmatch '^leantty-long-task-[a-f0-9]{32}$') {
+            throw '[cleanup] Fixture cleanup target failed validation'
+        }
+        Remove-Item -LiteralPath $resolvedFixture -Recurse -Force
     }
+  } catch {
+    $cleanupFailures.Add('Cleanup interrupted: ' + $_.Exception.GetType().FullName +
+        ' at line ' + $_.InvocationInfo.ScriptLineNumber)
+  } finally {
+    try {
+        if ($awakeLeaseAcquired) {
+            Stop-LeanTTYDeviceAwakeLease -Hdc $hdc -Target $Target
+            $awakeLeaseAcquired = $false
+        }
+    } catch { $cleanupFailures.Add('Screen timeout restoration failed') }
+    if ($cleanupFailures.Count -gt 0) { $result.status = 'invalid/interrupted' }
     if ($cleanupFailures.Count -eq 0) {
         $result.cleanup = [ordered]@{
             result = 'passed'
-            detail = 'app-visible-single-pane; notification-cancel-requested; reverse-port-removed; ' +
+            detail = 'app-visible-single-pane; notification-absence-audited; original-notification-setting-restored; reverse-port-removed; ' +
                 'temporary-sshd-stopped; tmux-socket-removed; fixture-files-removed; app-identity-unchanged'
         }
     } else {
@@ -544,8 +602,10 @@ try {
         -Value $result `
         -Depth 10
     Write-LongTaskProgress -Stage 'complete'
+  }
 }
 
+if ($null -ne $primaryFailure) { throw $primaryFailure }
 if ($cleanupFailures.Count -gt 0) {
     throw '[cleanup] ' + ($cleanupFailures -join '; ')
 }

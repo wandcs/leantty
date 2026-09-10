@@ -217,6 +217,137 @@ foreach ($scriptName in @('verify-background-bell-notification-pc.ps1','verify-b
         }
     }
 }
+# Check actual caller wiring as well as the shared state machine above.
+foreach ($scriptName in @('verify-long-task-notification-pc.ps1','verify-agent-compatibility-pc.ps1')) {
+    Test-Case "$scriptName-owns-permission-before-work" {
+        $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Raw
+        Assert-True ($source.Contains(". (Join-Path `$PSScriptRoot 'notification-regression.ps1')")) 'Caller does not reuse notification permission owner'
+        $prepare = $source.IndexOf('Set-NotificationEnabled -Enabled $true')
+        $work = $source.LastIndexOf($(if ($scriptName -match 'long-task') { '$result.workloads += Invoke-WorkloadScenario' } else { 'Invoke-AgentSelectedChecks' }))
+        Assert-True ($prepare -gt 0 -and $prepare -lt $work) 'Notification work can start without verified permission'
+        Assert-True ($source.Contains('Restore-NotificationPermission') -and $source.Contains('Assert-NotificationCleanup')) 'Caller lacks restoration or direct notification absence audit'
+        Assert-True ($source.Contains('notificationPermission = $notificationState')) 'Result loses permission state on early failure'
+    }
+}
+Test-Case 'shell-only-cannot-qualify-as-formal-or-send-model-request' {
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'verify-long-task-notification-pc.ps1'), [ref]$null, [ref]$null)
+    $guard = @($ast.EndBlock.Statements | Where-Object { $_.Extent.Text.StartsWith('if ($ShellOnlyProbe -and') })
+    Assert-True ($guard.Count -eq 1) 'Missing diagnostic-only shell probe guard'
+    $ShellOnlyProbe=$true; $DiagnosticHap=$false; $caught=$false
+    try { . ([scriptblock]::Create($guard[0].Extent.Text)) } catch { $caught=$true }
+    Assert-True $caught 'Shell probe accepted as formal evidence'
+    $body = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+        $n.Extent.Text.StartsWith('if (-not $ShellOnlyProbe)') }, $true))
+    Assert-True ($body.Count -eq 1) 'Missing bounded workload selector'
+    $probe=@{calls=0}
+    function Invoke-WorkloadScenario { $probe.calls++ }
+    . ([scriptblock]::Create($body[0].Extent.Text))
+    Assert-True ($probe.calls -eq 0) 'Shell-only probe invoked extra workloads'
+}
+Test-Case 'known-host-removal-waits-for-postcondition-not-submission' {
+    $hdc='unused'; $Target='unused'; $probe=@{reads=0}
+    function Invoke-HdcChecked {
+        $probe.reads++
+        if ($probe.reads -eq 1) { return "[127.0.0.1]:23150 ssh-ed25519 AAAA`nLEANTTY_KNOWN_HOST_READ_OK" }
+        return "[127.0.0.1]:23151 ssh-ed25519 AAAA`nLEANTTY_KNOWN_HOST_READ_OK"
+    }
+    function Start-Sleep {}
+    Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port 23150
+    Assert-True ($probe.reads -eq 2) 'Removal did not wait for the exact endpoint to disappear'
+}
+Test-Case 'unconfirmed-known-host-read-is-not-absence' {
+    function Invoke-HdcChecked { return 'cat: permission denied' }
+    $caught=''
+    try { Wait-LeanTTYDeviceKnownHostAbsent -Hdc unused -Target unused -Port 23150 }
+    catch { $caught=$_.Exception.Message }
+    Assert-True ($caught -match '^\[infrastructure\]') 'Failed file read qualified as cleanup'
+}
+foreach ($submitted in @($false,$true)) {
+    Test-Case "long-task-removal-submitted-$submitted-is-never-repeated" {
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot 'verify-long-task-notification-pc.ps1'), [ref]$null, [ref]$null)
+        $cleanup = $ast.Find({ param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+            $n.Extent.Text.StartsWith('if ($knownHostCleanupAttempted -and -not $knownHostRemoved)') }, $true)
+        $knownHostCleanupAttempted=$true; $knownHostRemoved=$false; $knownHostRemovalSubmitted=$submitted
+        $sshMayBeActive=$false; $hdc='unused'; $Target='unused'; $Port=23150
+        $probe=@{submissions=0;reads=0}
+        function Ensure-LeanTTYVisible {}
+        function Submit-LocalCommand { $probe.submissions++ }
+        function Wait-LeanTTYDeviceKnownHostAbsent { $probe.reads++ }
+        . ([scriptblock]::Create($cleanup.Extent.Text))
+        Assert-True ($probe.submissions -eq [int](-not $submitted) -and $probe.reads -eq 1 -and $knownHostRemoved) 'Unknown earlier submission was repeated or absence was not observed'
+    }
+}
+foreach ($scriptName in @('verify-long-task-notification-pc.ps1','verify-agent-compatibility-pc.ps1')) {
+    foreach ($failureMode in @('none','permission','audit','early')) {
+        Test-Case "$scriptName-new-cleanup-$failureMode" {
+            $parseErrors=$null
+            $ast = [Management.Automation.Language.Parser]::ParseFile(
+                (Join-Path $PSScriptRoot $scriptName), [ref]$null, [ref]$parseErrors)
+            Assert-True ($parseErrors.Count -eq 0) 'Caller has a PowerShell parse error'
+            $owner = @($ast.EndBlock.Statements | Where-Object {
+                $_ -is [Management.Automation.Language.TryStatementAst]
+            })[-1]
+            $fixture=@{restore=0;audit=0;writes=0}
+            $notificationState=@{originalEnabled=$false;restored=$false}
+            $processId=$appProcessId=$(if ($failureMode -eq 'early') { '' } else { '1' })
+            $panelOpen=$mappingActive=$isolatedTabCreated=$awakeLeaseAcquired=$knownHostCleanupAttempted=$false
+            $knownHostRemoved=$true; $sshdProcess=$null; $hdc='unused'; $Target='unused'
+            $fixtureDirectory='unused';$wslToolPath='unused';$wslFixtureDirectory='unused';$tmuxSocket='unused'
+            $EvidenceDirectory='unused';$attemptId='unused';$PreviousAttemptId='';$ShellOnlyProbe=$true
+            $cleanupFailures=[Collections.Generic.List[string]]::new()
+            $result=@{status='failed';failure='original-business-failure'}
+            function Write-AgentCompatibilityProgress { $fixture.writes++ }
+            function Write-LongTaskProgress { $fixture.writes++ }
+            function Write-LeanTTYAtomicJson { $fixture.writes++ }
+            function Restore-NotificationPermission {
+                $fixture.restore++
+                if ($failureMode -eq 'permission') { throw 'controlled-permission-failure' }
+                $notificationState.restored=$true
+            }
+            function Assert-NotificationCleanup {
+                $fixture.audit++
+                if ($failureMode -eq 'audit') { throw 'controlled-audit-failure' }
+                return @{attributes=@{}}
+            }
+            function Get-LeanTTYTerminalInputNodes { return @{attributes=@{}} }
+            function Test-Path { return $false }
+            function wsl.exe { $global:LASTEXITCODE=0 }
+            . ([scriptblock]::Create($owner.Finally.Extent.Text.Trim().Substring(1).TrimEnd().TrimEnd('}')))
+            Assert-True ($fixture.restore -eq [int]($failureMode -ne 'early')) 'Early exit skipped acquired permission or touched an unstarted app'
+            Assert-True ($fixture.audit -eq [int]($failureMode -ne 'early')) 'Permission restore failure prevented independent notification audit'
+            Assert-True ($result.cleanup.result -eq $(if ($failureMode -in @('permission','audit')) {'failed'} else {'passed'})) 'Cleanup result is incorrect'
+            Assert-True ($result.failure -eq 'original-business-failure') 'Cleanup overwrote the primary failure'
+            Assert-True ($fixture.writes -gt 0) 'Cleanup did not persist evidence'
+        }
+    }
+}
+. (Join-Path $PSScriptRoot 'candidate-store.ps1')
+foreach ($scriptName in @('verify-long-task-notification-pc.ps1','verify-agent-compatibility-pc.ps1',
+        'verify-mosh-pc.ps1','verify-ssh-auth-pc.ps1','verify-terminal-search-pc.ps1')) {
+    Test-Case "$scriptName-permission-repair-is-harness-only" {
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot $scriptName), [ref]$null, [ref]$null)
+        $call = $ast.Find({ param($n) $n -is [Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Assert-LeanTTYCandidateHarnessCompatibility' }, $true)
+        $arguments = @($call.CommandElements)
+        $position = [array]::FindIndex($arguments, [Predicate[object]]{ param($n)
+            $n -is [Management.Automation.Language.CommandParameterAst] -and $n.ParameterName -eq 'AllowedHarnessPaths' })
+        Assert-True ($position -ge 0) 'Missing candidate compatibility gate'
+        $allowed = $arguments[$position + 1].SafeGetValue()
+        $paths = @('tools/device-regression.ps1','tools/test-notification-regression.ps1',
+            'tools/test-agent-ssh-gate.ps1','tools/test-device-regression.ps1',
+            'tools/verify-long-task-notification-pc.ps1','tools/verify-agent-compatibility-pc.ps1',
+            'tools/verify-mosh-pc.ps1','tools/verify-ssh-auth-pc.ps1','tools/verify-terminal-search-pc.ps1',
+            'docs/quality-strategy.md','docs/next-work.md','docs/design/notification-fixture-permission-20260911.md')
+        Assert-LeanTTYHarnessOnlyPaths -ChangedPaths $paths -AllowedPaths $allowed
+        $rejected=$false
+        try { Assert-LeanTTYHarnessOnlyPaths -ChangedPaths @('entry/src/main/ets/model/ui/BackgroundBellNotification.ets') -AllowedPaths $allowed }
+        catch { $rejected=$true }
+        Assert-True $rejected 'Product permission code can reuse an old candidate'
+    }
+}
 $report = @{checks=@($checks.ToArray()); failed=@($checks | Where-Object result -eq failed).Count}
 if ($EvidencePath) {
     New-Item -ItemType Directory -Path (Split-Path $EvidencePath -Parent) -Force | Out-Null
