@@ -8,6 +8,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 & (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1') -SelfTest
 & (Join-Path $PSScriptRoot 'test-mosh-runtime-contract.ps1')
 & (Join-Path $PSScriptRoot 'test-recovery-command-probes.ps1')
+& (Join-Path $PSScriptRoot 'test-mosh-lifecycle-observation.ps1')
 & (Join-Path $PSScriptRoot 'test-notification-regression.ps1')
 
 function Assert-True {
@@ -1793,8 +1794,8 @@ foreach ($predictionContract in @(
     @{ Source = $moshNativeTypes; Text = 'predictionMode: string' },
     @{ Source = $moshNative; Text = 'connect_with_prediction_mode' },
     @{ Source = $moshNative; Text = 'mosh_prediction_mode(&prediction_mode)' },
-    @{ Source = $moshManifest; Text = 'tag = "v0.1.0"' },
-    @{ Source = $moshManifest; Text = 'version = "=0.1.0"' },
+    @{ Source = $moshManifest; Text = 'tag = "v0.1.1"' },
+    @{ Source = $moshManifest; Text = 'version = "=0.1.1"' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_MOSH_OUTPUT mode=' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' },
     @{ Source = $moshIndexPage; Text = 'runtime.viewModel.getMode() === TerminalMode.IDLE' },

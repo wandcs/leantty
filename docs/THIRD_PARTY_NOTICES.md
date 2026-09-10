@@ -77,7 +77,7 @@ Font License 1.1. The full OFL text and the Nerd Fonts attribution note are in
 ## Rust Dependencies (Cargo)
 
 `leantty_ssh/Cargo.lock` resolves 181 registry packages and the external Git
-package `mosh-client 0.1.0` for `aarch64-unknown-linux-ohos`; all report a
+package `mosh-client 0.1.1` for `aarch64-unknown-linux-ohos`; all report a
 license expression or license file through Cargo metadata. The complete
 versioned inventory is in `docs/RUST_DEPENDENCIES.md`.
 
@@ -94,10 +94,10 @@ The license families present are:
 - 0BSD OR MIT OR Apache-2.0 (`adler2`);
 - MIT OR Zlib OR Apache-2.0 (`miniz_oxide`).
 
-Rechecked offline on 2026-09-07: `mosh-client` uses `MIT OR Apache-2.0`.
-Cargo.toml selects exact version `=0.1.0` and release tag `v0.1.0` from
+Rechecked offline on 2026-09-10: `mosh-client` uses `MIT OR Apache-2.0`.
+Cargo.toml selects exact version `=0.1.1` and release tag `v0.1.1` from
 `https://github.com/wandcs/mosh-client-rs.git`; Cargo.lock fixes its source to
-`aed5865c1d779a989a3b0cf0c84aa046313515ee`, not a moving main branch.
+`dfc188975ed0a8bd734bbf14bd6cfdeb3838e629`, not a moving main branch.
 
 The repository `LICENSE` contains the Apache-2.0 text. Release builds copy each
 available package-specific license, copyright, copying, notice, or unlicense

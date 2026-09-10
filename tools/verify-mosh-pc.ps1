@@ -773,26 +773,30 @@ function Disable-MoshPredictionRelayPause {
 function Get-MoshLifecycleObservation {
     param([AllowNull()][string]$Logs = $null)
 
-    $logs = if ($null -eq $Logs) {
+    # A typed string coerces null to ''. Test binding, not the parameter value.
+    $snapshot = if (-not $PSBoundParameters.ContainsKey('Logs')) {
         Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
     } else { $Logs }
+    if ([string]::IsNullOrWhiteSpace($snapshot)) {
+        throw '[harness] Mosh lifecycle log snapshot is empty; absence of close/error is unproved'
+    }
     $interruption = [regex]::Match(
-        $logs,
+        $snapshot,
         'Mosh reachability state=interrupted reason=(?<reason>no_recent_contact|no_recent_reply)'
     )
     $closeReason = [regex]::Match(
-        $logs,
+        $snapshot,
         'Mosh close reason=(?<reason>disconnect_requested|local_closed|remote_closed|resize_channel_closed|write_channel_closed|unknown)'
     )
     return [pscustomobject]@{
-        logs = $logs
-        closed = ($logs -match 'Mosh Session closed')
-        error = ($logs -match 'Mosh error stage=')
+        logs = $snapshot
+        closed = ($snapshot -match 'Mosh Session closed')
+        error = ($snapshot -match 'Mosh error stage=')
         interrupted = $interruption.Success
         interruptionReason = $(if ($interruption.Success) {
             $interruption.Groups['reason'].Value
         } else { 'not-observed' })
-        recovered = ($logs -match 'Mosh reachability state=responsive transition=recovered')
+        recovered = ($snapshot -match 'Mosh reachability state=responsive transition=recovered')
         closeReason = $(if ($closeReason.Success) {
             $closeReason.Groups['reason'].Value
         } else { 'not-observed' })
@@ -4292,13 +4296,23 @@ try {
             [string]$resumedProcessIdentity.key -ceq [string]$initialProcessIdentity.key
         $operatorPreRecoveryLogs = Get-LeanTTYAppLogs `
             -Hdc $hdc -Target $targetId -ProcessId $appPid
-        $operatorPreRecoveryObservation = Get-MoshLifecycleObservation `
-            -Logs $operatorPreRecoveryLogs
-        $operatorPreRecoveryCloseObserved = $operatorPreRecoveryObservation.closed
-        $operatorPreRecoveryErrorObserved = $operatorPreRecoveryObservation.error
-        $operatorPreRecoveryInterruptionObserved = $operatorPreRecoveryObservation.interrupted
-        $operatorPreRecoveryInterruptionReason = $operatorPreRecoveryObservation.interruptionReason
-        $operatorPreRecoveryCloseReason = $operatorPreRecoveryObservation.closeReason
+        if ([string]::IsNullOrWhiteSpace($operatorPreRecoveryLogs)) {
+            # The old process may be gone. These optional diagnostics cannot
+            # prove a clean lifecycle or block the workspace-recovery branch.
+            $operatorPreRecoveryCloseObserved = $null
+            $operatorPreRecoveryErrorObserved = $null
+            $operatorPreRecoveryInterruptionObserved = $null
+            $operatorPreRecoveryInterruptionReason = 'unknown'
+            $operatorPreRecoveryCloseReason = 'unknown'
+        } else {
+            $operatorPreRecoveryObservation = Get-MoshLifecycleObservation `
+                -Logs $operatorPreRecoveryLogs
+            $operatorPreRecoveryCloseObserved = $operatorPreRecoveryObservation.closed
+            $operatorPreRecoveryErrorObserved = $operatorPreRecoveryObservation.error
+            $operatorPreRecoveryInterruptionObserved = $operatorPreRecoveryObservation.interrupted
+            $operatorPreRecoveryInterruptionReason = $operatorPreRecoveryObservation.interruptionReason
+            $operatorPreRecoveryCloseReason = $operatorPreRecoveryObservation.closeReason
+        }
         $remoteShellAliveBeforeRecoveryInput = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
         $serverAliveBeforeRecoveryInput = Test-WslProcessPresent -LinuxPid $moshServerPid
         if (Test-Path -LiteralPath $fixtureEvent -PathType Leaf) {
@@ -4445,10 +4459,10 @@ try {
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
         $pauseStopwatch = [Diagnostics.Stopwatch]::StartNew()
         Enable-MoshUdpImpairment
-        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        $pauseLogs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
             -Pattern 'Mosh reachability state=interrupted reason=no_recent_contact' `
-            -TimeoutSeconds 15 | Out-Null
-        $pauseObservation = Get-MoshLifecycleObservation
+            -TimeoutSeconds 15
+        $pauseObservation = Get-MoshLifecycleObservation -Logs $pauseLogs
         $automaticCloseObserved = $pauseObservation.closed
         $automaticErrorObserved = $pauseObservation.error
         $interruptionObserved = $pauseObservation.interrupted
@@ -4466,15 +4480,19 @@ try {
         Write-LiveStatus -Stage 'udp-recovery'
         Disable-MoshUdpImpairment
         $networkPauseDurationMs = [long]$pauseStopwatch.Elapsed.TotalMilliseconds
-        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        $recoveryLogs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
             -Pattern 'Mosh reachability state=responsive transition=recovered' `
-            -TimeoutSeconds 15 | Out-Null
+            -TimeoutSeconds 15
         $recoveryCaseId = 'resume_' + $attemptId.Substring(0, 12)
         Submit-MoshInput -Text "ltty-mosh-check $recoveryCaseId"
         Wait-ControlFileMatch -Path $fixtureEvent `
             -Pattern "(?ms)^case=$([regex]::Escape($recoveryCaseId))$.*^result=passed$" `
             -TimeoutSeconds 20 | Out-Null
         $recoveryObservation = Get-MoshLifecycleObservation
+        # Keep matched transitions even if the bounded buffer advances during
+        # input. The fresh post-command read above must also be nonempty.
+        $recoveryObservation = Get-MoshLifecycleObservation -Logs (
+            @($pauseObservation.logs, $recoveryLogs, $recoveryObservation.logs) -join "`n")
         $automaticCloseObserved = $automaticCloseObserved -or $recoveryObservation.closed
         $automaticErrorObserved = $automaticErrorObserved -or $recoveryObservation.error
         $recoveredStatusObserved = $recoveryObservation.recovered
@@ -4499,7 +4517,7 @@ try {
         Set-MoshDeviceWifi -Enabled $false -Name 'mosh-wifi-off'
         $wifiControlCleanupVerified = $false
         $wifiOutcome = Wait-MoshWifiInterruptionOutcome -TimeoutSeconds 20
-        $pauseObservation = Get-MoshLifecycleObservation
+        $pauseObservation = Get-MoshLifecycleObservation -Logs $wifiOutcome.logs
         $automaticCloseObserved = $pauseObservation.closed
         $automaticErrorObserved = $pauseObservation.error
         $interruptionObserved = $pauseObservation.interrupted
@@ -4523,9 +4541,9 @@ try {
         Write-LiveStatus -Stage 'wifi-recovery'
         Set-MoshDeviceWifi -Enabled $true -Name 'mosh-wifi-on'
         $wifiControlCleanupVerified = $true
-        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        $recoveryLogs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
             -Pattern 'Mosh reachability state=responsive transition=recovered' `
-            -TimeoutSeconds 25 | Out-Null
+            -TimeoutSeconds 25
         Focus-ActiveTerminalInput -Name 'mosh-wifi-recovery-focus.json' | Out-Null
         $recoveryCaseId = 'wifi_' + $attemptId.Substring(0, 12)
         Submit-MoshInput -Text "ltty-mosh-check $recoveryCaseId"
@@ -4533,6 +4551,8 @@ try {
             -Pattern "(?ms)^case=$([regex]::Escape($recoveryCaseId))$.*^result=passed$" `
             -TimeoutSeconds 25 | Out-Null
         $recoveryObservation = Get-MoshLifecycleObservation
+        $recoveryObservation = Get-MoshLifecycleObservation -Logs (
+            @($pauseObservation.logs, $recoveryLogs, $recoveryObservation.logs) -join "`n")
         $automaticCloseObserved = $automaticCloseObserved -or $recoveryObservation.closed
         $automaticErrorObserved = $automaticErrorObserved -or $recoveryObservation.error
         $recoveredStatusObserved = $recoveryObservation.recovered
@@ -4560,11 +4580,11 @@ try {
         }
         Wait-WslProcessAbsent -LinuxPid $moshServerPid -TimeoutSeconds 8 | Out-Null
         $disappearanceStopwatch = [Diagnostics.Stopwatch]::StartNew()
-        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
+        $disappearanceLogs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
             -Pattern 'Mosh reachability state=interrupted reason=no_recent_contact' `
-            -TimeoutSeconds 15 | Out-Null
+            -TimeoutSeconds 15
         $networkPauseDurationMs = [long]$disappearanceStopwatch.Elapsed.TotalMilliseconds
-        $disappearanceObservation = Get-MoshLifecycleObservation
+        $disappearanceObservation = Get-MoshLifecycleObservation -Logs $disappearanceLogs
         $automaticCloseObserved = $disappearanceObservation.closed
         $automaticErrorObserved = $disappearanceObservation.error
         $interruptionObserved = $disappearanceObservation.interrupted

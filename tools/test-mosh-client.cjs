@@ -30,7 +30,8 @@ const policy = compile(sourceRoot + 'model/ssh/SshControlEventPolicy.ets', { '..
 const escape = compile(sourceRoot + 'model/mosh/MoshEscapeParser.ets', {});
 const terminalTypes = compile(sourceRoot + 'common/types/TerminalTypes.ets', {});
 const logs = [];
-const logger = { Logger: class { info() {} error() {} warn(message) { logs.push(message); } } };
+const logger = { Logger: class { info() {} error(message) { logs.push(message); }
+  warn(message) { logs.push(message); } } };
 const nativeSessions = new Map();
 let nextId = 1;
 const native = {
@@ -207,6 +208,62 @@ test('post-admission native failure retains its existing failure classification'
   f.client.write('a'); failure(f.session); close(f.session);
   assert.equal(f.events.length, 1);
   assert.equal(f.events[0].error.code, mosh.MoshErrorCode.PROTOCOL);
+});
+
+test('current native error records safe kind before owner clearing, once', async () => {
+  const f = await fixture(), start = logs.length;
+  f.session.control({ kind: 'error', sessionId: f.session.id, generation: f.session.generation,
+    layer: 'target', code: 'network', stage: 'mosh_udp', detail: 'Session I/O failed: PermissionDenied' });
+  f.session.transport({ kind: 'close', code: 'network', detail: 'Session I/O failed: PermissionDenied' });
+  const failures = logs.slice(start).filter(line => line.startsWith('Mosh failure '));
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0], `Mosh failure generation=${f.session.generation},connected=true,closing=false,` +
+    'source=control,stage=mosh_udp,nativeCode=network,ioKind=PermissionDenied');
+  assert.equal(f.client.hasActiveSession(), false);
+  assert.equal(f.events.length, 1);
+  assert.equal(f.events[0].error.code, mosh.MoshErrorCode.NETWORK);
+});
+
+test('failure diagnostics reject arbitrary detail and metadata', () => {
+  for (const detail of ['private-key-content', 'Session I/O failed: PrivateSecret',
+    'Session I/O failed: TimedOut\nprivate-key-content', 'Session I/O failed: TimedOut ']) {
+    const error = new mosh.MoshError(mosh.MoshErrorCode.NETWORK, 'private-message', detail, 'mosh_udp');
+    assert.equal(mosh.MoshClient.safeErrorDiagnostic(error, 'control', 'network'),
+      'source=control,stage=mosh_udp,nativeCode=network,ioKind=unknown');
+  }
+  const error = new mosh.MoshError(mosh.MoshErrorCode.AUTH, 'secret',
+    'Session I/O failed: TimedOut', 'private-stage');
+  assert.equal(mosh.MoshClient.safeErrorDiagnostic(error, 'private-source', 'private-code'),
+    'source=unknown,stage=unknown,nativeCode=unknown,ioKind=unknown');
+  error.stage = 'authentication';
+  assert.match(mosh.MoshClient.safeErrorDiagnostic(error, 'control', 'network'), /ioKind=unknown$/);
+});
+
+test('stale control does not emit failure diagnostic or disturb another owner', async () => {
+  const f = await fixture(), start = logs.length;
+  f.session.control({ kind: 'error', sessionId: f.session.id, generation: f.session.generation + 1,
+    layer: 'target', code: 'network', stage: 'mosh_udp', detail: 'Session I/O failed: TimedOut' });
+  assert.equal(logs.slice(start).some(line => line.startsWith('Mosh failure ')), false);
+  assert.equal(f.client.isConnected(), true);
+  assert.equal(f.events.length, 0);
+  close(f.session);
+});
+
+test('transport and invalid reachability failure origins stay distinguishable', async () => {
+  for (const origin of ['transport', 'reachability']) {
+    const f = await fixture(), start = logs.length;
+    if (origin === 'transport') {
+      f.session.transport({ kind: 'close', code: 'callback', detail: 'private callback message' });
+    } else {
+      f.session.transport({ kind: 'reachability', layer: 'target', stage: 'mosh_udp',
+        status: 'private-status', reason: 'private-reason' });
+    }
+    const recorded = logs.slice(start).join('\n');
+    assert.match(recorded, new RegExp(`source=${origin},`));
+    assert.doesNotMatch(recorded, /private/);
+    assert.equal(f.events.length, 1);
+    assert.equal(f.client.hasActiveSession(), false);
+  }
 });
 
 test('temporary reachability interruption does not reject input or close the Session', async () => {

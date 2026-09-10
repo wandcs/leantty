@@ -196,7 +196,8 @@ export class MoshClient {
         (event: NativeControlEvent) => { this.handleNativeControlEvent(event) },
         (event: NativeAuthEvent) => { this.handleNativeAuthEvent(event) }
       )
-      this.logger.info('Mosh connect initiated, sessionId=' + this.sessionId)
+      this.logger.info('Mosh connect initiated, sessionId=' + this.sessionId +
+        ',generation=' + this.generation)
     } catch (e) {
       this.logger.error('moshConnect N-API failed')
       throw new Error('Mosh connect failed: ' + e)
@@ -403,11 +404,11 @@ export class MoshClient {
       // The transport close is ordered after its final data callback. During
       // rejected-input shutdown it owns completion, not the control channel.
       if (this.pendingInputError !== null) { return }
-      this.handleError(MoshClient.parseControlError(event))
+      this.handleError(MoshClient.parseControlError(event), 'control', event.code)
       return
     }
     this.handleError(new MoshError(
-      MoshErrorCode.INTERNAL, 'Invalid native Mosh control event', '', 'client'))
+      MoshErrorCode.INTERNAL, 'Invalid native Mosh control event', '', 'client'), 'control')
   }
 
   static parseControlError(event: NativeControlEvent): MoshError {
@@ -475,7 +476,7 @@ export class MoshClient {
       return
     }
     this.handleError(new MoshError(
-      MoshErrorCode.AUTH, 'Invalid native Mosh authentication event', '', 'authentication'))
+      MoshErrorCode.AUTH, 'Invalid native Mosh authentication event', '', 'authentication'), 'auth')
   }
 
   private handleNativeTransportEvent(event: NativeTransportEvent): void {
@@ -493,7 +494,7 @@ export class MoshClient {
       let reachability: MoshReachabilityInfo | null = MoshClient.parseReachability(event)
       if (reachability === null) {
         this.handleError(new MoshError(
-          MoshErrorCode.INTERNAL, 'Invalid native Mosh reachability event', '', 'client'))
+          MoshErrorCode.INTERNAL, 'Invalid native Mosh reachability event', '', 'client'), 'reachability')
       } else {
         this.emitEvent(MoshClientMessage.withReachability(reachability))
       }
@@ -501,12 +502,12 @@ export class MoshClient {
     }
     if (event.kind === 'close') {
       if (this.pendingInputError !== null) {
-        this.handleError(this.pendingInputError)
+        this.handleError(this.pendingInputError, 'transport', event.code)
         return
       }
       if (event.code.length > 0) {
         this.handleError(new MoshError(
-          MoshErrorCode.NETWORK, event.detail, event.detail, 'mosh_udp'))
+          MoshErrorCode.NETWORK, event.detail, event.detail, 'mosh_udp'), 'transport', event.code)
       } else {
         this.logger.info('Mosh close reason=' + MoshClient.safeCloseReason(event.detail))
         this.clearSession()
@@ -515,7 +516,7 @@ export class MoshClient {
       return
     }
     this.handleError(new MoshError(
-      MoshErrorCode.INTERNAL, 'Invalid native Mosh transport event', '', 'client'))
+      MoshErrorCode.INTERNAL, 'Invalid native Mosh transport event', '', 'client'), 'transport')
   }
 
   static safeCloseReason(reason: string): string {
@@ -569,12 +570,46 @@ export class MoshClient {
   }
 
   private reportError(error: MoshError): void {
+    this.logError(error, 'client', '')
     this.emitEvent(MoshClientMessage.withError(error))
   }
 
-  private handleError(error: MoshError): void {
+  private handleError(error: MoshError, source: string = 'client', nativeCode: string = ''): void {
+    this.logError(error, source, nativeCode)
     this.clearSession()
     this.emitEvent(MoshClientMessage.withError(error))
+  }
+
+  // Failure-only metadata, before clearSession discards the owner state. Never
+  // log native detail: bootstrap/authentication failures can contain secrets.
+  private logError(error: MoshError, source: string, nativeCode: string): void {
+    this.logger.error('Mosh failure generation=' + this.generation +
+      ',connected=' + this.connected + ',closing=' + (this.disconnectPromise !== null) +
+      ',' + MoshClient.safeErrorDiagnostic(error, source, nativeCode))
+  }
+
+  static safeErrorDiagnostic(error: MoshError, source: string, nativeCode: string): string {
+    let sources: string[] = ['control', 'transport', 'auth', 'reachability', 'client']
+    let stages: string[] = ['authentication', 'mosh_bootstrap', 'mosh_udp', 'client']
+    let codes: string[] = ['network', 'connection_timeout', 'terminal_size', 'protocol',
+      'resource_limit', 'state_exhausted', 'internal', 'callback', 'input', 'repaint',
+      'cancelled', 'auth', 'host_key', 'server', 'channel']
+    let kinds: string[] = ['NotFound', 'PermissionDenied', 'ConnectionRefused',
+      'ConnectionReset', 'HostUnreachable', 'NetworkUnreachable', 'ConnectionAborted',
+      'NotConnected', 'AddrInUse', 'AddrNotAvailable', 'NetworkDown', 'BrokenPipe',
+      'AlreadyExists', 'WouldBlock', 'InvalidInput', 'InvalidData', 'TimedOut',
+      'WriteZero', 'Interrupted', 'Unsupported', 'UnexpectedEof', 'OutOfMemory',
+      'Other', 'Uncategorized']
+    let ioKind: string = 'unknown'
+    if (error.stage === 'mosh_udp' && nativeCode === 'network') {
+      for (let kind of kinds) {
+        if (error.detail === 'Session I/O failed: ' + kind) { ioKind = kind; break }
+      }
+    }
+    return 'source=' + (sources.indexOf(source) >= 0 ? source : 'unknown') +
+      ',stage=' + (stages.indexOf(error.stage) >= 0 ? error.stage : 'unknown') +
+      ',nativeCode=' + (codes.indexOf(nativeCode) >= 0 ? nativeCode : 'unknown') +
+      ',ioKind=' + ioKind
   }
 
   private clearSession(): void {
