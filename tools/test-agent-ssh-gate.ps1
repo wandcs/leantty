@@ -75,6 +75,10 @@ function Test-Gate([string]$Name, [scriptblock]$Action) {
                 if ($script:fault -eq 'focus') { throw '[environment] controlled-focus-failure' }
                 return @{ controlled = $true }
             }
+            function Wait-LeanTTYDeviceKnownHostAbsent {
+                $script:trace.Add('known-host-absent')
+                if ($script:fault -eq 'known-host-read') { throw '[infrastructure] controlled-known-host-read-failure' }
+            }
             function Invoke-LeanTTYDeviceText {
                 $script:trace.Add('text')
                 if ($script:fault -eq 'text') { throw '[environment] controlled-text-failure' }
@@ -222,6 +226,13 @@ Test-Gate 'unconfirmed-local-state-blocks-cleanup-even-after-passed-check' {
     Expect-GateError { Invoke-AgentSelectedChecks } 'Local command state is unconfirmed'
     Assert-Gate (-not ($script:trace -contains 'local:known-host-post-clean') -and
         -not $script:knownHostRemoved) 'A check verdict cannot replace a local-state postcondition'
+}
+Test-Gate 'known-host-read-failure-cannot-claim-removal' {
+    function Invoke-AgentInteractionOnlyCheck { return [pscustomobject]@{ status = 'passed' } }
+    $script:fault = 'known-host-read'
+    Expect-GateError { Invoke-AgentSelectedChecks } 'controlled-known-host-read-failure'
+    Assert-Gate (-not $script:knownHostRemoved) 'Submission ACK became removal proof'
+    Assert-Gate (@($script:trace | Where-Object { $_ -eq 'local:known-host-post-clean' }).Count -eq 1) 'Failed observation must not repeat the command'
 }
 Test-Gate 'failed-capability-probe-does-not-submit-local-cleanup' {
     $Osc99CapabilityProbe = $true

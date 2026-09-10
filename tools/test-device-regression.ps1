@@ -3002,8 +3002,8 @@ Assert-True (
     $longTaskVerifier.Contains('contentRecorded = $false')
 ) 'Long-task notification scenario lacks real workloads, notification return, privacy, or cleanup oracles'
 Assert-True (
-    $longTaskVerifier.Contains('cleanup-before-activation') -and
-    $longTaskVerifier.Contains('if ($cleanupInputs.Count -eq 0)')
+    $longTaskVerifier.Contains('Restore-NotificationPermission') -and
+    $longTaskVerifier.Contains('Assert-NotificationCleanup')
 ) 'Long-task notification cleanup must not toggle an already visible singleton window'
 
 $agentCompatibilityVerifier = Get-Content -LiteralPath (

@@ -1144,6 +1144,15 @@ not a cancellation log for a notification that may never have existed.
 `test-notification-regression.ps1`, included in the `tooling` group, exercises
 the actual notification helpers and scenario publication/finally boundaries.
 
+Long-task and Agent notification workloads establish and restore the same
+permission fixture; earlier permission scenarios may leave notifications off.
+`verify-long-task-notification-pc.ps1 -DiagnosticHap -ShellOnlyProbe` runs only
+the real shell BEL/return/cleanup chain with zero model requests. It cannot
+qualify as formal long-task acceptance. The Agent SSH prerequisite probe also
+checks permission preparation/restoration without launching an Agent; it does
+not prove Agent notification publication. See the
+[2026-09-11 repair record](design/notification-fixture-permission-20260911.md).
+
 Each named scenario declares one primary oracle for its claimed result. SSH and
 transfer claims use the controlled server or final file/state; input-integrity
 claims use actual echo or received bytes; UI/focus claims use the current layout

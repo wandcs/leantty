@@ -1272,3 +1272,31 @@ function Save-LeanTTYDeviceScreenshot {
 function New-LeanTTYRegressionSecret {
     return 't' + [Guid]::NewGuid().ToString('N').Substring(0, 23)
 }
+function Wait-LeanTTYDeviceKnownHostAbsent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 65535)][int]$Port,
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 8
+    )
+    # Read the projection only; callers own the single command and prove local mode.
+    # The command submission ACK precedes the durable known-host operation.
+    $path = '/data/app/el2/100/base/com.leantty.app/haps/entry/files/.ssh/known_hosts'
+    $endpoint = "[127.0.0.1]:$Port"
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $content = Invoke-HdcChecked -Hdc $Hdc -Target $Target -Arguments @(
+            'shell', '-b', 'com.leantty.app', "cat $path && printf '\nLEANTTY_KNOWN_HOST_READ_OK\n'"
+        ) -Operation 'Audit temporary known-host removal'
+        if ($content -notmatch '(?m)^LEANTTY_KNOWN_HOST_READ_OK\r?$') {
+            throw '[infrastructure] Known-host projection read was not confirmed'
+        }
+        $present = @($content -split "`n" | Where-Object {
+            $hosts = (($_.Trim() -split '\s+')[0]) -split ','
+            $hosts -ccontains $endpoint
+        }).Count -gt 0
+        if (-not $present) { return }
+        Start-Sleep -Milliseconds 250
+    } while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    throw '[cleanup] Temporary known-host entry remained after the single removal command'
+}
