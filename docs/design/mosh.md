@@ -4,11 +4,11 @@
 >
 > 当前 milestone：1.6
 >
-> 更新日期：2026-09-07
+> 更新日期：2026-09-10
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已进入 [`next-work.md`](../next-work.md)；当前使用 `mosh-client` 0.1.0 正式版本继续开发
+> 实现授权：已进入 [`next-work.md`](../next-work.md)；当前使用 `mosh-client` 0.1.1 正式版本继续开发
 
 > 命令面治理：[`command-system.md`](command-system.md)
 
@@ -270,9 +270,9 @@ Wi-Fi network switch。每组都必须生成 `acceptanceEligible=true`、相同 
 ## 客户端依赖合同
 
 LeanTTY 选择 [`wandcs/mosh-client-rs`](https://github.com/wandcs/mosh-client-rs) 的
-`mosh-client` crate。依赖固定为 [0.1.0 正式版本](https://github.com/wandcs/mosh-client-rs/releases/tag/v0.1.0)：
-使用 Git `tag = "v0.1.0"` 和 `version = "=0.1.0"`，由 `Cargo.lock` 固定实际提交
-`aed5865c1d779a989a3b0cf0c84aa046313515ee`，不跟随 main/master。该版本尚未上传 crates.io，
+`mosh-client` crate。依赖固定为 [0.1.1 正式版本](https://github.com/wandcs/mosh-client-rs/releases/tag/v0.1.1)：
+使用 Git `tag = "v0.1.1"` 和 `version = "=0.1.1"`，由 `Cargo.lock` 固定实际提交
+`dfc188975ed0a8bd734bbf14bd6cfdeb3838e629`，不跟随 main/master。该版本尚未上传 crates.io，
 最低 Rust 版本为 1.88，许可证仍为 `MIT OR Apache-2.0`。
 LeanTTY 不直接修改该仓库，也不维护协议 fork；发现的问题记录在
 [`mosh-client-rs-integration-issues.md`](mosh-client-rs-integration-issues.md)，由库仓库独立修复、
@@ -284,6 +284,11 @@ LeanTTY 不直接修改该仓库，也不维护协议 fork；发现的问题记�
 `build/verification/mosh-client-v0.1.0-software-20260905.json` 和
 `build/verification/mosh-client-v0.1.0-final-rust-20260905.json`；本轮未重建 HAP 或复跑真机，
 既有真机报告仍对应各自记录的旧 revision。
+
+0.1.1 将已建立 Session 的 `PermissionDenied` 纳入临时 UDP send/receive 错误恢复，
+保留原 socket、协议状态和限速重试；首次连接及未知错误仍失败，公共 API、即时 cancel
+和 4 秒 close 上限不变。相对已核对的修复提交 `ae86bfe`，正式版本没有新增生产源码变化。
+升级验证和合盖证据的限制见 [Mosh 错误恢复记录](mosh-permission-denied-20260910.md)。
 
 依赖边界如下：
 

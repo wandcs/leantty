@@ -13,7 +13,7 @@
 - Add the initial `mosh [user@]host|alias` interactive-session path with existing
   Host, Identity, host-key and authentication policy, an isolated Pane-owned UDP
   IPv4 session, strict bootstrap parsing and local `Ctrl-^` disconnect/help escapes.
-  The protocol dependency uses the public `wandcs/mosh-client-rs` v0.1.0 release
+  The protocol dependency uses the public `wandcs/mosh-client-rs` v0.1.1 release
   tag and exact package version; formal candidate acceptance remains pending.
 - Add `mosh -p <port>` and `mosh -p <low>:<high>` for a fixed Mosh UDP endpoint,
   with strict pre-network validation and rejection when the stock server returns
@@ -61,9 +61,10 @@
   and Surface rebuilds.
 - Refresh retained Pane geometry, visibility and focus when splitting, closing
   a sibling or switching Tabs, without rebuilding the surviving terminal.
-- Preserve an established Mosh Session across temporary local network-interface
-  send errors through the pinned client revision, allowing reachability to report
-  interruption and recovery without replacing the remote PTY.
+- Preserve an established Mosh Session across the client's allowed temporary UDP
+  send/receive errors, including `PermissionDenied`, through the pinned v0.1.1
+  release. Retries retain the same Session; immediate cancellation and the
+  four-second graceful-close limit remain unchanged.
 - Keep the process-owned workspace and active Mosh Session across a HarmonyOS
   WindowStage/Page rebuild, while a true process replacement still restores only
   fresh local Pane identities and never fabricates a remote Session.
