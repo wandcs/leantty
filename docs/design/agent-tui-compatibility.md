@@ -415,8 +415,7 @@ L3 原 HAP 的零模型 SSH prerequisite 与无网络 Pane ownership；不改产
 虚拟重建/重排、多 Pane 正常输入，以及错误 Pane、替换 Web、不同窗口、搜索框、多终端、
 前后身份缺失、空白 ID、前后重复 ID、叶节点窗口不一致的拒绝。policy/tooling 七项注册
 检查通过，其中 Agent SSH gate 的 46 项反例仍通过。五个实际场景的候选兼容路径检查通过，
-没有扩大许可路径。指定的 test-driven-development 技能不可用，使用现有 PowerShell
-反例完成先失败后通过验证。
+没有扩大许可路径。验证采用仓库现有 PowerShell 反例，保留先失败后通过的结果。
 
 真机诊断使用干净 `f4bbe8e0250894fdef080501a804ff5ace4eb25c`，tree
 `3578ff5f9244c8c2a4231976ab6d3e90205d4514`，原 HAP SHA-256 仍为
