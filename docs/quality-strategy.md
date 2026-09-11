@@ -936,11 +936,12 @@ Every automated physical scenario MUST:
   a fresh layout, require exactly one focused semantic text node, verify the
   caller's intended target, derive coordinates from that current node, and then
   inject the complete payload, then capture another layout under the same mutex
-  and verify that the same window/tree target retains exclusive focus. Scope
-  terminal post-input identity to the unchanged native Web instance (non-empty
-  window ID, native hierarchy and accessibility ID) with exactly one terminal
-  input in that Web. Its virtual DOM hierarchy and cursor-following textarea
-  bounds may change during rendering; they are not Pane identity. Another Web,
+  and verify that the same target retains exclusive focus. Scope terminal
+  post-input identity to the unchanged native Web instance: nonblank window ID
+  and accessibility ID must match, and that Web identity must occur exactly once
+  in each operation-local layout, with exactly one terminal input in its subtree.
+  Native hierarchy is a child-index path, not instance identity; ancestor indices,
+  virtual DOM hierarchy and cursor-following textarea bounds may change. Another Web,
   window, replaced native instance or ambiguous terminal remains a failure.
   Other text controls keep their operation-scoped field identity checks. Scope
   this identity to the current operation; never cache it across navigation or

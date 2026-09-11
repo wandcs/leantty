@@ -501,13 +501,22 @@ function Test-LeanTTYSameTextInputTarget {
             $expectedInputs = @(Get-LeanTTYTerminalInputNodes -Layout $expectedWeb)
             $currentInputs = @(Get-LeanTTYTerminalInputNodes -Layout $currentWeb)
             if ($expectedInputs.Count -ne 1 -or $currentInputs.Count -ne 1) { return $false }
-            # Virtual DOM containers and cursor-following textarea bounds can
-            # change during input. Bind to the unchanged native Web instance,
-            # never another Pane at coincident coordinates or just the window.
-            foreach ($name in @('hostWindowId', 'hierarchy', 'accessibilityId')) {
+            # UiTest reidentifies native nodes by window + accessibility ID.
+            # Hierarchy is a child-index path: ancestor reindexing is not a new
+            # Web. Keep this identity within these two operation-local layouts;
+            # never accept a different Pane at coincident bounds or a duplicate ID.
+            foreach ($name in @('hostWindowId', 'accessibilityId')) {
                 $expectedValue = [string]$expectedWeb.attributes.$name
-                if ([string]::IsNullOrEmpty($expectedValue) -or
+                if ([string]::IsNullOrWhiteSpace($expectedValue) -or
                     [string]$currentWeb.attributes.$name -cne $expectedValue) { return $false }
+            }
+            foreach ($ownerLayout in @($ExpectedLayout, $CurrentLayout)) {
+                $matchingWebs = @(Get-LeanTTYLayoutNodes -Node $ownerLayout | Where-Object {
+                    [string]$_.attributes.type -eq 'Web' -and
+                    [string]$_.attributes.hostWindowId -ceq [string]$expectedWeb.attributes.hostWindowId -and
+                    [string]$_.attributes.accessibilityId -ceq [string]$expectedWeb.attributes.accessibilityId
+                })
+                if ($matchingWebs.Count -ne 1) { return $false }
             }
             if ([string]$expectedAttributes.hostWindowId -cne [string]$expectedWeb.attributes.hostWindowId -or
                 [string]$currentAttributes.hostWindowId -cne [string]$currentWeb.attributes.hostWindowId) { return $false }

@@ -365,3 +365,42 @@ tree `239274f4816d608a8a1f26472f6d6a72d830b755`；原候选 HAP SHA-256 为
 收口后 `software-final.json` 的 policy/tooling 七项注册检查通过，其中 Agent SSH gate
 为 46 项，包括五个实际调用方的候选兼容路径及产品输入拒绝；`git diff --check` 通过。
 此前失败的软件检查报告保留，最终通过不覆盖它们。这仍是 focused 开发证据，不是 QH。
+
+## 2026-09-12 native Web 输入身份修复
+
+准入依据是 PR #179 后的新正式失败，不是重复采样：`314004e` harness 在原 `ac01156`
+候选上于 2026-09-11 23:25 再次拒绝 host-key 的单次 `yes` 输入，未发 Enter。安全比较
+显示原生 Web 的 window/accessibility ID、bounds 相同，前后各一个终端，仅祖先索引变化。
+原始结果 SHA-256 `d291fd020f3278a264fbbdd7427a3980b604e71bf6640ad466ef386bd034e169`，
+位于 `build/verification/release-1.6.0-r3-pr179-20260911/formal/stages/agent-compatibility/attempt-1/result.json`。
+
+期望是同一原生 Web 内的一次输入不因祖先重排失败，换 Pane/Web/窗口仍须拒绝。最后正确
+边界是唯一焦点和单次 UiTest 输入返回；首个错误边界是共享 post-target 比较将 hierarchy
+当作实例身份。App/ArkWeb 持有实际焦点与节点，工具只核对操作前后的观察结果。已保留的
+安全比较和零设备投影定位了拒绝条件，不证明真实丢字或哪个祖先发生变化。
+
+本轮外部核对的问题是原生身份字段来源、唯一性、失效范围，以及路径能否替代它：
+
+- 官方 [6.0 属性包装与身份生成](https://github.com/openharmony/testfwk_arkxtest/blob/e6d3af0cc503cefef9a9f14c28e3728738b5dffd/uitest/server/element_node_iterator_impl.cpp)
+  和 [6.1 实现](https://github.com/openharmony/testfwk_arkxtest/blob/1fc51561281f02fda42e65ec952fb21406b05981/uitest/server/element_node_iterator_impl.cpp)
+  将 AccessibilityElementInfo 的 ID 原样写入 accessibilityId，HASHCODE 是 windowId 与
+  accessibilityId 的组合；[UiDriver](https://github.com/openharmony/testfwk_arkxtest/blob/b04e30c40cf266c9abfbd52933e43a0456eb99a2/uitest/core/ui_driver.cpp)
+  在窗口内以 HASHCODE 重新定位并核对类型。hierarchy 则来自父路径加 childIndex。
+- [ArkUI UINode](https://github.com/openharmony/arkui_ace_engine/blob/master/frameworks/core/components_ng/base/ui_node.cpp)
+  的当前源码在构造时以进程内原子递增值分配 accessibilityId。它不是跨进程持久标识；
+  不缓存到下一次输入、导航或重建。官方源码不等于对已部署 Huawei 二进制的证明，仍需
+  同一 OpenHarmony-6.1.1.135 / UiTest 6.0.2.3 真机验证。
+- 重新检索上游 PR/issues、Huawei 社区和可复核报告，未找到匹配本机 native Web 祖先
+  重排误判的报告。旧版 Huawei API 文档与第三方命令汇总没有补充稳定身份保证，不采纳
+  其兜底建议。[Playwright strictness](https://playwright.dev/docs/locators#strictness)
+  的多匹配拒绝仅作为设计参考，不作为 HarmonyOS 证据。
+
+待验证假设：操作内使用非空 window/accessibility ID，并在前后布局中各要求这一 native
+Web 身份唯一，可接受祖先重排且拒绝真正换 owner。保留实际父子树遍历、隐藏 Tab 排除、
+Web 内唯一终端、唯一焦点、叶节点与 Web 窗口一致、单次输入、失败不重发/不按 Enter。
+重复或缺失 native 身份失败关闭，hierarchy 只保留在安全失败诊断中，不回退到坐标身份。
+
+先让祖先重排与重复身份的新软件反例在旧代码上失败，再做一处共享判定修复；同时把旧
+other-pane 用例从“同 ID 换路径”改为真正不同的 native ID。选择 L0–L2 policy/tooling、
+L3 原 HAP 的零模型 SSH prerequisite 与无网络 Pane ownership；不改产品、xterm、HAP、
+超时或模型预算，不运行正式矩阵。若定向失败，保留现场和清理结果后停止，不扩成采样。
