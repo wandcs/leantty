@@ -12,7 +12,8 @@ $functionSources = @{}
 foreach ($name in @('Wait-AppLog', 'Connect-AgentServer', 'Disconnect-AgentServer',
         'Invoke-AgentSelectedChecks', 'Invoke-AgentInteractionOnlyCheck',
         'Invoke-AgentProtocolInteractionCheck', 'Invoke-AgentModeCheck',
-        'Invoke-Osc99CapabilityProbeCheck', 'Invoke-AgentSshPrerequisiteCheck')) {
+        'Invoke-Osc99CapabilityProbeCheck', 'Invoke-AgentSshPrerequisiteCheck',
+        'Get-AgentTabState', 'Get-AgentOwnedTab', 'Close-AgentTestTab')) {
     $function = $deviceAst.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
     }, $true)
@@ -52,13 +53,14 @@ function Test-Gate([string]$Name, [scriptblock]$Action) {
             $fixtureDirectory = $PSScriptRoot
             $shellReadyPath = Join-Path $PSScriptRoot 'controlled-absent-shell-ready'
             Assert-Gate (-not (Test-Path -LiteralPath $shellReadyPath)) 'Controlled marker must not exist'
-            $result = [pscustomobject]@{ server = @{ user = 'controlled' }; checks = @() }
+            $result = [pscustomobject]@{ server = @{ user = 'controlled' }; checks = @(); resources=@{} }
             $Agents = @('codex', 'opencode')
             $Modes = @('direct', 'tmux')
             $Osc99CapabilityProbe = $false
             $InteractionOnlyProbe = $true
             $ProtocolInteractionProbe = $false
             $SshPrerequisiteProbe = $false
+            $StopAtHostKeyPrompt = $false
             $inventory = [pscustomobject]@{
                 tools = @{ codex = @{ installed = $true }; opencode = @{ installed = $true } }
                 authenticationReady = @{ codex = $true; opencode = $true }
@@ -82,6 +84,11 @@ function Test-Gate([string]$Name, [scriptblock]$Action) {
             function Invoke-LeanTTYDeviceText {
                 $script:trace.Add('text')
                 if ($script:fault -eq 'text') { throw '[environment] controlled-text-failure' }
+                if ($script:fault -eq 'text-owner') {
+                    $failure = [InvalidOperationException]::new('[harness] controlled-owner-change')
+                    $failure.Data['LeanTTYTextInputFailure'] = @{phase='after';focusedCount=1;targets=@()}
+                    throw $failure
+                }
             }
             function Invoke-LeanTTYDeviceKey {
                 $script:trace.Add('enter')
@@ -139,6 +146,16 @@ Test-Gate 'prompt-confirms-once-before-shell-ready' {
     Assert-Gate ((@($script:trace | Where-Object { $_ -eq 'text' }).Count -eq 1) -and
         (@($script:trace | Where-Object { $_ -eq 'enter' }).Count -eq 1) -and
         $script:agentSshBoundary -eq 'shell-ready') 'Prompt must confirm once and prove shell-ready'
+}
+Test-Gate 'host-key-owner-failure-retains-safe-evidence-without-enter' {
+    $script:fault = 'text-owner'
+    $SshPrerequisiteProbe = $true
+    Invoke-AgentSelectedChecks
+    Assert-Gate ($result.checks[0].status -eq 'failed' -and
+        $result.hostKeyInputFailure.phase -eq 'after' -and
+        $result.hostKeyInputFailure.focusedCount -eq 1) 'Caller discarded text-target failure evidence'
+    Assert-Gate (@($script:trace | Where-Object { $_ -eq 'text' }).Count -eq 1 -and
+        -not ($script:trace -contains 'enter') -and -not ($script:trace -contains 'ctrl-d')) 'Owner loss must not retry or submit input'
 }
 foreach ($mode in @('trusted', 'already-connected')) {
     Test-Gate "$mode-never-confirms-a-past-prompt" {
@@ -279,6 +296,124 @@ foreach ($checkFunction in @('Invoke-AgentModeCheck', 'Invoke-AgentInteractionOn
             $check.failureDomain -eq 'environment') 'Preserve the original failure through the caller'
         Assert-Gate (-not ($script:trace -contains 'ctrl-d') -and
             -not ($script:trace -contains 'whole-app-reset')) 'Do not recover an unconfirmed session by sending input or restarting the app'
+    }
+}
+Test-Gate 'host-key-stop-is-zero-input-and-leaves-unconfirmed-session' {
+    $SshPrerequisiteProbe = $true
+    $StopAtHostKeyPrompt = $true
+    Invoke-AgentSelectedChecks
+    Assert-Gate ($result.checks[0].failure -match 'Diagnostic stop at host-key prompt' -and
+        $script:agentSshBoundary -eq 'unconfirmed' -and -not ($script:trace -contains 'text') -and
+        -not ($script:trace -contains 'enter') -and -not ($script:trace -contains 'ctrl-d')) 'Controlled stop advanced or sent input'
+}
+foreach ($case in @('idle', 'confirm-en', 'confirm-zh', 'wrong-owner', 'changed-process',
+        'other-dialog', 'confirmation-owner-changed', 'cancelled')) {
+    Test-Gate "owned-tab-cleanup-$case" {
+        . (Join-Path $PSScriptRoot 'device-regression.ps1')
+        . (Join-Path $PSScriptRoot 'notification-regression.ps1')
+        $script:isolatedTabCreated = $true
+        $isolatedTabId = 'tab-test'
+        $isolatedTabUiId = '20'
+        $baselineTabState = @{ids=@('10');activeId='10';windowId='1'}
+        $fixture = @{removed=$false;closeCount=0;confirmCount=0;pending=$false;stateReads=0}
+        function New-CleanupState {
+            $ids = if ($fixture.removed) { @('10') } else { @('10','20') }
+            $tabs = @($ids | ForEach-Object {
+                @{attributes=@{accessibilityId=$_};children=@(
+                    @{attributes=@{type='Text';text='✕';clickable='true';kind='close'};children=@()}
+                )}
+            })
+            return @{ids=$ids;tabs=$tabs;windowId='1';activeId=$(if ($fixture.removed) {'10'} else {'20'})}
+        }
+        function Ensure-LeanTTYVisible {}
+        function Invoke-HdcChecked { return $(if ($case -eq 'changed-process') {'9999'} else {'1234'}) }
+        function Get-AgentTabState {
+            $fixture.stateReads++
+            $state = New-CleanupState
+            if ($case -eq 'wrong-owner' -or ($case -eq 'confirmation-owner-changed' -and $fixture.stateReads -gt 1)) {
+                $state.windowId = '2'
+            }
+            return $state
+        }
+        function Get-FullLayout {
+            $title = if ($case -eq 'confirm-zh') {'关闭标签页？'} elseif ($case -eq 'other-dialog') {'Other operation?'} else {'Close this tab?'}
+            return @{attributes=@{type='AlertDialog';hostWindowId='1'};children=@(
+                @{attributes=@{type='Text';text=$title};children=@()},
+                @{attributes=@{type='Text';text='Cancel'};children=@()},
+                @{attributes=@{type='Text';text=$(if ($case -eq 'confirm-zh') {'关闭标签页'} else {'Close Tab'});kind='confirm'};children=@()}
+            )}
+        }
+        function Click-Node {
+            param($Node)
+            if ($Node.attributes.kind -eq 'close') {
+                $fixture.closeCount++
+                if ($case -eq 'idle') { $fixture.removed=$true }
+            } elseif ($Node.attributes.kind -eq 'confirm') {
+                $fixture.confirmCount++
+                if ($case -ne 'cancelled') { $fixture.removed=$true }
+            } else { throw 'Unexpected cleanup click' }
+        }
+        function Clear-LeanTTYAppLogs {}
+        function Get-LeanTTYAppLogs { if ($fixture.removed) { return 'Tab removed: tab-test' }; return '' }
+        $failure = ''
+        try { Close-AgentTestTab } catch { $failure=$_.Exception.Message }
+        if ($case -in @('idle','confirm-en','confirm-zh')) {
+            Assert-Gate ($failure -eq '' -and -not $script:isolatedTabCreated -and
+                $result.resources.tabCleanup.originalTabsRestored -and $fixture.closeCount -eq 1 -and
+                $fixture.confirmCount -eq [int]($case -ne 'idle')) 'Owned closure or restoration not proved'
+        } else {
+            Assert-Gate ($failure.Length -gt 0 -and $script:isolatedTabCreated) 'Unsafe/unknown closure was accepted'
+            if ($case -in @('wrong-owner','changed-process')) { Assert-Gate ($fixture.closeCount -eq 0) 'Wrong owner received close' }
+            if ($case -in @('other-dialog','confirmation-owner-changed')) { Assert-Gate ($fixture.confirmCount -eq 0) 'Unrelated dialog was accepted' }
+            Assert-Gate ($fixture.closeCount -le 1 -and $fixture.confirmCount -le 1) 'Unknown close/confirmation was repeated'
+        }
+    }
+}
+foreach ($readFails in @($false,$true)) {
+    Test-Gate "failed-trust-known-host-read-only-audit-$readFails" {
+        $knownHostCleanupAttempted=$true; $knownHostRemoved=$false
+        $cleanupFailures=[Collections.Generic.List[string]]::new()
+        $script:fault=$(if ($readFails) {'known-host-read'} else {''})
+        $audit=$deviceAst.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+            $n.Extent.Text.StartsWith('if ($knownHostCleanupAttempted -and -not $knownHostRemoved)')},$true)
+        . ([scriptblock]::Create($audit.Extent.Text))
+        Assert-Gate ($knownHostRemoved -eq (-not $readFails) -and $cleanupFailures.Count -eq [int]$readFails -and
+            @($script:trace | Where-Object {$_ -like 'local:*' -or $_ -in @('text','enter','ctrl-d')}).Count -eq 0) 'Unknown session received input or absence verdict was guessed'
+    }
+}
+# Read each caller's real allowlist: this repair must retain the original HAP,
+# without accepting product-source or dependency changes as harness-only.
+. (Join-Path $PSScriptRoot 'candidate-store.ps1')
+foreach ($caller in @('verify-agent-compatibility-pc.ps1', 'verify-mosh-pc.ps1',
+        'verify-ssh-auth-pc.ps1', 'verify-terminal-search-pc.ps1',
+        'verify-long-task-notification-pc.ps1')) {
+    Test-Gate "agent-repair-candidate-boundary-$caller" {
+        $callerAst = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot $caller), [ref]$null, [ref]$null)
+        $command = $callerAst.Find({ param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -eq 'Assert-LeanTTYCandidateHarnessCompatibility'
+        }, $true)
+        $parameter = @($command.CommandElements | Where-Object {
+            $_ -is [Management.Automation.Language.CommandParameterAst] -and
+            $_.ParameterName -eq 'AllowedHarnessPaths'
+        })
+        Assert-Gate ($parameter.Count -eq 1) 'Caller has no unique harness allowlist'
+        $index = $command.CommandElements.IndexOf($parameter[0])
+        $allowed = $command.CommandElements[$index + 1].SafeGetValue()
+        Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowed -ChangedPaths @(
+            'docs/design/agent-tui-compatibility.md', 'docs/next-work.md',
+            'tools/device-regression.ps1', 'tools/test-device-regression.ps1',
+            'tools/test-agent-ssh-gate.ps1', 'tools/test-agent-compatibility.ps1',
+            'tools/verify-agent-compatibility-pc.ps1', 'tools/verify-mosh-pc.ps1',
+            'tools/verify-ssh-auth-pc.ps1', 'tools/verify-terminal-search-pc.ps1',
+            'tools/verify-long-task-notification-pc.ps1')
+        foreach ($productPath in @('entry/src/main/ets/pages/Index.ets', 'leantty_ssh/Cargo.lock')) {
+            $rejected = $false
+            try { Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowed -ChangedPaths @($productPath) }
+            catch { $rejected = $true }
+            Assert-Gate $rejected 'Product inputs were accepted as harness-only'
+        }
     }
 }
 $report = [ordered]@{

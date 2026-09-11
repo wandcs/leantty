@@ -86,6 +86,8 @@ if ($Formal) {
             'tools/verify-ssh-auth-pc.ps1',
             'tools/verify-terminal-search-pc.ps1',
             'docs/design/notification-fixture-permission-20260911.md',
+            'docs/design/agent-tui-compatibility.md',
+            'tools/test-agent-compatibility.ps1',
             'tools/verify-mosh-matrix-pc.ps1',
             'tools/verify-release-pc.ps1',
             'tools/release-tooling.ps1',

@@ -76,6 +76,8 @@ if (-not $DiagnosticHap) {
             'tools/verify-agent-compatibility-pc.ps1',
             'tools/verify-mosh-pc.ps1',
             'docs/design/notification-fixture-permission-20260911.md',
+            'docs/design/agent-tui-compatibility.md',
+            'tools/test-agent-compatibility.ps1',
             'tools/verify-terminal-search-pc.ps1',
             'tools/verify-file-transfer-pc.ps1',
             'tools/verify-put-get-pc.ps1',
