@@ -1851,6 +1851,133 @@ $moshVerifierAst = [Management.Automation.Language.Parser]::ParseFile(
 )
 Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be parsed for helper tests'
 & {
+    # Run the actual focus, input, retry and Enter chain. Only device/PTY I/O
+    # is replaced; the shared native-owner predicate remains real.
+    foreach ($name in @('Focus-ActiveTerminalInput', 'Submit-MoshInput')) {
+        $definition = $moshVerifierAst.Find({ param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        Invoke-Expression $definition.Extent.Text
+    }
+    function New-MoshOwnerTestLayout {
+        $changed = $state.reads -ge $case.at
+        $webPath = if ($changed -and $case.change -eq 'reindex') { 'ROOT1,1' } else { 'ROOT1,0' }
+        $webId = if ($changed -and $case.change -eq 'replacement') { 'other-web' } else { 'owner-web' }
+        $windowId = if ($changed -and $case.change -eq 'window') { '2' } else { '1' }
+        if ($changed -and $case.change -eq 'missing') { $webId = '' }
+        $leafPath = if ($changed -and $case.change -eq 'virtual') { ',0,2,0' } else { ',0,0' }
+        $leaf = [pscustomobject]@{ attributes = @{
+            type = 'textField'; hint = 'Terminal input'; focused = 'true'; hostWindowId = $windowId
+            hierarchy = $webPath + $leafPath; accessibilityId = 'virtual-input'; bounds = '[10,10][30,30]'
+        }; children = @() }
+        $web = [pscustomobject]@{ attributes = @{
+            type = 'Web'; hierarchy = $webPath; accessibilityId = $webId; hostWindowId = $windowId
+        }; children = @($leaf) }
+        $children = @($web)
+        if ($changed -and $case.change -eq 'no-web') { $children = @($leaf) }
+        if ($changed -and $case.change -in @('duplicate', 'two-focused', 'peer')) {
+            $peerId = if ($case.change -eq 'duplicate') { $webId } else { 'peer-web' }
+            $peerFocus = if ($case.change -eq 'two-focused') { 'true' } else { 'false' }
+            $children += [pscustomobject]@{ attributes = @{
+                type = 'Web'; hierarchy = 'ROOT1,3'; accessibilityId = $peerId; hostWindowId = $windowId
+            }; children = @([pscustomobject]@{ attributes = @{
+                type = 'textField'; hint = 'Terminal input'; focused = $peerFocus; hostWindowId = $windowId
+                hierarchy = 'ROOT1,3,0,0'; bounds = '[40,10][60,30]'
+            }; children = @() }) }
+        }
+        return [pscustomobject]@{ attributes = @{}; children = $children }
+    }
+    $cases = @(
+        @{ change='stable'; at=1; text=1; enter=1; cancel=0 },
+        @{ change='reindex'; at=2; text=1; enter=1; cancel=0 },
+        @{ change='reindex'; at=3; text=1; enter=1; cancel=0 },
+        @{ change='reindex'; at=4; text=1; enter=1; cancel=0 },
+        @{ change='virtual'; at=2; text=1; enter=1; cancel=0 },
+        @{ change='virtual'; at=4; text=1; enter=1; cancel=0 },
+        @{ change='peer'; at=1; text=1; enter=1; cancel=0 },
+        @{ change='replacement'; at=2; text=0; enter=0; cancel=0 },
+        @{ change='replacement'; at=3; text=1; enter=0; cancel=0 },
+        @{ change='replacement'; at=4; text=1; enter=0; cancel=0 },
+        @{ change='window'; at=4; text=1; enter=0; cancel=0 },
+        @{ change='missing'; at=1; text=0; enter=0; cancel=0 },
+        @{ change='missing'; at=4; text=1; enter=0; cancel=0 },
+        @{ change='duplicate'; at=1; text=0; enter=0; cancel=0 },
+        @{ change='duplicate'; at=4; text=1; enter=0; cancel=0 },
+        @{ change='no-web'; at=1; text=0; enter=0; cancel=0 },
+        @{ change='two-focused'; at=4; text=1; enter=0; cancel=0 },
+        @{ change='reindex'; at=5; retry='once'; text=2; enter=1; cancel=1 },
+        @{ change='replacement'; at=5; retry='once'; text=1; enter=0; cancel=1 },
+        @{ change='stable'; at=1; retry='exhausted'; text=3; enter=0; cancel=2 },
+        @{ change='stable'; at=1; retry='clear-failed'; text=1; enter=0; cancel=1 },
+        @{ change='stable'; at=1; retry='local-prompt'; text=1; enter=0; cancel=0 }
+    )
+    foreach ($case in $cases) {
+        $state = @{ reads=0; text=0; enter=0; cancel=0; snapshots=0 }
+        $hdc = 'synthetic'; $targetId = 'synthetic'; $appPid = 1
+        $EvidenceDirectory = [IO.Path]::GetTempPath(); $activeMoshControlDirectory = 'synthetic'
+        $connectedInputObservations = [Collections.Generic.List[object]]::new()
+        function Get-LeanTTYDeviceLayout {
+            $state.reads++
+            if ($state.reads -gt 12) { throw 'Synthetic layout sequence exhausted' }
+            New-MoshOwnerTestLayout
+        }
+        function Get-HdcUiLayout { Get-LeanTTYDeviceLayout }
+        function Invoke-LeanTTYSerializedUiTest { param($Action) & $Action }
+        function Invoke-HdcChecked { $state.text++ }
+        function Invoke-LeanTTYDeviceKey { $state.enter++ }
+        function Invoke-LeanTTYDeviceCtrlC { $state.cancel++ }
+        function Wait-MoshInputSnapshot {
+            param($Expected)
+            $state.snapshots++
+            $mismatch = ($case.retry -and $state.snapshots -eq 1) -or
+                ($case.retry -eq 'exhausted' -and $Expected -ne '') -or
+                ($case.retry -eq 'clear-failed' -and $state.snapshots -eq 2)
+            return @{ observed=$true; value=$(if ($mismatch) { 'wrong' } else { $Expected }) }
+        }
+        function Get-LeanTTYAppLogs { return '' }
+        function Get-LeanTTYAcceptanceIdleInputState {
+            if ($case.retry -eq 'local-prompt') { return @{ input='public-owner-probe' } }
+            return $null
+        }
+        $failure = $null
+        try { Submit-MoshInput -Text 'public-owner-probe' } catch { $failure = $_.Exception }
+        $label = "$($case.change) at layout $($case.at), retry=$($case.retry)"
+        Assert-True (($null -eq $failure) -eq ($case.enter -eq 1)) "Mosh native owner verdict failed: $label"
+        Assert-True ($state.text -eq $case.text -and $state.enter -eq $case.enter -and
+            $state.cancel -eq $case.cancel) "Mosh sent an unsafe input, retry or Enter: $label"
+        Assert-True ($connectedInputObservations.Count -eq 1 -and
+            $connectedInputObservations[0].enterCount -eq $case.enter -and
+            $connectedInputObservations[0].result -eq $(if ($case.enter) { 'passed' } else { 'failed' })) (
+            "Mosh command observation lost its verdict: $label"
+        )
+        if ($case.enter -eq 1) {
+            Assert-True ($state.reads -eq (4 * $case.text)) "Owner matching added layout captures: $label"
+        }
+    }
+    foreach ($change in @('stable', 'reindex', 'virtual', 'replacement')) {
+        $case = @{ change=$change; at=2 }
+        $state = @{ reads=0; focus=0 }
+        function Get-LeanTTYDeviceLayout {
+            $state.reads++
+            $layout = New-MoshOwnerTestLayout
+            if ($state.reads -eq 1) { $layout.children[0].children[0].attributes.focused = 'false' }
+            return $layout
+        }
+        function Set-LeanTTYTerminalInputFocus { $state.focus++; Get-LeanTTYDeviceLayout }
+        $failure = $null; $capture = $null
+        try { $capture = Focus-ActiveTerminalInput -Name 'synthetic-focus.json' -IncludeLayout }
+        catch { $failure = $_.Exception }
+        Assert-True (($null -eq $failure) -eq ($change -ne 'replacement')) "Focus owner was not preserved: $change"
+        if ($null -ne $capture) {
+            $focused = @(Get-LeanTTYFocusedTextInputNodes -Layout $capture.layout)
+            Assert-True ($focused.Count -eq 1 -and [object]::ReferenceEquals($focused[0], $capture.node)) (
+                "Focus returned a stale pre-click node: $change"
+            )
+        }
+        Assert-True ($state.reads -eq 2 -and $state.focus -eq 1) 'Focus capture added a read or a click'
+    }
+}
+& {
     $timestampDefinition = $moshVerifierAst.FindAll({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
             $node.Name -eq 'ConvertFrom-MoshHilogTimestamp'

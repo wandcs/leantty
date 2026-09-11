@@ -676,7 +676,8 @@ function Invoke-LeanTTYDeviceText {
         [Parameter(Mandatory = $true)][string]$Hdc,
         [Parameter(Mandatory = $true)][string]$Target,
         [Parameter(Mandatory = $true)][string]$Text,
-        $InputNode = $null
+        $InputNode = $null,
+        $InputLayout = $null
     )
 
     if ($Text -match '[\r\n\x00]') {
@@ -707,9 +708,11 @@ function Invoke-LeanTTYDeviceText {
                 }
                 if ($null -ne $InputNode) {
                     if (-not (Test-LeanTTYSameTextInputTarget `
-                            -ExpectedNode $InputNode -CurrentNode $focusedInputs[0])) {
+                            -ExpectedNode $InputNode -CurrentNode $focusedInputs[0] `
+                            -ExpectedLayout $InputLayout -CurrentLayout $layout)) {
                         throw (New-LeanTTYTextInputFailure -Phase before -ExpectedNode $InputNode `
                             -CurrentNodes $focusedInputs `
+                            -ExpectedLayout $InputLayout -CurrentLayout $layout `
                             -Message '[harness] Intended HarmonyOS text target is no longer uniquely focused')
                     }
                 }
