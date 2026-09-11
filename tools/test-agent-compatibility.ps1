@@ -449,8 +449,7 @@ try {
         $deviceScript.Contains('Temporary WSL sshd remained alive after TERM and KILL') -and
         $deviceScript.Contains('Temporary WSL sshd TERM failed') -and
         $deviceScript.Contains('sudo kill -0 -- $wslSshdPid') -and
-        $deviceScript.Contains("-Text '/exit'") -and
-        $deviceScript.Contains('Stop-AgentTui -Agent $Agent') -and
+        $deviceScript.Contains('Stop-AgentTui -Agent $Agent -CaptureResultPath $captureResultPath') -and
         -not $deviceScript.Contains("'aa force-stop com.leantty.app'") -and
         $deviceScript.Contains("Join-Path `$EvidenceDirectory 'captures'") -and
         -not $deviceScript.Contains("'claude'") -and

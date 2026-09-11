@@ -872,6 +872,15 @@ summaries carry only the minimum redacted identity and result.
 
 ## Physical automation protocol
 
+`verify-agent-compatibility-pc.ps1 -DiagnosticHap -ExitBoundaryProbe` runs the
+zero-model Agent exit boundary only: start the real TUI, send its documented
+exit command once, await its child result and a fresh Bash prompt, then close
+SSH once. It covers the selected direct/tmux callers; IME, resize, notification,
+network and lifecycle checks are excluded, not passed. The shared Agent harness
+invalidates prompt readiness before submitting a connected command. Failed or
+unconfirmed TUI interactions leave cleanup to the isolated Tab, never a repeated
+exit sequence. See the [exit-boundary repair](design/agent-exit-boundary-20260912.md).
+
 `verify-agent-compatibility-pc.ps1 -DiagnosticHap -SshPrerequisiteProbe` is the
 zero-model diagnostic for the Agent harness's SSH prerequisites. It skips Agent
 configuration, inventory and launch, reuses the normal connect/locale/close

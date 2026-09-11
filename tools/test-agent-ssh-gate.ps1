@@ -9,7 +9,7 @@ $deviceAst = [Management.Automation.Language.Parser]::ParseFile(
     $devicePath, [ref]$null, [ref]$parseErrors)
 if ($parseErrors.Count -gt 0) { throw 'Agent harness has PowerShell parse errors' }
 $functionSources = @{}
-foreach ($name in @('Wait-AppLog', 'Connect-AgentServer', 'Disconnect-AgentServer',
+foreach ($name in @('Wait-AppLog', 'Connect-AgentServer', 'Disconnect-AgentServer', 'Stop-AgentTui', 'Confirm-AgentShellReady',
         'Invoke-AgentSelectedChecks', 'Invoke-AgentInteractionOnlyCheck',
         'Invoke-AgentProtocolInteractionCheck', 'Invoke-AgentModeCheck',
         'Invoke-Osc99CapabilityProbeCheck', 'Invoke-AgentSshPrerequisiteCheck',
@@ -82,7 +82,9 @@ function Test-Gate([string]$Name, [scriptblock]$Action) {
                 if ($script:fault -eq 'known-host-read') { throw '[infrastructure] controlled-known-host-read-failure' }
             }
             function Invoke-LeanTTYDeviceText {
+                param($Text)
                 $script:trace.Add('text')
+                if ($Text -in @('/exit','/quit')) { $script:trace.Add("exit-command:$Text") }
                 if ($script:fault -eq 'text') { throw '[environment] controlled-text-failure' }
                 if ($script:fault -eq 'text-owner') {
                     $failure = [InvalidOperationException]::new('[harness] controlled-owner-change')
@@ -95,6 +97,7 @@ function Test-Gate([string]$Name, [scriptblock]$Action) {
                 if ($script:fault -eq 'enter') { throw '[infrastructure] controlled-enter-failure' }
             }
             function Invoke-LeanTTYDeviceCtrlD { $script:trace.Add('ctrl-d') }
+            function Invoke-LeanTTYDeviceCtrlC { $script:trace.Add('ctrl-c') }
             function Save-CurrentAppLogs { $script:trace.Add('save-logs') }
             function Reset-AppAfterAgentFailure { $script:trace.Add('whole-app-reset') }
             function Get-AgentExpectedAttentionKind { return 'bel' }
@@ -210,8 +213,8 @@ Test-Gate 'disconnect-requires-current-shell-proof' {
 Test-Gate 'disconnect-clears-stale-logs-and-proves-local' {
     $script:agentSshBoundary = 'shell-ready'
     Disconnect-AgentServer
-    Assert-Gate (($script:trace[0] -eq 'clear-logs') -and $script:agentSshBoundary -eq 'local') `
-        'A fresh close observation must precede local cleanup permission'
+    Assert-Gate (($script:trace -join ',') -eq 'shell-ready,clear-logs,ctrl-d,wait:SSH closed, exitCode=' -and
+        $script:agentSshBoundary -eq 'local') 'Fresh shell proof and close observation must precede local cleanup permission'
 }
 Test-Gate 'failed-disconnect-cannot-be-repeated' {
     $script:agentSshBoundary = 'shell-ready'
@@ -230,6 +233,70 @@ Test-Gate 'failed-check-stops-selection-and-local-cleanup' {
     Assert-Gate (@($result.checks).Count -eq 1) 'Do not run later Agent/mode checks after failure'
     Assert-Gate (-not ($script:trace -contains 'local:known-host-post-clean')) 'Do not submit cleanup after a failed check'
     Assert-Gate ($script:trace -contains 'checkpoint:codex-direct-complete') 'Persist the first failed check'
+}
+foreach ($agentName in @('codex','opencode','pi','qwen')) {
+    Test-Gate "$agentName-exits-once-without-shell-control-keys" {
+        $script:agentSshBoundary = 'shell-busy'
+        Stop-AgentTui -Agent $agentName -CaptureResultPath 'pending-capture'
+        $expected = if ($agentName -in @('pi','qwen')) { '/quit' } else { '/exit' }
+        Assert-Gate (($script:trace -contains "exit-command:$expected") -and
+            @($script:trace | Where-Object { $_ -eq 'enter' }).Count -eq 1 -and
+            -not ($script:trace -contains 'ctrl-c') -and -not ($script:trace -contains 'ctrl-d')) `
+            'One documented TUI exit must not spill Ctrl+C or Ctrl+D into Bash'
+        Assert-Gate ($script:agentSshBoundary -eq 'shell-ready') 'Child exit alone is not shell-return proof'
+    }
+}
+Test-Gate 'agent-already-exited-does-not-receive-an-exit-command' {
+    function Test-Path { param($LiteralPath) return $LiteralPath -eq 'finished-capture' }
+    $script:agentSshBoundary = 'shell-busy'
+    Stop-AgentTui -Agent opencode -CaptureResultPath 'finished-capture'
+    Assert-Gate (-not ($script:trace -contains 'text') -and -not ($script:trace -contains 'enter') -and
+        -not ($script:trace -contains 'ctrl-d') -and -not ($script:trace -contains 'ctrl-c')) 'Already-exited TUI must be observation-only'
+}
+foreach ($missingBoundary in @('child', 'shell')) {
+    Test-Gate "missing-$missingBoundary-acknowledgement-blocks-ssh-close" {
+        $script:agentSshBoundary = 'shell-busy'
+        function Wait-File {
+            param($Path)
+            if (($missingBoundary -eq 'child' -and $Path -eq 'pending-capture') -or
+                ($missingBoundary -eq 'shell' -and $Path -eq $shellReadyPath)) {
+                throw '[harness] controlled-boundary-timeout'
+            }
+            $script:trace.Add("ack:$Path")
+        }
+        Expect-GateError { Stop-AgentTui -Agent opencode -CaptureResultPath 'pending-capture' } 'controlled-boundary-timeout'
+        Expect-GateError { Disconnect-AgentServer } 'unconfirmed'
+        Assert-Gate (-not ($script:trace -contains 'ctrl-d')) 'Missing exit or shell ACK must not close SSH'
+    }
+}
+Test-Gate 'busy-shell-needs-fresh-prompt-before-disconnect' {
+    $script:agentSshBoundary = 'shell-busy'
+    $script:fault = 'shell-ready'
+    Expect-GateError { Disconnect-AgentServer } 'controlled-shell-ready-failure'
+    Assert-Gate (-not ($script:trace -contains 'ctrl-d') -and $script:agentSshBoundary -eq 'unconfirmed') `
+        'An old connection proof cannot authorize EOF while the shell is busy'
+}
+Test-Gate 'failed-tui-exit-cannot-be-resubmitted' {
+    $script:agentSshBoundary = 'shell-busy'
+    $script:fault = 'enter'
+    Expect-GateError { Stop-AgentTui -Agent opencode -CaptureResultPath 'pending-capture' } 'controlled-enter-failure'
+    Expect-GateError { Stop-AgentTui -Agent opencode -CaptureResultPath 'pending-capture' } 'unconfirmed|already requested'
+    Expect-GateError { Disconnect-AgentServer } 'unconfirmed'
+    Assert-Gate (@($script:trace | Where-Object { $_ -eq 'enter' }).Count -eq 1 -and
+        -not ($script:trace -contains 'ctrl-d')) 'Unknown TUI outcome must not produce another input or shell EOF'
+}
+foreach ($caller in @('Invoke-AgentInteractionOnlyCheck','Invoke-AgentProtocolInteractionCheck')) {
+    Test-Gate "$caller-does-not-type-into-an-uncertain-tui" {
+        function Connect-AgentServer { $script:agentSshBoundary = 'shell-ready' }
+        function Submit-ConnectedCommand { $script:agentSshBoundary = 'shell-busy' }
+        function Wait-AgentInteractionReady { throw '[external-agent] controlled-tui-not-ready' }
+        function Wait-AgentTuiReady { throw '[external-agent] controlled-tui-not-ready' }
+        $check = & $caller -Agent opencode -Mode direct
+        Assert-Gate ($check.status -eq 'failed' -and $check.failure -match 'controlled-tui-not-ready' -and
+            $check.recovery -match 'isolated-tab-finalization-required') 'Failed TUI preparation must retain the original failure and defer to its Tab owner'
+        Assert-Gate (-not ($script:trace -contains 'text') -and -not ($script:trace -contains 'enter') -and
+            -not ($script:trace -contains 'ctrl-c') -and -not ($script:trace -contains 'ctrl-d')) 'The real caller must not attempt exit input after an uncertain interaction'
+    }
 }
 Test-Gate 'successful-selection-cleans-known-host-once' {
     function Invoke-AgentInteractionOnlyCheck { return [pscustomobject]@{ status = 'passed' } }

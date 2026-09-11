@@ -20,6 +20,7 @@ param(
     [switch]$AllowPartialAuthentication,
     [switch]$Osc99CapabilityProbe,
     [switch]$InteractionOnlyProbe,
+    [switch]$ExitBoundaryProbe,
     [switch]$ProtocolInteractionProbe,
     [switch]$SshPrerequisiteProbe,
     [switch]$StopAtHostKeyPrompt,
@@ -30,6 +31,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ExitBoundaryProbe) {
+    if (-not $DiagnosticHap) { throw '-ExitBoundaryProbe is zero-model diagnostic evidence only' }
+    $InteractionOnlyProbe = $true
+}
 if ($SshPrerequisiteProbe -and -not $DiagnosticHap) {
     throw '-SshPrerequisiteProbe is a diagnostic-only prerequisite, not Agent acceptance'
 }
@@ -180,7 +185,7 @@ $commandObservations = [Collections.Generic.List[object]]::new()
 $connectedCommandObservations = [Collections.Generic.List[object]]::new()
 $controlledLocaleChecked = $false
 # Last proven boundary of this isolated attempt, not a substitute for app SSH state.
-# Only Connect/Disconnect grant shell-ready/local after observing their postconditions.
+# Remote prompt and current close observations grant shell-ready/local respectively.
 $agentSshBoundary = 'unconfirmed'
 
 $result = New-LeanTTYAgentCompatibilityResult `
@@ -188,6 +193,8 @@ $result = New-LeanTTYAgentCompatibilityResult `
         'zero-model-ssh-prerequisite-over-default-wsl-openssh'
     } elseif ($Osc99CapabilityProbe) {
         'osc99-capability-response-over-default-wsl-openssh'
+    } elseif ($ExitBoundaryProbe) {
+        'zero-model-agent-exit-boundary-over-default-wsl-openssh'
     } elseif ($InteractionOnlyProbe) {
         'zero-model-agent-tui-interaction-over-default-wsl-openssh'
     } elseif ($ProtocolInteractionProbe) {
@@ -466,6 +473,7 @@ function Submit-ConnectedCommand {
         [Parameter(Mandatory = $true)][string]$Command,
         [Parameter(Mandatory = $true)][string]$Stage
     )
+    Confirm-AgentShellReady
     if (Test-Path -LiteralPath $snapshotPath) {
         Remove-Item -LiteralPath $snapshotPath -Force
     }
@@ -492,8 +500,24 @@ function Submit-ConnectedCommand {
         Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
         throw "[harness] Connected command mismatch at index $mismatch"
     }
+    # Require a new prompt after this exact command, including a long-lived TUI.
+    Remove-Item -LiteralPath $shellReadyPath -Force
+    $script:agentSshBoundary = 'shell-busy'
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     $observation.enterCount = 1
+}
+
+function Confirm-AgentShellReady {
+    if ($script:agentSshBoundary -notin @('shell-ready', 'shell-busy')) {
+        throw '[harness] SSH shell is unconfirmed; refusing further input'
+    }
+    try {
+        Wait-File -Path $shellReadyPath -TimeoutSeconds 10
+        $script:agentSshBoundary = 'shell-ready'
+    } catch {
+        $script:agentSshBoundary = 'unconfirmed'
+        throw
+    }
 }
 
 function Connect-AgentServer {
@@ -543,9 +567,7 @@ function Connect-AgentServer {
 }
 
 function Disconnect-AgentServer {
-    if ($script:agentSshBoundary -ne 'shell-ready') {
-        throw '[harness] SSH shell is unconfirmed; refusing Ctrl+D and leaving isolated-tab cleanup to finalization'
-    }
+    Confirm-AgentShellReady
     # Invalidate before dispatch: an ambiguous Ctrl+D must not be retried by a caller's catch.
     $script:agentSshBoundary = 'unconfirmed'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
@@ -831,18 +853,24 @@ function Assert-AgentSearch {
 }
 
 function Stop-AgentTui {
-    param([Parameter(Mandatory = $true)][string]$Agent)
-    if ($Agent -eq 'codex') {
-        $inputNode = Focus-TerminalInput -Name 'codex-exit'
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text '/exit' -InputNode $inputNode
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-        return
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('codex','opencode','pi','qwen')][string]$Agent,
+        [Parameter(Mandatory = $true)][string]$CaptureResultPath
+    )
+    if ($script:agentSshBoundary -ne 'shell-busy') {
+        throw '[harness] TUI state is unconfirmed or exit was already requested; refusing input'
     }
-    Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
-    Start-Sleep -Milliseconds 250
-    Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
-    Start-Sleep -Milliseconds 250
-    Invoke-LeanTTYDeviceCtrlD -Hdc $hdc -Target $Target
+    # Invalidate before dispatch. Missing acknowledgement never authorizes a retry.
+    $script:agentSshBoundary = 'unconfirmed'
+    if (-not (Test-Path -LiteralPath $CaptureResultPath -PathType Leaf)) {
+        $command = if ($Agent -in @('pi','qwen')) { '/quit' } else { '/exit' }
+        $inputNode = Focus-TerminalInput -Name "$Agent-exit"
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $command -InputNode $inputNode
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
+    }
+    Wait-File -Path $CaptureResultPath -TimeoutSeconds 30
+    Wait-File -Path $shellReadyPath -TimeoutSeconds 10
+    $script:agentSshBoundary = 'shell-ready'
 }
 
 function Invoke-AgentModeCheck {
@@ -924,7 +952,7 @@ function Invoke-AgentModeCheck {
             $check.tmuxResume = $true
         }
 
-        Stop-AgentTui -Agent $Agent
+        Stop-AgentTui -Agent $Agent -CaptureResultPath $captureResultPath
         Wait-File -Path $captureResultPath -TimeoutSeconds 30
         $capture = Get-Content -LiteralPath $captureResultPath -Raw | ConvertFrom-Json -Depth 30
         $expectedAttention = Get-AgentExpectedAttentionKind -Agent $Agent
@@ -992,7 +1020,6 @@ function Invoke-AgentInteractionOnlyCheck {
     $captureName = "$Agent-$Mode-interaction"
     $captureResultPath = Join-Path $fixtureDirectory "results\$captureName.json"
     $windowToggled = $false
-    $agentStarted = $false
     $check = [ordered]@{
         agent = $Agent
         mode = $Mode
@@ -1001,7 +1028,7 @@ function Invoke-AgentInteractionOnlyCheck {
         plannedModelRequests = 0
         tokenUsage = 'zero-model-interaction-probe'
         rawMode = $false
-        inputMethod = 'physical-harmony-ime-composition'
+        inputMethod = $(if ($ExitBoundaryProbe) { 'documented-tui-exit-command-only' } else { 'physical-harmony-ime-composition' })
         englishPhysicalInput = $false
         cjkComposition = $false
         terminalSizeBefore = $null
@@ -1016,7 +1043,6 @@ function Invoke-AgentInteractionOnlyCheck {
     try {
         Connect-AgentServer -Stage $stage
         Submit-ConnectedCommand -Command "lat $Agent $Mode interaction" -Stage "$stage-launch"
-        $agentStarted = $true
         Wait-AgentInteractionReady -CaptureResultPath $captureResultPath
         $before = Get-AgentTermiosSample -CaptureName $captureName -SampleName 'before-resize'
         $check.rawMode = [bool]$before.rawMode
@@ -1027,41 +1053,60 @@ function Invoke-AgentInteractionOnlyCheck {
         if (-not $check.rawMode) {
             throw '[compatibility] Agent TUI did not place its controlled PTY in raw mode'
         }
-        Invoke-AgentPhysicalImeProbe -Stage $stage
+        if (-not $ExitBoundaryProbe) {
+            Invoke-AgentPhysicalImeProbe -Stage $stage
 
-        $beforeLayout = Get-FullLayout -Name "$stage-before-resize"
-        $toggle = Get-WindowSizeToggleButton -Layout $beforeLayout
-        Click-Node -Node $toggle -Description "Toggle HarmonyOS window size for $stage"
-        $windowToggled = $true
-        Start-Sleep -Milliseconds 1200
-        $after = Get-AgentTermiosSample -CaptureName $captureName -SampleName 'after-resize'
-        $check.terminalSizeAfter = [ordered]@{
-            rows = [int]$after.rows
-            columns = [int]$after.columns
-        }
-        $check.resize = (
-            [int]$before.rows -ne [int]$after.rows -or
-            [int]$before.columns -ne [int]$after.columns
-        )
-        if (-not $check.resize) {
-            throw '[product] Agent PTY dimensions did not change after the real HarmonyOS window resize'
-        }
+            $beforeLayout = Get-FullLayout -Name "$stage-before-resize"
+            $toggle = Get-WindowSizeToggleButton -Layout $beforeLayout
+            Click-Node -Node $toggle -Description "Toggle HarmonyOS window size for $stage"
+            $windowToggled = $true
+            Start-Sleep -Milliseconds 1200
+            $after = Get-AgentTermiosSample -CaptureName $captureName -SampleName 'after-resize'
+            $check.terminalSizeAfter = [ordered]@{
+                rows = [int]$after.rows
+                columns = [int]$after.columns
+            }
+            $check.resize = (
+                [int]$before.rows -ne [int]$after.rows -or
+                [int]$before.columns -ne [int]$after.columns
+            )
+            if (-not $check.resize) {
+                throw '[product] Agent PTY dimensions did not change after the real HarmonyOS window resize'
+            }
 
-        $afterLayout = Get-FullLayout -Name "$stage-after-resize"
-        $restore = Get-WindowSizeToggleButton -Layout $afterLayout
-        Click-Node -Node $restore -Description "Restore HarmonyOS window size after $stage"
-        $windowToggled = $false
-        Start-Sleep -Milliseconds 700
-        Stop-AgentTui -Agent $Agent
-        $agentStarted = $false
+            $afterLayout = Get-FullLayout -Name "$stage-after-resize"
+            $restore = Get-WindowSizeToggleButton -Layout $afterLayout
+            Click-Node -Node $restore -Description "Restore HarmonyOS window size after $stage"
+            $windowToggled = $false
+            Start-Sleep -Milliseconds 700
+        }
+        if ($ExitBoundaryProbe) { Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target }
+        Stop-AgentTui -Agent $Agent -CaptureResultPath $captureResultPath
+        if ($ExitBoundaryProbe) {
+            $exitLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appProcessId
+            $check.exitBoundary = [ordered]@{
+                sshClosedBeforeDisconnect = ($exitLogs -match 'SSH closed, exitCode=')
+                agentResultExistsAfterStop = (Test-Path -LiteralPath $captureResultPath)
+                cachedSshBoundaryAfterStop = $script:agentSshBoundary
+            }
+            if ($check.exitBoundary.sshClosedBeforeDisconnect) {
+                $script:agentSshBoundary = 'unconfirmed'
+                throw '[harness] SSH closed before its dedicated disconnect action'
+            }
+        }
         Wait-File -Path $captureResultPath -TimeoutSeconds 30
         $capture = Get-Content -LiteralPath $captureResultPath -Raw | ConvertFrom-Json -Depth 30
         $check.englishPhysicalInput = [bool]$capture.input.containsControlledEnglishMarker
         $check.cjkComposition = [bool]$capture.input.containsCjkUtf8
-        if (-not $check.englishPhysicalInput) {
+        if ($ExitBoundaryProbe) {
+            $check.englishPhysicalInput = $null
+            $check.cjkComposition = $null
+            $check.resize = $null
+        }
+        if (-not $ExitBoundaryProbe -and -not $check.englishPhysicalInput) {
             throw '[compatibility] Physical English input did not reach the Agent PTY'
         }
-        if (-not $check.cjkComposition) {
+        if (-not $ExitBoundaryProbe -and -not $check.cjkComposition) {
             throw '[compatibility] Physical HarmonyOS IME composition did not reach the Agent PTY'
         }
         $check.alternateScreen = [ordered]@{
@@ -1104,9 +1149,9 @@ function Invoke-AgentInteractionOnlyCheck {
                 Click-Node -Node $restore -Description "Restore HarmonyOS window after failed $stage"
                 $windowToggled = $false
             }
-            if ($agentStarted) { Stop-AgentTui -Agent $Agent }
-            Disconnect-AgentServer
-            $check.recovery = 'window-restored; agent-stopped; SSH disconnected'
+            # A failed interaction may leave arbitrary input in a live TUI.
+            # Its isolated Tab owns cleanup; do not submit more commands or EOF.
+            $check.recovery = 'window-restored; isolated-tab-finalization-required'
         } catch {
             $check.recovery = 'failed: ' + $_.Exception.Message
         }
@@ -1146,7 +1191,6 @@ function Invoke-AgentProtocolInteractionCheck {
     )
     $stage = "$Agent-$Mode-protocol"
     $captureResultPath = Join-Path $fixtureDirectory "results\$stage.json"
-    $agentStarted = $false
     $check = [ordered]@{
         agent = $Agent
         mode = $Mode
@@ -1170,7 +1214,6 @@ function Invoke-AgentProtocolInteractionCheck {
     try {
         Connect-AgentServer -Stage $stage
         Submit-ConnectedCommand -Command "lat $Agent $Mode protocol" -Stage "$stage-launch"
-        $agentStarted = $true
         Wait-AgentTuiReady -CaptureResultPath $captureResultPath -TimeoutSeconds 20
         # The prompt is deliberately tiny. This delay is only a scheduling guard
         # before the local /copy action; OSC 52 remains the actual completion oracle.
@@ -1246,8 +1289,7 @@ function Invoke-AgentProtocolInteractionCheck {
             ctrlEndRestoration = 'recorded-for-visual-review'
         }
 
-        Stop-AgentTui -Agent $Agent
-        $agentStarted = $false
+        Stop-AgentTui -Agent $Agent -CaptureResultPath $captureResultPath
         Wait-File -Path $captureResultPath -TimeoutSeconds 30
         $capture = Get-Content -LiteralPath $captureResultPath -Raw | ConvertFrom-Json -Depth 30
         if ($capture.output.osc52ClipboardCount -lt 1) {
@@ -1273,13 +1315,7 @@ function Invoke-AgentProtocolInteractionCheck {
         } else {
             'unknown'
         }
-        try {
-            if ($agentStarted) { Stop-AgentTui -Agent $Agent }
-            Disconnect-AgentServer
-            $check.recovery = 'agent-stopped; SSH disconnected'
-        } catch {
-            $check.recovery = 'failed: ' + $_.Exception.Message
-        }
+        $check.recovery = 'isolated-tab-finalization-required'
     }
     return [pscustomobject]$check
 }
@@ -1516,7 +1552,8 @@ try {
     $bashRc = @(
         "PS1='leantty-agent-test$ '"
         'set +o history'
-        "printf 'ready\n' > '$wslShellReadyPath'"
+        "__leantty_ready() { printf 'ready\n' > '$wslShellReadyPath'; }"
+        'PROMPT_COMMAND=__leantty_ready'
         $(if ($OpenCodeForceOsc99Protocol) {
             'export LEANTTY_OPENCODE_FORCE_OSC99_PROTOCOL=1'
         } else {
@@ -1613,6 +1650,8 @@ try {
                 'ssh-prerequisite-connect-command-close-cleanup'
             } elseif ($Osc99CapabilityProbe) {
                 'osc99-capability-response'
+            } elseif ($ExitBoundaryProbe) {
+                'zero-model-agent-exit-shell-return-and-ssh-close'
             } elseif ($InteractionOnlyProbe) {
                 'zero-model-agent-tui-raw-alternate-resize'
             } elseif ($ProtocolInteractionProbe) {
