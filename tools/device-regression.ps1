@@ -550,7 +550,9 @@ function New-LeanTTYTextInputFailure {
         [Parameter(Mandatory = $true)][string]$Message,
         [ValidateSet('before', 'after')][string]$Phase,
         $ExpectedNode,
-        [AllowEmptyCollection()][object[]]$CurrentNodes = @()
+        [AllowEmptyCollection()][object[]]$CurrentNodes = @(),
+        $ExpectedLayout = $null,
+        $CurrentLayout = $null
     )
 
     # Exception.Data is visible to every caller. Construct a whitelist here,
@@ -597,6 +599,24 @@ function New-LeanTTYTextInputFailure {
         focusedCount = $CurrentNodes.Count
         targetsTruncated = $CurrentNodes.Count -gt 4
         targets = $targets
+    }
+    if ($null -ne $ExpectedLayout -and $null -ne $CurrentLayout) {
+        $expectedWeb = Get-LeanTTYTerminalInputWebOwner -Layout $ExpectedLayout -InputNode $ExpectedNode
+        $currentWebs = @($CurrentNodes | Select-Object -First 4 | ForEach-Object {
+            Get-LeanTTYTerminalInputWebOwner -Layout $CurrentLayout -InputNode $_
+        } | Where-Object { $null -ne $_ })
+        # Reuse the same whitelist for the actual identity boundary. No layouts
+        # are passed recursively, so this adds exactly one comparison level.
+        $webFailure = New-LeanTTYTextInputFailure -Message $Message -Phase $Phase `
+            -ExpectedNode $expectedWeb -CurrentNodes $currentWebs
+        $webDetails = $webFailure.Data['LeanTTYTextInputFailure']
+        $webDetails.expectedTerminalCount = $(if ($null -ne $expectedWeb) {
+            @(Get-LeanTTYTerminalInputNodes -Layout $expectedWeb).Count
+        } else { 0 })
+        $webDetails.currentTerminalCounts = @($currentWebs | ForEach-Object {
+            @(Get-LeanTTYTerminalInputNodes -Layout $_).Count
+        })
+        $failure.Data['LeanTTYTextInputFailure'].webOwners = $webDetails
     }
     return $failure
 }
@@ -704,6 +724,7 @@ function Invoke-LeanTTYDeviceText {
                         -ExpectedLayout $layout -CurrentLayout $afterLayout)) {
                     throw (New-LeanTTYTextInputFailure -Phase after -ExpectedNode $focusedInputs[0] `
                         -CurrentNodes $afterInputs `
+                        -ExpectedLayout $layout -CurrentLayout $afterLayout `
                         -Message '[harness] HarmonyOS text input changed its intended target; refusing retry or Enter')
                 }
             } | Out-Null

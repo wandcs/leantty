@@ -488,6 +488,10 @@ Assert-True (@(Get-LeanTTYTerminalInputNodes -Layout $warmPaneLayout).Count -eq 
             Assert-True ($null -eq $failure) 'Same native Web owner must survive a virtual textarea subtree rebuild'
         } else {
             Assert-True ($null -ne $failure) "Terminal input must reject changed or ambiguous owner: $case"
+            $owners = $failure.Data['LeanTTYTextInputFailure'].webOwners
+            Assert-True ($owners.expectedPresent -and $owners.targets.Count -eq 1) 'Missing native Web failure comparison'
+            Assert-True ($owners.targets[0].attributes.accessibilityId.equal -eq ($case -ne 'replaced-web')) 'Web identity comparison was lost'
+            Assert-True (($owners | ConvertTo-Json -Depth 12) -notmatch 'web-owner|web-new|input-old|input-new|Terminal input|Search text') 'Web comparison leaked raw attributes'
         }
         Assert-True ($script:webOwnerInputs -eq 1 -and $script:webOwnerLayoutReads -eq 2) (
             'Web owner comparison must not add input retries or Enter'

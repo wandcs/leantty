@@ -441,7 +441,8 @@ try {
         $deviceScript.Contains('Save-CurrentAppLogs') -and
         $deviceScript.Contains('rawCaptureDeletedBeforeEvidenceCopy') -and
         $deviceScript.Contains("Invoke-AgentWorkspaceChord -Action 'new-tab'") -and
-        $deviceScript.Contains("Invoke-AgentWorkspaceChord -Action 'close-active'") -and
+        $deviceScript.Contains('Close-AgentTestTab') -and
+        -not $deviceScript.Contains("Invoke-AgentWorkspaceChord -Action 'close-active'") -and
         $deviceScript.Contains('Expected one active terminal input') -and
         $deviceScript.Contains('Temporary WSL sshd PID is missing or malformed') -and
         $deviceScript.Contains('Temporary WSL sshd identity did not match its run-scoped config') -and

@@ -285,3 +285,40 @@ failure，禁止继续形成 Agent 兼容结论。旧零模型探针中的 `cont
 LeanTTY。只有同一失败能在受控普通 SSH/tmux 中稳定复现、影响高频 Agent 工作，并且不能通过
 Agent 的公开配置解决时，才评审最小产品修复。修复仍必须复用现有 Terminal Surface、Pane
 attention、通知和返回所有权，不能引入按 Agent 解析输出的长期维护面。
+
+## 2026-09-11 SSH 信任输入与失败收尾诊断
+
+正式 `512e828` harness 在原 `ac01156` 候选上，于 host-key 提示输入 `yes` 后停止：
+目标检查失败，未发送 Enter。异常中的安全比较元数据未进入 Agent 结果，不能判断真实
+焦点变化还是结构索引变化。独立收尾确认等待信任时关闭测试 Tab 会弹出确认框；原 finally
+只发关闭快捷键并等待删除日志，未处理确认。原正式结果及独立收尾见根工作记录 §8.49。
+
+本轮只修复这两个必需证据/清理阻塞。App/ArkWeb 持有实际页面、会话和焦点；工具只核对
+观察结果。先保留输入节点及原生 Web 的属性存在性、相等性和数量，不保存正文或标识值，
+不改变目标判定。自有 Tab 通过创建前后原生 Tab 节点差集识别，结合产品工作区检查点确认
+激活位置；清理只作用于该节点，并证明原节点集合和激活页恢复。身份不明则拒绝关闭。
+未知会话内不发送清理命令，先只读核对临时 known-host 缺席。
+
+2026-09-11 外部研究针对“坐标输入是否保证 owner 不变、结构路径是否稳定、确认框是否
+必须显式处理”：
+
+- [OpenHarmony UiTest 指南](https://github.com/openharmony/docs/blob/master/zh-cn/application-dev/application-test/uitest-guidelines.md)
+  将坐标 inputText 定义为点击获焦后输入，未保证整个操作期间目标不变。当前 master 的
+  API 20 输入模式不等于测试机已部署行为；不切换输入模式规避此次故障。
+- [UiTest ui_model.cpp](https://github.com/openharmony/testfwk_arkxtest/blob/master/uitest/core/ui_model.cpp)
+  的 WidgetHierarchyBuilder 用父路径和 childIndex 生成 hierarchy；
+  [ui_driver.cpp](https://github.com/openharmony/testfwk_arkxtest/blob/master/uitest/core/ui_driver.cpp)
+  在重新定位控件前更新窗口。这支持“索引变化”的假设，不证明本次原生 Web 身份未变。
+- [上游 PR !1108](https://gitee.com/openharmony/testfwk_arkxtest/pulls/1108)
+  的自测记录包含 InputText 未触发文字变化回调；它不是本次 owner 故障，也不支持改用
+  新事件监听作为稳定判据。Huawei 当前指南网页无法读取，社区检索未找到匹配当前
+  OpenHarmony-6.1.1.135/原生 Web owner 变化的可复核报告；保留版本差异与未知。
+- [Playwright dialogs](https://playwright.dev/docs/dialogs) 和
+  [locators](https://playwright.dev/docs/locators) 提供显式处理模态确认、操作前重新定位的
+  设计参考，不是 HarmonyOS 行为证据。
+
+验证只做 L0–L3：失败元数据与原始失败保留、模态确认/取消、错误 owner 拒绝、缺席审计
+的定向反例；原 HAP 上的零模型 SSH prerequisite 及停在信任提示的收尾诊断。
+下一假设是同一原生 Web 的 hierarchy 重排触发误报，必须由失败当时的比较结果区分。
+没有反例时不继续采样，也不放宽共享检查。无需构建、模型工作负载、Wi-Fi 或合盖测试；
+开发证据不替代完整 C3，工具变更在下轮启动边界按 R3 与 QH 规则采用。

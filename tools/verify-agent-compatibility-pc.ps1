@@ -22,6 +22,7 @@ param(
     [switch]$InteractionOnlyProbe,
     [switch]$ProtocolInteractionProbe,
     [switch]$SshPrerequisiteProbe,
+    [switch]$StopAtHostKeyPrompt,
     [switch]$OpenCodeForceOsc99Protocol,
     [switch]$DiagnosticHap,
     [string]$CandidateBasePath = '',
@@ -31,6 +32,9 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($SshPrerequisiteProbe -and -not $DiagnosticHap) {
     throw '-SshPrerequisiteProbe is a diagnostic-only prerequisite, not Agent acceptance'
+}
+if ($StopAtHostKeyPrompt -and -not ($SshPrerequisiteProbe -and $DiagnosticHap)) {
+    throw '-StopAtHostKeyPrompt requires the zero-model diagnostic SSH prerequisite'
 }
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
@@ -167,6 +171,8 @@ $notificationState = @{originalEnabled=$null;settingsOpen=$false;promptRejected=
 $knownHostCleanupAttempted = $false
 $isolatedTabCreated = $false
 $isolatedTabId = ''
+$isolatedTabUiId = ''
+$baselineTabState = $null
 $knownHostRemoved = $false
 $primaryFailure = $null
 $cleanupFailures = [Collections.Generic.List[string]]::new()
@@ -233,6 +239,7 @@ $result = New-LeanTTYAgentCompatibilityResult `
 if ($SshPrerequisiteProbe) {
     $result | Add-Member -NotePropertyName actualModelRequests -NotePropertyValue 0
 }
+if ($StopAtHostKeyPrompt) { $result.diagnosticOverrides += 'stop-before-host-key-input' }
 $result.resources = [ordered]@{
     notificationPermission = $notificationState
     fixtureDirectory = $fixtureDirectory
@@ -248,6 +255,11 @@ function Write-AgentCompatibilityProgress {
     # A completed check is not necessarily a pass. Persist its verdict before
     # later commands or cleanup can fail, including enough identity for recovery.
     $result.resources.isolatedTabId = $isolatedTabId
+    $result.resources.isolatedTabUiId = $isolatedTabUiId
+    if ($null -ne $baselineTabState) {
+        $result.resources.originalTabUiIds = @($baselineTabState.ids)
+        $result.resources.originalActiveTabUiId = $baselineTabState.activeId
+    }
     $result.resources.mappingActive = $mappingActive
     $result.resources.awakeLeaseAcquired = $awakeLeaseAcquired
     $result.resources.isolatedTabCreated = $isolatedTabCreated
@@ -289,14 +301,122 @@ function Focus-TerminalInput {
 }
 
 function Invoke-AgentWorkspaceChord {
-    param([Parameter(Mandatory = $true)][ValidateSet('new-tab', 'close-active')][string]$Action)
-    $command = if ($Action -eq 'new-tab') {
-        'uinput -K -d 2072 -d 2047 -d 2036 -u 2036 -u 2047 -u 2072'
-    } else {
-        'uinput -K -d 2072 -d 2047 -d 2039 -u 2039 -u 2047 -u 2072'
-    }
+    param([Parameter(Mandatory = $true)][ValidateSet('new-tab')][string]$Action)
+    $command = 'uinput -K -d 2072 -d 2047 -d 2036 -u 2036 -u 2047 -u 2072'
     & $hdc -t $Target shell $command | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "[environment] Unable to invoke isolated Agent $Action" }
+}
+
+function Get-AgentTabState {
+    param([Parameter(Mandatory = $true)][string]$Name, $Layout = $null)
+    if ($null -eq $Layout) { $Layout = Get-FullLayout -Name $Name }
+    $root = Find-OneNode -Layout $Layout -Description 'LeanTTY root' -Predicate {
+        $_.attributes.type -ceq 'root' -and $_.attributes.bundleName -ceq 'com.leantty.app'
+    }
+    $windowId = [string]$root.attributes.hostWindowId
+    $tabs = @(Get-LeanTTYLayoutNodes -Node $root | Where-Object {
+        $_.attributes.type -ceq 'Stack' -and $_.attributes.clickable -eq 'true' -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.attributes.description)
+    })
+    $ids = @($tabs | ForEach-Object { [string]$_.attributes.accessibilityId })
+    # Same product-owned checkpoint and native Tab identity used by review smoke.
+    # Labels repeat, and the active index alone cannot identify a disposable Tab.
+    $path = '/data/app/el2/100/base/com.leantty.app/haps/entry/preferences/leantty_unexpected_exit_recovery'
+    [xml]$xml = Invoke-HdcChecked -Hdc $hdc -Target $Target -Arguments @(
+        'shell', '-b', 'com.leantty.app', "cat $path"
+    ) -Operation 'Read Agent fixture workspace-only checkpoint'
+    $recordNode = $xml.SelectSingleNode('/preferences/string[@key="record"]')
+    if ($null -eq $recordNode) { throw '[harness] Agent workspace checkpoint missing' }
+    $record = $recordNode.InnerText | ConvertFrom-Json
+    $position = $record.workspace.activeTabPosition
+    if ($record.schemaVersion -ne 1 -or $windowId.Length -eq 0 -or $tabs.Count -eq 0 -or
+        '' -cin $ids -or @($ids | Select-Object -Unique).Count -ne $ids.Count -or
+        @($record.workspace.tabs).Count -ne $tabs.Count -or
+        ($position -isnot [int] -and $position -isnot [long]) -or
+        $position -lt 0 -or $position -ge $tabs.Count) {
+        throw '[harness] Agent Tab identity unavailable or ambiguous'
+    }
+    return [pscustomobject]@{ tabs=$tabs; ids=$ids; activeId=$ids[$position]; windowId=$windowId; layout=$Layout }
+}
+
+function Get-AgentOwnedTab {
+    param([Parameter(Mandatory = $true)]$State)
+    $remaining = @($State.ids | Where-Object { $_ -cne $isolatedTabUiId })
+    $owned = @($State.tabs | Where-Object { $_.attributes.accessibilityId -ceq $isolatedTabUiId })
+    if ($null -eq $baselineTabState -or $isolatedTabId.Length -eq 0 -or
+        $isolatedTabUiId.Length -eq 0 -or $owned.Count -ne 1 -or
+        $State.windowId -cne $baselineTabState.windowId -or
+        ($remaining -join ',') -cne ($baselineTabState.ids -join ',')) {
+        throw '[harness] Refusing to close an unidentified Agent Tab or changed workspace'
+    }
+    return $owned[0]
+}
+
+function Close-AgentTestTab {
+    Ensure-LeanTTYVisible -Stage 'isolated-tab-cleanup' -DismissPermissionPrompt | Out-Null
+    $currentProcess = (Invoke-HdcChecked -Hdc $hdc -Target $Target -Arguments @(
+        'shell', 'pidof com.leantty.app'
+    ) -Operation 'Verify Agent cleanup process owner').Trim()
+    if ($currentProcess -cne $appProcessId) { throw '[harness] Agent cleanup process changed' }
+    $state = Get-AgentTabState -Name 'isolated-tab-cleanup-owner'
+    $tab = Get-AgentOwnedTab -State $state
+    if ($state.activeId -cne $isolatedTabUiId) {
+        Click-Node -Node $tab -Description 'Select identified Agent test Tab'
+        $state = Get-AgentTabState -Name 'isolated-tab-cleanup-selected'
+        $tab = Get-AgentOwnedTab -State $state
+    }
+    if ($state.activeId -cne $isolatedTabUiId) { throw '[harness] Agent test Tab did not become active' }
+    $close = Find-OneNode -Layout $tab -Description 'owned Agent Tab close control' -Predicate {
+        $_.attributes.type -ceq 'Text' -and $_.attributes.clickable -eq 'true' -and $_.attributes.text -ceq '✕'
+    }
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    Click-Node -Node $close -Description 'Close identified Agent test Tab once'
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $confirmationSent = $false
+    $removed = $false
+    do {
+        $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appProcessId
+        if ($logs -match ('Tab removed: ' + [regex]::Escape($isolatedTabId) + '(?:\s|$)')) {
+            $removed = $true
+            break
+        }
+        $layout = Get-FullLayout -Name 'isolated-tab-close-pending'
+        $dialogs = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+            $_.attributes.type -ceq 'AlertDialog' -and $_.attributes.hostWindowId -ceq $state.windowId
+        })
+        if ($dialogs.Count -gt 0 -and -not $confirmationSent) {
+            if ($dialogs.Count -ne 1) { throw '[harness] Ambiguous Agent close confirmation' }
+            $dialog = $dialogs[0]
+            Find-OneNode -Layout $dialog -Description 'Tab close confirmation title' -Predicate {
+                $_.attributes.type -ceq 'Text' -and $_.attributes.text -cin @('Close this tab?', '关闭标签页？')
+            } | Out-Null
+            Find-OneNode -Layout $dialog -Description 'Tab close cancellation control' -Predicate {
+                $_.attributes.type -ceq 'Text' -and $_.attributes.text -cin @('Cancel', '取消')
+            } | Out-Null
+            $confirm = Find-OneNode -Layout $dialog -Description 'Tab close confirmation action' -Predicate {
+                $_.attributes.type -ceq 'Text' -and $_.attributes.text -cin @('Close Tab', '关闭标签页')
+            }
+            $state = Get-AgentTabState -Name 'isolated-tab-confirm-owner' -Layout $layout
+            Get-AgentOwnedTab -State $state | Out-Null
+            if ($state.activeId -cne $isolatedTabUiId) { throw '[harness] Agent confirmation owner changed' }
+            $confirmationSent = $true
+            Click-Node -Node $confirm -Description 'Confirm identified Agent test Tab closure once'
+        }
+        Start-Sleep -Milliseconds 250
+    } while ($watch.Elapsed.TotalSeconds -lt 8)
+    if (-not $removed) { throw '[cleanup] Agent Tab removal unconfirmed; no repeated close or confirmation' }
+    $script:isolatedTabCreated = $false
+    $state = Get-AgentTabState -Name 'isolated-tab-removed'
+    if (($state.ids -join ',') -cne ($baselineTabState.ids -join ',') -or
+        $state.windowId -cne $baselineTabState.windowId) { throw '[cleanup] Original Agent workspace changed' }
+    if ($state.activeId -cne $baselineTabState.activeId) {
+        $original = @($state.tabs | Where-Object { $_.attributes.accessibilityId -ceq $baselineTabState.activeId })
+        if ($original.Count -ne 1) { throw '[cleanup] Original active Tab unavailable' }
+        Click-Node -Node $original[0] -Description 'Restore original active Tab'
+        $state = Get-AgentTabState -Name 'isolated-tab-original-restored'
+    }
+    if ($state.activeId -cne $baselineTabState.activeId) { throw '[cleanup] Original active Tab was not restored' }
+    $result.resources.tabCleanup = @{ ownedTabRemoved=$true; originalTabsRestored=$true; originalActiveTabRestored=$true; confirmationSent=$confirmationSent }
 }
 
 function Submit-LocalCommand {
@@ -389,8 +509,16 @@ function Connect-AgentServer {
     $connectionLogs = Wait-AppLog `
         -Pattern 'native control event: host_key_prompt:|SSH session connected' -TimeoutSeconds 30
     if ($connectionLogs -notmatch 'SSH session connected') {
+        if ($StopAtHostKeyPrompt) { throw '[harness] Diagnostic stop at host-key prompt before input' }
         $inputNode = Focus-TerminalInput -Name "$Stage-host-key"
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'yes' -InputNode $inputNode
+        try {
+            Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'yes' -InputNode $inputNode
+        } catch {
+            # The producer whitelists metadata; retain it before outer checks reduce the error to text.
+            $result | Add-Member -NotePropertyName hostKeyInputFailure `
+                -NotePropertyValue $_.Exception.Data['LeanTTYTextInputFailure'] -Force
+            throw
+        }
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         Wait-AppLog -Pattern 'SSH session connected' -TimeoutSeconds 30 | Out-Null
     }
@@ -1315,6 +1443,7 @@ try {
     [void](Set-NotificationEnabled -Enabled $true -Stage 'agent-permission')
     Write-AgentCompatibilityProgress -Stage 'notification-permission-ready'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+    $baselineTabState = Get-AgentTabState -Name 'isolated-tab-baseline'
     Invoke-AgentWorkspaceChord -Action 'new-tab'
     $isolatedTabCreated = $true
     $createdLogs = Wait-AppLog -Pattern 'Tab added: ' -TimeoutSeconds 5
@@ -1326,6 +1455,13 @@ try {
         -Hdc $hdc -Target $Target `
         -LocalPath (Join-Path $EvidenceDirectory 'isolated-test-tab.json') `
         -TimeoutSeconds 20 | Out-Null
+    $createdState = Get-AgentTabState -Name 'isolated-tab-created-owner'
+    $addedIds = @($createdState.ids | Where-Object { $_ -cnotin $baselineTabState.ids })
+    if ($addedIds.Count -ne 1 -or $createdState.activeId -cne $addedIds[0]) {
+        throw '[harness] Isolated Agent Tab creation identity unconfirmed'
+    }
+    $isolatedTabUiId = $addedIds[0]
+    Get-AgentOwnedTab -State $createdState | Out-Null
 
     $publicKeyOutput = @(
         & $hdc -t $Target shell -b com.leantty.app `
@@ -1529,13 +1665,7 @@ try {
     } catch { $cleanupFailures.Add('WSL fixture cleanup failed') }
     if ($isolatedTabCreated) {
         try {
-            if ($isolatedTabId.Length -eq 0) { throw '[harness] Cannot close an unidentified Agent Tab' }
-            Ensure-LeanTTYVisible -Stage 'isolated-tab-cleanup' -DismissPermissionPrompt | Out-Null
-            Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-            Invoke-AgentWorkspaceChord -Action 'close-active'
-            Wait-AppLog -Pattern ('Tab removed: ' + [regex]::Escape($isolatedTabId)) `
-                -TimeoutSeconds 5 | Out-Null
-            $isolatedTabCreated = $false
+            Close-AgentTestTab
         } catch {
             $cleanupFailures.Add('Isolated Agent test tab cleanup failed')
         }
@@ -1636,7 +1766,12 @@ try {
         }
     }
     if ($knownHostCleanupAttempted -and -not $knownHostRemoved) {
-        $cleanupFailures.Add('Run-scoped known-host removal was not confirmed')
+        try {
+            # The trust reply may never have been submitted. Absence is sufficient;
+            # an unknown session must never receive a guessed local cleanup command.
+            Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $Port -TimeoutSeconds 1
+            $knownHostRemoved = $true
+        } catch { $cleanupFailures.Add('Run-scoped known-host removal was not confirmed') }
     }
   } catch {
     $cleanupFailures.Add('Cleanup interrupted: ' + $_.Exception.GetType().FullName +
