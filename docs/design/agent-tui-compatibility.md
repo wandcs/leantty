@@ -291,7 +291,8 @@ attention、通知和返回所有权，不能引入按 Agent 解析输出的长�
 正式 `512e828` harness 在原 `ac01156` 候选上，于 host-key 提示输入 `yes` 后停止：
 目标检查失败，未发送 Enter。异常中的安全比较元数据未进入 Agent 结果，不能判断真实
 焦点变化还是结构索引变化。独立收尾确认等待信任时关闭测试 Tab 会弹出确认框；原 finally
-只发关闭快捷键并等待删除日志，未处理确认。原正式结果及独立收尾见根工作记录 §8.49。
+只发关闭快捷键并等待删除日志，未处理确认。原正式结果及独立收尾保存在
+`build/verification/release-1.6.0-r3-pr178-20260911/` 的 `formal/` 与 `agent-stop-audit/`。
 
 本轮只修复这两个必需证据/清理阻塞。App/ArkWeb 持有实际页面、会话和焦点；工具只核对
 观察结果。先保留输入节点及原生 Web 的属性存在性、相等性和数量，不保存正文或标识值，
@@ -322,3 +323,45 @@ attention、通知和返回所有权，不能引入按 Agent 解析输出的长�
 下一假设是同一原生 Web 的 hierarchy 重排触发误报，必须由失败当时的比较结果区分。
 没有反例时不继续采样，也不放宽共享检查。无需构建、模型工作负载、Wi-Fi 或合盖测试；
 开发证据不替代完整 C3，工具变更在下轮启动边界按 R3 与 QH 规则采用。
+
+### 定向验证结果
+
+两次真机诊断均使用干净 harness `9ec168954eb7b4aafeed58e86a12d9344c706bbc`，
+tree `239274f4816d608a8a1f26472f6d6a72d830b755`；原候选 HAP SHA-256 为
+`0db0f090cc9053b15204d55f6a49a2df202aa970eaf3e3672192fb668da95e71`。
+测试机为 HAD-W32 ARM64、OpenHarmony-6.1.1.135，UiTest 6.0.2.3、HDC 3.2.0d。
+没有改产品、构建、换包内容、调用模型或管理 WSL 生命周期。
+
+- 21:50–21:51：`-DiagnosticHap -SshPrerequisiteProbe -StopAtHostKeyPrompt` 在信任提示
+  输入前主动停止。业务结果按预期保留 failed，不发送 `yes` 或 Enter；真实关闭确认框
+  被确认一次，测试 Tab 删除，原 Tab 和激活页保留，cleanup passed。
+- 21:52–21:54：正常零模型 SSH prerequisite passed，UTF-8 远端命令执行、断开、
+  known-host 删除和 Tab 收尾通过。三条本地命令均一次输入、一次 Enter、零不匹配；
+  受控远端命令也一次输入、一次 Enter、无不匹配。未出现 host-key owner 异常。
+- 两次均恢复原来的通知禁用状态，关闭设置页，完成通知缺席审计并释放 awake lease。
+  独立只读核对确认端口 35931/32377、精确夹具进程/目录、临时 known-host 和 HDC
+  正反向映射缺席；工作区剩原 Tab、activeTabPosition=0。冻结源码、HAP 和旧失败报告未变。
+
+输入失败元数据及 native Web 比较由软件反例证明；真机未重现原始输入问题，不能说其
+根因已定位或已修复。新增诊断停止开关只允许在显式 diagnostic 的 SSH 前置探针中使用，
+不能成为正式通过条件。取消、错误 owner、进程变化、不相关确认框和重复动作拒绝只由
+定向软件反例覆盖，不描述成真机已逐项操作。
+
+证据根：`build/verification/agent-trust-cleanup-20260911/`。
+`host-key-stop/result.json` SHA-256：
+`7127e6405f6bef5d7bd210d57bdbd1de58f427aa33f53899bba017eda5f6d5cc`；
+`ssh-prerequisite/result.json` SHA-256：
+`cc3bceb68368b02c9f64f2e9f8c4c33556fd4dbb0e7e3bef2832a5765736c93a`。
+独立审计为 `resource-identity-audit-confirmed.json`；先前审计误用当前 HDC 不支持的
+`rport ls`，后按本机 `hdc -h` 的 `fport ls` 确认 `[Empty]`，不完整记录保留。
+首次补审计还误写了原报告路径，未成功写出确认记录；发现 `attempt-1` 后只读核对成功。
+这两项是本轮审计调用错误，不是产品或原诊断清理失败。
+
+真机前的 41 项 Agent 反例及 policy/tooling 七项注册检查通过。真机后的兼容性反例
+发现四个调用方缺少本次 Agent 设计文档和测试脚本的精确许可路径；只补这两条路径，
+不扩大到产品源码或依赖。该收口不改变已验证的输入/关闭链；下轮仍需干净合并身份和
+正式 QH，不复用旧正式通过前缀。根工作区其他变更不纳入本修复。
+
+收口后 `software-final.json` 的 policy/tooling 七项注册检查通过，其中 Agent SSH gate
+为 46 项，包括五个实际调用方的候选兼容路径及产品输入拒绝；`git diff --check` 通过。
+此前失败的软件检查报告保留，最终通过不覆盖它们。这仍是 focused 开发证据，不是 QH。

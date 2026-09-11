@@ -381,6 +381,41 @@ foreach ($readFails in @($false,$true)) {
             @($script:trace | Where-Object {$_ -like 'local:*' -or $_ -in @('text','enter','ctrl-d')}).Count -eq 0) 'Unknown session received input or absence verdict was guessed'
     }
 }
+# Read each caller's real allowlist: this repair must retain the original HAP,
+# without accepting product-source or dependency changes as harness-only.
+. (Join-Path $PSScriptRoot 'candidate-store.ps1')
+foreach ($caller in @('verify-agent-compatibility-pc.ps1', 'verify-mosh-pc.ps1',
+        'verify-ssh-auth-pc.ps1', 'verify-terminal-search-pc.ps1',
+        'verify-long-task-notification-pc.ps1')) {
+    Test-Gate "agent-repair-candidate-boundary-$caller" {
+        $callerAst = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot $caller), [ref]$null, [ref]$null)
+        $command = $callerAst.Find({ param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -eq 'Assert-LeanTTYCandidateHarnessCompatibility'
+        }, $true)
+        $parameter = @($command.CommandElements | Where-Object {
+            $_ -is [Management.Automation.Language.CommandParameterAst] -and
+            $_.ParameterName -eq 'AllowedHarnessPaths'
+        })
+        Assert-Gate ($parameter.Count -eq 1) 'Caller has no unique harness allowlist'
+        $index = $command.CommandElements.IndexOf($parameter[0])
+        $allowed = $command.CommandElements[$index + 1].SafeGetValue()
+        Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowed -ChangedPaths @(
+            'docs/design/agent-tui-compatibility.md', 'docs/next-work.md',
+            'tools/device-regression.ps1', 'tools/test-device-regression.ps1',
+            'tools/test-agent-ssh-gate.ps1', 'tools/test-agent-compatibility.ps1',
+            'tools/verify-agent-compatibility-pc.ps1', 'tools/verify-mosh-pc.ps1',
+            'tools/verify-ssh-auth-pc.ps1', 'tools/verify-terminal-search-pc.ps1',
+            'tools/verify-long-task-notification-pc.ps1')
+        foreach ($productPath in @('entry/src/main/ets/pages/Index.ets', 'leantty_ssh/Cargo.lock')) {
+            $rejected = $false
+            try { Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowed -ChangedPaths @($productPath) }
+            catch { $rejected = $true }
+            Assert-Gate $rejected 'Product inputs were accepted as harness-only'
+        }
+    }
+}
 $report = [ordered]@{
     scenario = 'agent-ssh-gate-fault-injection'; acceptanceEligible = $false
     startedAt = $startedAt.ToString('o'); completedAt = [DateTimeOffset]::UtcNow.ToString('o')

@@ -87,6 +87,8 @@ if ($DiagnosticHap) {
             'tools/test-agent-ssh-gate.ps1',
             'tools/verify-agent-compatibility-pc.ps1',
             'docs/design/notification-fixture-permission-20260911.md',
+            'docs/design/agent-tui-compatibility.md',
+            'tools/test-agent-compatibility.ps1',
             'tools/candidate-store.ps1',
             'tools/release-tooling.ps1',
             'tools/device-regression.ps1',
