@@ -904,20 +904,47 @@ function Get-MoshCloseProtocolElapsedMs {
 }
 
 function Focus-ActiveTerminalInput {
-    param([Parameter(Mandatory = $true)][string]$Name)
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [switch]$IncludeLayout
+    )
     $layoutPath = Join-Path $EvidenceDirectory $Name
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt 10) {
         $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $targetId -LocalPath $layoutPath
         $nodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout)
         $focused = @($nodes | Where-Object { [string]$_.attributes.focused -eq 'true' })
+        if ($IncludeLayout -and $focused.Count -gt 1) {
+            throw '[harness] Mosh input has multiple focused terminals'
+        }
         $node = if ($focused.Count -eq 1) { $focused[0] } elseif ($nodes.Count -eq 1) {
             $nodes[0]
         } else { $null }
         if ($null -ne $node) {
             if ([string]$node.attributes.focused -ne 'true') {
-                Set-LeanTTYTerminalInputFocus -Hdc $hdc -Target $targetId `
-                    -InputNode $node -LocalPath $layoutPath -TimeoutSeconds 10 | Out-Null
+                $focusedLayout = Set-LeanTTYTerminalInputFocus -Hdc $hdc -Target $targetId `
+                    -InputNode $node -LocalPath $layoutPath -TimeoutSeconds 10
+                if ($IncludeLayout) {
+                    $focusedInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $focusedLayout)
+                    if ($focusedInputs.Count -ne 1 -or -not (Test-LeanTTYSameTextInputTarget `
+                            -ExpectedNode $node -CurrentNode $focusedInputs[0] `
+                            -ExpectedLayout $layout -CurrentLayout $focusedLayout)) {
+                        throw '[harness] Mosh focus changed its intended native Web'
+                    }
+                    $layout = $focusedLayout
+                    $node = $focusedInputs[0]
+                }
+            }
+            if ($IncludeLayout) {
+                $focusedInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $layout)
+                if ($focusedInputs.Count -ne 1 -or
+                    -not [object]::ReferenceEquals($node, $focusedInputs[0]) -or
+                    $null -eq (Get-LeanTTYTerminalInputWebOwner -Layout $layout -InputNode $node)) {
+                    throw '[harness] Mosh input requires one focused terminal with a native Web owner'
+                }
+                # Keep the node and the layout that owns it together only for
+                # this command. Virtual textarea paths may change after output.
+                return [pscustomobject]@{ node = $node; layout = $layout }
             }
             return $node
         }
@@ -991,21 +1018,26 @@ function Submit-MoshInput {
         lastProvenBoundary = 'none'
     }
     try {
-        $intendedNode = $null
+        $intendedInput = $null
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             $observation.inputAttempts = $attempt
-            $node = Focus-ActiveTerminalInput -Name "mosh-connected-focus-$attempt.json"
-            if ($null -eq $intendedNode) { $intendedNode = $node }
-            if (-not (Test-LeanTTYSameTextInputTarget -ExpectedNode $intendedNode -CurrentNode $node)) {
+            $inputTarget = Focus-ActiveTerminalInput -Name "mosh-connected-focus-$attempt.json" -IncludeLayout
+            if ($null -eq $intendedInput) { $intendedInput = $inputTarget }
+            if (-not (Test-LeanTTYSameTextInputTarget `
+                    -ExpectedNode $intendedInput.node -CurrentNode $inputTarget.node `
+                    -ExpectedLayout $intendedInput.layout -CurrentLayout $inputTarget.layout)) {
                 throw '[harness] Controlled Mosh input lost its original Pane before retry'
             }
-            Invoke-LeanTTYDeviceText -Hdc $hdc -Target $targetId -Text $Text -InputNode $node
+            Invoke-LeanTTYDeviceText -Hdc $hdc -Target $targetId -Text $Text `
+                -InputNode $inputTarget.node -InputLayout $inputTarget.layout
             $snapshot = Wait-MoshInputSnapshot -Expected $Text `
                 -ControlDirectory $ControlDirectory
             $actual = if ($snapshot.observed) { [string]$snapshot.value } else { '' }
             $observation.actualLength = $actual.Length
-            $currentNode = Focus-ActiveTerminalInput -Name "mosh-input-owner-$attempt.json"
-            if (-not (Test-LeanTTYSameTextInputTarget -ExpectedNode $intendedNode -CurrentNode $currentNode)) {
+            $currentInput = Focus-ActiveTerminalInput -Name "mosh-input-owner-$attempt.json" -IncludeLayout
+            if (-not (Test-LeanTTYSameTextInputTarget `
+                    -ExpectedNode $intendedInput.node -CurrentNode $currentInput.node `
+                    -ExpectedLayout $intendedInput.layout -CurrentLayout $currentInput.layout)) {
                 throw '[harness] Controlled Mosh input lost its original Pane; refusing retry or Enter'
             }
             if ($actual -ceq $Text) {
