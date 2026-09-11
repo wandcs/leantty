@@ -451,9 +451,12 @@ Assert-True (@(Get-LeanTTYTerminalInputNodes -Layout $warmPaneLayout).Count -eq 
     # The native Web owner survives a DOM renderer change; its virtual textarea
     # path, opaque ID and cursor-following bounds do not have to survive it.
     function New-WebOwnerLayout($after, $case) {
-        $webPath = if ($after -and $case -eq 'other-pane') { 'ROOT1,1' } else { 'ROOT1,0' }
-        $webId = if ($after -and $case -eq 'replaced-web') { 'web-new' } else { 'web-owner' }
+        $webPath = if ($after -and $case -in @('other-pane', 'ancestor-reindex')) { 'ROOT1,1' } else { 'ROOT1,0' }
+        $webId = if ($after -and $case -in @('replaced-web', 'other-pane')) { 'web-new' } else { 'web-owner' }
         $windowId = if ($after -and $case -eq 'other-window') { '2' } else { '1' }
+        if (($after -and $case -eq 'missing-id-after') -or (-not $after -and $case -eq 'missing-id-before')) { $webId = '' }
+        if ($case -eq 'blank-id') { $webId = ' ' }
+        if (($after -and $case -eq 'missing-window-after') -or (-not $after -and $case -eq 'missing-window-before')) { $windowId = '' }
         $hint = if ($after -and $case -eq 'search') { 'Search text Find' } else { 'Terminal input' }
         $leaf = [pscustomobject]@{attributes=[pscustomobject]@{
             type='textField'; hint=$hint; focused='true'; hostWindowId=$windowId
@@ -470,9 +473,25 @@ Assert-True (@(Get-LeanTTYTerminalInputNodes -Layout $warmPaneLayout).Count -eq 
             type='Web'; hierarchy=$webPath; accessibilityId=$webId; hostWindowId=$windowId
             bounds='[0,0][200,200]'
         };children=$children}
-        return [pscustomobject]@{attributes=@{};children=@($web)}
+        if ($after -and $case -eq 'leaf-window-mismatch') { $leaf.attributes.hostWindowId = '2' }
+        $roots = @($web)
+        if (($after -and $case -eq 'duplicate-id-after') -or
+                (-not $after -and $case -eq 'duplicate-id-before') -or $case -eq 'other-visible-pane') {
+            # A second Web may occupy identical bounds, but must have a distinct
+            # native identity. Reject duplicate IDs even if only one is focused.
+            $peerId = if ($case -eq 'other-visible-pane') { 'peer-web' } else { $webId }
+            $roots += [pscustomobject]@{attributes=@{type='Web';hierarchy='ROOT1,2';
+                accessibilityId=$peerId;hostWindowId=$windowId;bounds='[0,0][200,200]'};children=@(
+                [pscustomobject]@{attributes=@{type='textField';hint='Terminal input';focused='false'};children=@()}
+            )}
+        }
+        return [pscustomobject]@{attributes=@{};children=$roots}
     }
-    foreach ($case in @('same-web', 'other-pane', 'replaced-web', 'other-window', 'search', 'ambiguous')) {
+    $acceptedCases = @('same-web', 'ancestor-reindex', 'other-visible-pane')
+    foreach ($case in @('same-web', 'ancestor-reindex', 'other-visible-pane', 'other-pane', 'replaced-web',
+            'other-window', 'search', 'ambiguous', 'missing-id-before', 'missing-id-after', 'blank-id',
+            'missing-window-before', 'missing-window-after', 'duplicate-id-before', 'duplicate-id-after',
+            'leaf-window-mismatch')) {
         $script:webOwnerLayoutReads = 0
         $script:webOwnerInputs = 0
         function Get-HdcUiLayout {
@@ -484,13 +503,15 @@ Assert-True (@(Get-LeanTTYTerminalInputNodes -Layout $warmPaneLayout).Count -eq 
         $failure = $null
         try { Invoke-LeanTTYDeviceText -Hdc 'Invoke-FakeHdc' -Target 'regression-device' -Text 'public-owner-probe' }
         catch { $failure = $_.Exception }
-        if ($case -eq 'same-web') {
-            Assert-True ($null -eq $failure) 'Same native Web owner must survive a virtual textarea subtree rebuild'
+        if ($case -in $acceptedCases) {
+            Assert-True ($null -eq $failure) "Same unique native Web owner must survive structural reindexing: $case"
         } else {
             Assert-True ($null -ne $failure) "Terminal input must reject changed or ambiguous owner: $case"
             $owners = $failure.Data['LeanTTYTextInputFailure'].webOwners
             Assert-True ($owners.expectedPresent -and $owners.targets.Count -eq 1) 'Missing native Web failure comparison'
-            Assert-True ($owners.targets[0].attributes.accessibilityId.equal -eq ($case -ne 'replaced-web')) 'Web identity comparison was lost'
+            if ($case -in @('other-pane', 'replaced-web')) {
+                Assert-True (-not $owners.targets[0].attributes.accessibilityId.equal) 'Web identity comparison was lost'
+            }
             Assert-True (($owners | ConvertTo-Json -Depth 12) -notmatch 'web-owner|web-new|input-old|input-new|Terminal input|Search text') 'Web comparison leaked raw attributes'
         }
         Assert-True ($script:webOwnerInputs -eq 1 -and $script:webOwnerLayoutReads -eq 2) (

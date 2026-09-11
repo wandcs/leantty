@@ -365,3 +365,86 @@ tree `239274f4816d608a8a1f26472f6d6a72d830b755`；原候选 HAP SHA-256 为
 收口后 `software-final.json` 的 policy/tooling 七项注册检查通过，其中 Agent SSH gate
 为 46 项，包括五个实际调用方的候选兼容路径及产品输入拒绝；`git diff --check` 通过。
 此前失败的软件检查报告保留，最终通过不覆盖它们。这仍是 focused 开发证据，不是 QH。
+
+## 2026-09-12 native Web 输入身份修复
+
+准入依据是 PR #179 后的新正式失败，不是重复采样：`314004e` harness 在原 `ac01156`
+候选上于 2026-09-11 23:25 再次拒绝 host-key 的单次 `yes` 输入，未发 Enter。安全比较
+显示原生 Web 的 window/accessibility ID、bounds 相同，前后各一个终端，仅祖先索引变化。
+原始结果 SHA-256 `d291fd020f3278a264fbbdd7427a3980b604e71bf6640ad466ef386bd034e169`，
+位于 `build/verification/release-1.6.0-r3-pr179-20260911/formal/stages/agent-compatibility/attempt-1/result.json`。
+
+期望是同一原生 Web 内的一次输入不因祖先重排失败，换 Pane/Web/窗口仍须拒绝。最后正确
+边界是唯一焦点和单次 UiTest 输入返回；首个错误边界是共享 post-target 比较将 hierarchy
+当作实例身份。App/ArkWeb 持有实际焦点与节点，工具只核对操作前后的观察结果。已保留的
+安全比较和零设备投影定位了拒绝条件，不证明真实丢字或哪个祖先发生变化。
+
+本轮外部核对的问题是原生身份字段来源、唯一性、失效范围，以及路径能否替代它：
+
+- 官方 [6.0 属性包装与身份生成](https://github.com/openharmony/testfwk_arkxtest/blob/e6d3af0cc503cefef9a9f14c28e3728738b5dffd/uitest/server/element_node_iterator_impl.cpp)
+  和 [6.1 实现](https://github.com/openharmony/testfwk_arkxtest/blob/1fc51561281f02fda42e65ec952fb21406b05981/uitest/server/element_node_iterator_impl.cpp)
+  将 AccessibilityElementInfo 的 ID 原样写入 accessibilityId，HASHCODE 是 windowId 与
+  accessibilityId 的组合；[UiDriver](https://github.com/openharmony/testfwk_arkxtest/blob/b04e30c40cf266c9abfbd52933e43a0456eb99a2/uitest/core/ui_driver.cpp)
+  在窗口内以 HASHCODE 重新定位并核对类型。hierarchy 则来自父路径加 childIndex。
+- [ArkUI UINode](https://github.com/openharmony/arkui_ace_engine/blob/OpenHarmony-6.0-Release/frameworks/core/components_ng/base/ui_node.cpp)
+  的 6.0 与当前源码在构造时以进程内原子递增值分配 accessibilityId。它不是跨进程持久标识；
+  不缓存到下一次输入、导航或重建。官方源码不等于对已部署 Huawei 二进制的证明，仍需
+  同一 OpenHarmony-6.1.1.135 / UiTest 6.0.2.3 真机验证。
+- 重新检索上游 PR/issues、Huawei 社区和可复核报告，未找到匹配本机 native Web 祖先
+  重排误判的报告。旧版 Huawei API 文档与第三方命令汇总没有补充稳定身份保证，不采纳
+  其兜底建议。[Playwright strictness](https://playwright.dev/docs/locators#strictness)
+  的多匹配拒绝仅作为设计参考，不作为 HarmonyOS 证据。
+
+待验证假设：操作内使用非空 window/accessibility ID，并在前后布局中各要求这一 native
+Web 身份唯一，可接受祖先重排且拒绝真正换 owner。保留实际父子树遍历、隐藏 Tab 排除、
+Web 内唯一终端、唯一焦点、叶节点与 Web 窗口一致、单次输入、失败不重发/不按 Enter。
+重复或缺失 native 身份失败关闭，hierarchy 只保留在安全失败诊断中，不回退到坐标身份。
+
+先让祖先重排与重复身份的新软件反例在旧代码上失败，再做一处共享判定修复；同时把旧
+other-pane 用例从“同 ID 换路径”改为真正不同的 native ID。选择 L0–L2 policy/tooling、
+L3 原 HAP 的零模型 SSH prerequisite 与无网络 Pane ownership；不改产品、xterm、HAP、
+超时或模型预算，不运行正式矩阵。若定向失败，保留现场和清理结果后停止，不扩成采样。
+
+### 修复与定向验证
+
+共享判定现按非空白 window/accessibility ID 匹配，并要求该 Web 身份在两份完整布局中
+各出现一次；其余输入、焦点、隐藏 Tab、叶节点窗口和 Web 内唯一终端保护不变。不增加
+设备调用、延时、日志采样或重试。没有对正文、xterm 或应用输入路径作改动。
+
+新祖先重排反例先在旧实现上失败；修复后 16 项 native Web 用例通过，包括同 owner 的
+虚拟重建/重排、多 Pane 正常输入，以及错误 Pane、替换 Web、不同窗口、搜索框、多终端、
+前后身份缺失、空白 ID、前后重复 ID、叶节点窗口不一致的拒绝。policy/tooling 七项注册
+检查通过，其中 Agent SSH gate 的 46 项反例仍通过。五个实际场景的候选兼容路径检查通过，
+没有扩大许可路径。验证采用仓库现有 PowerShell 反例，保留先失败后通过的结果。
+
+真机诊断使用干净 `f4bbe8e0250894fdef080501a804ff5ace4eb25c`，tree
+`3578ff5f9244c8c2a4231976ab6d3e90205d4514`，原 HAP SHA-256 仍为
+`0db0f090cc9053b15204d55f6a49a2df202aa970eaf3e3672192fb668da95e71`。
+
+- 00:34–00:36：零模型 SSH prerequisite 和 cleanup passed；三条普通本地命令各一次输入、
+  一次 Enter、零不匹配，harness stable；一条受控远端命令的服务端快照精确匹配后单次
+  提交，UTF-8、断开与 known-host 收尾通过。实际模型请求 0。原 Tab 和通知禁用状态恢复。
+- 随后的 Pane ownership 诊断在 34.3 秒完成：split/close-left/retained-right/resplit、
+  满宽与不重叠检查通过，四项原生输入缓冲检查全部精确；零 Enter、无网络变化，内外
+  cleanup passed。按原工具约定结束时停止测试 App，不把进程仍运行作为通过条件。
+- 独立只读审计确认临时 known-host、监听、精确夹具进程/目录、HDC 映射缺席，工作区
+  一 Tab、activeTabPosition=0；原 HAP、冻结来源、新旧 harness 和五份旧失败报告未变。
+
+这是 L0–L3 工具修复证据，不是自然输入可靠性采样或完整 Agent TUI 验收。自然运行期间
+是否再次出现同一祖先重排未单独采集，不能宣称真机必现事件已重放；确定性软件反例证明
+判定修复，真机证明正常 SSH 与 Pane 边界。未运行 QH、完整 C3、C4、Wi-Fi、锁屏或合盖。
+
+证据根为 `build/verification/native-web-owner-20260912/`：`software-focused.json`、
+`candidate-compatibility.json`、`ssh-prerequisite/result.json`、
+`pane-ownership/text-input-diagnostic.json` 与 `closing-audit.json`。
+SSH report SHA-256：`e1cbed2cddb1899c87777739dbbb68fa47e8667286e67ef11de04d6b3ce7a87a`；
+Pane report SHA-256：`516bd55e069b3fe41b2b406e1043484da6e26ca7ede80a5fc144ded8ac9f553b`。
+首次 SSH 调用误将 preflight.target 对象当作字符串，在任何设备操作前被拒绝；改读其
+key 后运行上述唯一有效探针。原调用错误不记作产品故障，也不掩盖为首次执行成功。
+当前规则下共享判定变更要求 R3，但本轮不自动启动完整矩阵。维护者随后要求先核定
+实际证据失效范围与最小可信续跑路径，再决定重测；新 harness 的 QH 仍须重新取得。
+
+直接调用核查：完整前后布局分支只由 `Invoke-LeanTTYDeviceText` 调用；其调用前检查
+与 Mosh `Submit-MoshInput` 的两处跨阶段守卫都没有传布局，仍走旧字段比较，未受本次
+实现改变。后两处的潜在重排误拒绝须用最小合同反例核查；本轮没有该边界的真实失败，
+不宣称已修，也不直接扩展修复。其余场景复用共享注入路径，不复制这次判定。
