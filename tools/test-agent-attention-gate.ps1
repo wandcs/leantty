@@ -2,7 +2,7 @@ param([string]$HarnessPath = (Join-Path $PSScriptRoot 'verify-agent-compatibilit
 $ErrorActionPreference = 'Stop'
 $ast = [Management.Automation.Language.Parser]::ParseFile($HarnessPath, [ref]$null, [ref]$null)
 foreach ($name in @('Assert-NotificationAndReturn', 'Get-AgentAttentionFailure', 'Hide-AgentNotificationWindow',
-        'Start-AgentNotificationAfterHidden')) {
+        'Start-AgentNotificationAfterHidden', 'Invoke-AgentFocusReadinessProbe')) {
     $function = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
     }, $true)
@@ -94,6 +94,26 @@ try {
     if (($script:trace -join '|') -ne 'before-minimize|minimize|Window visibility changed: visible=false|after-hidden') {
         throw 'OpenCode interactive setup must not wait for an argv-prompt gate'
     }
+    function Wait-AgentTuiReady {
+        param($CaptureResultPath, [switch]$RequireFocusReporting)
+        if (-not $RequireFocusReporting) { throw 'Qwen readiness must require focus reporting' }
+        $script:trace.Add('focus-ready')
+    }
+    $script:trace.Clear()
+    $focusObservation = @{}
+    Start-AgentNotificationAfterHidden -Agent qwen -Stage controlled -CaptureResultPath $capturePath -Observation $focusObservation
+    if (($script:trace -join '|') -ne 'focus-ready|before-minimize|minimize|Window visibility changed: visible=false|after-hidden' -or
+        $focusObservation.focusReportingReady -ne $true) {
+        throw 'Qwen must enable native focus reporting before the real minimize action, without an exec gate'
+    }
+    function Wait-AgentTuiReady { throw '[harness] native focus reporting unavailable' }
+    $script:trace.Clear()
+    $failure = ''
+    try { Start-AgentNotificationAfterHidden -Agent qwen -Stage controlled -CaptureResultPath $capturePath -Observation @{} }
+    catch { $failure = $_.Exception.Message }
+    if ($failure -notmatch '^\[harness\].*startup failed' -or $script:trace.Count -ne 0) {
+        throw 'Missing native focus readiness must stop before minimizing, without inventing a hidden state'
+    }
     foreach ($failAt in @('ready', 'hidden', 'release')) {
         $script:trace.Clear()
         function Set-AgentStartGate {
@@ -137,7 +157,54 @@ try {
         catch { $rejected = $true }
         if (-not $rejected) { throw 'Observer admission must not accept a product dependency change' }
     }
-    Write-Host 'Agent attention gate: 16 actual-owner cases passed; no device or model requests.'
+    # Execute the actual readiness function, not just its caller's mock.
+    $readyFunction = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Wait-AgentTuiReady'
+    }, $true)
+    . ([scriptblock]::Create($readyFunction.Extent.Text))
+    $livePath = Join-Path $testDirectory 'qwen-tmux-notification-live.json'
+    foreach ($counts in @(@{ enable=1; disable=0; ready=$true }, @{ enable=0; disable=0; ready=$false },
+            @{ enable=1; disable=1; ready=$false }, @{ enable=2; disable=1; ready=$false })) {
+        @{ output=@{ alternateScreen=@{enterCount=1}; focusReporting=@{enableCount=$counts.enable;disableCount=$counts.disable} } } |
+            ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $livePath
+        $ready = $true
+        try { Wait-AgentTuiReady -CaptureResultPath $capturePath -RequireFocusReporting }
+        catch { $ready = $false }
+        if ($ready -ne $counts.ready) { throw 'Alternate screen or ambiguous counters do not establish native focus readiness' }
+    }
+    Wait-AgentTuiReady -CaptureResultPath $capturePath # Existing non-focus callers retain their TUI gate.
+    function Wait-AgentTuiReady { $script:phase = 'ready' }
+    function Clear-LeanTTYAppLogs {}
+    function Get-FullLayout { return @{} }
+    function Get-MinimizeButton { return @{} }
+    function Click-Node { $script:phase = 'hidden' }
+    function Restore-AgentAppForContinuation {
+        $script:phase = 'restored'; $script:restoreCount++
+        if ($script:probeFailure -eq 'restore') { throw '[environment] controlled restore failure' }
+    }
+    function Wait-AppLog {
+        if ($script:probeFailure -eq 'visibility') { throw '[harness] controlled visibility failure' }
+    }
+    function wsl.exe {
+        $global:LASTEXITCODE = 0
+        $outCount = if ($script:phase -ne 'ready' -and $script:probeFailure -ne 'focus-out') { 1 } else { 0 }
+        $inCount = if ($script:phase -eq 'restored' -and $script:probeFailure -ne 'focus-in') { 1 } else { 0 }
+        @{ input=@{focusReporting=@{inCount=$inCount;outCount=$outCount}} } |
+            ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $livePath
+    }
+    foreach ($case in @('', 'visibility', 'focus-out', 'focus-in', 'restore')) {
+        $script:probeFailure = $case
+        $script:restoreCount = 0
+        $observed = @{}
+        $failure = ''
+        try { Invoke-AgentFocusReadinessProbe -Stage controlled -CaptureResultPath $capturePath -Observation $observed -TimeoutSeconds 1 }
+        catch { $failure = $_.Exception.Message }
+        if (($case -eq '' -and ($failure -ne '' -or -not $observed.focusOutObserved -or -not $observed.focusInObserved)) -or
+            ($case -ne '' -and $failure -eq '') -or $script:restoreCount -ne 1) {
+            throw "Focus probe must require both real transitions and restore after failure: case=$case failure=$failure"
+        }
+    }
+    Write-Host 'Agent attention gate: 28 actual-owner cases passed; no device or model requests.'
 } finally {
     Remove-Item -LiteralPath $testDirectory -Recurse -Force
 }

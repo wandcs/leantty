@@ -571,3 +571,84 @@ Candidate reuse remains R2 only after current state admission and new QH.
 Only Agent-local policy/caller/tests and documentation changed. The SSH change
 admits those exact paths; its runtime behavior, shared observation/cleanup and
 all product/HAP bytes remain unchanged. Full Agent/SSH acceptance is still pending.
+
+### Qwen focus readiness repair
+
+PR187 (`93bd05b`) subsequently reached all eight Agent modes. The first seven
+passed; Pi/tmux recorded its reviewed forwarding limitation without stopping
+the remainder. Qwen/tmux completed its interaction and reconnect assertions but
+emitted no native attention. Its formal result remains invalid/interrupted after
+unconfirmed known-host cleanup; independent recovery and audit passed. Neither
+that result nor its HAP was rewritten by the following diagnosis.
+
+The notification fixture had an unmet focus precondition. Eight zero-model
+checks execute the installed Qwen 0.23.0 public hook bodies with modeled React
+hooks. Qwen begins focused; approval attention requires an unfocused waiting
+state, and completion requires at least twenty seconds of responding while
+unfocused. A later focus-out does not replay a completion handled while focused.
+Enabling `terminalBell` is therefore not an unconditional emission contract.
+These isolated hooks do not reconstruct the historical model/business state.
+
+A stock tmux 3.6 experiment used real PTYs and its `client-focus-out` hook to
+confirm the outer event. Hiding before the inner program enables DEC 1004
+delivered zero inner focus events; enabling first then hiding delivered one
+complete focus-out. Both controlled children exited 0 and their owned tmux
+servers were removed. Thus the pre-exec hidden gate cannot establish the
+late-starting Qwen's unfocused state. This is a harness precondition defect,
+not evidence for an upstream exemption or a LeanTTY product change.
+
+The repair starts Qwen visibly, waits for its native alternate screen and
+unambiguous initial focus-reporting enable, then uses the existing minimize
+action. Missing or ambiguous readiness fails before minimizing. Codex/Pi retain
+their pre-exec gate. Native attention, hidden-window observation, generic card,
+return, privacy, interaction and cleanup assertions are unchanged.
+
+The caller's new regression failed on the old sequence. The repaired software
+passed `test-regression.ps1 -Group policy,tooling`, including 28 actual-owner
+attention cases, 76 SSH-boundary cases and six real PTY/dispatcher cases. The
+dispatcher cases use controlled Agent stubs, not model calls.
+
+One `-DiagnosticHap -FocusReadinessProbe -Agents qwen -Modes tmux` run on the
+physical ARM64 PC then passed from 19:29:55 to 19:32:20 on 2026-09-12. It used
+the unchanged signed HAP `0db0f090…95e71`, actual Qwen and stock tmux, with no
+prompt/model request. Inner-PTY `(focus-in, focus-out)` counts were `(0,0)` before
+minimize, `(0,1)` after hidden and `(1,1)` after restore. Raw mode, alternate-screen
+return, one documented TUI exit and the separate SSH close passed. Three local
+commands each used one input and one Enter, without mismatch. Original Tab,
+notification setting and screen policy were restored; temporary resources were
+removed. The 19:34:07 independent read-only audit confirmed absence and unchanged
+historical report/HAP. Its first invocation stopped before resource checks due
+to using an object field for the result's string target; correcting this audit
+schema assumption required no physical or model rerun.
+
+Post-run review added one software-only negative case: an unconfirmed app
+restore must not be retried by the focus helper's `finally`. Its failure-path
+change does not alter the physically exercised successful sequence.
+
+This closes the focus-startup defect, not native notification acceptance. The
+minimize-to-host-observed-hidden interval still needs a causal ordering review:
+focus-triggered attention may precede the host's after-hidden byte checkpoint.
+Do not weaken that gate, add a name-based exemption or run another formal matrix
+to discover its timing. Review the device-state/publication and output boundaries
+first, retaining negative, ambiguous and privacy cases. C3/C4 and SSH remain open.
+
+Evidence root: `build/verification/agent-emission-contract-20260912/`.
+
+| Evidence | SHA-256 |
+|---|---|
+| `qwen-public-hook-probe.json` | `0ec9b3d2401d961a560b698c05857f9a3f004e5af2a3bcc0d2b322fe2f78c899` |
+| `tmux-focus-probe.json` | `767ba28aa7caa3cb7e8bc8e8e8a2f779e7d958bc7ac9fea56f6af9b921d38987` |
+| `software-focus-probe.json` | `6e609b9f944e50fe9887e059d4056536bb97e9e94cecac950a8a39b5153314da` |
+| `software-final.json` | `08f9e844605580294f3efa786c3f9a4ff1f8cf1252e55b9ee3ed95a5509997fd` |
+| `device-focus-probe/result.json` | `64724e25035a2b2857fdd456b528cdf34597eb9a89f241ef5f8b4a1f37127a17` |
+
+Primary version evidence is the installed public Qwen code: notification/UI
+chunk SHA `cd4d239ebd1d210edb0329287105bc94644cde971683e1d12683d1fbe359dca5`
+and focus-hook chunk SHA
+`8289bddb00db4a1a5c7be2fac1452dab5325261ddd1fcf4a595610ec07d03f1a`.
+The [upstream hook paths](https://github.com/QwenLM/qwen-code/tree/v0.23.0/packages/cli/src/ui/hooks)
+were identified, but the web reader could not retrieve their bodies; the tests
+use the installed public bytes. No exact matching upstream issue was found.
+[Huawei lifecycle guidance](https://developer.huawei.com/consumer/cn/doc/doccenter-dev-faq/faqs-ability-94)
+does not promise remote PTY focus replay. These source boundaries and the real
+tmux contrast, rather than an inferred product defect, determine the repair.

@@ -21,6 +21,7 @@ param(
     [switch]$Osc99CapabilityProbe,
     [switch]$InteractionOnlyProbe,
     [switch]$ExitBoundaryProbe,
+    [switch]$FocusReadinessProbe,
     [switch]$ProtocolInteractionProbe,
     [switch]$SshPrerequisiteProbe,
     [switch]$StopAtHostKeyPrompt,
@@ -31,6 +32,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($FocusReadinessProbe) {
+    if (-not $DiagnosticHap -or $Agents.Count -ne 1 -or $Agents[0] -ne 'qwen') {
+        throw '-FocusReadinessProbe requires -DiagnosticHap -Agents qwen; it does not test notification emission'
+    }
+    $ExitBoundaryProbe = $true
+}
 if ($ExitBoundaryProbe) {
     if (-not $DiagnosticHap) { throw '-ExitBoundaryProbe is zero-model diagnostic evidence only' }
     $InteractionOnlyProbe = $true
@@ -203,6 +210,8 @@ $result = New-LeanTTYAgentCompatibilityResult `
         'zero-model-ssh-prerequisite-over-default-wsl-openssh'
     } elseif ($Osc99CapabilityProbe) {
         'osc99-capability-response-over-default-wsl-openssh'
+    } elseif ($FocusReadinessProbe) {
+        'zero-model-qwen-focus-readiness-over-default-wsl-openssh'
     } elseif ($ExitBoundaryProbe) {
         'zero-model-agent-exit-boundary-over-default-wsl-openssh'
     } elseif ($InteractionOnlyProbe) {
@@ -644,8 +653,14 @@ function Set-AgentStartGate {
 
 function Start-AgentNotificationAfterHidden {
     param([string]$Agent, [string]$Stage, [string]$CaptureResultPath, [System.Collections.IDictionary]$Observation)
-    $gated = $Agent -ne 'opencode'
+    $gated = $Agent -in @('codex', 'pi')
     try {
+        if ($Agent -eq 'qwen') {
+            # Qwen starts focused. tmux does not replay an earlier focus-out
+            # when a late child enables 1004: establish readiness before hiding.
+            Wait-AgentTuiReady -CaptureResultPath $CaptureResultPath -RequireFocusReporting
+            $Observation.focusReportingReady = $true
+        }
         if ($gated) {
             $name = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
             Wait-File -Path (Join-Path (Split-Path $CaptureResultPath -Parent) "$name-start-gate.json") -TimeoutSeconds 10
@@ -755,7 +770,8 @@ function Assert-NotificationAndReturn {
 function Wait-AgentTuiReady {
     param(
         [Parameter(Mandatory = $true)][string]$CaptureResultPath,
-        [ValidateRange(1, 30)][int]$TimeoutSeconds = 15
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 15,
+        [switch]$RequireFocusReporting
     )
     $captureName = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
     $liveProbePath = Join-Path (Split-Path $CaptureResultPath -Parent) "$captureName-live.json"
@@ -765,7 +781,14 @@ function Wait-AgentTuiReady {
         if (Test-Path -LiteralPath $liveProbePath -PathType Leaf) {
             $liveProbe = Get-Content -LiteralPath $liveProbePath -Raw |
                 ConvertFrom-Json -Depth 30
-            if ($liveProbe.output.alternateScreen.enterCount -gt 0) { return }
+            $focus = $liveProbe.output.focusReporting
+            # Counts establish the initial enable only; do not infer current
+            # mode from repeated enables/disables or a pre-existing TUI screen.
+            $focusReady = -not $RequireFocusReporting -or (
+                ($focus.enableCount -is [int] -or $focus.enableCount -is [long]) -and
+                ($focus.disableCount -is [int] -or $focus.disableCount -is [long]) -and
+                $focus.enableCount -eq 1 -and $focus.disableCount -eq 0)
+            if ($liveProbe.output.alternateScreen.enterCount -gt 0 -and $focusReady) { return }
         }
         if (Test-Path -LiteralPath $CaptureResultPath -PathType Leaf) {
             throw '[external-agent] Agent exited before the interactive TUI became ready'
@@ -1182,6 +1205,11 @@ function Invoke-AgentInteractionOnlyCheck {
         Connect-AgentServer -Stage $stage
         Submit-ConnectedCommand -Command "lat $Agent $Mode interaction" -Stage "$stage-launch"
         Wait-AgentInteractionReady -CaptureResultPath $captureResultPath
+        if ($FocusReadinessProbe) {
+            $check.focusTransition = [ordered]@{}
+            Invoke-AgentFocusReadinessProbe -Stage $stage -CaptureResultPath $captureResultPath `
+                -Observation $check.focusTransition
+        }
         $before = Get-AgentTermiosSample -CaptureName $captureName -SampleName 'before-resize'
         $check.rawMode = [bool]$before.rawMode
         $check.terminalSizeBefore = [ordered]@{
@@ -1295,6 +1323,57 @@ function Invoke-AgentInteractionOnlyCheck {
         }
     }
     return [pscustomobject]$check
+}
+
+function Invoke-AgentFocusReadinessProbe {
+    param(
+        [Parameter(Mandatory = $true)][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$CaptureResultPath,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Observation,
+        [ValidateRange(1, 15)][int]$TimeoutSeconds = 10
+    )
+    Wait-AgentTuiReady -CaptureResultPath $CaptureResultPath -RequireFocusReporting
+    $Observation.focusReportingReady = $true
+    $captureName = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
+    $livePath = Join-Path (Split-Path $CaptureResultPath -Parent) "$captureName-live.json"
+    $restoreRequired = $false
+    try {
+        foreach ($phase in @('before', 'hidden', 'restored')) {
+            if ($phase -eq 'hidden') {
+                Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
+                $layout = Get-FullLayout -Name "$Stage-focus-before-minimize"
+                $minimize = Get-MinimizeButton -Layout $layout
+                $restoreRequired = $true
+                Click-Node -Node $minimize -Description 'Minimize after native focus-reporting readiness'
+                Wait-AppLog -Pattern 'Window visibility changed: visible=false' -TimeoutSeconds 15 | Out-Null
+            } elseif ($phase -eq 'restored') {
+                $restoreRequired = $false
+                Restore-AgentAppForContinuation
+            }
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                & wsl.exe --exec bash $wslToolPath probe $wslFixtureDirectory $captureName 2>$null
+                if ($LASTEXITCODE -ne 0) { throw '[harness] Focus diagnostic capture is unavailable' }
+                $counts = (Get-Content -LiteralPath $livePath -Raw | ConvertFrom-Json -Depth 30).input.focusReporting
+                foreach ($field in @('inCount', 'outCount')) {
+                    if (($counts.$field -isnot [int] -and $counts.$field -isnot [long]) -or $counts.$field -lt 0) {
+                        throw '[harness] Focus diagnostic requires complete numeric input counters'
+                    }
+                }
+                $Observation[$phase] = [ordered]@{ inCount=$counts.inCount; outCount=$counts.outCount }
+                $observed = $phase -eq 'before' -or
+                    ($phase -eq 'hidden' -and $counts.outCount -gt $Observation.before.outCount) -or
+                    ($phase -eq 'restored' -and $counts.inCount -gt $Observation.hidden.inCount)
+                if ($observed) { break }
+                Start-Sleep -Milliseconds 200
+            } while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+            if (-not $observed) { throw "[compatibility] No new native focus event at the $phase inner-PTY boundary" }
+            if ($phase -eq 'hidden') { $Observation.focusOutObserved = $true }
+            if ($phase -eq 'restored') { $Observation.focusInObserved = $true }
+        }
+    } finally {
+        if ($restoreRequired) { Restore-AgentAppForContinuation }
+    }
 }
 
 function Wait-AgentOsc52ClipboardCapture {
