@@ -69,6 +69,17 @@ function Write-LeanTTYAgentCompatibilityResult {
         [Parameter(Mandatory = $true)][object]$Result
     )
 
+    $limitations = @($Result.checks | Where-Object {
+        $_.notificationAssessment.status -eq 'not-applicable'
+    } | ForEach-Object {
+        [pscustomobject]@{
+            agent = $_.agent; mode = $_.mode
+            classification = $_.notificationAssessment.classification
+            systemNotification = $_.notificationAssessment.systemNotification
+            evidenceReference = $_.notificationAssessment.limitation.evidenceReference
+        }
+    })
+    $Result | Add-Member -NotePropertyName nonBlockingLimitations -NotePropertyValue $limitations -Force
     Write-LeanTTYAtomicJson -Path $Path -Value $Result -Depth 20
     $resolvedPath = [IO.Path]::GetFullPath($Path)
     try {
@@ -297,7 +308,9 @@ function Resolve-LeanTTYAgentNotificationAssessment {
         [Parameter(Mandatory = $true)][bool]$NativeAttentionObserved,
         [Parameter(Mandatory = $true)][bool]$SystemNotificationCompleted,
         [Parameter(Mandatory = $true)][int]$AgentChildExitCode,
-        [AllowEmptyString()][string]$NotificationFailure = ''
+        [AllowEmptyString()][string]$NotificationFailure = '',
+        [AllowNull()][object]$UpstreamEnvironment = $null,
+        [AllowNull()][object]$OuterObservation = $null
     )
 
     $applicability = if ($Agent -eq 'opencode' -and $Mode -eq 'tmux') {
@@ -317,6 +330,7 @@ function Resolve-LeanTTYAgentNotificationAssessment {
         agentChildExitCode = $AgentChildExitCode
         failure = $NotificationFailure
         failureDomain = $failureDomain
+        limitation = $null
     }
 
     if ($SystemNotificationCompleted) {
@@ -330,6 +344,45 @@ function Resolve-LeanTTYAgentNotificationAssessment {
         $assessment.classification = 'verified'
         $assessment.failure = ''
         $assessment.failureDomain = 'none'
+        return [pscustomobject]$assessment
+    }
+
+    # Approved 2026-09-12: this exact producer/forwarder cannot deliver bare OSC 777.
+    # Inner attention alone is not evidence of an external cause. Bind the known
+    # boundary to current public source/config identities and a complete outer capture.
+    $outer = $OuterObservation
+    $before = $outer.checkpoints.'before-minimize'
+    $hidden = $outer.checkpoints.'after-hidden'
+    $outerNumbersValid = $true
+    foreach ($number in @($outer.childExitCode, $outer.bytes, $outer.attentionCount,
+            $outer.afterHiddenCount, $before, $hidden)) {
+        if ($number -isnot [int] -and $number -isnot [long]) { $outerNumbersValid = $false }
+    }
+    if ($Agent -ceq 'pi' -and $Mode -ceq 'tmux' -and
+        $NativeAttentionObserved -and $AgentChildExitCode -eq 0 -and
+        $NotificationFailure -ceq '[unknown] Agent inner attention observed without outer attention' -and
+        $UpstreamEnvironment.piVersion -ceq '0.84.4' -and
+        $UpstreamEnvironment.tmuxVersion -ceq 'tmux 3.6' -and
+        $UpstreamEnvironment.notifyExtensionSha256 -ceq '70e4333e09ce00d546c116fd2e918abf7616c70b5da6e88ba8ee21a326afd483' -and
+        $UpstreamEnvironment.tmuxConfigSha256 -ceq 'c751ee4a8029da7cd247a32c1962d2195d2e801c448f5bc9a067c6811c323dd6' -and
+        $outerNumbersValid -and $outer.boundary -ceq 'remote-outer-pty-not-client-receipt' -and
+        $outer.complete -is [bool] -and $outer.complete -and
+        $null -ne $outer.childExitCode -and $outer.childExitCode -eq 0 -and
+        $outer.bytes -gt 0 -and $null -ne $outer.attentionCount -and $outer.attentionCount -eq 0 -and
+        $null -ne $outer.afterHiddenCount -and $outer.afterHiddenCount -eq 0 -and
+        $null -ne $before -and $null -ne $hidden -and
+        $before -ge 0 -and $before -le $hidden -and $hidden -le $outer.bytes) {
+        $assessment.status = 'not-applicable'
+        $assessment.classification = 'upstream-not-forwarded'
+        $assessment.systemNotification = 'not-exercised'
+        $assessment.failure = ''
+        $assessment.failureDomain = 'external-agent'
+        $assessment.limitation = [ordered]@{
+            evidenceReference = 'docs/design/agent-exit-boundary-20260912.md#pr186-formal-stop-at-pi-tmux-forwarding'
+            environment = $UpstreamEnvironment
+            outerObservation = $outer
+            observedFailure = $NotificationFailure
+        }
         return [pscustomobject]$assessment
     }
 

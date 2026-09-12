@@ -1,9 +1,9 @@
-param([string]$EvidencePath = '')
+param([string]$EvidencePath = '', [string]$HarnessPath = (Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1'))
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 . (Join-Path $PSScriptRoot 'agent-compatibility-policy.ps1')
-$devicePath = Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1'
+$devicePath = $HarnessPath
 $parseErrors = $null
 $deviceAst = [Management.Automation.Language.Parser]::ParseFile(
     $devicePath, [ref]$null, [ref]$parseErrors)
@@ -297,6 +297,81 @@ foreach ($caller in @('Invoke-AgentInteractionOnlyCheck','Invoke-AgentProtocolIn
             $check.recovery -match 'isolated-tab-finalization-required') 'Failed TUI preparation must retain the original failure and defer to its Tab owner'
         Assert-Gate (-not ($script:trace -contains 'text') -and -not ($script:trace -contains 'enter') -and
             -not ($script:trace -contains 'ctrl-c') -and -not ($script:trace -contains 'ctrl-d')) 'The real caller must not attempt exit input after an uncertain interaction'
+    }
+}
+foreach ($case in @('known-limit', 'unknown-version', 'product', 'privacy', 'search', 'input', 'reconnect', 'cleanup')) {
+    Test-Gate "third-party-real-selection-$case" {
+        $InteractionOnlyProbe = $false
+        $Agents = @('pi', 'codex'); $Modes = @('tmux')
+        $inventory.tools.pi = @{ installed = $true; version = '0.84.4' }
+        $inventory.authenticationReady.pi = $true
+        $fixtureDirectory = Join-Path ([IO.Path]::GetTempPath()) ('leantty-third-party-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $fixtureDirectory 'results') | Out-Null
+        try {
+            foreach ($agentName in $Agents) {
+                $capture = @{ childExitCode = 0; input = @{ containsCjkUtf8 = $true; bytes = 4200 }
+                    output = @{ nativeAttentionSignalObserved = $true; nativeAttentionSignalKinds = @('osc-777') } }
+                if ($case -eq 'input') { $capture.input.bytes = 1 }
+                $capture | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $fixtureDirectory "results/$agentName-tmux-notification.json")
+            }
+            function Start-Sleep {}
+            function Controlled-Hdc { $global:LASTEXITCODE = 0 }
+            $hdc = 'Controlled-Hdc'
+            function Connect-AgentServer { param($Stage)
+                if ($case -eq 'reconnect' -and $Stage -match 'reconnect') { throw '[product] controlled reconnect failure' }
+                $script:agentSshBoundary = 'shell-ready'
+            }
+            function Submit-ConnectedCommand {}
+            function Start-AgentNotificationAfterHidden {}
+            function Get-AgentExpectedAttentionKind { return 'osc-777' }
+            function Assert-NotificationAndReturn { param($Stage)
+                if ($Stage -eq 'pi-tmux') {
+                    if ($case -in @('product', 'privacy')) { throw "[$case] controlled notification failure" }
+                    throw '[unknown] Agent inner attention observed without outer attention'
+                }
+            }
+            function Restore-AgentAppForContinuation {}
+            function Resume-AgentAfterAttention {}
+            function Assert-AgentSearch { if ($case -eq 'search') { throw '[product] controlled search failure' } }
+            function Invoke-AgentInputProbes {}
+            function Stop-AgentTui { $script:agentSshBoundary = 'shell-ready' }
+            function Disconnect-AgentServer { $script:agentSshBoundary = 'local' }
+            function Get-AgentOuterAttention {
+                return @{ boundary = 'remote-outer-pty-not-client-receipt'; complete = $true
+                    childExitCode = 0; bytes = 100; attentionCount = 0; afterHiddenCount = 0
+                    checkpoints = @{ 'before-minimize' = 0; 'after-hidden' = 0 } }
+            }
+            function Get-AgentTmuxNotificationEnvironment {
+                return @{ piVersion = $(if ($case -eq 'unknown-version') { 'future' } else { '0.84.4' })
+                    tmuxVersion = 'tmux 3.6'
+                    notifyExtensionSha256 = '70e4333e09ce00d546c116fd2e918abf7616c70b5da6e88ba8ee21a326afd483'
+                    tmuxConfigSha256 = 'c751ee4a8029da7cd247a32c1962d2195d2e801c448f5bc9a067c6811c323dd6' }
+            }
+            if ($case -eq 'cleanup') { $script:fault = 'known-host-read' }
+            $selectionError = ''
+            try { Invoke-AgentSelectedChecks } catch { $selectionError = $_.Exception.Message }
+            if ($case -in @('known-limit', 'cleanup')) {
+                Assert-Gate ($result.checks.Count -eq 2 -and $result.checks[1].status -eq 'passed') 'Known limitation must continue the real selection'
+                $first = $result.checks[0]
+                Assert-Gate ($first.notificationAssessment.status -eq 'not-applicable' -and
+                    $first.notificationAssessment.classification -eq 'upstream-not-forwarded' -and
+                    -not $first.nativeNotification -and -not $first.genericNotificationPayload -and -not $first.returnApplied -and
+                    $first.search -and $first.reconnect -and $first.tmuxResume) 'Exclusion must retain independent assertions without inventing notification evidence'
+                if ($case -eq 'cleanup') {
+                    Assert-Gate ($selectionError -match 'known-host-read' -and -not $script:knownHostRemoved) 'Limitation must not bypass failed cleanup'
+                } else { Assert-Gate ($selectionError -eq '' -and $script:knownHostRemoved) 'Successful continuation must still clean owned state' }
+            } else {
+                Assert-Gate ($result.checks.Count -eq 1 -and $result.checks[0].status -eq 'failed' -and
+                    -not $script:knownHostRemoved) 'Unknown or independent failure must stop before the next Agent'
+            }
+        } finally {
+            $ownedRoot = [IO.Path]::GetFullPath($fixtureDirectory)
+            $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+            if (-not $ownedRoot.StartsWith($tempRoot) -or (Split-Path $ownedRoot -Leaf) -notmatch '^leantty-third-party-[0-9a-f]{32}$') {
+                throw 'Unsafe controlled fixture cleanup path'
+            }
+            Remove-Item -LiteralPath $ownedRoot -Recurse -Force
+        }
     }
 }
 Test-Gate 'successful-selection-cleans-known-host-once' {

@@ -56,7 +56,14 @@ UiTest layout channels are usable. It does not install, launch, unlock or repair
 the PC, and it does not prove product behavior. After it passes, run only the
 named physical scenario mapped to the changed claim.
 
-When a test or physical scenario fails, stop the enclosing matrix and follow the
+Confirmed third-party limitations outside LeanTTY's responsibility are
+non-blocking observations, not product failures or successful capability tests.
+Record evidence and continue independent acceptance without waiting for an
+upstream fix or repeated approval. Follow `docs/quality-strategy.md` ->
+"Third-party limitations and acceptance continuity"; unknown attribution is
+not an external exemption.
+
+For a blocking failure or unknown outcome, stop the enclosing matrix and follow the
 root-cause and reframing gate in `docs/quality-strategy.md`. Before changing code,
 record the expected result, last correct boundary, first incorrect boundary,
 authoritative state owner and one hypothesis that the next smallest diagnostic

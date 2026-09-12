@@ -121,7 +121,7 @@ try {
         Assert-Rejected "invocation $field" { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
         $invocation.$field=$saved
     }
-    foreach ($path in @('tools/test-agent-attention-gate.ps1',
+    foreach ($path in @('tools/test-agent-attention-gate.ps1', 'tools/agent-compatibility-policy.ps1', 'AGENTS.md',
             'tools/agent-compatibility/capture_notification.sh',
             'tools/agent-compatibility/start_gate.py',
             'tools/agent-compatibility/test_start_gate.py',

@@ -15,6 +15,8 @@ function Assert-LeanTTYAgentContinuationPaths {
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Paths)
     Assert-LeanTTYHarnessOnlyPaths -ChangedPaths $Paths -AllowedPaths @(
         'tools/verify-agent-compatibility-pc.ps1',
+        'tools/agent-compatibility-policy.ps1',
+        'AGENTS.md',
         'tools/test-agent-ssh-gate.ps1', 'tools/test-agent-compatibility.ps1',
         'tools/test-agent-attention-gate.ps1',
         'tools/agent-compatibility/capture_notification.sh',
