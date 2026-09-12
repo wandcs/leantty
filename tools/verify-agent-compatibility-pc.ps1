@@ -99,6 +99,7 @@ if ($DiagnosticHap) {
             'tools/release-agent-continuation.ps1',
             'tools/test-release-agent-continuation.ps1',
             'docs/design/agent-exit-boundary-20260912.md',
+            'docs/design/agent-notification-order-20260912.md',
            'tools/verify-agent-compatibility-pc.ps1',
             'tools/verify-mosh-pc.ps1',
             'tools/verify-ssh-auth-pc.ps1',
