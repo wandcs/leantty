@@ -1,7 +1,8 @@
 param([string]$HarnessPath = (Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1'))
 $ErrorActionPreference = 'Stop'
 $ast = [Management.Automation.Language.Parser]::ParseFile($HarnessPath, [ref]$null, [ref]$null)
-foreach ($name in @('Assert-NotificationAndReturn', 'Get-AgentAttentionFailure', 'Hide-AgentNotificationWindow')) {
+foreach ($name in @('Assert-NotificationAndReturn', 'Get-AgentAttentionFailure', 'Hide-AgentNotificationWindow',
+        'Start-AgentNotificationAfterHidden')) {
     $function = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
     }, $true)
@@ -80,6 +81,37 @@ try {
         if ($_.Exception.Message -ne '[harness] hidden event unavailable') { throw }
     }
     if ($script:trace -contains 'after-hidden') { throw 'Missing hidden event cannot create a hidden barrier' }
+    function Wait-File { $script:trace.Add('wait-ready') }
+    function Set-AgentStartGate { param($CaptureResultPath, $Action); $script:trace.Add($Action) }
+    function Wait-AppLog { param($Pattern); $script:trace.Add($Pattern) }
+    $script:trace.Clear()
+    Start-AgentNotificationAfterHidden -Agent pi -Stage controlled -CaptureResultPath $capturePath -Observation @{}
+    if (($script:trace -join '|') -ne 'wait-ready|ready|before-minimize|minimize|Window visibility changed: visible=false|after-hidden|release') {
+        throw 'Agent workload must be released only after actual hidden-window evidence'
+    }
+    $script:trace.Clear()
+    Start-AgentNotificationAfterHidden -Agent opencode -Stage controlled -CaptureResultPath $capturePath -Observation @{}
+    if (($script:trace -join '|') -ne 'before-minimize|minimize|Window visibility changed: visible=false|after-hidden') {
+        throw 'OpenCode interactive setup must not wait for an argv-prompt gate'
+    }
+    foreach ($failAt in @('ready', 'hidden', 'release')) {
+        $script:trace.Clear()
+        function Set-AgentStartGate {
+            param($CaptureResultPath, $Action)
+            $script:trace.Add($Action)
+            if ($Action -eq $failAt) { throw "[harness] controlled $Action failure" }
+        }
+        function Wait-AppLog {
+            if ($failAt -eq 'hidden') { throw '[harness] hidden event unavailable' }
+        }
+        $failure = ''
+        try { Start-AgentNotificationAfterHidden -Agent pi -Stage controlled -CaptureResultPath $capturePath -Observation @{} }
+        catch { $failure = $_.Exception.Message }
+        if ($failure -notmatch '^\[harness\].*startup failed' -or $script:trace[-1] -ne 'cancel' -or
+            ($failAt -ne 'release' -and $script:trace -contains 'release')) {
+            throw 'Failed startup must cancel once, stop the scenario and never release before hidden'
+        }
+    }
     $missingInner = Get-AgentAttentionFailure -Outer @{ checkpoints = @{ 'after-hidden' = 0 }; attentionCount = 0; afterHiddenCount = 0 } `
         -InnerObserved $false -InnerAvailable $false
     if ($missingInner -notmatch '^\[harness\].*absence of emission is unproved') { throw 'Missing inner evidence must not authorize no-emission applicability' }
@@ -96,6 +128,7 @@ try {
         $allowed = $command.CommandElements[$command.CommandElements.IndexOf($parameter[0]) + 1].SafeGetValue()
         Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowed -ChangedPaths @(
             'tools/test-agent-attention-gate.ps1', 'tools/agent-compatibility/capture_notification.sh',
+            'tools/agent-compatibility/start_gate.py', 'tools/agent-compatibility/test_start_gate.py',
             'tools/agent-compatibility/observe_attention.py', 'tools/agent-compatibility/attention_observer_probe.py',
             'tools/agent-compatibility/test_observe_attention.py', 'tools/agent-compatibility/test_observe_attention_pty.py')
         $rejected = $false
@@ -103,7 +136,7 @@ try {
         catch { $rejected = $true }
         if (-not $rejected) { throw 'Observer admission must not accept a product dependency change' }
     }
-    Write-Host 'Agent attention gate: 11 actual-owner cases passed; no device or model requests.'
+    Write-Host 'Agent attention gate: 16 actual-owner cases passed; no device or model requests.'
 } finally {
     Remove-Item -LiteralPath $testDirectory -Recurse -Force
 }

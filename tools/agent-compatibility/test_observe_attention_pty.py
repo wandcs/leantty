@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 from observe_attention import observe
+from start_gate import Gate
 
 here = Path(__file__).resolve().parent
 harness = here.parent / 'agent-compatibility-wsl.sh'
@@ -55,6 +56,27 @@ for mode, cancel, scenario in (('direct', False, 'notification'), ('tmux', False
                         pass
             raise AssertionError('actual outer PTY boundary timed out')
         try:
+            if scenario == 'notification':
+                gate_path = root / 'results' / f'{name}-start-gate.json'
+                wait_for(lambda: gate_path.exists() or (root / 'observer-ready').exists())
+                assert gate_path.exists(), 'notification child started before the hidden-window gate'
+                assert not (root / 'observer-ready').exists(), 'unreleased gate started the child'
+                gate = Gate(root, name)
+                assert gate.control('ready')['status'] == 'waiting'
+                observe(root, name, 'before-minimize')
+                observe(root, name, 'after-hidden')
+                if cancel:
+                    gate.control('cancel')
+                    wait_for(lambda: (root / 'results' / f'{name}-outer-final.json').exists())
+                    final = observe(root, name, 'probe')
+                    assert final['childExitCode'] == 125 and final['attentionCount'] == 0
+                    assert not (root / 'observer-ready').exists()
+                    assert not (root / 'captures' / f'{name}.outer-output').exists()
+                    checks.append({'mode': mode, 'cancelBeforeLaunch': True, 'status': 'passed'})
+                    continue
+                # Make the first attention immediate, before permitting any child.
+                (root / 'observer-early').touch()
+                gate.control('release')
             wait_for(lambda: (root / 'observer-ready').exists())
             (root / 'observer-early').touch()
             if scenario == 'interaction':
@@ -66,12 +88,11 @@ for mode, cancel, scenario in (('direct', False, 'notification'), ('tmux', False
                 checks.append({'mode': mode, 'scenario': scenario, 'status': 'passed', 'outerObserverStarted': False})
                 continue
             wait_for(lambda: observe(root, name, 'probe')['attentionCount'] == 1)
-            before = observe(root, name, 'before-minimize')
-            assert before['beforeMinimizeCount'] == 1 and before['afterHiddenCount'] == 0
-            observe(root, name, 'after-hidden')
+            before = observe(root, name, 'probe')
+            assert before['beforeMinimizeCount'] == 0 and before['afterHiddenCount'] == 1
             if not cancel:
                 (root / 'observer-late').touch()
-                wait_for(lambda: observe(root, name, 'probe')['afterHiddenCount'] == 1)
+                wait_for(lambda: observe(root, name, 'probe')['afterHiddenCount'] == 2)
             (root / 'observer-exit').touch()
             wait_for(lambda: (root / 'results' / f'{name}-outer-final.json').exists())
             final = observe(root, name, 'probe')

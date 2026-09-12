@@ -282,7 +282,7 @@ try {
         -WindowsPath (Join-Path $PSScriptRoot 'agent-compatibility\test_osc99_probe.py')
     & wsl.exe --exec python3 $osc99ProbeTest $wslHarness $wslRoot
     if ($LASTEXITCODE -ne 0) { throw 'OSC 99 capability response probe self-test failed' }
-    foreach ($observerTest in @('test_observe_attention.py', 'test_observe_attention_pty.py')) {
+    foreach ($observerTest in @('test_observe_attention.py', 'test_start_gate.py', 'test_observe_attention_pty.py')) {
         $observerTestPath = ConvertTo-LeanTTYWslPath `
             -WindowsPath (Join-Path $PSScriptRoot "agent-compatibility/$observerTest")
         & wsl.exe --exec python3 $observerTestPath

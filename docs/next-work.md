@@ -14,7 +14,7 @@
 前一阶段的停止条件未通过时，不进入后一阶段。完成事实进入相应规范、设计文档、
 `CHANGELOG.md` 和 Git 历史，不在这里长期保留已完成 checkbox。
 
-**当前执行位置：1. Agent 通知的外层/窗口时序观察器已完成开发验证，原 Qwen 原生通知失败的原因仍未知；接下来冻结工具修复、更新准入审计，按 R2 运行新 QH、完整 Agent 和后续 SSH。不得把零模型诊断当作正式通过。**
+**当前执行位置：1. Pi 启动/隐藏竞态的 Agent 专用启动门已通过软件及原 HAP 的 direct/tmux 零模型真机验证，独立清理审计通过。接下来冻结修复并刷新准入，满足 R2 后运行新 QH、完整 Agent 和 SSH；原 Qwen 原因仍未知，不把诊断当作正式通过。**
 
 1.6 产品和验收工具的开发验证、CQ-001 至 CQ-004 修复，以及诊断后的两处精简已闭合。
 普通 SSH/Mosh 不再做无消费者的输出观察解码；Mosh 首次连接成功后停用状态空轮询。
@@ -140,8 +140,11 @@ Agent、SSH 矩阵未运行，没有模型调用；完整 C3、C4 和发布仍�
   零模型真机观察通过，全部诊断资源清理已独立核对。最终捕获入口隔离到 Agent 专用文件，
   共享 WSL/分析器、Mosh、产品和 HAP 未改；R2 仍拒绝共享或产品变更。详见
   [观察器修复与证据边界](design/agent-exit-boundary-20260912.md#agent-notification-observer)。
-  下一次正式运行前重新核对全部失败/诊断尝试的资源、平台及旧证据哈希，再运行新 QH、
-  完整 Agent 和 SSH。详见 [调用上下文修复](design/agent-exit-boundary-20260912.md#agent-input-context)。
+  PR #185 的正式 R2 随后在 Pi direct 的通知落入隐藏过渡区间时停止，原报告保留失败。
+  新启动门等待真实隐藏检查点后才放行原生工作负载；软件与 direct/tmux 零模型真机验证、
+  独立清理审计通过，原 HAP、共享 fixture、通知判据不变。先冻结修复并重新核对全部
+  尝试的资源、平台和旧证据哈希；满足 R2 后运行新 QH、完整 Agent 和 SSH。
+  详见 [启动门及验证边界](design/agent-exit-boundary-20260912.md#hidden-window-startup-gate)。
 
 - [ ] C3 完成后进入 C4 前，补齐同版本 AppGallery 文案的审查与归档入口；当前冻结来源
   只有 `docs/release/1.5.1-appgallery.md`，不能作为 1.6.0 文案。明确材料与候选身份关系
