@@ -282,6 +282,12 @@ try {
         -WindowsPath (Join-Path $PSScriptRoot 'agent-compatibility\test_osc99_probe.py')
     & wsl.exe --exec python3 $osc99ProbeTest $wslHarness $wslRoot
     if ($LASTEXITCODE -ne 0) { throw 'OSC 99 capability response probe self-test failed' }
+    foreach ($observerTest in @('test_observe_attention.py', 'test_observe_attention_pty.py')) {
+        $observerTestPath = ConvertTo-LeanTTYWslPath `
+            -WindowsPath (Join-Path $PSScriptRoot "agent-compatibility/$observerTest")
+        & wsl.exe --exec python3 $observerTestPath
+        if ($LASTEXITCODE -ne 0) { throw "Agent outer observer test failed: $observerTest" }
+    }
     $osc99ProbeResult = Get-Content -LiteralPath (
         Join-Path $temporaryDirectory 'results\osc99-capability-probe.json'
     ) -Raw | ConvertFrom-Json -Depth 10
@@ -432,7 +438,7 @@ try {
     ) 'Agent device fixture can suppress its controlled Bash rcfile'
     Assert-True (
         $deviceScript.Contains('Agent exited without native attention') -and
-        $deviceScript.Contains('Agent emitted native attention but LeanTTY did not publish it') -and
+        $deviceScript.Contains('Post-hide outer attention observed') -and
         $deviceScript.Contains("[ValidateSet('codex', 'opencode', 'pi', 'qwen')]") -and
         $deviceScript.Contains("'opencode' { return 'osc-99' }") -and
         $deviceScript.Contains("'pi' { return 'osc-777' }") -and
@@ -469,4 +475,6 @@ try {
 
 & (Join-Path $PSScriptRoot 'test-agent-ssh-gate.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Agent SSH gate fault injection failed' }
+& (Join-Path $PSScriptRoot 'test-agent-attention-gate.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Agent attention gate fault injection failed' }
 Write-Host 'Agent compatibility helper tests passed.'

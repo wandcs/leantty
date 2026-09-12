@@ -121,7 +121,17 @@ try {
         Assert-Rejected "invocation $field" { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
         $invocation.$field=$saved
     }
-    foreach ($path in @('tools/device-regression.ps1','tools/hdc-common.ps1','tools/release-tooling.ps1','entry/src/main/ets/Test.ets','leantty_ssh/Cargo.lock','tools/notification-regression.ps1')) {
+    foreach ($path in @('tools/test-agent-attention-gate.ps1',
+            'tools/agent-compatibility/capture_notification.sh',
+            'tools/agent-compatibility/observe_attention.py',
+            'tools/agent-compatibility/attention_observer_probe.py',
+            'tools/agent-compatibility/test_observe_attention.py',
+            'tools/agent-compatibility/test_observe_attention_pty.py')) {
+        $script:changedPaths=@($path)
+        Get-LeanTTYAgentReleaseContinuation @argsForPolicy | Out-Null
+        $passed++
+    }
+    foreach ($path in @('tools/device-regression.ps1','tools/hdc-common.ps1','tools/release-tooling.ps1','entry/src/main/ets/Test.ets','leantty_ssh/Cargo.lock','tools/notification-regression.ps1','tools/agent-compatibility-wsl.sh','tools/agent-compatibility/analyze_capture.py')) {
         $script:changedPaths=@($path)
         Assert-Rejected "shared or product path $path" { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
     }

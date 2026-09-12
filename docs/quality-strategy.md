@@ -516,7 +516,25 @@ Direct and tmux results remain separate, and a diagnostic HAP result is not
 release acceptance. The stable contract and current matrix are recorded in
 [`design/agent-tui-compatibility.md`](design/agent-tui-compatibility.md).
 The tmux fixture enables `focus-events` because DEC 1004 focus reporting is
-otherwise consumed at the outer tmux boundary. A captured native signal proves
+otherwise consumed at the outer tmux boundary. Agent notification acceptance uses
+`agent-compatibility/capture_notification.sh` for a separate output-only outer
+PTY capture. It leaves the shared WSL fixture and Mosh interaction path unchanged.
+`observe_attention.py` records content-free byte checkpoints before minimize and
+after the actual `windowVisibilityChange(false)` observation. Only complete
+attention frames starting at or after the latter checkpoint prove post-hide outer
+observation. Earlier frames and frames spanning the hide interval cannot qualify.
+An outer capture proves neither SSH receipt nor ArkWeb delivery. Missing outer or
+window evidence is a harness gap; inner-only attention or outer attention without
+confirmed publication remains unknown, never pass or assumed product failure.
+The generic notification card and accurate return remain required. No native
+Agent workload receives an injected BEL, changed prompt or longer deadline.
+Raw outer output is deleted on normal completion or by the run-owned fixture
+cleanup after interruption; only counts, byte offsets and signal kinds survive.
+Software tests exercise actual assertions, real script/PTY/tmux capture and
+non-notification dispatch. A zero-model observer diagnostic is not native Agent
+or formal acceptance. See [observer repair](design/agent-exit-boundary-20260912.md#agent-notification-observer).
+
+A captured native signal proves
 wire behavior, not system notification: if the physical app is suspended after
 the window becomes hidden, a later Agent completion signal is recorded as a
 product/lifecycle limitation rather than promoted to pass. OpenCode's OSC 99
