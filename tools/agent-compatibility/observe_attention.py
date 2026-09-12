@@ -45,6 +45,7 @@ def summarize(capture: dict, marks: dict) -> dict:
     events = capture["events"]
     early = [event for event in events if before is not None and event["end"] <= before]
     late = [event for event in events if hidden is not None and event["start"] >= hidden]
+    after_start = [event for event in events if before is not None and event["start"] >= before]
     return {
         "schemaVersion": 1,
         "boundary": "remote-outer-pty-not-client-receipt",
@@ -56,6 +57,7 @@ def summarize(capture: dict, marks: dict) -> dict:
         "beforeMinimizeCount": len(early),
         "hideIntervalOrUnorderedCount": len(events) - len(early) - len(late),
         "afterHiddenCount": len(late),
+        "afterMinimizeStartCount": len(after_start),
         "afterHiddenKinds": sorted({event["kind"] for event in late}),
         "privacy": {"contentIncludedInSummary": False},
     }

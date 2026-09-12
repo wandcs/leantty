@@ -42,8 +42,11 @@ class AttentionObserverTests(unittest.TestCase):
             live = observe(root, 'controlled', 'probe')
             self.assertEqual((live['beforeMinimizeCount'], live['hideIntervalOrUnorderedCount'],
                               live['afterHiddenCount']), (1, 1, 1))
+            self.assertEqual(live['afterMinimizeStartCount'], 2)
             final = observe(root, 'controlled', 'finish', 130)
             self.assertFalse(raw.exists())
+            # Numeric checkpoints are metadata, not raw terminal output.
+            self.assertTrue((root / 'captures' / 'controlled.outer-checkpoints').exists())
             self.assertEqual(final['childExitCode'], 130)
             self.assertEqual(observe(root, 'controlled', 'probe'), final)
             for path in (root / 'results').iterdir():
@@ -63,6 +66,14 @@ class AttentionObserverTests(unittest.TestCase):
     def test_event_limit_is_bounded(self):
         with self.assertRaisesRegex(ValueError, 'limit exceeded'):
             attention_events(b'\x07' * 4097)
+
+    def test_action_barrier_excludes_frames_started_before_it(self):
+        data = b'\x1b]9;public\x07\x07'
+        capture = {'events': attention_events(data), 'bytes': len(data), 'complete': True, 'childExitCode': 0}
+        result = summarize(capture, {'before-minimize': 3, 'after-hidden': len(data)})
+        self.assertEqual(result['afterMinimizeStartCount'], 1)
+        self.assertEqual(result['afterHiddenCount'], 0)
+        self.assertEqual(summarize(capture, {})['afterMinimizeStartCount'], 0)
 
 
 if __name__ == '__main__':

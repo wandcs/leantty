@@ -952,6 +952,15 @@ summaries carry only the minimum redacted identity and result.
 
 ## Physical automation protocol
 
+Agent notification ordering uses the complete outer frame after the pre-action
+checkpoint together with the current process/main-thread hidden, attention and
+successful-publication episode. The later host `after-hidden` byte checkpoint
+remains diagnostic evidence, not the event timestamp. Require the real generic
+card and return to that episode's complete Pane ID; missing or contradictory
+device order cannot qualify from output alone. Clear the app-log epoch before
+the action and recognize the platform's optional HiTrace prefix only in its
+documented position. See the [ordering repair](design/agent-notification-order-20260912.md).
+
 `verify-agent-compatibility-pc.ps1 -DiagnosticHap -FocusReadinessProbe -Agents qwen`
 is a zero-model focus diagnostic. It starts the real Qwen TUI, requires its
 initial native 1004 enable before minimizing, observes a new inner-PTY focus-out,
