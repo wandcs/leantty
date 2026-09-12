@@ -2,7 +2,7 @@ param([string]$HarnessPath = (Join-Path $PSScriptRoot 'verify-agent-compatibilit
 $ErrorActionPreference = 'Stop'
 $ast = [Management.Automation.Language.Parser]::ParseFile($HarnessPath, [ref]$null, [ref]$null)
 foreach ($name in @('Assert-NotificationAndReturn', 'Get-AgentAttentionFailure', 'Hide-AgentNotificationWindow',
-        'Start-AgentNotificationAfterHidden', 'Invoke-AgentFocusReadinessProbe')) {
+        'Start-AgentNotificationAfterHidden', 'Invoke-AgentFocusReadinessProbe', 'Get-AgentNotificationEpisode')) {
     $function = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
     }, $true)
@@ -14,22 +14,29 @@ try {
     $capturePath = Join-Path $testDirectory 'qwen-tmux-notification.json'
     @{ childExitCode = 0; output = @{ nativeAttentionSignalObserved = $true } } |
         ConvertTo-Json | Set-Content -LiteralPath $capturePath
-    $hdc = 'no-device'; $Target = 'no-device'; $appProcessId = '0'
+    $hdc = 'no-device'; $Target = 'no-device'; $appProcessId = '101'
     $wslToolPath = 'no-wsl'; $wslFixtureDirectory = 'no-fixture'
-    $script:published = $false
-    function Get-LeanTTYAppLogs {
-        if ($script:published) { return 'Background BEL notification published: paneId=pane-1' }
-        return ''
-    }
+    $hiddenLog = '09-12 12:00:00.100 101 101 I A00001/com.leantty.app/EntryAbility: Window visibility changed: visible=false'
+    $attentionLog = '09-12 12:00:00.101 101 101 I A00001/com.leantty.app/AppViewModel: Pane attention set: pane-12-1'
+    $publishedLog = '09-12 12:00:00.102 101 101 I A00001/com.leantty.app/BackgroundBellNotification: Background BEL notification published: paneId=pane-12-1'
+    $validLogs = @($hiddenLog, $attentionLog, $publishedLog) -join "`n"
+    $script:logs = ''
+    function Get-LeanTTYAppLogs { return $script:logs }
     function wsl.exe { $global:LASTEXITCODE = 0 }
     $script:outer = $null
     function Get-AgentOuterAttention { return $script:outer }
     function Open-NotificationPanel { return @{} }
-    function Get-LeanTTYLayoutNodes {
-        return @{ attributes = @{ text = 'LeanTTY, A terminal needs your attention.' } }
-    }
+    $script:cardText = 'LeanTTY, A terminal needs your attention.'
+    function Get-LeanTTYLayoutNodes { return @{ attributes = @{ text = $script:cardText } } }
     function Click-Node { $script:returnClicked = $true }
-    function Wait-AppLog { $script:returnObserved = $true }
+    $script:returnPane = 'pane-12-1'
+    function Wait-AppLog {
+        param($Pattern)
+        if ("Background BEL return applied: paneId=$script:returnPane" -notmatch $Pattern) {
+            throw '[harness] Expected source Pane return not observed'
+        }
+        $script:returnObserved = $true
+    }
     $failure = ''
     try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath }
     catch { $failure = $_.Exception.Message }
@@ -42,22 +49,89 @@ try {
         @{ count = 0; late = 0; pattern = '^\[unknown\].*without outer' },
         @{ count = 1; late = 1; pattern = '^\[unknown\].*client receipt' }
     )) {
-        $script:outer = @{ checkpoints = @{ 'after-hidden' = 10 }; attentionCount = $case.count; afterHiddenCount = $case.late }
+        $script:outer = @{ checkpoints = @{ 'before-minimize' = 0; 'after-hidden' = 10 }
+            attentionCount = $case.count; afterHiddenCount = $case.late; afterMinimizeStartCount = $case.late }
         $failure = ''
         try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath }
         catch { $failure = $_.Exception.Message }
         if ($failure -notmatch $case.pattern) { throw "Incorrect attribution: $failure" }
     }
-    $script:published = $true
+    $script:logs = $validLogs
     $script:returnClicked = $false; $script:returnObserved = $false
-    $observation = @{}
+    $observation = @{ windowHidden = $true }
     Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation $observation
     if (-not $script:returnClicked -or -not $script:returnObserved -or $observation.outer.afterHiddenCount -ne 1) {
         throw 'Post-hide signal must still require the actual generic-card and return observations'
     }
     $script:outer.afterHiddenCount = 0
+    $script:outer.afterMinimizeStartCount = 1
+    $observation = @{ windowHidden = $true }
+    Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation $observation
+    if ($observation.deviceEpisode.paneId -cne 'pane-12-1' -or $observation.outer.afterHiddenCount -ne 0) {
+        throw 'A complete device episode must qualify a signal before the later host checkpoint'
+    }
+    # HarmonyOS may attach HiTrace metadata to asynchronous publication logs.
+    $script:logs = $validLogs.Replace(': Background BEL', ': [a92ab143765732c 0 0]Background BEL')
+    Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true }
+    $script:logs = $validLogs
+    foreach ($invalidLogs in @(
+        '', $attentionLog, $publishedLog,
+        (@($attentionLog, $publishedLog) -join "`n"),
+        (@($hiddenLog, $publishedLog) -join "`n"),
+        (@($publishedLog, $hiddenLog, $attentionLog) -join "`n"),
+        (@($hiddenLog, $publishedLog, $attentionLog) -join "`n"),
+        ($validLogs.Replace($attentionLog, $attentionLog.Replace('pane-12-1', 'pane-12-10'))),
+        (@($hiddenLog, $attentionLog, $attentionLog.Replace('pane-12-1', 'pane-13'), $publishedLog) -join "`n"),
+        ($validLogs + "`n" + $publishedLog),
+        ($validLogs.Replace($attentionLog, $hiddenLog.Replace('visible=false', 'visible=true') + "`n" + $attentionLog)),
+        ($validLogs + "`n" + $hiddenLog.Replace('visible=false', 'visible=true')),
+        ($validLogs + "`n" + $publishedLog.Replace('published: paneId=pane-12-1', 'canceled')),
+        ($validLogs + "`n" + $attentionLog.Replace('set:', 'cleared:')),
+        ($validLogs.Replace('101 101', '102 102')),
+        ($validLogs.Replace('101 101', '101 102')),
+        ($validLogs.Replace('/BackgroundBellNotification:', '/TerminalBridge:')),
+        ($validLogs.Replace(': Background BEL', ': [not-a-trace]Background BEL')),
+        ($validLogs.Replace($publishedLog, 'terminal output: ' + $publishedLog)),
+        ($validLogs.Replace('paneId=pane-12-1', 'paneId=pane-12-1-extra'))
+    )) {
+        $script:logs = $invalidLogs
+        $failure = ''
+        try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
+        catch { $failure = $_.Exception.Message }
+        if ($failure -notmatch '^\[unknown\].*device episode') { throw "Invalid episode qualified: $failure" }
+    }
+    $script:logs = $validLogs
+    foreach ($missing in @('before-minimize', 'after-hidden', 'windowHidden', 'afterMinimizeStartCount')) {
+        $savedOuter = $script:outer
+        $script:outer = @{ attentionCount=1; afterHiddenCount=0; afterMinimizeStartCount=1
+            checkpoints=@{ 'before-minimize'=0; 'after-hidden'=10 } }
+        $observation = @{ windowHidden=$true }
+        if ($missing -eq 'windowHidden') { $observation.Clear() }
+        elseif ($missing -eq 'afterMinimizeStartCount') { $script:outer.Remove($missing) }
+        else { $script:outer.checkpoints.Remove($missing) }
+        $failure = ''
+        try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation $observation }
+        catch { $failure = $_.Exception.Message }
+        if ($failure -notmatch '^\[(harness|unknown)\]') { throw "Missing $missing must not qualify: $failure" }
+        $script:outer = $savedOuter
+    }
+    foreach ($wrongPane in @('pane-12', 'pane-12-10', 'pane-13')) {
+        $script:returnPane = $wrongPane
+        $failure = ''
+        try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
+        catch { $failure = $_.Exception.Message }
+        if ($failure -ne '[harness] Expected source Pane return not observed') { throw "Wrong return qualified: $failure" }
+    }
+    $script:returnPane = 'pane-12-1'
+    $script:cardText = 'LeanTTY, qwen A terminal needs your attention.'
+    $failure = ''
+    try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
+    catch { $failure = $_.Exception.Message }
+    if ($failure -notmatch '^\[privacy\]') { throw 'A valid episode cannot bypass notification privacy' }
+    $script:cardText = 'LeanTTY, A terminal needs your attention.'
+    $script:outer.afterMinimizeStartCount = 0
     try {
-        Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath
+        Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true }
         throw 'Pre-hide signal with publication must not bypass ordering'
     } catch {
         if ($_.Exception.Message -notmatch '^\[harness\].*before minimize') { throw }
@@ -65,11 +139,12 @@ try {
     $script:trace = [Collections.Generic.List[string]]::new()
     function Get-FullLayout { return @{} }
     function Get-MinimizeButton { return @{} }
+    function Clear-LeanTTYAppLogs { $script:trace.Add('clear-logs') }
     function Get-AgentOuterAttention { param($CaptureResultPath, $Action); $script:trace.Add($Action); return @{} }
     function Click-Node { $script:trace.Add('minimize') }
     function Wait-AppLog { param($Pattern); $script:trace.Add($Pattern) }
     Hide-AgentNotificationWindow -Stage controlled -CaptureResultPath $capturePath -Observation @{}
-    if (($script:trace -join '|') -ne 'before-minimize|minimize|Window visibility changed: visible=false|after-hidden') {
+    if (($script:trace -join '|') -ne 'clear-logs|before-minimize|minimize|Window visibility changed: visible=false|after-hidden') {
         throw 'Byte barriers must bracket the action and actual window-hidden observation'
     }
     $script:trace.Clear()
@@ -86,12 +161,12 @@ try {
     function Wait-AppLog { param($Pattern); $script:trace.Add($Pattern) }
     $script:trace.Clear()
     Start-AgentNotificationAfterHidden -Agent pi -Stage controlled -CaptureResultPath $capturePath -Observation @{}
-    if (($script:trace -join '|') -ne 'wait-ready|ready|before-minimize|minimize|Window visibility changed: visible=false|after-hidden|release') {
+    if (($script:trace -join '|') -ne 'wait-ready|ready|clear-logs|before-minimize|minimize|Window visibility changed: visible=false|after-hidden|release') {
         throw 'Agent workload must be released only after actual hidden-window evidence'
     }
     $script:trace.Clear()
     Start-AgentNotificationAfterHidden -Agent opencode -Stage controlled -CaptureResultPath $capturePath -Observation @{}
-    if (($script:trace -join '|') -ne 'before-minimize|minimize|Window visibility changed: visible=false|after-hidden') {
+    if (($script:trace -join '|') -ne 'clear-logs|before-minimize|minimize|Window visibility changed: visible=false|after-hidden') {
         throw 'OpenCode interactive setup must not wait for an argv-prompt gate'
     }
     function Wait-AgentTuiReady {
@@ -102,7 +177,7 @@ try {
     $script:trace.Clear()
     $focusObservation = @{}
     Start-AgentNotificationAfterHidden -Agent qwen -Stage controlled -CaptureResultPath $capturePath -Observation $focusObservation
-    if (($script:trace -join '|') -ne 'focus-ready|before-minimize|minimize|Window visibility changed: visible=false|after-hidden' -or
+    if (($script:trace -join '|') -ne 'focus-ready|clear-logs|before-minimize|minimize|Window visibility changed: visible=false|after-hidden' -or
         $focusObservation.focusReportingReady -ne $true) {
         throw 'Qwen must enable native focus reporting before the real minimize action, without an exec gate'
     }
@@ -204,7 +279,7 @@ try {
             throw "Focus probe must require both real transitions and restore after failure: case=$case failure=$failure"
         }
     }
-    Write-Host 'Agent attention gate: 28 actual-owner cases passed; no device or model requests.'
+    Write-Host 'Agent attention gate: actual-owner ordering, rejection and focus cases passed; no device or model requests.'
 } finally {
     Remove-Item -LiteralPath $testDirectory -Recurse -Force
 }

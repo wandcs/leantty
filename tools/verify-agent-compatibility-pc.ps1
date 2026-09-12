@@ -635,6 +635,7 @@ function Hide-AgentNotificationWindow {
     param([string]$Stage, [string]$CaptureResultPath, [System.Collections.IDictionary]$Observation)
     $layout = Get-FullLayout -Name "$Stage-before-minimize"
     $minimize = Get-MinimizeButton -Layout $layout
+    Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     $Observation.before = Get-AgentOuterAttention -CaptureResultPath $CaptureResultPath -Action before-minimize
     Click-Node -Node $minimize -Description "Minimize LeanTTY for $Stage native notification"
     # A minimize action is not Ability.onBackground. Wait for the actual owner.
@@ -686,6 +687,9 @@ function Get-AgentAttentionFailure {
     if ($Outer.afterHiddenCount -gt 0) {
         return '[unknown] Post-hide outer attention observed; client receipt and notification publication unconfirmed'
     }
+    if ($Outer.afterMinimizeStartCount -gt 0) {
+        return '[unknown] Post-minimize outer attention observed; device episode or notification publication unconfirmed'
+    }
     if ($Outer.attentionCount -gt 0) {
         return '[harness] Agent outer attention was before minimize or in the unproved hide interval'
     }
@@ -696,6 +700,41 @@ function Get-AgentAttentionFailure {
         return '[harness] Agent inner observation is unavailable; absence of emission is unproved'
     }
     return "[external-agent] Agent exited without native attention or notification deadline expired, childExitCode=$ChildExitCode"
+}
+
+function Get-AgentNotificationEpisode {
+    param([string]$Logs, [string]$ProcessId)
+    # These owners log on the same UI thread. Host read time is not event time.
+    # Keep the ordered device episode, not just an unscoped publication substring.
+    # Async platform calls may prepend a HiTrace [chainId spanId parentSpanId].
+    $linePattern = '^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\s+' +
+        [regex]::Escape($ProcessId) + '\s+' + [regex]::Escape($ProcessId) +
+        '\s+I\s+A00001/com\.leantty\.app/(?<owner>EntryAbility|AppViewModel|BackgroundBellNotification): ' +
+        '(?:\[[0-9a-f]+ [0-9a-f]+ [0-9a-f]+\])?(?<message>.+)$'
+    $phase = 'visible'
+    $paneId = ''
+    foreach ($line in ($Logs -split '\r?\n')) {
+        if ($line -cnotmatch $linePattern) { continue }
+        $owner = $Matches.owner
+        $message = $Matches.message
+        if ($owner -ceq 'EntryAbility') {
+            if ($message -ceq 'Window visibility changed: visible=true') { return $null }
+            if ($message -ceq 'Window visibility changed: visible=false' -and $phase -ceq 'visible') { $phase = 'hidden' }
+        } elseif ($owner -ceq 'AppViewModel') {
+            if ($message -cmatch '^Pane attention set: (pane-\d+(?:-\d+)?)$') {
+                if ($phase -cne 'hidden') { return $null }
+                $paneId = $Matches[1]
+                $phase = 'attention'
+            } elseif ($message -cmatch '^Pane attention cleared: ' -and $phase -ceq 'published') { return $null }
+        } elseif ($owner -ceq 'BackgroundBellNotification') {
+            if ($message -cmatch '^Background BEL notification published: paneId=(pane-\d+(?:-\d+)?)$') {
+                if ($phase -cne 'attention' -or $Matches[1] -cne $paneId) { return $null }
+                $phase = 'published'
+            } elseif ($message -ceq 'Background BEL notification canceled' -and $phase -ceq 'published') { return $null }
+        }
+    }
+    if ($phase -cne 'published') { return $null }
+    return [ordered]@{ paneId=$paneId; processId=$ProcessId; order='hidden-attention-published' }
 }
 
 function Assert-NotificationAndReturn {
@@ -719,8 +758,11 @@ function Assert-NotificationAndReturn {
         if ($null -ne $outer -and $outer.attentionCount -gt 0 -and $null -eq $agentSignalObservedAt) {
             $agentSignalObservedAt = [DateTimeOffset]::UtcNow
         }
-        if ($logs -match 'Background BEL notification published: paneId=pane-\d+' -and
-            $null -ne $outer -and $outer.afterHiddenCount -gt 0) {
+        $episode = Get-AgentNotificationEpisode -Logs $logs -ProcessId $appProcessId
+        if ($Observation.windowHidden -eq $true -and $null -ne $episode -and
+            $null -ne $outer -and $null -ne $outer.checkpoints.'before-minimize' -and
+            $null -ne $outer.checkpoints.'after-hidden' -and $outer.afterMinimizeStartCount -gt 0) {
+            $Observation.deviceEpisode = $episode
             $published = $true
             break
         }
@@ -763,7 +805,8 @@ function Assert-NotificationAndReturn {
     }
     Click-Node -Node $cards[0] -Description 'Return to native Agent notification source'
     $script:panelOpen = $false
-    Wait-AppLog -Pattern 'Background BEL return applied: paneId=pane-\d+' -TimeoutSeconds 20 |
+    $returnPattern = 'Background BEL return applied: paneId=' + [regex]::Escape($episode.paneId) + '(?=[\s,]|$)'
+    Wait-AppLog -Pattern $returnPattern -TimeoutSeconds 20 |
         Out-Null
 }
 
