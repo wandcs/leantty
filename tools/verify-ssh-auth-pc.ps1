@@ -124,6 +124,10 @@ if (-not $DiagnosticHap) {
         -RepoRoot $repoRoot `
         -Candidate $candidate `
         -AllowedHarnessPaths @(
+            'tools/verify-release-pc.ps1',
+            'tools/release-agent-continuation.ps1',
+            'tools/test-release-agent-continuation.ps1',
+            'docs/design/agent-exit-boundary-20260912.md',
             'tools/verify-ssh-auth-pc.ps1',
             'tools/test-notification-regression.ps1',
             'tools/test-agent-ssh-gate.ps1',

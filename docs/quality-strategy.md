@@ -751,6 +751,16 @@ the smallest enclosing acceptance script rather than manually promoting an
 `-Only`/`runMode=diagnostic` result. SSH groups are the acceptance-mode resume
 boundary; individual stages inside a group are not.
 
+`verify-release-pc.ps1 -AgentContinuationPath` is the bounded cross-harness R2
+entry for an Agent-local exit repair: a new report pins the original failed
+report, independent recovery and fresh state audit. Only the complete prefix
+before Agent is reusable, and only under the explicit continuation path policy.
+SSH auth's admission-array change must leave all other source unchanged. New QH,
+the full Agent stage and SSH remain mandatory. Inherited result paths/hashes are
+revalidated on resume and completion; original failures are never rewritten.
+This is not a general skip-stage switch or a waiver of cleanup or platform
+continuity. See [the repair contract](design/agent-exit-boundary-20260912.md#agent-local-formal-continuation).
+
 Checkpoint JSON is replaced atomically after each independent group. It records
 the exact candidate commit/tree/HAP hash, clean harness commit/tree, attempt and
 previous-attempt identity, result and cleanup audits. A separate `progress.json`
