@@ -2,7 +2,8 @@ param([string]$HarnessPath = (Join-Path $PSScriptRoot 'verify-agent-compatibilit
 $ErrorActionPreference = 'Stop'
 $ast = [Management.Automation.Language.Parser]::ParseFile($HarnessPath, [ref]$null, [ref]$null)
 foreach ($name in @('Assert-NotificationAndReturn', 'Get-AgentAttentionFailure', 'Hide-AgentNotificationWindow',
-        'Start-AgentNotificationAfterHidden', 'Invoke-AgentFocusReadinessProbe', 'Get-AgentNotificationEpisode')) {
+        'Start-AgentNotificationAfterHidden', 'Invoke-AgentFocusReadinessProbe', 'Get-AgentNotificationEpisode',
+        'Get-AgentNotificationLogs')) {
     $function = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
     }, $true)
@@ -21,7 +22,19 @@ try {
     $publishedLog = '09-12 12:00:00.102 101 101 I A00001/com.leantty.app/BackgroundBellNotification: Background BEL notification published: paneId=pane-12-1'
     $validLogs = @($hiddenLog, $attentionLog, $publishedLog) -join "`n"
     $script:logs = ''
-    function Get-LeanTTYAppLogs { return $script:logs }
+    function Get-LeanTTYAppLogs { return (($script:logs -split '\r?\n' | Select-Object -Last 500) -join "`n") }
+    $script:queryFailure = $false
+    function Invoke-HdcChecked {
+        param($Hdc, $Target, $Arguments, $Operation)
+        if ($script:queryFailure) { throw '[harness] controlled notification query failure' }
+        if ($Arguments.Count -ne 2 -or $Arguments[0] -cne 'shell' -or
+            $Arguments[1] -cne 'hilog -z 500 -t app -P 101 -T EntryAbility,AppViewModel,BackgroundBellNotification') {
+            throw 'Notification query must be current-PID and owner-filtered at the device boundary'
+        }
+        return (($script:logs -split '\r?\n' | Where-Object {
+            $_ -match '/(EntryAbility|AppViewModel|BackgroundBellNotification):'
+        } | Select-Object -Last 500) -join "`n")
+    }
     function wsl.exe { $global:LASTEXITCODE = 0 }
     $script:outer = $null
     function Get-AgentOuterAttention { return $script:outer }
@@ -73,6 +86,24 @@ try {
     # HarmonyOS may attach HiTrace metadata to asynchronous publication logs.
     $script:logs = $validLogs.Replace(': Background BEL', ': [a92ab143765732c 0 0]Background BEL')
     Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true }
+    $script:logs = $validLogs
+    # Execute the actual assertion and reader. Filtering a returned mixed tail
+    # cannot recover an earlier owner event already displaced by terminal ACKs.
+    $noise = '09-12 12:00:00.100 101 101 I A00001/com.leantty.app/TerminalBridge: ACCEPTANCE_TERMINAL_WRITE_ACK bytes=107'
+    $script:logs = (@($hiddenLog) + @($noise) * 501 + @($attentionLog, $publishedLog)) -join "`n"
+    Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true }
+    $script:queryFailure = $true
+    $failure = ''
+    try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
+    catch { $failure = $_.Exception.Message }
+    if ($failure -cne '[harness] controlled notification query failure') { throw 'Query failure must propagate without a product or notification verdict' }
+    $script:queryFailure = $false
+    $ownerNoise = $noise.Replace('/TerminalBridge:', '/AppViewModel:')
+    $script:logs = (@($hiddenLog) + @($ownerNoise) * 501 + @($attentionLog, $publishedLog)) -join "`n"
+    $failure = ''
+    try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
+    catch { $failure = $_.Exception.Message }
+    if ($failure -notmatch '^\[harness\].*snapshot limit') { throw "Saturated owner query must be an explicit evidence gap: $failure" }
     $script:logs = $validLogs
     foreach ($invalidLogs in @(
         '', $attentionLog, $publishedLog,
