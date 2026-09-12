@@ -87,6 +87,10 @@ if ($DiagnosticHap) {
         -RepoRoot $repoRoot `
         -Candidate $candidate `
         -AllowedHarnessPaths @(
+            'tools/verify-release-pc.ps1',
+            'tools/release-agent-continuation.ps1',
+            'tools/test-release-agent-continuation.ps1',
+            'docs/design/agent-exit-boundary-20260912.md',
            'tools/verify-agent-compatibility-pc.ps1',
             'tools/verify-mosh-pc.ps1',
             'tools/verify-ssh-auth-pc.ps1',

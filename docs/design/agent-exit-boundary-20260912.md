@@ -130,3 +130,63 @@ record is preferable to repeating unrelated human actions, but it must validate
 the original reports, exact candidate, scoped changes, new QH and cleanup without
 rewriting their verdicts. That continuation mechanism is not implemented by this
 repair; no formal pass is manually spliced or promoted.
+
+## Agent-local formal continuation
+
+The subsequent R2 repair adds `verify-release-pc.ps1 -AgentContinuationPath`.
+It creates a new report; ordinary `-Resume` retains its exact-harness rule.
+Only an original registered report with a complete passing prefix, a failed
+Agent stage and an unstarted SSH stage is eligible. The manifest pins the old
+report, independent recovery and a fresh machine-local admission audit by
+SHA-256. A recovery audit does not change the original Agent failure or cleanup.
+
+The continuation owner checks candidate and invocation identity, original
+harness ancestry/tree, prefix result files and cleanup, restored initial state
+and the repaired Agent script hash. It admits only the named Agent repair,
+reporting, tests and documentation paths. SSH auth may change only its
+candidate-compatibility array; its remaining source must match the original
+byte for byte. Changes to shared input, layout, logs, fixtures or cleanup reject
+R2. This also fixes the formal allowlist omission for this repair document.
+
+The new report records inherited stages as `reused`, with original result paths
+and hashes. It always runs a new QH, then the full Agent stage and SSH matrix.
+The original failed attempt remains the new Agent attempt's predecessor. Eight
+new planned model requests are distinct from inherited work and the earlier
+failed run's unavailable actual count. No model retry is automatic. Inherited
+hashes are checked again on resume and before a complete-matrix claim.
+
+The live admission audit checks each failed/diagnostic attempt's fingerprint,
+listener, process and directory absence; reverse mappings; the restored Tab and
+notification state; candidate hash; and platform continuity. It preserves its
+observations and script locally. It neither manufactures stage verdicts nor
+serves as a new product acceptance result. A stale/unknown audit stops before QH.
+
+Research on 2026-09-12 compared [GitHub reruns](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs),
+which retain the original commit, with [GitLab retries](https://docs.gitlab.com/ci/jobs/#retry-jobs),
+which create a new job identity and artifacts. These support distinct attempt
+lineage, not silent substitution of a repaired harness. Huawei's
+[testing guidance](https://developer.huawei.com/consumer/cn/doc/HarmonyOS-Guides/other-test)
+retains preceding observations after script failure but does not define
+cross-harness reuse. No matching Huawei community or upstream report established
+such a guarantee; the OpenHarmony 6.0 README lookup on Gitee was unavailable.
+The selected policy follows this repository's R2 contract, not an assumed OS API.
+
+Current platform observations distinguish the two version fields:
+`const.ohos.fullname` reports `OpenHarmony-6.1.1.135`, while the product software
+field reports `HAD-W24 6.1.0.135(SP60C00E100R13P3log)`; UiTest is `6.0.2.3`.
+The first admission observation found the PC locked, not a missing application;
+it created no fixture or formal result. The documented local-credential helper
+handles unlock before the next audit, preserving the app process.
+
+The 47-case continuation regression passes, including altered invocation,
+candidate, report hash, reused checkpoint, missing prefix, stale admission and
+unproved cleanup. The original entry fails the new continuation contract test.
+The focused `policy,tooling` gate passes seven checks. A live audit after normal
+unlock validates all three previous Agent attempts' cleanup and the 16 reusable
+physical stages. It sends no model request and performs no lock/lid/Wi-Fi test.
+The process start counter and its measured clock rate exclude a reboot since
+the original report started; the two version fields above and UiTest are stable.
+Evidence is under `build/verification/agent-r2-continuation-20260912/`:
+`software-final.json`, `admission-diagnostic-2/audit.json` and
+`admission-diagnostic-2/continuation.json`. Fresh clean-harness formal QH and
+Agent/SSH results are still required; this audit is not a C3 completion claim.

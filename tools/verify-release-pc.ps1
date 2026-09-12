@@ -19,13 +19,16 @@ param(
     [ValidateRange(0, 65535)][int]$AgentPort = 0,
     [Parameter(Mandatory = $true)][string]$MoshAlternateWifiSsid,
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
-    [switch]$Resume
+    [switch]$Resume,
+    [string]$AgentContinuationPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
+. (Join-Path $PSScriptRoot 'release-agent-continuation.ps1')
+if ($Resume -and $AgentContinuationPath) { throw 'Use a new report for Agent continuation, not -Resume' }
 
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 $repoFullPath = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
@@ -169,6 +172,11 @@ if ($Resume) {
     $report = [IO.File]::ReadAllText($reportPath, [Text.Encoding]::UTF8) |
         ConvertFrom-Json -Depth 20
     $candidate = Assert-ReleaseResumeIdentity -ExistingReport $report
+    if ($null -ne $report.continuation) {
+        $validated = Get-LeanTTYAgentReleaseContinuation -Manifest $report.continuation.manifest `
+            -Candidate $candidate -Invocation $report.invocation -RepoRoot $repoRoot -Recheck
+        Assert-LeanTTYInheritedReleaseStages -Report $report -Validated $validated
+    }
     Assert-PassingReleaseCheckpoints -ExistingReport $report -ResolvedCandidate $candidate
     $report.resumeCount = [int]$report.resumeCount + 1
     $report.result = 'running'
@@ -226,6 +234,30 @@ if ($Resume) {
         )
     }
     $candidate = $null
+    if ($AgentContinuationPath) {
+        if ([string]::IsNullOrWhiteSpace($HapPath)) { throw 'Agent continuation requires the exact -HapPath' }
+        $manifest = Get-Content -LiteralPath $AgentContinuationPath -Raw | ConvertFrom-Json -Depth 10
+        $oldRoot = [IO.Path]::GetFullPath((Split-Path $manifest.sourceReport.path -Parent)).TrimEnd('\', '/')
+        if ($EvidenceDirectory.Equals($oldRoot, [StringComparison]::OrdinalIgnoreCase) -or
+            $EvidenceDirectory.StartsWith($oldRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Continuation must not write inside the original report directory'
+        }
+        $candidate = Resolve-LeanTTYRetainedCandidate -RepoRoot $repoRoot -HapPath $HapPath `
+            -CandidateBasePath $normalizedCandidateBasePath
+        $validated = Get-LeanTTYAgentReleaseContinuation -Manifest $manifest -Candidate $candidate `
+            -Invocation $report.invocation -RepoRoot $repoRoot
+        $report | Add-Member -NotePropertyName continuation -NotePropertyValue ([pscustomobject]@{
+            scope = 'R2'; manifest = $manifest; originalFailurePreserved = $true
+            newPlannedModelRequests = 8; automaticRetries = 0
+        })
+        foreach ($inherited in $validated.prefix) {
+            $stage = $inherited.stage
+            $stage.status = 'reused'
+            $stage | Add-Member -NotePropertyName sourceEvidenceSha256 -NotePropertyValue $inherited.sha256
+            $report.stages[$inherited.index] = $stage
+        }
+        $report.stages[-2].attemptId = $validated.failedAttemptId
+    }
     $null = Write-LeanTTYReleaseReportArtifacts `
         -EvidenceDirectory $EvidenceDirectory -Report $report
 }
@@ -528,6 +560,11 @@ try {
             $null = Write-LeanTTYReleaseReportArtifacts `
                 -EvidenceDirectory $EvidenceDirectory -Report $report
         }
+    }
+    if ($null -ne $report.continuation) {
+        $validated = Get-LeanTTYAgentReleaseContinuation -Manifest $report.continuation.manifest `
+            -Candidate $candidate -Invocation $report.invocation -RepoRoot $repoRoot -Recheck
+        Assert-LeanTTYInheritedReleaseStages -Report $report -Validated $validated
     }
     $report.result = 'passed'
     $report.registeredStagesPassed = $true
