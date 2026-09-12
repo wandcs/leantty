@@ -14,7 +14,7 @@ foreach ($name in @('Wait-AppLog', 'Connect-AgentServer', 'Disconnect-AgentServe
         'Invoke-AgentSelectedChecks', 'Invoke-AgentInteractionOnlyCheck',
         'Invoke-AgentProtocolInteractionCheck', 'Invoke-AgentModeCheck',
         'Invoke-Osc99CapabilityProbeCheck', 'Invoke-AgentSshPrerequisiteCheck',
-        'Get-AgentTabState', 'Get-AgentOwnedTab', 'Close-AgentTestTab')) {
+        'Get-AgentTabState', 'Get-AgentOwnedTab', 'Close-AgentTestTab', 'Get-AgentTmuxNotificationEnvironment')) {
     $function = $deviceAst.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
     }, $true)
@@ -673,6 +673,67 @@ Test-Gate 'every-agent-terminal-text-call-supplies-layout' {
         if ($owner.Name -eq 'Assert-AgentSearch') { continue }
         $parameters = @($call.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] })
         Assert-Gate (@($parameters | Where-Object ParameterName -eq 'InputLayout').Count -eq 1) "Terminal caller omitted layout: $($owner.Name)"
+    }
+}
+foreach ($lineEnding in @('LF', 'CRLF')) {
+    foreach ($identityCase in @('valid', 'query-failed', 'missing-output', 'extra-output', 'malformed-hash',
+            'unknown-pi', 'unknown-tmux', 'missing-pi', 'missing-tmux', 'changed-extension', 'changed-config', 'missing-config')) {
+        Test-Gate "public-identity-$lineEnding-$identityCase" {
+            # Keep the actual owner and classifier. Replace only WSL and file IO;
+            # the separate WSL probe proves the real Bash interpretation.
+            $source = $functionSources['Get-AgentTmuxNotificationEnvironment'].Replace("`r`n", "`n")
+            if ($lineEnding -ceq 'CRLF') { $source = $source.Replace("`n", "`r`n") }
+            . ([scriptblock]::Create($source))
+            $inventory = @{tools=@{pi=@{version='0.84.4'}}}
+            if ($identityCase -ceq 'unknown-pi') { $inventory.tools.pi.version = 'future' }
+            if ($identityCase -ceq 'missing-pi') { $inventory.tools.pi.version = '' }
+            $script:identityQueries = 0
+            $script:configReads = 0
+            function wsl.exe {
+                $script:identityQueries++
+                Assert-Gate ($args.Count -eq 4 -and ($args[0..2] -join '|') -ceq '--exec|bash|-lc') 'Public identity query changed execution scope'
+                if ([string]$args[3] -match "`r" -or $identityCase -ceq 'query-failed') {
+                    $global:LASTEXITCODE = 1
+                    return
+                }
+                $global:LASTEXITCODE = 0
+                if ($identityCase -ceq 'missing-output') { return 'tmux 3.6' }
+                $version = switch ($identityCase) { 'unknown-tmux' { 'tmux future' }; 'missing-tmux' { '' }; default { 'tmux 3.6' } }
+                $hash = switch ($identityCase) {
+                    'malformed-hash' { 'invalid' }
+                    'changed-extension' { 'a' * 64 }
+                    default { '70e4333e09ce00d546c116fd2e918abf7616c70b5da6e88ba8ee21a326afd483' }
+                }
+                @($version, "$hash  /public/notify.ts")
+                if ($identityCase -ceq 'extra-output') { 'unexpected third line' }
+            }
+            function Get-FileHash {
+                param($LiteralPath, $Algorithm)
+                $script:configReads++
+                Assert-Gate ($LiteralPath -ceq (Join-Path $fixtureDirectory 'tmux.conf') -and $Algorithm -ceq 'SHA256') 'Public identity must hash the owned run config'
+                if ($identityCase -ceq 'missing-config') { throw '[harness] controlled missing config' }
+                @{Hash=$(if ($identityCase -ceq 'changed-config') { 'b' * 64 } else { 'c751ee4a8029da7cd247a32c1962d2195d2e801c448f5bc9a067c6811c323dd6' })}
+            }
+            if ($identityCase -in @('query-failed', 'missing-output', 'extra-output', 'malformed-hash', 'missing-config')) {
+                Expect-GateError { Get-AgentTmuxNotificationEnvironment } '\[harness\]'
+                Assert-Gate ($script:configReads -eq $(if ($identityCase -ceq 'missing-config') { 1 } else { 0 })) 'Failed public query must not proceed to fixture identity'
+            } else {
+                $publicEnvironment = Get-AgentTmuxNotificationEnvironment
+                $outer = @{boundary='remote-outer-pty-not-client-receipt';complete=$true;childExitCode=0;bytes=100;attentionCount=0;afterHiddenCount=0;checkpoints=@{'before-minimize'=0;'after-hidden'=0}}
+                $assessment = Resolve-LeanTTYAgentNotificationAssessment -Agent pi -Mode tmux -NativeAttentionObserved $true `
+                    -SystemNotificationCompleted $false -AgentChildExitCode 0 `
+                    -NotificationFailure '[unknown] Agent inner attention observed without outer attention' `
+                    -UpstreamEnvironment $publicEnvironment -OuterObservation $outer
+                if ($identityCase -ceq 'valid') {
+                    Assert-Gate ($assessment.status -ceq 'not-applicable' -and $assessment.classification -ceq 'upstream-not-forwarded' -and
+                        $assessment.systemNotification -ceq 'not-exercised') 'Exact identities must preserve the existing limitation, not claim a notification pass'
+                } else {
+                    Assert-Gate ($assessment.status -ceq 'failed') 'Unknown or missing identity must not receive an upstream exemption'
+                }
+                Assert-Gate ($script:configReads -eq 1) 'Owned config must be read exactly once'
+            }
+            Assert-Gate ($script:identityQueries -eq 1) 'Public identity failure must never trigger an automatic retry'
+        }
     }
 }
 $report = [ordered]@{

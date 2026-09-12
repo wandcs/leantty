@@ -133,3 +133,43 @@ Agent/SSH suffix remain required after freezing this harness.
 and [Huawei's PC logging instructions](https://consumer.huawei.com/cn/support/content/zh-cn16083991/)
 document tag/PID selection and the bounded tail. No matching upstream issue was
 established; the real-device comparison above supplies the missing evidence.
+
+## Follow-up: keep checkout line endings out of the public identity query
+
+The PR191 formal attempt passed its first five Agent checks, then stopped at
+Pi/tmux's public identity query. The tracked PowerShell checkout uses CRLF;
+its multiline Bash argument carried those CR bytes into WSL. The original
+query failed, while the same query with CR removed returned the installed
+public identities. This was a harness failure, not a LeanTTY transport defect.
+
+Use one line for this fixed Bash query. Keep query exit/output validation,
+exact Pi/tmux versions, extension/config hashes and the existing forwarding
+limitation unchanged. Do not change repository line-ending policy, product
+code, shared helpers, fixture configuration or the retained HAP.
+
+The actual owner now has 24 LF/CRLF cases covering valid identities, query
+errors, missing/extra output, malformed hashes, unknown/missing versions and
+changed/missing public files. Before the repair, eight CRLF cases failed;
+afterward all 100 owner checks passed. Focused `policy,tooling` passed under
+the desktop user. An earlier sandbox run stopped at WSL access denial; that
+failed evidence is preserved separately.
+
+At 22:08:43 (+08:00), a zero-model WSL check ran the real owner in both source
+line-ending forms. Both read Pi 0.84.4, tmux 3.6 and the approved public-file
+hashes. The classifier used synthetic outer-capture metadata, so this proves
+the query boundary only, not native Agent behavior or formal acceptance.
+The generated public config was removed; WSL lifecycle was not changed.
+
+Evidence root: `build/verification/agent-public-identity-20260912/`.
+`public-identity.json` SHA-256:
+`e80423493740451c53502f4581bf9ff43cb67b0fc16efe7770d17fc56a1d53e2`.
+Fresh frozen-harness admission, QH and the complete Agent/SSH suffix remain
+required. The original failed formal reports retain their verdicts.
+
+[Git's `eol` documentation](https://git-scm.com/docs/gitattributes#_eol)
+explains checkout normalization; the
+[WSL command reference](https://learn.microsoft.com/en-us/windows/wsl/basic-commands)
+defines the host invocation. Neither proves this query's bytes: the actual
+CRLF/LF comparison above does. The historical
+[WSL CR error report](https://github.com/microsoft/WSL/issues/2939)
+is supporting context, not a current-platform diagnosis.
