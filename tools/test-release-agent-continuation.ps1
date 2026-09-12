@@ -133,7 +133,10 @@ try {
         Get-LeanTTYAgentReleaseContinuation @argsForPolicy | Out-Null
         $passed++
     }
-    foreach ($path in @('tools/device-regression.ps1','tools/hdc-common.ps1','tools/release-tooling.ps1','entry/src/main/ets/Test.ets','leantty_ssh/Cargo.lock','tools/notification-regression.ps1','tools/agent-compatibility-wsl.sh','tools/agent-compatibility/analyze_capture.py')) {
+    $script:changedPaths=@('docs/design/agent-notification-order-20260912.md')
+    Get-LeanTTYAgentReleaseContinuation @argsForPolicy | Out-Null
+    $passed++
+    foreach ($path in @('tools/device-regression.ps1','tools/hdc-common.ps1','tools/release-tooling.ps1','entry/src/main/ets/Test.ets','leantty_ssh/Cargo.lock','tools/notification-regression.ps1','tools/agent-compatibility-wsl.sh','tools/agent-compatibility/analyze_capture.py', 'docs/design/unreviewed.md', 'docs/design/agent-notification-order-20260912.md.ps1')) {
         $script:changedPaths=@($path)
         Assert-Rejected "shared or product path $path" { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
     }

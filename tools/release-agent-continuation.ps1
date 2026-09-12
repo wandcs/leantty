@@ -30,7 +30,8 @@ function Assert-LeanTTYAgentContinuationPaths {
         'tools/test-release-agent-continuation.ps1', 'tools/test-build-workflows.ps1',
         'tools/verify-ssh-auth-pc.ps1',
         'docs/next-work.md', 'docs/quality-strategy.md',
-        'docs/design/agent-exit-boundary-20260912.md'
+        'docs/design/agent-exit-boundary-20260912.md',
+        'docs/design/agent-notification-order-20260912.md'
     )
 }
 

@@ -130,6 +130,7 @@ if (-not $DiagnosticHap) {
             'tools/release-agent-continuation.ps1',
             'tools/test-release-agent-continuation.ps1',
             'docs/design/agent-exit-boundary-20260912.md',
+            'docs/design/agent-notification-order-20260912.md',
             'tools/verify-ssh-auth-pc.ps1',
             'tools/test-notification-regression.ps1',
             'tools/test-agent-ssh-gate.ps1',

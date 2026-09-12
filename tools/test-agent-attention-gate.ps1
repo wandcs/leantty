@@ -222,6 +222,7 @@ try {
         })
         $allowed = $command.CommandElements[$command.CommandElements.IndexOf($parameter[0]) + 1].SafeGetValue()
         Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowed -ChangedPaths @(
+            'docs/design/agent-notification-order-20260912.md',
             'AGENTS.md', 'tools/agent-compatibility-policy.ps1',
             'tools/test-agent-attention-gate.ps1', 'tools/agent-compatibility/capture_notification.sh',
             'tools/agent-compatibility/start_gate.py', 'tools/agent-compatibility/test_start_gate.py',
