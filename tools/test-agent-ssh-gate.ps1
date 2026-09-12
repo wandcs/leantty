@@ -10,6 +10,7 @@ $deviceAst = [Management.Automation.Language.Parser]::ParseFile(
 if ($parseErrors.Count -gt 0) { throw 'Agent harness has PowerShell parse errors' }
 $functionSources = @{}
 foreach ($name in @('Wait-AppLog', 'Connect-AgentServer', 'Disconnect-AgentServer', 'Stop-AgentTui', 'Confirm-AgentShellReady',
+        'Focus-TerminalInput', 'Submit-LocalCommand', 'Submit-ConnectedCommand',
         'Invoke-AgentSelectedChecks', 'Invoke-AgentInteractionOnlyCheck',
         'Invoke-AgentProtocolInteractionCheck', 'Invoke-AgentModeCheck',
         'Invoke-Osc99CapabilityProbeCheck', 'Invoke-AgentSshPrerequisiteCheck',
@@ -481,6 +482,122 @@ foreach ($caller in @('verify-agent-compatibility-pc.ps1', 'verify-mosh-pc.ps1',
             catch { $rejected = $true }
             Assert-Gate $rejected 'Product inputs were accepted as harness-only'
         }
+    }
+}
+foreach ($case in @('same-web-reindex', 'replaced-web', 'other-window', 'missing-web',
+        'missing-id', 'duplicate-web', 'duplicate-terminal', 'post-input-owner-loss')) {
+    Test-Gate "host-key-caller-context-$case" {
+        # Keep the actual Focus -> Connect -> shared text guard. Only layout
+        # observations and device effects are synthetic; no actual input occurs.
+        . (Join-Path $PSScriptRoot 'device-regression.ps1')
+        foreach ($name in @('Focus-TerminalInput', 'Connect-AgentServer')) {
+            . ([scriptblock]::Create($functionSources[$name]))
+        }
+        function New-ContextLayout([bool]$Changed) {
+            $leaf = [pscustomobject]@{ attributes = [pscustomobject]@{
+                type='textField'; hint='Terminal input'; focused='true'; hostWindowId='1'
+                hierarchy=$(if ($Changed) { 'ROOT1,1,2' } else { 'ROOT1,0,0,2' })
+                accessibilityId=$(if ($Changed) { 'virtual-new' } else { 'virtual-old' })
+                bounds='[10,10][30,30]'
+            }; children=@() }
+            $web = [pscustomobject]@{ attributes = [pscustomobject]@{
+                type='Web'; hostWindowId='1'; accessibilityId='native-web'
+                hierarchy=$(if ($Changed) { 'ROOT1,1' } else { 'ROOT1,0' })
+            }; children=@($leaf) }
+            if ($Changed) {
+                switch ($case) {
+                    'replaced-web' { $web.attributes.accessibilityId = 'replacement' }
+                    'other-window' { $web.attributes.hostWindowId = '2'; $leaf.attributes.hostWindowId = '2' }
+                    'missing-web' { $web.attributes.type = 'Column' }
+                    'missing-id' { $web.attributes.accessibilityId = '' }
+                    'duplicate-terminal' {
+                        $web.children += [pscustomobject]@{attributes=@{
+                            type='textField'; hint='Terminal input'; focused='false'
+                        }; children=@()}
+                    }
+                }
+            }
+            $layout = [pscustomobject]@{attributes=@{}; children=@($web)}
+            if ($Changed -and $case -eq 'duplicate-web') {
+                $layout.children += [pscustomobject]@{attributes=@{
+                    type='Web'; hostWindowId='1'; accessibilityId='native-web'
+                }; children=@()}
+            }
+            return $layout
+        }
+        $script:layoutReads = 0
+        function Get-FullLayout { return (New-ContextLayout $false) }
+        function Click-Node { $script:trace.Add('focus-click') }
+        function Clear-LeanTTYAppLogs { $script:trace.Add('clear-logs') }
+        function Start-Sleep { }
+        function Invoke-LeanTTYSerializedUiTest { param($Action) & $Action }
+        function Get-HdcUiLayout {
+            $script:layoutReads++
+            $layout = New-ContextLayout $true
+            if ($case -eq 'post-input-owner-loss' -and $script:layoutReads -eq 2) {
+                $layout.children[0].attributes.accessibilityId = 'replacement'
+            }
+            return $layout
+        }
+        function Invoke-HdcChecked { $script:trace.Add('text-dispatch') }
+        function Invoke-LeanTTYDeviceKey { $script:trace.Add('enter') }
+        if ($case -eq 'same-web-reindex') {
+            Connect-AgentServer -Stage 'context'
+            Assert-Gate ($script:agentSshBoundary -eq 'shell-ready' -and
+                @($script:trace | Where-Object { $_ -eq 'text-dispatch' }).Count -eq 1 -and
+                @($script:trace | Where-Object { $_ -eq 'enter' }).Count -eq 1) 'Same native owner must confirm exactly once'
+        } else {
+            Expect-GateError { Connect-AgentServer -Stage 'context' } 'text target|intended target'
+            $expectedDispatches = if ($case -eq 'post-input-owner-loss') { 1 } else { 0 }
+            Assert-Gate (@($script:trace | Where-Object { $_ -eq 'text-dispatch' }).Count -eq $expectedDispatches -and
+                -not ($script:trace -contains 'enter') -and -not ($script:trace -contains 'ctrl-c') -and
+                $script:agentSshBoundary -eq 'unconfirmed') 'Owner loss must stop without retry, cancellation or Enter'
+        }
+    }
+}
+Test-Gate 'focus-result-keeps-node-and-layout-from-one-observation' {
+    . ([scriptblock]::Create($functionSources['Focus-TerminalInput']))
+    $leaf = @{attributes=@{focused='true'}}
+    $layout = @{children=@($leaf)}
+    function Get-FullLayout { return $layout }
+    function Get-LeanTTYTerminalInputNodes { return $leaf }
+    function Click-Node { }
+    function Start-Sleep { }
+    $context = Focus-TerminalInput -Name 'paired'
+    Assert-Gate ([object]::ReferenceEquals($context.node, $leaf) -and
+        [object]::ReferenceEquals($context.layout, $layout)) 'Context must preserve the actual node and its containing layout'
+}
+Test-Gate 'local-command-preparation-passes-the-paired-context' {
+    . ([scriptblock]::Create($functionSources['Submit-LocalCommand']))
+    $paired = @{node=@{attributes=@{hint='Terminal input'}};layout=@{controlled='layout'}}
+    function Focus-TerminalInput { return $paired }
+    function Submit-LeanTTYDeviceCommand {
+        param($InputNodeProvider, $InputPreparer)
+        Assert-Gate ($null -ne $InputPreparer) 'Local caller must retain context through its input preparer'
+        $context = & $InputNodeProvider 1
+        & $InputPreparer $context 1
+    }
+    function Invoke-LeanTTYDeviceText {
+        param($Text, $InputNode, $InputLayout)
+        Assert-Gate ($Text -ceq 'help ssh' -and [object]::ReferenceEquals($InputNode, $paired.node) -and
+            [object]::ReferenceEquals($InputLayout, $paired.layout)) 'Local input discarded or mismatched context'
+        $script:trace.Add('paired-input')
+    }
+    Submit-LocalCommand -Command 'help ssh' -Stage 'paired'
+    Assert-Gate ($script:trace -contains 'paired-input') 'Local caller never dispatched through preparation'
+}
+Test-Gate 'every-agent-terminal-text-call-supplies-layout' {
+    $calls = @($deviceAst.FindAll({param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and
+        $node.GetCommandName() -eq 'Invoke-LeanTTYDeviceText'
+    }, $true))
+    foreach ($call in $calls) {
+        # Search is a native field with its own operation-scoped identity.
+        $owner = $call.Parent
+        while ($null -ne $owner -and $owner -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $owner = $owner.Parent }
+        if ($owner.Name -eq 'Assert-AgentSearch') { continue }
+        $parameters = @($call.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] })
+        Assert-Gate (@($parameters | Where-Object ParameterName -eq 'InputLayout').Count -eq 1) "Terminal caller omitted layout: $($owner.Name)"
     }
 }
 $report = [ordered]@{

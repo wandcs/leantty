@@ -308,7 +308,9 @@ function Focus-TerminalInput {
     }
     Click-Node -Node $input -Description 'Focus Agent compatibility terminal input'
     Start-Sleep -Milliseconds 200
-    return $input
+    # The shared guard needs the containing layout to identify the native Web.
+    # Keep this pair operation-local; a virtual textarea path is not its owner.
+    return [pscustomobject]@{ node = $input; layout = $layout }
 }
 
 function Invoke-AgentWorkspaceChord {
@@ -441,6 +443,10 @@ function Submit-LocalCommand {
         -InputNodeProvider {
             param($attempt)
             Focus-TerminalInput -Name "$Stage-local-command-$attempt"
+        } -InputPreparer {
+            param($inputContext, $attempt)
+            Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command `
+                -InputNode $inputContext.node -InputLayout $inputContext.layout
         } | Out-Null
 }
 
@@ -481,8 +487,9 @@ function Submit-ConnectedCommand {
     if (Test-Path -LiteralPath $snapshotPath) {
         Remove-Item -LiteralPath $snapshotPath -Force
     }
-    $inputNode = Focus-TerminalInput -Name "$Stage-before-input"
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command -InputNode $inputNode
+    $inputContext = Focus-TerminalInput -Name "$Stage-before-input"
+    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command `
+        -InputNode $inputContext.node -InputLayout $inputContext.layout
     & $hdc -t $Target shell 'uinput -K -d 2072 -d 2040 -u 2040 -u 2072' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to inject Ctrl+X snapshot prefix' }
     & $hdc -t $Target shell 'uinput -K -d 2072 -d 2028 -u 2028 -u 2072' | Out-Null
@@ -538,9 +545,10 @@ function Connect-AgentServer {
         -Pattern 'native control event: host_key_prompt:|SSH session connected' -TimeoutSeconds 30
     if ($connectionLogs -notmatch 'SSH session connected') {
         if ($StopAtHostKeyPrompt) { throw '[harness] Diagnostic stop at host-key prompt before input' }
-        $inputNode = Focus-TerminalInput -Name "$Stage-host-key"
+        $inputContext = Focus-TerminalInput -Name "$Stage-host-key"
         try {
-            Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'yes' -InputNode $inputNode
+            Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'yes' `
+                -InputNode $inputContext.node -InputLayout $inputContext.layout
         } catch {
             # The producer whitelists metadata; retain it before outer checks reduce the error to text.
             $result | Add-Member -NotePropertyName hostKeyInputFailure `
@@ -773,19 +781,23 @@ function Restore-AgentAppForContinuation {
 
 function Invoke-AgentInputProbes {
     param([Parameter(Mandatory = $true)][string]$Stage)
-    $inputNode = Focus-TerminalInput -Name "$Stage-unicode-input"
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'English中文' -InputNode $inputNode
+    $inputContext = Focus-TerminalInput -Name "$Stage-unicode-input"
+    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'English中文' `
+        -InputNode $inputContext.node -InputLayout $inputContext.layout
     Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
-    $inputNode = Focus-TerminalInput -Name "$Stage-large-input"
+    $inputContext = Focus-TerminalInput -Name "$Stage-large-input"
     Invoke-LeanTTYDeviceText `
-        -Hdc $hdc -Target $Target -Text ('P' * 4096) -InputNode $inputNode
+        -Hdc $hdc -Target $Target -Text ('P' * 4096) `
+        -InputNode $inputContext.node -InputLayout $inputContext.layout
     Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
-    $inputNode = Focus-TerminalInput -Name "$Stage-shift-enter-prefix"
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'line-one' -InputNode $inputNode
+    $inputContext = Focus-TerminalInput -Name "$Stage-shift-enter-prefix"
+    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'line-one' `
+        -InputNode $inputContext.node -InputLayout $inputContext.layout
     & $hdc -t $Target shell 'uinput -K -d 2047 -d 2054 -u 2054 -u 2047' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to inject physical Shift+Enter' }
-    $inputNode = Focus-TerminalInput -Name "$Stage-shift-enter-suffix"
-    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'line-two' -InputNode $inputNode
+    $inputContext = Focus-TerminalInput -Name "$Stage-shift-enter-suffix"
+    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'line-two' `
+        -InputNode $inputContext.node -InputLayout $inputContext.layout
     Invoke-LeanTTYDeviceCtrlC -Hdc $hdc -Target $Target
 }
 
@@ -868,8 +880,9 @@ function Stop-AgentTui {
     $script:agentSshBoundary = 'unconfirmed'
     if (-not (Test-Path -LiteralPath $CaptureResultPath -PathType Leaf)) {
         $command = if ($Agent -in @('pi','qwen')) { '/quit' } else { '/exit' }
-        $inputNode = Focus-TerminalInput -Name "$Agent-exit"
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $command -InputNode $inputNode
+        $inputContext = Focus-TerminalInput -Name "$Agent-exit"
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $command `
+            -InputNode $inputContext.node -InputLayout $inputContext.layout
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
     }
     Wait-File -Path $CaptureResultPath -TimeoutSeconds 30
@@ -916,10 +929,11 @@ function Invoke-AgentModeCheck {
             -Stage "$stage-launch"
         if ($Agent -eq 'opencode') {
             Wait-AgentTuiReady -CaptureResultPath $captureResultPath
-            $inputNode = Focus-TerminalInput -Name "$stage-interactive-prompt"
+            $inputContext = Focus-TerminalInput -Name "$stage-interactive-prompt"
             $prompt = 'Use the bash tool exactly once to run: sleep 12. Do not use any other tool. After it completes, reply exactly LEANTTY_AGENT_DONE.'
             Invoke-LeanTTYDeviceText `
-                -Hdc $hdc -Target $Target -Text $prompt -InputNode $inputNode
+                -Hdc $hdc -Target $Target -Text $prompt `
+                -InputNode $inputContext.node -InputLayout $inputContext.layout
             Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         }
         Start-Sleep -Milliseconds 700
@@ -1227,9 +1241,10 @@ function Invoke-AgentProtocolInteractionCheck {
         foreach ($attempt in 1..3) {
             $check.copyAttempts = $attempt
             Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-            $inputNode = Focus-TerminalInput -Name "$stage-copy-$attempt"
+            $inputContext = Focus-TerminalInput -Name "$stage-copy-$attempt"
             Invoke-LeanTTYDeviceText `
-                -Hdc $hdc -Target $Target -Text '/copy' -InputNode $inputNode
+                -Hdc $hdc -Target $Target -Text '/copy' `
+                -InputNode $inputContext.node -InputLayout $inputContext.layout
             Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
             try {
                 Wait-AppLog -Pattern 'OSC 52 clipboard write success=true,length=[1-9][0-9]*' `
@@ -1257,9 +1272,10 @@ function Invoke-AgentProtocolInteractionCheck {
             -Hdc $hdc -Target $Target `
             -LocalPath (Join-Path $EvidenceDirectory "$stage-protocol-response.png")
 
-        $inputNode = Focus-TerminalInput -Name "$stage-scrollback-fill"
+        $inputContext = Focus-TerminalInput -Name "$stage-scrollback-fill"
         Invoke-LeanTTYDeviceText `
-            -Hdc $hdc -Target $Target -Text '!seq 1 120' -InputNode $inputNode
+            -Hdc $hdc -Target $Target -Text '!seq 1 120' `
+            -InputNode $inputContext.node -InputLayout $inputContext.layout
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         Start-Sleep -Milliseconds 1500
         $bottomPath = Join-Path $EvidenceDirectory "$stage-scrollback-bottom.png"
