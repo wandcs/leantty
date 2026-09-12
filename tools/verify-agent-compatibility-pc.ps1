@@ -633,6 +633,35 @@ function Hide-AgentNotificationWindow {
     $Observation.hidden = Get-AgentOuterAttention -CaptureResultPath $CaptureResultPath -Action after-hidden
 }
 
+function Set-AgentStartGate {
+    param([string]$CaptureResultPath, [ValidateSet('ready', 'release', 'cancel')][string]$Action)
+    $captureName = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
+    $gateTool = ConvertTo-LeanTTYWslPath -WindowsPath (Join-Path $PSScriptRoot 'agent-compatibility/start_gate.py')
+    & wsl.exe --exec python3 $gateTool $wslFixtureDirectory $captureName $Action 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "[harness] Agent startup gate failed: $Action" }
+}
+
+function Start-AgentNotificationAfterHidden {
+    param([string]$Agent, [string]$Stage, [string]$CaptureResultPath, [System.Collections.IDictionary]$Observation)
+    $gated = $Agent -ne 'opencode'
+    try {
+        if ($gated) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
+            Wait-File -Path (Join-Path (Split-Path $CaptureResultPath -Parent) "$name-start-gate.json") -TimeoutSeconds 10
+            Set-AgentStartGate -CaptureResultPath $CaptureResultPath -Action ready
+        }
+        Hide-AgentNotificationWindow -Stage $Stage -CaptureResultPath $CaptureResultPath -Observation $Observation
+        if ($gated) { Set-AgentStartGate -CaptureResultPath $CaptureResultPath -Action release }
+    } catch {
+        $failure = $_.Exception.Message
+        if ($gated) {
+            try { Set-AgentStartGate -CaptureResultPath $CaptureResultPath -Action cancel }
+            catch { $failure += '; startup cancellation unconfirmed' }
+        }
+        throw "[harness] Agent hidden-window startup failed: $failure"
+    }
+}
+
 function Get-AgentAttentionFailure {
     param($Outer, [bool]$InnerObserved, [int]$ChildExitCode = -1, [bool]$InnerAvailable = $true)
     if ($null -eq $Outer -or $null -eq $Outer.checkpoints.'after-hidden') {
@@ -997,10 +1026,9 @@ function Invoke-AgentModeCheck {
                 -InputNode $inputContext.node -InputLayout $inputContext.layout
             Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         }
-        Start-Sleep -Milliseconds 700
+        Start-AgentNotificationAfterHidden -Agent $Agent -Stage $stage -CaptureResultPath $captureResultPath `
+            -Observation $check.notificationObservation
         try {
-            Hide-AgentNotificationWindow -Stage $stage -CaptureResultPath $captureResultPath `
-                -Observation $check.notificationObservation
             Assert-NotificationAndReturn -Stage $stage -CaptureResultPath $captureResultPath `
                 -Observation $check.notificationObservation
             $check.nativeNotification = $true

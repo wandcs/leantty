@@ -289,3 +289,150 @@ to the shared fixture/analyzer or product are still rejected. SSH's change is
 its candidate-compatible file list only. The original HAP, old failed reports
 and independent prefix remain immutable. An unmet reuse prerequisite escalates
 under the existing R1–R4 rules; this diagnostic does not complete C3/C4.
+
+## Pi startup ordering reframe
+
+The subsequent formal R2 ran on the unchanged `7293a46` harness and original
+`0db0f090…95e71` HAP from 13:56:50 to 14:11:48 on 2026-09-12 (+08:00).
+Thirteen historical attempts were audited afresh; sixteen independent physical
+stages were reused. New formal QH passed. Codex direct/tmux and OpenCode
+direct/tmux passed; OpenCode tmux retained `not-emitted-by-agent`, not a verified
+system notification. Pi direct failed; Pi tmux, both Qwen checks and SSH did not
+run. This does not resolve the historical Qwen failure or complete C3/C4.
+
+The original Agent result remains `invalid/interrupted`, with known-host cleanup
+unconfirmed. One product-command removal of the exact residual fingerprint
+passed with one input and one Enter. At 14:13:42 an independent audit confirmed
+resource absence, restored workspace and policies, and unchanged candidate,
+frozen sources, original reports and inherited evidence. The new Agent budget
+was eight requests; actual model usage remains unavailable, with no automatic
+model retries. Thirteen local and eight connected commands each had one input,
+one Enter and no mismatch. These counts do not cover every TUI key event.
+
+### Proven boundary and unresolved cause
+
+- Expected contract: evaluate native attention emitted after the window is
+  confirmed hidden, then observe the generic system card and return.
+- Last correct boundary: the outer PTY captured a complete OSC 777 frame;
+  the device logged window visibility false at 14:10:04.699.
+- First unproved boundary: before-minimize offset was 32,301; after-hidden
+  offset was 50,604. The first frame occupied bytes 43,088–43,120, inside that
+  interval. The observation period had no post-checkpoint attention. Receipt
+  and visibility ordering inside the interval remain unknown.
+- Final capture contains another OSC 777 at 67,675–67,707 that was absent from
+  the notification observation. The intervening workflow restores the foreground
+  and performs input probes; this frame has no window-relative checkpoint and
+  cannot qualify the earlier hidden-window assertion. Raw captures were deleted by the owner;
+  only metadata summaries remain.
+- State owners: Pi emits attention, the window owns visibility, and the Agent
+  fixture must establish their test ordering. The observer correctly rejected
+  this ambiguous sample; it does not by itself establish a product defect.
+
+The fixture starts Pi with its short prompt before minimizing. Unlike OpenCode,
+Pi uses no tools and has no `sleep 12` workload. The 700 ms delay and subsequent
+layout/click/log work establish no ordering guarantee. This is a setup race,
+not evidence that a longer delay will fix the product. The existing best-effort
+exception only accepts its specific publication classification; it must not be
+broadened to turn this harness failure into a pass.
+
+### Research and bounded next decision
+
+Research refreshed on 2026-09-12 for Pi 0.84.4, UiTest 6.0.2.3 and the recorded
+HarmonyOS 6.1 test PC:
+
+- Pi's versioned [official notify extension](https://raw.githubusercontent.com/earendil-works/pi/v0.84.4/packages/coding-agent/examples/extensions/notify.ts)
+  emits OSC 777 on `agent_settled` in this environment. It has no synchronization
+  with the client window. The upstream [settled-event discussion](https://github.com/earendil-works/pi/issues/2110)
+  concerns Agent completion semantics, not this HarmonyOS timing failure.
+- OpenHarmony's [window visibility API](https://github.com/openharmony/docs/blob/master/en/application-dev/reference/apis-arkui/arkts-apis-window-Window.md#onwindowvisibilitychange11)
+  supplies the visibility callback, not ordering against remote output. The
+  moving documentation is semantic guidance; the actual device log remains the
+  evidence for this installed version. Huawei FAQ content was unavailable and
+  no matching Huawei community report was found; neither establishes a platform
+  notification defect.
+- Playwright's [actionability guidance](https://playwright.dev/docs/actionability)
+  illustrates waiting on preconditions before the tested action. It is a design
+  pattern only, not proof of HarmonyOS behavior.
+
+Reframe from “observe the launch/minimize race more precisely” to “establish the
+background precondition before releasing the real workload.” The next cheapest
+hypothesis test is a bounded Agent-only startup gate: hold the original launch,
+confirm capture readiness and hidden-window checkpoint, then release exactly
+once. First prove ordering, cancellation, expiry and unchanged output bytes
+with a zero-model process/PTY test; validate the same entry on the PC before
+spending another formal Agent budget. Do not intercept or replay notifications,
+modify Pi's extension, weaken the oracle, add arbitrary sleep, or type into a
+hidden terminal. This approach has not been implemented or physically verified.
+If it requires shared WSL/analyzer or product changes, reassess R2/R3/R4 before
+changing them. Executable work remains solely in Next Work.
+
+Evidence root: `build/verification/agent-attention-observer-20260912/`.
+`formal-admission/audit.json`, `formal/release-report.json`, the Agent attempt's
+`result.json` and `captures/`, `residual-cleanup.json`, and
+`formal-closing-audit.json` retain this run. Release report SHA-256:
+`28aa001b21eb376f8b14b6d01bc32e1c57e4a6b3f7c1655ea4b1a91d20d8b8d6`;
+Agent report: `8356055878c25ec4a943dbdb87629c7a790552530252214e189580d08ed152fa`.
+
+## Hidden-window startup gate
+
+The reframe above is now implemented and development-verified. The original
+dispatcher reproduces premature child startup with an external Agent substitute
+and no model. The repair holds the first Codex/Pi/Qwen notification launch inside
+the existing outer PTY. The caller waits for readiness, minimizes through the
+existing window owner, writes the after-hidden checkpoint, and releases once.
+OpenCode retains its visible interactive prompt setup. Non-notification launches
+and later tmux attachments retain the shared dispatcher's behavior.
+
+The gate uses Python's standard-library [file lock](https://docs.python.org/3/library/fcntl.html)
+to serialize release, cancellation and startup, then [exec](https://docs.python.org/3/library/os.html#os.execv)
+to preserve the PTY, argv and environment. It consumes no terminal input and
+relays no output. A 60-second maximum prevents abandoned startup; it is a failure
+deadline, not a fixed workload delay. Missing readiness/hidden proof, expiry and
+cancellation stop startup. Cancellation before readiness leaves a tombstone so
+a delayed launch cannot run. Once startup is consumed, cancellation reports
+that it cannot prove cancellation rather than pretending to stop the child.
+
+There is no new dependency, notification injection, Agent prompt/extension
+change, product change, shared fixture/analyzer change or oracle relaxation.
+The SSH harness change only admits the two new Agent-specific files. All
+existing shared/product rejection tests remain active.
+
+Development evidence is under
+`build/verification/agent-start-gate-20260912/`:
+
+- `diagnosis.md` records the expected outcome, owners and distinguishing
+  hypothesis before implementation. The old launch fails the premature-start
+  counterexample. `software.json` passes all seven focused policy/tooling checks;
+  the embedded suites include eight gate tests, four real PTY cases, sixteen
+  PowerShell observation/startup cases, 68 SSH-boundary cases and 57 continuation
+  checks. PTY evidence covers direct/tmux immediate output, cancellation and
+  non-notification bypass. Gate tests cover original queued input/output bytes,
+  missing/wrong checkpoints, repeated release, deadline and hangup.
+- One zero-model original-HAP diagnostic ran from 16:54:18 to 16:57:09 (+08:00)
+  on 2026-09-12, attempt `555f93b0073b4f69b6e8131ec4363afd`. Both direct and
+  tmux had zero attention before release and exactly one immediate post-hide
+  BEL, followed by the generic notification card and return. Both children
+  exited normally and raw outer captures were deleted. This exercises the real
+  startup/hide/assertion functions with a public producer; it is not native
+  Pi/Qwen emission evidence. Its run-owned diagnostic replaces only the SSH
+  prerequisite check, submits a short fixture function and makes no model call.
+- `device/result.json` and owner cleanup passed. SHA-256:
+  `d681cb6de115ef27c6332c37a166c6bf7f939f132e6c8219eedb91ef0ee7b697`.
+  The read-only `closing-audit.json` at 16:59:32 independently confirms the exact
+  fingerprint, listener, fixture processes/directory and reverse mapping are
+  absent; original Tab 40 and active Tab 40 are restored. Original HAP and
+  previous failed reports/frozen harness are unchanged. WSL lifecycle was not
+  managed. Notification/screen-timeout restoration is confirmed by the owner.
+- During development, a reversed path-check argument was corrected before
+  successful software/device verification. The first read-only audit lacked
+  the existing notification helper import; correcting that local audit allowed
+  completion without another behavior run. The software wrapper redundantly
+  invoked tests already covered by policy/tooling; future verification should
+  use that registry once.
+
+The gate's native Agent behavior remains pending formal acceptance. Freeze the
+verified repair, refresh all attempted-run cleanup and candidate/platform/source
+admission, then run new formal QH and the complete Agent/SSH suffix only if R2
+reuse still qualifies. Do not reuse the diagnostic as QH or a native pass, and
+do not repeat a matrix on another setup failure. Historical Qwen cause remains
+unknown; C3, C4 and release delivery remain incomplete.

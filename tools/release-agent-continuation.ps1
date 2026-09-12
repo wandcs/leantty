@@ -18,6 +18,8 @@ function Assert-LeanTTYAgentContinuationPaths {
         'tools/test-agent-ssh-gate.ps1', 'tools/test-agent-compatibility.ps1',
         'tools/test-agent-attention-gate.ps1',
         'tools/agent-compatibility/capture_notification.sh',
+        'tools/agent-compatibility/start_gate.py',
+        'tools/agent-compatibility/test_start_gate.py',
         'tools/agent-compatibility/observe_attention.py',
         'tools/agent-compatibility/attention_observer_probe.py',
         'tools/agent-compatibility/test_observe_attention.py',

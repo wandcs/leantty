@@ -15,6 +15,13 @@ if [[ "${1:-}" != "capture" ]]; then
     exec bash "$fixture" launch "$run_root" "$agent" "$mode" "$scenario"
   fi
   export LEANTTY_AGENT_COMPAT_CONTROLLED_CAPTURE=1
+  # OpenCode needs its visible interactive prompt; argv-prompt Agents can wait
+  # before startup. The outer capture is already live when the gate becomes ready.
+  if [[ "$agent" != opencode ]]; then
+    exec bash "$0" capture "$run_root" "$capture_name" -- \
+      python3 "$script_dir/start_gate.py" "$run_root" "$capture_name" hold -- \
+      bash "$fixture" launch "$run_root" "$agent" "$mode" "$scenario"
+  fi
   exec bash "$0" capture "$run_root" "$capture_name" -- \
     bash "$fixture" launch "$run_root" "$agent" "$mode" "$scenario"
 fi
