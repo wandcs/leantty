@@ -173,3 +173,87 @@ defines the host invocation. Neither proves this query's bytes: the actual
 CRLF/LF comparison above does. The historical
 [WSL CR error report](https://github.com/microsoft/WSL/issues/2939)
 is supporting context, not a current-platform diagnosis.
+
+## Follow-up: observe Agent input focus without a redundant click
+
+PR192's formal continuation passed QH and both Codex modes. OpenCode direct
+passed notification, same-Pane return and search, then the pre-input guard
+rejected its current focused-field count. The saved large-input layout had one
+focused terminal. The Agent helper still clicked and returned its pre-click
+layout; its catch discarded the shared guard's safe failure metadata. The old
+report cannot distinguish zero focus, multiple fields or a transient view.
+
+The Agent-local repair returns an already-focused node/layout pair without a
+click. A necessary click now requires one fresh focused field belonging to the
+same native Web owner. Failure stops before text. The normal Agent check keeps
+the existing `LeanTTYTextInputFailure` metadata: phase, counts and whitelisted
+comparisons, not contents or raw identifiers. Shared input guards, one-Enter
+rules, cleanup, product code, xterm, dependencies and the HAP are unchanged.
+The fixed 200 ms wait is removed; no timer, polling or retry replaces it.
+
+Ten new actual-owner cases cover focused/unfocused preparation, lost/replaced
+owners, ambiguous fields and pre/post input failure propagation. Against the
+old frozen source, eight fail; the repair passes all 110 checks. An initial
+test incorrectly restored a real log-clearing side effect while loading shared
+comparison helpers; it failed before the injected input error. After restoring
+that external-effect stub, both red and green runs reached the intended owner.
+Focused `policy,tooling` also passed. This is software evidence, not a physical
+reproduction of the previous focus loss.
+
+### Bounded physical contrast and cleanup
+
+The unchanged HAP `0db0f090…95e71` ran OpenCode 1.18.30 direct in zero-model
+interaction mode on the physical ARM64 PC. An ignored adapter reused the real
+SSH, focus, input, TUI-exit and finalization owners; no notification/search
+workload, model prompt, Shift+Enter or resize was added.
+
+- 22:52:35–22:54:38 (+08:00): the adapter's Windows `ReadAllBytes` could not
+  open the live WSL capture. It stopped before either contrast vector. The
+  original result remains invalid/interrupted. One guarded product command
+  removed its residual temporary fingerprint at 22:56:11; the 22:57:24 audit
+  confirmed cleanup and restoration.
+- A local held-writer test reproduced the sharing failure and verified bounded
+  read-only `FileShare.ReadWrite` snapshots. Only the ignored adapter changed.
+- 22:57:43–23:00:21: the single corrected contrast passed. Old and new helpers
+  each started from one focused terminal and delivered one `English中文` marker
+  and one contiguous 4096-character marker to the inner PTY. Each phase had two
+  Ctrl+C events and no Enter. Byte totals also include terminal protocol input;
+  they are not a content-equality or performance comparison.
+- Native `/exit` returned from alternate screen and proved shell-ready before
+  SSH close. Three local and two connected setup/cleanup commands each used one
+  input/Enter with no mismatch. Stage cleanup and the 23:01:07 independent audit
+  passed: owned fingerprint, listener, processes, directory and reverse mapping
+  absent; original Tab, notification setting and timeout restored. Raw captures
+  were deleted. The original HAP, formal report and PR192 freeze stayed unchanged.
+
+Evidence root: `build/verification/agent-focus-input-20260912/`.
+
+| Record | SHA-256 |
+| --- | --- |
+| `device-focus-contrast/result.json` | `ae0fdfd097140ecbdbb87e37b23767c4e3fb5abba72f29ddb5d318f422ca30b7` |
+| `device-focus-contrast-shared-read/result.json` | `70f477807a8e58c237833976fc4439e90e7943123dc5246ab558c6a5c1cd899f` |
+| `device-focus-contrast-shared-read-audit.json` | `e0fb73f27baeabe00add8f2669a0986f050b190363bd687b0cd99ca0c6e7bfd3` |
+
+### Reframing and next boundary
+
+Both variants passed, so the extra click is not a proven cause of the prior
+incident. This sample also lacks its notification/search history. Stop causal
+sampling here: no product/platform attribution, new exemption or further
+diagnostic round is justified. Retain the repair for the independently proven
+stale-context and discarded-evidence defects, with this physical main-path
+check. Do not claim that historical focus loss is fixed.
+
+After merge/freeze, reassess R2 identities and resources, then run fresh QH and
+the complete Agent/SSH suffix as acceptance, not as a reproduction experiment.
+Use the fixed budget and stop on the first failure; preserve the new metadata
+before choosing any next diagnostic. Neither routine report replaces formal
+evidence. C3/C4 remain open; no formal matrix or product build ran in this round.
+
+The [OpenHarmony UiTest guide](https://github.com/openharmony/docs/blob/master/en/application-dev/application-test/uitest-guidelines.md)
+describes coordinate input's own focus action, while the
+[UiTest command reference](https://github.com/openharmony/testfwk_arkxtest/blob/master/README_zh.md)
+separates click and layout observation. Current upstream source is not the exact
+installed UiTest binary. [Playwright actionability](https://playwright.dev/docs/actionability)
+is a comparison, not platform evidence; no matching upstream issue established
+this incident's cause. [.NET FileShare](https://learn.microsoft.com/en-us/dotnet/api/system.io.fileshare)
+documents the independent diagnostic reader's sharing contract.

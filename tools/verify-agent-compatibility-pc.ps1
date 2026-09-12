@@ -322,10 +322,22 @@ function Focus-TerminalInput {
     } else {
         throw "[environment] Expected one active terminal input, found $($inputs.Count) mounted and $($focusedInputs.Count) focused"
     }
-    Click-Node -Node $input -Description 'Focus Agent compatibility terminal input'
-    Start-Sleep -Milliseconds 200
-    # The shared guard needs the containing layout to identify the native Web.
-    # Keep this pair operation-local; a virtual textarea path is not its owner.
+    # A cursor-targeted click is an input effect, not a focus observation.
+    # Preserve an already-focused owner; the shared guard rechecks before text.
+    if ($focusedInputs.Count -ne 1) {
+        Click-Node -Node $input -Description 'Focus Agent compatibility terminal input'
+        $afterLayout = Get-FullLayout -Name "$Name-focused"
+        $afterInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $afterLayout)
+        if ($afterInputs.Count -ne 1 -or -not (Test-LeanTTYSameTextInputTarget `
+                -ExpectedNode $input -CurrentNode $afterInputs[0] `
+                -ExpectedLayout $layout -CurrentLayout $afterLayout)) {
+            throw (New-LeanTTYTextInputFailure -Phase before -ExpectedNode $input `
+                -CurrentNodes $afterInputs -ExpectedLayout $layout -CurrentLayout $afterLayout `
+                -Message '[harness] Agent focus action did not preserve its unique input owner')
+        }
+        $input = $afterInputs[0]
+        $layout = $afterLayout
+    }
     return [pscustomobject]@{ node = $input; layout = $layout }
 }
 
@@ -1196,6 +1208,7 @@ function Invoke-AgentModeCheck {
         }
         $check.status = 'passed'
     } catch {
+        $check.textTargetFailure = $_.Exception.Data['LeanTTYTextInputFailure']
         Save-CurrentAppLogs -Name "$stage-final-failure"
         $check.failure = $_.Exception.Message
         $check.failureDomain = if ($check.failure -match '^\[product\]') {
