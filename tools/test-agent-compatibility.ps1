@@ -173,6 +173,74 @@ try {
         $privacyFailure.failureDomain -eq 'privacy'
     ) 'Applicability policy must not downgrade notification privacy failures'
 
+    $upstreamArguments = @{
+        Agent = 'pi'; Mode = 'tmux'; NativeAttentionObserved = $true
+        SystemNotificationCompleted = $false; AgentChildExitCode = 0
+        NotificationFailure = '[unknown] Agent inner attention observed without outer attention'
+        UpstreamEnvironment = @{
+            piVersion = '0.84.4'; tmuxVersion = 'tmux 3.6'
+            notifyExtensionSha256 = '70e4333e09ce00d546c116fd2e918abf7616c70b5da6e88ba8ee21a326afd483'
+            tmuxConfigSha256 = 'c751ee4a8029da7cd247a32c1962d2195d2e801c448f5bc9a067c6811c323dd6'
+        }
+        OuterObservation = @{
+            boundary = 'remote-outer-pty-not-client-receipt'; complete = $true
+            childExitCode = 0; bytes = 100; attentionCount = 0; afterHiddenCount = 0
+            checkpoints = @{ 'before-minimize' = 0; 'after-hidden' = 0 }
+        }
+    }
+    $upstream = Resolve-LeanTTYAgentNotificationAssessment @upstreamArguments
+    Assert-True ($upstream.status -eq 'not-applicable' -and
+        $upstream.classification -eq 'upstream-not-forwarded' -and
+        $upstream.systemNotification -eq 'not-exercised' -and
+        $upstream.limitation.evidenceReference -match 'pi-tmux-forwarding') `
+        'Approved evidence must record an external limitation, not a notification pass'
+    $limitationReport = New-LeanTTYAgentCompatibilityReadinessFixture -StartedAt ([DateTimeOffset]::UtcNow)
+    $limitationReport.checks[0] | Add-Member -NotePropertyName notificationAssessment -NotePropertyValue $upstream -Force
+    $limitationReport.checks[0].agent = 'pi'; $limitationReport.checks[0].mode = 'tmux'
+    $limitationReport.cleanup.result = 'failed'
+    $limitationReport.status = 'invalid/interrupted'
+    $limitationRoundTrip = Write-LeanTTYAgentCompatibilityResult -Path (Join-Path $temporaryDirectory 'limitation-result.json') -Result $limitationReport
+    Assert-True ($limitationRoundTrip.result.nonBlockingLimitations.Count -eq 1 -and
+        $limitationRoundTrip.result.nonBlockingLimitations[0].systemNotification -eq 'not-exercised' -and
+        $limitationRoundTrip.result.status -eq 'invalid/interrupted' -and
+        $limitationRoundTrip.result.cleanup.result -eq 'failed') 'Summary must disclose the exclusion without masking cleanup failure'
+    foreach ($mutation in @(
+        @{ Agent = 'qwen' }, @{ Mode = 'direct' }, @{ AgentChildExitCode = 1 },
+        @{ NativeAttentionObserved = $false }, @{ UpstreamEnvironment = $null },
+        @{ OuterObservation = $null },
+        @{ NotificationFailure = '[unknown] Unexplained timeout' },
+        @{ NotificationFailure = '[product] Controlled notification failure' },
+        @{ NotificationFailure = '[privacy] Controlled payload leak' },
+        @{ NotificationFailure = '[harness] Controlled observer failure' },
+        @{ NotificationFailure = '[environment] Controlled focus failure' },
+        @{ NotificationFailure = '[infrastructure] Controlled transport failure' }
+    )) {
+        $arguments = $upstreamArguments.Clone()
+        foreach ($key in $mutation.Keys) { $arguments[$key] = $mutation[$key] }
+        $assessment = Resolve-LeanTTYAgentNotificationAssessment @arguments
+        Assert-True ($assessment.status -eq 'failed') 'An upstream limitation must not hide unrelated or unproved failures'
+    }
+    foreach ($key in $upstreamArguments.UpstreamEnvironment.Keys) {
+        $arguments = $upstreamArguments.Clone()
+        $arguments.UpstreamEnvironment = $upstreamArguments.UpstreamEnvironment.Clone()
+        $arguments.UpstreamEnvironment[$key] = 'changed'
+        Assert-True ((Resolve-LeanTTYAgentNotificationAssessment @arguments).status -eq 'failed') `
+            "Changed upstream identity must be reassessed: $key"
+    }
+    foreach ($mutation in @(
+        @{ complete = $false }, @{ complete = 'true' }, @{ childExitCode = 1 },
+        @{ bytes = 0 }, @{ bytes = '100' }, @{ childExitCode = $false },
+        @{ attentionCount = $null }, @{ attentionCount = 1 }, @{ afterHiddenCount = 1 },
+        @{ boundary = 'inner-pty' }, @{ checkpoints = @{} },
+        @{ checkpoints = @{ 'before-minimize' = 20; 'after-hidden' = 10 } },
+        @{ checkpoints = @{ 'before-minimize' = 0; 'after-hidden' = 101 } }
+    )) {
+        $arguments = $upstreamArguments.Clone()
+        $arguments.OuterObservation = $upstreamArguments.OuterObservation.Clone()
+        foreach ($key in $mutation.Keys) { $arguments.OuterObservation[$key] = $mutation[$key] }
+        Assert-True ((Resolve-LeanTTYAgentNotificationAssessment @arguments).status -eq 'failed') `
+            'Incomplete, malformed or contradictory outer evidence must remain blocking'
+    }
     $sentinelPath = Join-Path $temporaryDirectory '.leantty-agent-compat'
     [IO.File]::WriteAllText(
         $sentinelPath,

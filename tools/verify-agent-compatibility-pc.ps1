@@ -87,6 +87,7 @@ if ($DiagnosticHap) {
         -RepoRoot $repoRoot `
         -Candidate $candidate `
         -AllowedHarnessPaths @(
+            'AGENTS.md',
             'tools/verify-release-pc.ps1',
             'tools/release-agent-continuation.ps1',
             'tools/test-release-agent-continuation.ps1',
@@ -979,6 +980,25 @@ function Stop-AgentTui {
     $script:agentSshBoundary = 'shell-ready'
 }
 
+function Get-AgentTmuxNotificationEnvironment {
+    # Read only public installed code and this run's owned config. No model/auth call.
+    $publicIdentity = @(& wsl.exe --exec bash -lc '
+set -e
+tmux -V
+sha256sum "$(npm root -g)/@earendil-works/pi-coding-agent/examples/extensions/notify.ts"
+' 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $publicIdentity.Count -ne 2 -or
+        $publicIdentity[1] -cnotmatch '^([0-9a-f]{64})\s') {
+        throw '[harness] Unable to verify public Pi/tmux notification identities'
+    }
+    return [pscustomobject]@{
+        piVersion = [string]$inventory.tools.pi.version
+        tmuxVersion = [string]$publicIdentity[0]
+        notifyExtensionSha256 = $Matches[1]
+        tmuxConfigSha256 = (Get-FileHash -LiteralPath (Join-Path $fixtureDirectory 'tmux.conf') -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 function Invoke-AgentModeCheck {
     param(
         [Parameter(Mandatory = $true)][string]$Agent,
@@ -1072,19 +1092,30 @@ function Invoke-AgentModeCheck {
             throw '[compatibility] Controlled Unicode or large input did not reach the Agent PTY'
         }
         $check.captureSummary = "results/$stage-notification.json"
+        $upstreamEnvironment = $null
+        $finalOuter = $null
+        if ($Agent -ceq 'pi' -and $Mode -ceq 'tmux' -and
+            $deferredFailure -ceq '[unknown] Agent inner attention observed without outer attention') {
+            Wait-File -Path (Join-Path $fixtureDirectory "results/$stage-notification-outer-final.json") -TimeoutSeconds 10
+            $finalOuter = Get-AgentOuterAttention -CaptureResultPath $captureResultPath
+            $check.notificationObservation.outer = $finalOuter
+            $upstreamEnvironment = Get-AgentTmuxNotificationEnvironment
+        }
         $notificationAssessment = Resolve-LeanTTYAgentNotificationAssessment `
             -Agent $Agent `
             -Mode $Mode `
             -NativeAttentionObserved $nativeAttentionObserved `
             -SystemNotificationCompleted ([bool]$check.nativeNotification) `
             -AgentChildExitCode ([int]$capture.childExitCode) `
-            -NotificationFailure $deferredFailure
+            -NotificationFailure $deferredFailure `
+            -UpstreamEnvironment $upstreamEnvironment `
+            -OuterObservation $finalOuter
         $check.notificationAssessment = $notificationAssessment
         Disconnect-AgentServer
         Connect-AgentServer -Stage "$stage-final-reconnect"
         $check.reconnect = $true
         Disconnect-AgentServer
-        if ($notificationAssessment.status -ne 'passed') {
+        if ($notificationAssessment.status -notin @('passed', 'not-applicable')) {
             throw $notificationAssessment.failure
         }
         $check.status = 'passed'

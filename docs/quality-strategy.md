@@ -75,7 +75,8 @@ owner, competing product/harness/environment hypotheses and the single
 hypothesis tested next. The next run MUST be the cheapest level that can
 distinguish those hypotheses.
 
-The enclosing formal matrix MUST stop at its first failure and MUST NOT be used
+The enclosing formal matrix MUST stop at its first blocking failure or unknown
+outcome. Confirmed external limitations follow the continuity rule below. It MUST NOT be used
 as a reproduction loop. Earlier formal stages may be reused only under the
 checkpoint rules; diagnosis uses the failed named stage, a narrower diagnostic
 or a deterministic trigger. A new full matrix is forbidden while the failed
@@ -103,6 +104,55 @@ documented outcome, and use the smallest compile-time-isolated acceptance trigge
 on the physical PC for every otherwise unselectable production recovery path.
 The trigger may start the path but must not simulate its result or create a
 second state model.
+
+### Third-party limitations and acceptance continuity
+
+Maintainer decision, 2026-09-12: acceptance evaluates LeanTTY's behavior, not
+whether every third-party application is defect-free. A proven third-party
+defect or unsupported behavior outside LeanTTY's responsibility MUST NOT by
+itself stop our acceptance, block release, or require a product workaround.
+Record the limitation and continue unaffected checks; do not wait for an
+upstream fix or repeatedly seek approval for cases covered by this rule.
+
+Classification requires evidence, not merely an external executable or an
+`external-agent` error label. Record the exact software/version/configuration,
+expected and observed behavior, last correct/first missing boundary, and a
+primary-source or bounded diagnostic explanation that locates the cause outside
+LeanTTY. A timeout, missing log or inner signal alone is insufficient. Prefer
+a zero-model protocol/control test to another full matrix or model request.
+
+Keep these boundaries:
+
+- Mark the affected assertion as a non-blocking third-party limitation, with
+  its reason and evidence references. It is not a product failure and does not
+  prove the unavailable end-to-end capability. Preserve actual pass/fail facts
+  for every other assertion and disclose excluded capability in the summary.
+- Continue independent checks once their preconditions and owned-state cleanup
+  are proved. Only checks that depend on the unavailable behavior remain
+  unassessed. Missing evidence for an applicable LeanTTY contract still needs
+  another valid test; it cannot be replaced with a third-party exemption.
+- Responsibility is not source authorship. A bundled library causing LeanTTY
+  to crash, lose data or mishandle valid protocol input remains our product
+  responsibility. Privacy, state isolation, error handling and recovery remain
+  mandatory even when an external program triggers the condition.
+- Unknown attribution, a broken observation channel, unsafe state or failed
+  cleanup still invokes the normal stop/recovery rules. Do not guess an
+  external cause, suppress exceptions broadly or withdraw a supported product
+  contract without an explicit decision.
+- Existing failed reports and frozen harnesses remain immutable. If the
+  executable classifier cannot represent a proven limitation, qualify the
+  smallest policy repair at a new round boundary and use the existing R1–R4
+  rules. Do not hot-patch a running matrix or repeat unaffected tests merely
+  because the upstream limitation persists.
+
+The Pi 0.84.4 / tmux 3.6 bare-OSC-777 case is an approved application of this
+principle: the upstream frame does not reach LeanTTY, while the controlled
+wrapped-frame comparison distinguishes forwarding from observer failure.
+Record `upstream-not-forwarded`, not a system-notification pass; retain the
+remaining interaction and cleanup gates. See the
+[evidence and decision](design/agent-exit-boundary-20260912.md#pr186-formal-stop-at-pi-tmux-forwarding).
+Reassess applicability when the relevant version, configuration, boundary or
+observed emission changes; this is not a permanent exemption for an Agent name.
 
 ### Change-scoped feature and bug-fix verification
 
@@ -550,7 +600,7 @@ native-signal, generic system-notification and return chain. OpenCode tmux is
 `not-emitted-by-agent` only when the final raw-free PTY summary contains no
 native attention and the notification wait ended in the external Agent domain;
 if OpenCode does emit a native signal, the complete LeanTTY notification chain
-becomes required. Pi direct/tmux and Qwen direct must still emit their expected
+becomes required. Pi direct/tmux and Qwen direct normally require their expected
 native signal; when that signal is captured but the exact hidden-window
 non-publication boundary occurs, record `platform-deferred` and
 `systemNotification=not-observed`, never a notification pass. If those paths do
@@ -842,7 +892,9 @@ candidate identity changed, escalate to R4.
 
 ### Failure handling procedure
 
-At the first failure:
+Record confirmed out-of-responsibility limitations and continue independent
+checks under "Third-party limitations and acceptance continuity". At the first
+blocking failure or unknown outcome:
 
 1. stop the enclosing matrix before executing unrelated later stages;
 2. capture the stage, candidate/harness/attempt identities, failure domain,
@@ -1260,7 +1312,10 @@ rendered digits and diverge from the native buffer.
 - **Invalid/interrupted:** the candidate changed, evidence identity is missing,
   cleanup makes the result ambiguous, or the run stopped early.
 
-Only **Pass** counts as acceptance. Infrastructure failures must be repaired and
+Only **Pass** proves an exercised assertion. Disclosed, evidenced third-party
+limitations may coexist with complete applicable acceptance; they do not prove
+the excluded capability. All remaining applicable product assertions must pass.
+Infrastructure failures must be repaired and
 rerun; they must not be relabeled as product passes or product regressions.
 Unknown outcomes require a verified state reset before R1, otherwise R3.
 
