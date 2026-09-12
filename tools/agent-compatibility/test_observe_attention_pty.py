@@ -20,8 +20,10 @@ from start_gate import Gate
 here = Path(__file__).resolve().parent
 harness = here.parent / 'agent-compatibility-wsl.sh'
 checks = []
-for mode, cancel, scenario in (('direct', False, 'notification'), ('tmux', False, 'notification'),
-                               ('tmux', True, 'notification'), ('direct', False, 'interaction')):
+for agent, mode, cancel, scenario in (
+        ('codex', 'direct', False, 'notification'), ('codex', 'tmux', False, 'notification'),
+        ('codex', 'tmux', True, 'notification'), ('codex', 'direct', False, 'interaction'),
+        ('qwen', 'direct', False, 'notification'), ('qwen', 'tmux', False, 'notification')):
     with tempfile.TemporaryDirectory(prefix='leantty-agent-compat-observer-') as directory:
         root = Path(directory)
         subprocess.run(['bash', str(harness), 'prepare', directory], check=True, stdout=subprocess.DEVNULL)
@@ -33,15 +35,18 @@ for mode, cancel, scenario in (('direct', False, 'notification'), ('tmux', False
         bin_dir = root / 'bin'
         bin_dir.mkdir()
         (bin_dir / 'npm').write_text('#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(directory) + '\n')
-        (bin_dir / 'codex').write_text('#!/bin/sh\nif [ "$1" = login ]; then exit 0; fi\nexec ' + shlex.join(producer) + '\n')
+        (bin_dir / agent).write_text('#!/bin/sh\nif [ "$1" = login ]; then exit 0; fi\nexec ' + shlex.join(producer) + '\n')
         for executable in bin_dir.iterdir():
             executable.chmod(0o700)
-        name = f'codex-{mode}-{scenario}'
+        name = f'{agent}-{mode}-{scenario}'
         pid, fd = pty.fork()
         if pid == 0:
             os.environ['TERM'] = 'xterm-256color'
             os.environ['PATH'] = str(bin_dir) + ':' + os.environ['PATH']
-            os.execvp('bash', ['bash', str(here / 'capture_notification.sh'), directory, 'codex', mode, scenario])
+            # A non-secret readiness sentinel for the stub, never an actual credential.
+            if agent == 'qwen':
+                os.environ['QWEN_API_KEY'] = 'controlled-no-model-stub'
+            os.execvp('bash', ['bash', str(here / 'capture_notification.sh'), directory, agent, mode, scenario])
         fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
         def wait_for(condition):
             deadline = time.monotonic() + 10
@@ -56,7 +61,12 @@ for mode, cancel, scenario in (('direct', False, 'notification'), ('tmux', False
                         pass
             raise AssertionError('actual outer PTY boundary timed out')
         try:
-            if scenario == 'notification':
+            if scenario == 'notification' and agent == 'qwen':
+                wait_for(lambda: (root / 'observer-ready').exists())
+                assert not (root / 'results' / f'{name}-start-gate.json').exists()
+                observe(root, name, 'before-minimize')
+                observe(root, name, 'after-hidden')
+            elif scenario == 'notification':
                 gate_path = root / 'results' / f'{name}-start-gate.json'
                 wait_for(lambda: gate_path.exists() or (root / 'observer-ready').exists())
                 assert gate_path.exists(), 'notification child started before the hidden-window gate'
@@ -99,7 +109,7 @@ for mode, cancel, scenario in (('direct', False, 'notification'), ('tmux', False
             assert final['complete'] and final['childExitCode'] == 0
             assert final['attentionCount'] == (1 if cancel else 2)
             assert not (root / 'captures' / f'{name}.outer-output').exists()
-            checks.append({'mode': mode, 'cancelBeforeLate': cancel, 'status': 'passed',
+            checks.append({'agent': agent, 'mode': mode, 'cancelBeforeLate': cancel, 'status': 'passed',
                            'early': final['beforeMinimizeCount'], 'late': final['afterHiddenCount'],
                            'rawDeleted': True})
         finally:

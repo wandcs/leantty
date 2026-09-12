@@ -952,6 +952,15 @@ summaries carry only the minimum redacted identity and result.
 
 ## Physical automation protocol
 
+`verify-agent-compatibility-pc.ps1 -DiagnosticHap -FocusReadinessProbe -Agents qwen`
+is a zero-model focus diagnostic. It starts the real Qwen TUI, requires its
+initial native 1004 enable before minimizing, observes a new inner-PTY focus-out,
+restores the app and requires a new focus-in. It then uses the existing documented
+TUI exit, SSH close and isolated-resource cleanup. Record the three input-counter
+boundaries; missing visibility, focus input or cleanup stops the probe. It does
+not submit a model prompt or test notification emission, IME, resize or return
+from a notification. A pass does not replace formal Agent acceptance.
+
 `verify-agent-compatibility-pc.ps1 -DiagnosticHap -ExitBoundaryProbe` runs the
 zero-model Agent exit boundary only: start the real TUI, send its documented
 exit command once, await its child result and a fresh Bash prompt, then close
