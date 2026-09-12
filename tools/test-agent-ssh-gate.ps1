@@ -675,6 +675,68 @@ Test-Gate 'every-agent-terminal-text-call-supplies-layout' {
         Assert-Gate (@($parameters | Where-Object ParameterName -eq 'InputLayout').Count -eq 1) "Terminal caller omitted layout: $($owner.Name)"
     }
 }
+foreach ($focusCase in @('already-focused', 'gain-focus', 'still-unfocused', 'replaced-web',
+        'other-window', 'two-after', 'two-before', 'missing-before')) {
+    Test-Gate "agent-focus-preparation-$focusCase" {
+        . (Join-Path $PSScriptRoot 'device-regression.ps1')
+        . ([scriptblock]::Create($functionSources['Focus-TerminalInput']))
+        function New-FocusLayout([bool]$AfterClick) {
+            $leaf = @{attributes=@{type='textField';hint='Terminal input';focused=$(if ($AfterClick -or $focusCase -eq 'already-focused') {'true'} else {'false'});hostWindowId='1';bounds='[10,10][30,30]'};children=@()}
+            $web = @{attributes=@{type='Web';hostWindowId='1';accessibilityId='native-web'};children=@($leaf)}
+            if ($AfterClick -and $focusCase -eq 'still-unfocused') { $leaf.attributes.focused='false' }
+            if ($AfterClick -and $focusCase -eq 'replaced-web') { $web.attributes.accessibilityId='replacement' }
+            if ($AfterClick -and $focusCase -eq 'other-window') { $web.attributes.hostWindowId='2';$leaf.attributes.hostWindowId='2' }
+            if (($AfterClick -and $focusCase -eq 'two-after') -or $focusCase -eq 'two-before') {
+                $leaf.attributes.focused='true'
+                $web.children += @{attributes=@{type='textField';hint='Terminal input';focused='true';hostWindowId='1'};children=@()}
+            }
+            if ($focusCase -eq 'missing-before') { $web.children=@() }
+            return @{attributes=@{};children=@($web)}
+        }
+        $before = New-FocusLayout $false
+        $after = New-FocusLayout $true
+        $script:focusClicks=0
+        $script:focusReads=0
+        function Get-FullLayout { $script:focusReads++; if ($script:focusClicks) { return $after }; return $before }
+        function Click-Node {
+            $script:focusClicks++
+            if ($focusCase -eq 'already-focused') { throw '[harness] controlled redundant click loses focus' }
+        }
+        function Start-Sleep { }
+        if ($focusCase -in @('already-focused','gain-focus')) {
+            $context = Focus-TerminalInput -Name 'controlled-focus'
+            $expected = if ($focusCase -eq 'already-focused') { $before } else { $after }
+            Assert-Gate ([object]::ReferenceEquals($context.layout,$expected) -and
+                [object]::ReferenceEquals($context.node,$expected.children[0].children[0])) 'Focus result must retain the current proven owner/layout pair'
+            Assert-Gate ($script:focusClicks -eq [int]($focusCase -eq 'gain-focus')) 'Only a required focus transition may click'
+        } else {
+            Expect-GateError { Focus-TerminalInput -Name 'controlled-focus' } '\[(harness|environment)\]'
+            Assert-Gate ($script:focusClicks -eq $(if ($focusCase -in @('two-before','missing-before')) {0} else {1})) 'Ambiguous preparation must not click or retry'
+        }
+    }
+}
+foreach ($phase in @('before','after')) {
+    Test-Gate "agent-tui-retains-safe-input-failure-$phase" {
+        . (Join-Path $PSScriptRoot 'device-regression.ps1')
+        function Clear-LeanTTYAppLogs { $script:trace.Add('clear-logs') }
+        function Connect-AgentServer { $script:agentSshBoundary='shell-ready' }
+        function Submit-ConnectedCommand { $script:agentSshBoundary='shell-busy' }
+        function Start-AgentNotificationAfterHidden { }
+        function Assert-NotificationAndReturn { }
+        function Resume-AgentAfterAttention { }
+        function Assert-AgentSearch { }
+        function Invoke-AgentInputProbes {
+            $node = @{attributes=@{type='textField';hint='Terminal input';text='never-record-this-input'}}
+            throw (New-LeanTTYTextInputFailure -Message '[harness] controlled input owner failure' -Phase $phase -ExpectedNode $node -CurrentNodes @())
+        }
+        $check = Invoke-AgentModeCheck -Agent codex -Mode direct
+        Assert-Gate ($check.status -eq 'failed' -and $check.textTargetFailure.phase -eq $phase -and
+            $check.textTargetFailure.focusedCount -eq 0 -and $check.textTargetFailure.expectedPresent) "Agent discarded the existing safe input failure metadata; observed failure: $($check.failure)"
+        Assert-Gate (-not (($check.textTargetFailure|ConvertTo-Json -Depth 10).Contains('never-record-this-input'))) 'Failure evidence leaked input contents'
+        Assert-Gate (-not ($script:trace -contains 'enter') -and -not ($script:trace -contains 'ctrl-c') -and
+            -not ($script:trace -contains 'ctrl-d')) 'Failed TUI input must not send a recovery key or Enter'
+    }
+}
 foreach ($lineEnding in @('LF', 'CRLF')) {
     foreach ($identityCase in @('valid', 'query-failed', 'missing-output', 'extra-output', 'malformed-hash',
             'unknown-pi', 'unknown-tmux', 'missing-pi', 'missing-tmux', 'changed-extension', 'changed-config', 'missing-config')) {
