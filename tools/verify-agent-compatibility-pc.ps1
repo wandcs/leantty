@@ -100,6 +100,7 @@ if ($DiagnosticHap) {
             'tools/notification-regression.ps1',
             'tools/test-notification-regression.ps1',
             'tools/test-agent-ssh-gate.ps1',
+            'tools/test-agent-attention-gate.ps1',
             'tools/test-device-regression.ps1',
             'docs/design/notification-fixture-permission-20260911.md',
             'tools/agent-compatibility-policy.ps1',
@@ -158,6 +159,10 @@ New-Item -ItemType Directory -Path $fixtureDirectory | Out-Null
 $wslFixtureDirectory = ConvertTo-LeanTTYWslPath -WindowsPath $fixtureDirectory
 $wslToolPath = ConvertTo-LeanTTYWslPath `
     -WindowsPath (Join-Path $PSScriptRoot 'agent-compatibility-wsl.sh')
+$wslAttentionObserver = ConvertTo-LeanTTYWslPath `
+    -WindowsPath (Join-Path $PSScriptRoot 'agent-compatibility/observe_attention.py')
+$wslNotificationCapture = ConvertTo-LeanTTYWslPath `
+    -WindowsPath (Join-Path $PSScriptRoot 'agent-compatibility/capture_notification.sh')
 $hostKeyPath = Join-Path $fixtureDirectory 'ssh_host_ed25519_key'
 $authorizedKeysPath = Join-Path $fixtureDirectory 'authorized_keys'
 $sshdConfigPath = Join-Path $fixtureDirectory 'sshd_config'
@@ -601,19 +606,76 @@ function Get-MinimizeButton {
     }
 }
 
+function Get-AgentOuterAttention {
+    param(
+        [Parameter(Mandatory = $true)][string]$CaptureResultPath,
+        [ValidateSet('probe', 'before-minimize', 'after-hidden')][string]$Action = 'probe'
+    )
+    $captureName = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
+    & wsl.exe --exec python3 $wslAttentionObserver $wslFixtureDirectory $captureName $Action 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "[harness] Agent outer observation failed: $Action" }
+    $path = Join-Path (Split-Path $CaptureResultPath -Parent) "$captureName-outer-observation.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw '[harness] Agent outer observation is missing'
+    }
+    return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 20
+}
+
+function Hide-AgentNotificationWindow {
+    param([string]$Stage, [string]$CaptureResultPath, [System.Collections.IDictionary]$Observation)
+    $layout = Get-FullLayout -Name "$Stage-before-minimize"
+    $minimize = Get-MinimizeButton -Layout $layout
+    $Observation.before = Get-AgentOuterAttention -CaptureResultPath $CaptureResultPath -Action before-minimize
+    Click-Node -Node $minimize -Description "Minimize LeanTTY for $Stage native notification"
+    # A minimize action is not Ability.onBackground. Wait for the actual owner.
+    Wait-AppLog -Pattern 'Window visibility changed: visible=false' -TimeoutSeconds 10 | Out-Null
+    $Observation.windowHidden = $true
+    $Observation.hidden = Get-AgentOuterAttention -CaptureResultPath $CaptureResultPath -Action after-hidden
+}
+
+function Get-AgentAttentionFailure {
+    param($Outer, [bool]$InnerObserved, [int]$ChildExitCode = -1, [bool]$InnerAvailable = $true)
+    if ($null -eq $Outer -or $null -eq $Outer.checkpoints.'after-hidden') {
+        return '[harness] Agent outer output or hidden-window checkpoint is missing'
+    }
+    if ($Outer.afterHiddenCount -gt 0) {
+        return '[unknown] Post-hide outer attention observed; client receipt and notification publication unconfirmed'
+    }
+    if ($Outer.attentionCount -gt 0) {
+        return '[harness] Agent outer attention was before minimize or in the unproved hide interval'
+    }
+    if ($InnerObserved) {
+        return '[unknown] Agent inner attention observed without outer attention'
+    }
+    if (-not $InnerAvailable) {
+        return '[harness] Agent inner observation is unavailable; absence of emission is unproved'
+    }
+    return "[external-agent] Agent exited without native attention or notification deadline expired, childExitCode=$ChildExitCode"
+}
+
 function Assert-NotificationAndReturn {
     param(
         [Parameter(Mandatory = $true)][string]$Stage,
-        [Parameter(Mandatory = $true)][string]$CaptureResultPath
+        [Parameter(Mandatory = $true)][string]$CaptureResultPath,
+        [System.Collections.IDictionary]$Observation = @{}
     )
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $published = $false
     $agentSignalObservedAt = $null
+    $innerObserved = $false
+    $innerAvailable = $false
+    $outer = $null
     $captureName = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
     $liveProbePath = Join-Path (Split-Path $CaptureResultPath -Parent) "$captureName-live.json"
     do {
         $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appProcessId
-        if ($logs -match 'Background BEL notification published: paneId=pane-\d+') {
+        $outer = Get-AgentOuterAttention -CaptureResultPath $CaptureResultPath
+        $Observation.outer = $outer
+        if ($null -ne $outer -and $outer.attentionCount -gt 0 -and $null -eq $agentSignalObservedAt) {
+            $agentSignalObservedAt = [DateTimeOffset]::UtcNow
+        }
+        if ($logs -match 'Background BEL notification published: paneId=pane-\d+' -and
+            $null -ne $outer -and $outer.afterHiddenCount -gt 0) {
             $published = $true
             break
         }
@@ -621,30 +683,28 @@ function Assert-NotificationAndReturn {
         if (Test-Path -LiteralPath $liveProbePath -PathType Leaf) {
             $liveProbe = Get-Content -LiteralPath $liveProbePath -Raw |
                 ConvertFrom-Json -Depth 30
+            $innerObserved = [bool]$liveProbe.output.nativeAttentionSignalObserved
+            $innerAvailable = $true
             if ($liveProbe.output.nativeAttentionSignalObserved -and
                 $null -eq $agentSignalObservedAt) {
                 $agentSignalObservedAt = [DateTimeOffset]::UtcNow
             }
-            if ($null -ne $agentSignalObservedAt -and
-                ([DateTimeOffset]::UtcNow - $agentSignalObservedAt).TotalSeconds -ge 10) {
-                throw '[product] Agent emitted native attention but LeanTTY did not publish it'
-            }
+        }
+        if ($null -ne $agentSignalObservedAt -and
+            ([DateTimeOffset]::UtcNow - $agentSignalObservedAt).TotalSeconds -ge 10) {
+            throw (Get-AgentAttentionFailure -Outer $outer -InnerObserved $innerObserved -InnerAvailable $innerAvailable)
         }
         if (Test-Path -LiteralPath $CaptureResultPath -PathType Leaf) {
             $earlyCapture = Get-Content -LiteralPath $CaptureResultPath -Raw |
                 ConvertFrom-Json -Depth 30
-            if ($earlyCapture.output.nativeAttentionSignalObserved) {
-                throw '[product] Agent emitted native attention but LeanTTY did not publish it'
-            }
-            throw (
-                '[external-agent] Agent exited without native attention, childExitCode=' +
-                [string]$earlyCapture.childExitCode
-            )
+            throw (Get-AgentAttentionFailure -Outer $outer `
+                -InnerObserved ([bool]$earlyCapture.output.nativeAttentionSignalObserved) `
+                -ChildExitCode ([int]$earlyCapture.childExitCode))
         }
         Start-Sleep -Milliseconds 500
     } while ($watch.Elapsed.TotalSeconds -lt 180)
     if (-not $published) {
-        throw '[external-agent] Timed out without an Agent native attention signal'
+        throw (Get-AgentAttentionFailure -Outer $outer -InnerObserved $innerObserved -InnerAvailable $innerAvailable)
     }
     $panel = Open-NotificationPanel -Stage $Stage
     $cards = @(Get-LeanTTYLayoutNodes -Node $panel | Where-Object {
@@ -909,6 +969,7 @@ function Invoke-AgentModeCheck {
         genericNotificationPayload = $false
         returnApplied = $false
         notificationAssessment = $null
+        notificationObservation = [ordered]@{ windowHidden = $false; before = $null; hidden = $null; outer = $null }
         unicodeInput = 'harmony-uitest-semantic-unicode-not-physical-ime-composition'
         largeInputCharacters = 4096
         shiftEnter = 'physical-key-injected-captured-at-pty'
@@ -937,11 +998,11 @@ function Invoke-AgentModeCheck {
             Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         }
         Start-Sleep -Milliseconds 700
-        $layout = Get-FullLayout -Name "$stage-before-minimize"
-        $minimize = Get-MinimizeButton -Layout $layout
-        Click-Node -Node $minimize -Description "Minimize LeanTTY for $stage native notification"
         try {
-            Assert-NotificationAndReturn -Stage $stage -CaptureResultPath $captureResultPath
+            Hide-AgentNotificationWindow -Stage $stage -CaptureResultPath $captureResultPath `
+                -Observation $check.notificationObservation
+            Assert-NotificationAndReturn -Stage $stage -CaptureResultPath $captureResultPath `
+                -Observation $check.notificationObservation
             $check.nativeNotification = $true
             $check.genericNotificationPayload = $true
             $check.returnApplied = $true
@@ -1579,7 +1640,7 @@ try {
         } else {
             '# no OpenCode notification protocol override'
         })
-        "lat() { '$wslToolPath' launch '$wslFixtureDirectory' `"`$@`"; }"
+        "lat() { bash '$wslNotificationCapture' '$wslFixtureDirectory' `"`$@`"; }"
         "lat_osc99_probe() { '$wslToolPath' osc99-probe '$wslFixtureDirectory'; }"
         '__leantty_snapshot() {'
         '  umask 077'

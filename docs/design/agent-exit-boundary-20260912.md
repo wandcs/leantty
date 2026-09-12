@@ -231,3 +231,61 @@ counterexamples, `software-focused-desktop.json`, `device-ssh/result.json` and
 `closing-audit.json`. The first focused run stopped at the sandbox's WSL identity
 boundary; the same checks passed under the required desktop identity. This
 diagnostic verdict cannot replace new formal QH or Agent/SSH acceptance.
+
+## Agent notification observer
+
+On 2026-09-12, the actual notification assertion reproduced an attribution defect:
+inner-only attention with no outer or hidden-window evidence produced a product
+failure. This does not establish the cause of PR 184's historical Qwen tmux
+failure. The four earlier generic BEL controls are closed and are not rerun.
+
+The Agent-only outer capture reuses util-linux script 2.41.3. It records byte
+checkpoints before minimize and after the real window-hidden event, not
+UIAbility.onBackground or cross-machine timestamps. Complete frames starting
+after the second checkpoint prove only remote outer PTY observation. Early,
+straddling, inner-only, missing-observation and publication-unconfirmed cases
+stay harness/unknown failures. Generic payload and notification return remain
+required; no Qwen exemption, fixture BEL in native acceptance, prompt change or
+deadline increase is introduced.
+
+Fresh research checked Qwen 0.23.0's [native BEL implementation](https://github.com/QwenLM/qwen-code/blob/v0.23.0/packages/cli/src/ui/hooks/useTerminalNotification.ts),
+the [util-linux script contract](https://github.com/util-linux/util-linux/blob/v2.41/term-utils/script.1.adoc),
+[Huawei window visibility guidance](https://developer.huawei.com/consumer/cn/doc/doccenter-dev-faq/faqs-arkui-1029)
+and [Playwright condition assertions](https://playwright.dev/docs/test-assertions).
+No matching upstream/Huawei report establishes this Qwen cause. Flush and an
+extra PTY may perturb timing; a passing observer cannot exclude an uninstrumented
+race. A signal during the checkpoint interval remains ambiguous, not a pass.
+
+Development evidence under `build/verification/agent-attention-observer-20260912/`:
+
+- The real assertion fails the inner-only counterexample before repair. Software
+  coverage includes 11 assertion/owner/admission cases, six parser/checkpoint
+  cases, real direct/tmux capture and early exit, and a non-notification launch.
+  External Agent/npm effects are replaced by public test processes in the latter;
+  no authentication or model is used. Existing 68 Agent SSH checks also pass.
+- First physical preparation (13:17:14–13:19:18 +08:00) stopped before observer
+  startup: a 739-character diagnostic command read back as an empty line; Enter
+  count was zero. The cause remains unknown. The original result stays invalid
+  because its host cleanup was unconfirmed. One exact fingerprint removal and
+  the independent audit passed; no command was resent.
+- Replacement preparation used the fixture's existing short-function pattern,
+  retaining exact input verification and single Enter. At 13:22:17–13:24:36 it
+  observed one pre-minimize BEL and one post-hide BEL, then the generic card and
+  correct return. Raw output was deleted, normal cleanup and independent absence
+  audit passed. All physical work used the original `0db0f090…95e71` HAP and
+  made zero model requests. The passing result SHA-256 is
+  `b90890e000322402a8b05b3a4d726ae50d10cb6ebd00dd815630e6259343cbf5`.
+- After that device diagnostic, the unchanged capture body was moved out of the
+  shared WSL dispatcher into `capture_notification.sh`. The final dispatcher
+  and nested capture were verified with real PTY/tmux software tests; the shared
+  `agent-compatibility-wsl.sh` and existing analyzer are byte-for-byte unchanged.
+  The device result belongs to the pre-extraction implementation, not a new
+  formal or post-extraction device run.
+
+The selected next scope is R2: clean committed harness, fresh resource/platform/
+identity admission and QH, then the complete Agent stage and the pending SSH
+matrix under the fixed budget. Only Agent-specific files are admitted; changes
+to the shared fixture/analyzer or product are still rejected. SSH's change is
+its candidate-compatible file list only. The original HAP, old failed reports
+and independent prefix remain immutable. An unmet reuse prerequisite escalates
+under the existing R1–R4 rules; this diagnostic does not complete C3/C4.
