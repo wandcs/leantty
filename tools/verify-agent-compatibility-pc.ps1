@@ -1061,11 +1061,8 @@ function Stop-AgentTui {
 
 function Get-AgentTmuxNotificationEnvironment {
     # Read only public installed code and this run's owned config. No model/auth call.
-    $publicIdentity = @(& wsl.exe --exec bash -lc '
-set -e
-tmux -V
-sha256sum "$(npm root -g)/@earendil-works/pi-coding-agent/examples/extensions/notify.ts"
-' 2>$null)
+    # PS1 checkouts use CRLF; keep source line endings out of the Bash argument.
+    $publicIdentity = @(& wsl.exe --exec bash -lc 'set -e; tmux -V; sha256sum "$(npm root -g)/@earendil-works/pi-coding-agent/examples/extensions/notify.ts"' 2>$null)
     if ($LASTEXITCODE -ne 0 -or $publicIdentity.Count -ne 2 -or
         $publicIdentity[1] -cnotmatch '^([0-9a-f]{64})\s') {
         throw '[harness] Unable to verify public Pi/tmux notification identities'
