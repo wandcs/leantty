@@ -94,3 +94,42 @@ supports arming observation before action; it is not HarmonyOS evidence.
 [tmux issue 4909](https://github.com/tmux/tmux/issues/4909) concerns 3.4 and multiple
 panes, not this 3.6 single-pane case, so it was excluded as a cause. No matching
 upstream issue establishes the old host-checkpoint requirement.
+
+## Follow-up: preserve the notification log source
+
+The PR190 formal attempt exposed a separate observation defect: OpenCode's
+terminal ACK traffic displaced the hidden event from the mixed 500-line app
+tail. Attention and publication remained, so the strict episode assertion
+correctly rejected incomplete evidence. This did not establish a product bug.
+
+The Agent notification assertion now queries the current PID and the three
+owner tags at the device, before the tail limit. Shared log readers and all
+ordering, main-thread, Pane, card, privacy and return assertions are unchanged.
+Query errors propagate; a full 500-line owner snapshot fails as incomplete
+harness evidence. This does not guarantee retention beyond HiLog's bounded
+device buffers.
+
+The actual-owner high-traffic regression failed with the old reader and passed
+with the new reader. Focused `policy,tooling` passed, including rejected
+saturation and query-failure cases. One zero-model physical diagnostic on
+OpenHarmony 6.1.1.135 / UiTest 6.0.2.3 ran at 21:27:35–21:30:13 (+08:00):
+
+- mixed query: 500 lines, all terminal ACKs, hidden event absent;
+- owner query before BEL: one line, hidden event retained;
+- one controlled BEL: strict episode, generic card/privacy and same-Pane
+  return passed; final capture completed with child exit 0;
+- all five local/connected commands had one input, one Enter and no mismatch;
+- stage cleanup and the 21:32:27 independent resource audit passed. The original
+  HAP, prior formal report and frozen PR190 checkout were unchanged.
+
+Evidence root: `build/verification/agent-notification-source-20260912/`.
+`device-source-probe/result.json` SHA-256:
+`55c83c489b5a8ef4ef9c4cfae0e43587911720ac0d36a5a1fe54c44e221a37be`.
+This controlled producer qualifies only the reader repair, not native Agent
+behavior or formal C3 acceptance. Fresh R2 admission, QH and the complete
+Agent/SSH suffix remain required after freezing this harness.
+
+[OpenHarmony HiLog documentation](https://github.com/openharmony/docs/blob/master/zh-cn/application-dev/dfx/hilog.md)
+and [Huawei's PC logging instructions](https://consumer.huawei.com/cn/support/content/zh-cn16083991/)
+document tag/PID selection and the bounded tail. No matching upstream issue was
+established; the real-device comparison above supplies the missing evidence.

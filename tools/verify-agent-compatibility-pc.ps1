@@ -703,6 +703,18 @@ function Get-AgentAttentionFailure {
     return "[external-agent] Agent exited without native attention or notification deadline expired, childExitCode=$ChildExitCode"
 }
 
+function Get-AgentNotificationLogs {
+    # Filter at the device, before the tail limit: terminal write ACKs must not
+    # displace the earlier visibility event from the notification episode.
+    $logs = Invoke-HdcChecked -Hdc $hdc -Target $Target -Arguments @(
+        'shell', "hilog -z 500 -t app -P $appProcessId -T EntryAbility,AppViewModel,BackgroundBellNotification"
+    ) -Operation 'Read Agent notification owner logs'
+    if (@($logs -split '\r?\n' | Where-Object { $_ }).Count -ge 500) {
+        throw '[harness] Agent notification owner logs reached the snapshot limit; episode completeness is unproved'
+    }
+    return $logs
+}
+
 function Get-AgentNotificationEpisode {
     param([string]$Logs, [string]$ProcessId)
     # These owners log on the same UI thread. Host read time is not event time.
@@ -753,7 +765,7 @@ function Assert-NotificationAndReturn {
     $captureName = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
     $liveProbePath = Join-Path (Split-Path $CaptureResultPath -Parent) "$captureName-live.json"
     do {
-        $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appProcessId
+        $logs = Get-AgentNotificationLogs
         $outer = Get-AgentOuterAttention -CaptureResultPath $CaptureResultPath
         $Observation.outer = $outer
         if ($null -ne $outer -and $outer.attentionCount -gt 0 -and $null -eq $agentSignalObservedAt) {
