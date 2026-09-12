@@ -190,3 +190,44 @@ Evidence is under `build/verification/agent-r2-continuation-20260912/`:
 `software-final.json`, `admission-diagnostic-2/audit.json` and
 `admission-diagnostic-2/continuation.json`. Fresh clean-harness formal QH and
 Agent/SSH results are still required; this audit is not a C3 completion claim.
+
+## Agent input context
+
+The next formal R2 attempt passed QH but stopped before entering SSH trust
+`yes`. Its single focused textarea retained type, hint, window and bounds while
+its virtual hierarchy changed. Agent's focus helper returned the node without
+its containing layout, so the shared guard used its legacy hierarchy comparison.
+The failed capture did not preserve the native Web identity; that observation
+alone cannot establish a product fault or prove the native owner was unchanged.
+
+`Focus-TerminalInput` now returns the node and layout from one observation. Every
+Agent-owned terminal text caller passes both to the existing shared guard. Local
+commands carry the pair through the existing input-preparation callback; native
+buffer equality and single-Enter submission remain owned by the shared submitter.
+There is no persistent locator cache, shared-helper change or product change.
+
+Research checked the versioned [OpenHarmony 6.0 hierarchy builder](https://github.com/openharmony/testfwk_arkxtest/blob/OpenHarmony-6.0-Release/uitest/core/ui_model.cpp)
+and [UiTest guide](https://github.com/openharmony/docs/blob/OpenHarmony-6.0-Release/en/application-dev/application-test/uitest-guidelines.md)
+on 2026-09-12. Hierarchy is assembled from child indices. The installed UiTest
+6.0.2.3/HarmonyOS build is not asserted to be identical to that source.
+[Playwright's current locator guidance](https://playwright.dev/docs/locators)
+supports fresh, uniquely resolved targets as a design pattern, not a HarmonyOS
+guarantee. Searches of upstream and Huawei discussions found no exact matching
+report or cross-rebuild identity guarantee. The repair therefore preserves the
+existing operation-local native Web rule rather than weakening it.
+
+Actual Focus/Connect/shared-guard counterexamples fail without this repair and
+pass with it. They cover same-Web reindexing, another Web/window, missing or
+ambiguous owners, and post-input owner loss without another input or Enter.
+Caller tests also check reference pairing, local preparation and complete layout
+arguments. The focused policy/tooling gate passes seven checks, including 68
+Agent SSH cases. The original-HAP zero-model SSH prerequisite passed in 125 seconds:
+three local commands and one remote command each used one input and one Enter,
+with no mismatch. Host trust, current shell readiness and normal close passed;
+the isolated Tab, fingerprint, fixture, reverse mapping and policies were restored.
+An independent absence audit passed. No model, Wi-Fi, lock or lid action ran.
+Evidence: `build/verification/agent-input-context-20260912/` contains the red/green
+counterexamples, `software-focused-desktop.json`, `device-ssh/result.json` and
+`closing-audit.json`. The first focused run stopped at the sandbox's WSL identity
+boundary; the same checks passed under the required desktop identity. This
+diagnostic verdict cannot replace new formal QH or Agent/SSH acceptance.
