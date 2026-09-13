@@ -28,6 +28,7 @@ function Assert-LeanTTYAgentContinuationPaths {
         'tools/agent-compatibility/test_observe_attention_pty.py',
         'tools/verify-release-pc.ps1', 'tools/release-agent-continuation.ps1',
         'tools/test-release-agent-continuation.ps1', 'tools/test-build-workflows.ps1',
+        'tools/test-release-phases.ps1',
         'tools/verify-ssh-auth-pc.ps1',
         'docs/next-work.md', 'docs/quality-strategy.md',
         'docs/design/agent-exit-boundary-20260912.md',
@@ -43,19 +44,22 @@ function Get-LeanTTYAgentReleaseContinuation {
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [switch]$Recheck
     )
-    if ($Manifest.schemaVersion -ne 1 -or $Manifest.scope -cne 'agent-exit-boundary-R2') {
+    if ($Manifest.schemaVersion -ne 1 -or $Manifest.scope -cnotin @('agent-exit-boundary-R2', 'agent-split-R2')) {
         throw 'Unsupported release continuation contract'
     }
     $old = Read-LeanTTYPinnedReleaseJson $Manifest.sourceReport
     $recovery = Read-LeanTTYPinnedReleaseJson $Manifest.recovery
     $admission = Read-LeanTTYPinnedReleaseJson $Manifest.admission
-    $definitions = @(Get-LeanTTYReleaseVerificationStages)
+    $split = $Manifest.scope -ceq 'agent-split-R2'
+    $definitions = @(Get-LeanTTYReleaseVerificationStages -SplitOperator:$split)
     $names = @($definitions.name)
+    $agentIndex = [Array]::IndexOf($names, 'agent-compatibility')
     if ($old.schemaVersion -ne 1 -or $old.gate -cne 'registered-release-verification' -or
         $old.result -cne 'failed' -or $null -ne $old.continuation -or
         ($old.stageOrder -join '|') -cne ($names -join '|') -or
-        @($old.stages).Count -ne $names.Count -or
-        ($names[-2..-1] -join '|') -cne 'agent-compatibility|ssh-physical-matrix') {
+        @($old.stages).Count -ne $names.Count -or $agentIndex -lt 2 -or
+        (-not $split -and ($names[-2..-1] -join '|') -cne 'agent-compatibility|ssh-physical-matrix') -or
+        ($split -and ($names[-2..-1] -join '|') -cne 'mosh-operator-lock-recovery|mosh-operator-lid-recovery')) {
         throw 'Continuation requires an original failed Agent checkpoint in the registered order'
     }
     if ($old.stages[0].name -cne 'candidate' -or $old.stages[0].status -cnotin @('passed','reused')) {
@@ -109,10 +113,15 @@ function Get-LeanTTYAgentReleaseContinuation {
         if ($normalized[0] -cne $normalized[1]) { throw 'SSH prefix behavior changed; R3 required' }
     }
 
-    $failed = $old.stages[-2]
-    if ($failed.name -cne 'agent-compatibility' -or $failed.status -cne 'failed' -or
-        $old.stages[-1].status -cne 'pending' -or $old.stages[-1].attemptCount -ne 0) {
-        throw 'Continuation requires Agent failed and SSH never started'
+    $failed = $old.stages[$agentIndex]
+    if ($failed.name -cne 'agent-compatibility' -or $failed.status -cne 'failed') {
+        throw 'Continuation requires a failed Agent stage'
+    }
+    for ($index = $agentIndex + 1; $index -lt $names.Count; $index++) {
+        if ($old.stages[$index].name -cne $names[$index] -or
+            $old.stages[$index].status -cne 'pending' -or $old.stages[$index].attemptCount -ne 0) {
+            throw 'Continuation requires the complete post-Agent suffix never started'
+        }
     }
     $agent = Get-LeanTTYReleaseEvidenceMetadata -Path $failed.resultPath -StageName $failed.name
     $agentHash = (Get-FileHash -LiteralPath $failed.resultPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -124,6 +133,9 @@ function Get-LeanTTYAgentReleaseContinuation {
         $agent.evidence.harness.gitTree -cne $old.harness.gitTree -or
         $agent.evidence.harness.gitDirty -ne $false) {
         throw 'Failed Agent evidence identity changed'
+    }
+    if ($split -and $agent.evidence.cleanup.result -cne 'passed') {
+        throw 'Split continuation requires successful owned Agent cleanup'
     }
     if ($recovery.result -cne 'passed' -or $recovery.attemptId -cne $failed.attemptId -or
         $recovery.originalReleaseReportSha256 -ine $Manifest.sourceReport.sha256 -or
@@ -158,7 +170,7 @@ function Get-LeanTTYAgentReleaseContinuation {
     if ($admission.agentScriptSha256 -cne $agentScriptHash) { throw 'Agent repair changed after admission' }
 
     $prefix = @()
-    for ($index = 1; $index -lt $definitions.Count - 2; $index++) {
+    for ($index = 1; $index -lt $agentIndex; $index++) {
         $stage = $old.stages[$index]
         if ($stage.name -cne $names[$index] -or $stage.script -cne $definitions[$index].script -or
             $stage.status -cne 'passed') { throw 'Continuation prefix is incomplete or reordered' }
@@ -194,7 +206,7 @@ function Get-LeanTTYAgentReleaseContinuation {
             sha256 = (Get-FileHash -LiteralPath $stage.resultPath -Algorithm SHA256).Hash.ToLowerInvariant()
         }
     }
-    [pscustomobject]@{ manifest = $Manifest; prefix = $prefix; failedAttemptId = $failed.attemptId }
+    [pscustomobject]@{ manifest = $Manifest; prefix = $prefix; failedAttemptId = $failed.attemptId; agentIndex = $agentIndex }
 }
 
 function Assert-LeanTTYInheritedReleaseStages {

@@ -1,4 +1,4 @@
-param([string]$EntrySourceRevision = '')
+param([string]$EntrySourceRevision = '', [switch]$SplitOperator)
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $entry = if ($EntrySourceRevision) {
@@ -32,17 +32,20 @@ try {
     $candidate = [pscustomobject]@{gitCommit=('c'*40);gitTree=('d'*40);sha256=('e'*64);gitDirty=$false}
     $invocation = [pscustomobject]@{target='fixture';candidateBasePath='';fixturePort=22000;longTaskPort=23000;agentPort=0;moshAlternateWifiSsidIdentity=('f'*64);distribution='test-wsl'}
     $harness = @{gitCommit=('a'*40);gitTree=('b'*40);gitDirty=$false}
-    $defs = @(Get-LeanTTYReleaseVerificationStages)
+    $defs = @(Get-LeanTTYReleaseVerificationStages -SplitOperator:$SplitOperator)
+    $agentIndex = [Array]::IndexOf(@($defs.name), 'agent-compatibility')
     $stages = @($defs | ForEach-Object {
         $evidence = @{result='passed';cleanup=@{result='passed'};candidate=$candidate;harness=$harness;reviewTestHap=@{sha256=$candidate.sha256};releaseEligible=$true;runMode='formal'}
         $reference = Pin-TestJson ($_.name + '.json') $evidence
         [pscustomobject]@{name=$_.name;script=$_.script;status='passed';resultPath=$reference.path;attemptId='';attemptCount=1}
     })
     $resources = @{knownHostEndpoint='[127.0.0.1]:32000';tabCleanup=@{ownedTabRemoved=$true;originalTabsRestored=$true;originalActiveTabRestored=$true};notificationPermission=@{restored=$true}}
-    $agent = @{status='invalid/interrupted';runMode='acceptance';harness=$harness;candidate=$candidate;attemptId='original-attempt';resources=$resources;cleanup=@{result='failed'}}
+    $agent = @{status='invalid/interrupted';runMode='acceptance';harness=$harness;candidate=$candidate;attemptId='original-attempt';resources=$resources;cleanup=@{result=$(if ($SplitOperator) {'passed'} else {'failed'})}}
     $agentRef = Pin-TestJson 'failed-agent.json' $agent
-    $stages[-2].status='failed'; $stages[-2].attemptId='original-attempt'; $stages[-2].resultPath=$agentRef.path
-    $stages[-1].status='pending'; $stages[-1].attemptCount=0
+    $stages[$agentIndex].status='failed'; $stages[$agentIndex].attemptId='original-attempt'; $stages[$agentIndex].resultPath=$agentRef.path
+    for ($index=$agentIndex+1;$index -lt $stages.Count;$index++) {
+        $stages[$index].status='pending'; $stages[$index].attemptCount=0
+    }
     $old = [pscustomobject]@{schemaVersion=1;gate='registered-release-verification';result='failed';stageOrder=@($defs.name);stages=$stages;candidate=$candidate;harness=$harness;invocation=$invocation}
     $oldRef = Pin-TestJson 'old.json' $old
     $recovery = [pscustomobject]@{result='passed';attemptId='original-attempt';originalReleaseReportSha256=$oldRef.sha256;originalAgentReportSha256=$agentRef.sha256;knownHostEndpoint=$resources.knownHostEndpoint;originalReportsUnchanged=$true;knownHostAbsent=$true}
@@ -50,10 +53,10 @@ try {
     $admission = [pscustomobject]@{gate='agent-continuation-state-audit';result='passed';sourceReportSha256=$oldRef.sha256;failedAgentSha256=$agentRef.sha256;candidateSha256=$candidate.sha256;target='fixture';observedAt=[DateTimeOffset]::UtcNow.ToString('o');agentScriptSha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()}
     $stateFields = @('readOnly','knownHostsAbsent','fixtureProcessesAbsent','fixtureDirectoriesAbsent','listenersAbsent','hdcMappingsEmpty','workspaceRestored','notificationRestored','platformUnchanged','prefixIndependent')
     foreach ($field in $stateFields) { $admission | Add-Member $field $true }
-    $manifest = [pscustomobject]@{schemaVersion=1;scope='agent-exit-boundary-R2';sourceReport=$oldRef;recovery=$recoveryRef;admission=(Pin-TestJson 'admission.json' $admission)}
+    $manifest = [pscustomobject]@{schemaVersion=1;scope=$(if ($SplitOperator) {'agent-split-R2'} else {'agent-exit-boundary-R2'});sourceReport=$oldRef;recovery=$recoveryRef;admission=(Pin-TestJson 'admission.json' $admission)}
     $argsForPolicy = @{Manifest=$manifest;Candidate=$candidate;Invocation=$invocation;RepoRoot=$repoRoot}
     $result = Get-LeanTTYAgentReleaseContinuation @argsForPolicy
-    if ($result.prefix.Count -ne 16 -or $result.failedAttemptId -cne 'original-attempt' -or
+    if ($result.prefix.Count -ne ($agentIndex-2) -or $result.agentIndex -ne $agentIndex -or $result.failedAttemptId -cne 'original-attempt' -or
         $result.prefix.stage.name -contains 'harness-qualification' -or
         (Read-LeanTTYPinnedReleaseJson $oldRef).result -cne 'failed') { throw 'Valid continuation lost its prefix, fresh QH or immutable failure' }
     $passed++
@@ -77,7 +80,7 @@ try {
         {param($x) $x.stages[0].status='pending'},
         {param($x) $x.stages[2].name='other'},
         {param($x) $x.stages[2].status='failed'},
-        {param($x) $x.stages[-2].status='passed'},
+        {param($x) $x.stages[$agentIndex].status='passed'},
         {param($x) $x.stages[-1].attemptCount=1},
         {param($x) $x.harness.gitDirty=$true},
         {param($x) $x.candidate.gitDirty=$true}
@@ -97,6 +100,13 @@ try {
     $manifest.recovery=Pin-TestJson 'recovery.json' $recovery
     $admission.sourceReportSha256=$manifest.sourceReport.sha256
     $manifest.admission=Pin-TestJson 'admission.json' $admission
+    if ($SplitOperator) {
+        $agent.cleanup.result='failed'
+        $null=Pin-TestJson 'failed-agent.json' $agent
+        Assert-Rejected 'split cleanup cannot be waived by recovery' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        $agent.cleanup.result='passed'
+        $null=Pin-TestJson 'failed-agent.json' $agent
+    }
     foreach ($field in $stateFields) {
         $admission.$field = $false; $manifest.admission = Pin-TestJson 'admission.json' $admission
         Assert-Rejected $field { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
@@ -156,3 +166,4 @@ try {
     if ($resolved.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase) -and
         (Split-Path $resolved -Leaf) -like 'leantty-continuation-*') { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }
+if (-not $SplitOperator) { & $PSCommandPath -SplitOperator -EntrySourceRevision $EntrySourceRevision }

@@ -33,7 +33,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'release-agent-continuation.ps1')
 if ($Resume -and $AgentContinuationPath) { throw 'Use a new report for Agent continuation, not -Resume' }
 if ($Phase -eq 'operator' -and -not $Resume) { throw 'Operator phase requires -Resume from completed automatic work' }
-if ($Phase -ne 'full' -and $AgentContinuationPath) { throw 'Split phases cannot inherit another harness report' }
+if ($Phase -eq 'operator' -and $AgentContinuationPath) { throw 'Operator phase cannot create a continuation' }
 
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 $repoFullPath = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
@@ -199,7 +199,9 @@ if ($Resume) {
             if ($definitions[$index].scenario -like 'operator-*') { continue }
             $allowedStatus = if ($definitions[$index].kind -eq 'candidate') {
                 @('passed', 'reused')
-            } else { @('passed') }
+            } elseif ($null -ne $report.continuation -and
+                @($validated.prefix.index) -contains $index) { @('reused') }
+            else { @('passed') }
             if ($report.stages[$index].status -notin $allowedStatus) {
                 throw 'Automatic phase is incomplete; no operator action is allowed'
             }
@@ -264,6 +266,10 @@ if ($Resume) {
     if ($AgentContinuationPath) {
         if ([string]::IsNullOrWhiteSpace($HapPath)) { throw 'Agent continuation requires the exact -HapPath' }
         $manifest = Get-Content -LiteralPath $AgentContinuationPath -Raw | ConvertFrom-Json -Depth 10
+        if (($Phase -eq 'full' -and $manifest.scope -cne 'agent-exit-boundary-R2') -or
+            ($Phase -eq 'automatic' -and $manifest.scope -cne 'agent-split-R2')) {
+            throw 'Continuation scope does not match the selected release phase'
+        }
         $oldRoot = [IO.Path]::GetFullPath((Split-Path $manifest.sourceReport.path -Parent)).TrimEnd('\', '/')
         if ($EvidenceDirectory.Equals($oldRoot, [StringComparison]::OrdinalIgnoreCase) -or
             $EvidenceDirectory.StartsWith($oldRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
@@ -283,7 +289,7 @@ if ($Resume) {
             $stage | Add-Member -NotePropertyName sourceEvidenceSha256 -NotePropertyValue $inherited.sha256
             $report.stages[$inherited.index] = $stage
         }
-        $report.stages[-2].attemptId = $validated.failedAttemptId
+        $report.stages[$validated.agentIndex].attemptId = $validated.failedAttemptId
     }
     $null = Write-LeanTTYReleaseReportArtifacts `
         -EvidenceDirectory $EvidenceDirectory -Report $report

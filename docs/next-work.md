@@ -1,5 +1,11 @@
 # LeanTTY 当前工作
 
+当前工具修复：PR200 的 Qwen 完整内外 PTY 未发通知，按证据限定为第三方非发出，
+不证明通知通过。补齐既有 Agent-stage R2 的自动/人工分段续验，复用十五个独立
+行为阶段，重做 QH 与完整 Agent 后继续 SSH/自动 Mosh；人工阶段仍待维护者明确就绪。
+原候选、失败报告和冻结工具不变，详见
+[分类与有限续验](design/agent-notification-order-20260912.md#qwen-completed-task-without-native-emission)。
+
 > 状态：唯一有效的项目 TODO；1.5.1 已通过 AppGallery 审核并上架，进入 1.6.0 开发
 >
 > 更新日期：2026-09-13

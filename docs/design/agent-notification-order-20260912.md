@@ -381,3 +381,56 @@ all five real AST-owned lists, accepts the six reviewed paths and rejects
 ArkTS, terminal HTML, app/build metadata, Rust source/lockfile and an unreviewed
 tool. Before starting R3, compare every changed path from candidate source to
 the final clean merged harness, and verify the HAP and frozen C0–C2 identities.
+
+## Qwen completed task without native emission
+
+The PR200 automatic round completed the controlled Qwen 0.23.0 direct task in
+21.006 seconds, after proved window hiding and native focus-out. The final inner
+and outer PTYs both ended normally and contained no attention signal. Search,
+Unicode/large input, reconnection and owned cleanup completed. The original
+failed report remains unchanged.
+
+The [versioned upstream hook](https://github.com/QwenLM/qwen-code/blob/v0.23.0/packages/cli/src/ui/hooks/useAttentionNotifications.ts)
+tests the elapsed value observed in `StreamingState.Responding`, not the shell
+task's wall time. The earlier statement that a 21-second task satisfies that
+condition was too strong. This run did not record Qwen's internal hook state;
+it proves non-emission for this fixture, not a universal Qwen defect. No missing
+signal can demonstrate LeanTTY dropping it.
+
+The classifier now records `not-applicable / not-emitted-by-agent` only for
+Qwen 0.23.0, a completed gated task, proved hiding/focus readiness, normal final
+inner/outer exit and complete positive-length captures with no native signal.
+It retains `systemNotification=not-exercised`. Missing/malformed evidence,
+changed versions, emitted signals, observer failures and independent interaction,
+privacy or cleanup failures remain blocking. Direct and tmux use the same
+producer rule; neither receives a permanent exemption by application name.
+
+Evidence: PR200 `formal-split-r3-pr200/stages/agent-compatibility/attempt-1/`,
+under the retained `release-1.6.0-r4-pr194-20260913` round. Inner capture SHA-256
+`02f59b704a8f7a072fdc5cd460ba9c33dac42e93329d1d3af66184bb1ab073d1`;
+task gate `5c97f3f98fe91551f2333686c334d535774c6aa95d1fe1a1399c893188ce7a93`.
+Both are content-free summaries; no raw terminal contents are published.
+
+### Bounded split-phase R2
+
+Extend the existing Agent-stage continuation, not its internal check granularity.
+The `agent-split-R2` manifest requires the exact split registry, failed Agent,
+successful owned cleanup and an untouched SSH/Mosh/operator suffix. It retains
+the existing pinned original report, recovery, fresh state audit, candidate,
+scope, prefix-independence and evidence-hash checks. New QH and the complete
+Agent stage run before SSH and automatic Mosh; operator actions still require
+an explicit later `-Phase operator -Resume`.
+
+This reuses fifteen independent behavior stages and the candidate, saving the
+roughly 35-minute stable prefix including its model workload. The fixed new
+Agent stage costs eight model workloads with zero automatic retries; it repeats
+six previously completed checks. Finer Agent import would add a second identity,
+cleanup and report boundary; defer it because its implementation and qualification
+cost is not justified by this remaining run. Old failures are never relabeled
+or imported as passes, and an unrelated harness/product change still rejects R2.
+
+Verification uses the real classifier, check/selection owners, continuation
+validator, split entry and atomic writer with external effects stubbed. It tests
+the valid limitation, version/observation/interaction failures, old-failure
+immutability, fresh qualification, prefix reuse and automatic/operator boundary.
+These software checks do not constitute physical acceptance.
