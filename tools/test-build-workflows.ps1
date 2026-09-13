@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'test-release-evidence.ps1')
 & (Join-Path $PSScriptRoot 'test-release-readiness-report.ps1')
 & (Join-Path $PSScriptRoot 'test-release-agent-continuation.ps1')
+& (Join-Path $PSScriptRoot 'test-release-phases.ps1')
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) (

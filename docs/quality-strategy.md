@@ -841,6 +841,31 @@ audit before selecting the next group. Agent/mode and notification workload
 runs use the same atomic attempt/progress contract; a diagnostic retry remains
 diagnostic and cannot be promoted to acceptance.
 
+### Automatic work followed by operator actions
+
+When the maintainer requests two segments, use `verify-release-pc.ps1 -Phase
+automatic` with the retained C2 HAP. The split registry runs QH and all automatic
+checks first, including the six automatic Mosh scenarios. It leaves only
+`mosh-operator-lock-recovery` and `mosh-operator-lid-recovery` pending, with zero
+attempts. Every executed scenario finishes its owned cleanup before the tool
+returns `awaiting-operator`; neither complete-matrix flag may claim Pass.
+Default `-Phase full` retains its existing order.
+
+After the maintainer confirms readiness, use `-Phase operator -Resume` with the
+same evidence directory and invocation arguments. The entry revalidates the
+candidate, clean harness, fixed stage order and passing checkpoints, including
+the shared Mosh formal evidence and cleanup validator. Every automatic stage
+must have passed; only the retained candidate may be marked reused. The two
+operator scenarios create their own fixtures and issue real-time prompts only
+when ready. Completed automatic work and model requests are not repeated.
+
+The same device, Test Kit/control environment and controlled server preconditions
+must remain valid across the pause. Audit them before resuming; apply the R1–R4
+table if they changed. Split mode cannot inherit an Agent continuation report or
+resume a full-mode report. C3 completes only after all 27 registered stages pass
+(including the retained candidate checkpoint). A pending operator suffix is not
+a failure, a diagnostic result or permission to skip the two actions.
+
 ### What “restart from the beginning” means
 
 Use these four scopes explicitly in reports and decisions:

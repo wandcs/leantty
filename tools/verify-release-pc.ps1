@@ -7,6 +7,8 @@
   replace production/review artifact preparation. Every stage writes to its own
   evidence directory. -Resume reuses only passing checkpoints after exact
   candidate, harness, target and invocation identity validation.
+  -Phase automatic runs all unattended stages and leaves the two real operator
+  scenarios pending. -Phase operator -Resume executes only that validated suffix.
 #>
 [CmdletBinding()]
 param(
@@ -19,6 +21,7 @@ param(
     [ValidateRange(0, 65535)][int]$AgentPort = 0,
     [Parameter(Mandatory = $true)][string]$MoshAlternateWifiSsid,
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
+    [ValidateSet('full', 'automatic', 'operator')][string]$Phase = 'full',
     [switch]$Resume,
     [string]$AgentContinuationPath = ''
 )
@@ -29,6 +32,8 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 . (Join-Path $PSScriptRoot 'release-agent-continuation.ps1')
 if ($Resume -and $AgentContinuationPath) { throw 'Use a new report for Agent continuation, not -Resume' }
+if ($Phase -eq 'operator' -and -not $Resume) { throw 'Operator phase requires -Resume from completed automatic work' }
+if ($Phase -ne 'full' -and $AgentContinuationPath) { throw 'Split phases cannot inherit another harness report' }
 
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 $repoFullPath = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
@@ -44,7 +49,7 @@ $normalizedCandidateBasePath = if ([string]::IsNullOrWhiteSpace($CandidateBasePa
 }
 $reportPath = Join-Path $EvidenceDirectory 'release-report.json'
 $stageRoot = Join-Path $EvidenceDirectory 'stages'
-$definitions = @(Get-LeanTTYReleaseVerificationStages)
+$definitions = @(Get-LeanTTYReleaseVerificationStages -SplitOperator:($Phase -ne 'full'))
 $definitionNames = @($definitions | ForEach-Object { $_.name })
 
 $sourceStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
@@ -162,7 +167,18 @@ function Assert-PassingReleaseCheckpoints {
                 throw "Passing $($definition.kind) no longer matches the candidate and harness identities"
             }
         }
+        if ($definition.kind -eq 'mosh-scenario') {
+            Assert-ReleaseMoshCheckpoint -Definition $definition -Path ([string]$stage.resultPath) `
+                -ResolvedCandidate $ResolvedCandidate
+        }
     }
+}
+
+function Assert-ReleaseMoshCheckpoint {
+    param($Definition, [string]$Path, $ResolvedCandidate)
+    $null = Assert-LeanTTYMoshScenarioEvidence -Path $Path -Scenario $Definition.scenario `
+        -CandidateSha256 $ResolvedCandidate.sha256 -CandidateCommit $ResolvedCandidate.gitCommit `
+        -CandidateTree $ResolvedCandidate.gitTree -HarnessCommit $harnessCommit -HarnessTree $harnessTree
 }
 
 if ($Resume) {
@@ -178,6 +194,17 @@ if ($Resume) {
         Assert-LeanTTYInheritedReleaseStages -Report $report -Validated $validated
     }
     Assert-PassingReleaseCheckpoints -ExistingReport $report -ResolvedCandidate $candidate
+    if ($Phase -eq 'operator') {
+        for ($index = 0; $index -lt $definitions.Count; $index++) {
+            if ($definitions[$index].scenario -like 'operator-*') { continue }
+            $allowedStatus = if ($definitions[$index].kind -eq 'candidate') {
+                @('passed', 'reused')
+            } else { @('passed') }
+            if ($report.stages[$index].status -notin $allowedStatus) {
+                throw 'Automatic phase is incomplete; no operator action is allowed'
+            }
+        }
+    }
     $report.resumeCount = [int]$report.resumeCount + 1
     $report.result = 'running'
     $report.failure = ''
@@ -418,6 +445,18 @@ function Invoke-AuthoritativeReleaseStage {
             if ($ResumeMatrix) { $arguments['Resume'] = $true }
             & $scriptPath @arguments
         }
+        'mosh-scenario' {
+            $arguments = @{
+                Formal = $true; Scenario = [string]$Definition.scenario
+                Target = $Target; HapPath = [string]$candidate.hapPath
+                CandidateBasePath = $normalizedCandidateBasePath
+                EvidenceDirectory = $StageEvidenceDirectory
+                AlternateWifiSsid = $MoshAlternateWifiSsid
+                PreviousAttemptId = $PreviousAttemptId
+            }
+            Add-OptionalArgument -Arguments $arguments -Name Distribution -Value $Distribution
+            & $scriptPath @arguments
+        }
         'long-task' {
             & $scriptPath -Target $Target -HapPath ([string]$candidate.hapPath) `
                 -CandidateBasePath $normalizedCandidateBasePath `
@@ -451,6 +490,7 @@ try {
         $definition = $definitions[$index]
         $stage = $report.stages[$index]
         if ([string]$stage.status -in @('passed', 'reused')) { continue }
+        if ($Phase -eq 'automatic' -and $definition.scenario -like 'operator-*') { break }
         if ($Resume -and [string]$stage.status -eq 'running') {
             throw "Stage '$($stage.name)' was interrupted without cleanup evidence; audit it before a new run"
         }
@@ -512,6 +552,10 @@ try {
                 if ([bool]$candidate.gitDirty) { throw 'Formal release candidate must be clean' }
                 Set-ReleaseCandidate -ResolvedCandidate $candidate
             }
+            if ($definition.kind -eq 'mosh-scenario') {
+                Assert-ReleaseMoshCheckpoint -Definition $definition -Path ([string]$stage.resultPath) `
+                    -ResolvedCandidate $candidate
+            }
             $summary = Get-LeanTTYReleaseEvidenceSummary `
                 -Path ([string]$stage.resultPath) -StageName ([string]$stage.name)
             $stage.status = 'passed'
@@ -566,9 +610,11 @@ try {
             -Candidate $candidate -Invocation $report.invocation -RepoRoot $repoRoot -Recheck
         Assert-LeanTTYInheritedReleaseStages -Report $report -Validated $validated
     }
-    $report.result = 'passed'
-    $report.registeredStagesPassed = $true
-    $report.completeApplicablePhysicalMatrixClaimed = $true
+    $awaitingOperator = ($Phase -eq 'automatic' -and
+        @($report.stages | Where-Object status -eq 'pending').Count -gt 0)
+    $report.result = if ($awaitingOperator) { 'awaiting-operator' } else { 'passed' }
+    $report.registeredStagesPassed = -not $awaitingOperator
+    $report.completeApplicablePhysicalMatrixClaimed = -not $awaitingOperator
     $cleanupValues = @($report.stages | ForEach-Object { [string]$_.cleanup })
     $report.cleanup = [ordered]@{
         result = $(if ($cleanupValues -contains 'failed' -or
@@ -578,7 +624,7 @@ try {
             } elseif ($cleanupValues -contains 'not-separately-reported') {
                 'passed-with-unreported-stage-cleanup'
             } else { 'passed' })
-        detail = 'all authoritative stages completed their owned cleanup or reported no separate cleanup field'
+        detail = 'executed stages completed their owned cleanup; pending operator stages have not started'
     }
 } catch {
     $caughtError = $_
@@ -608,5 +654,9 @@ if ($null -ne $caughtError) {
     Write-Host "Release report: $($artifacts.reportPath)" -ForegroundColor Yellow
     throw $caughtError
 }
-Write-Host "REGISTERED RELEASE STAGES PASSED: $($artifacts.reportPath)" -ForegroundColor Green
+if ($report.result -eq 'awaiting-operator') {
+    Write-Host "AUTOMATIC RELEASE STAGES COMPLETE; OPERATOR ACTIONS NOT STARTED: $($artifacts.reportPath)" -ForegroundColor Cyan
+} else {
+    Write-Host "REGISTERED RELEASE STAGES PASSED: $($artifacts.reportPath)" -ForegroundColor Green
+}
 Write-Host "Maintainer summary: $($artifacts.summaryPath)" -ForegroundColor Green

@@ -124,6 +124,9 @@ if (-not $DiagnosticHap) {
         -RepoRoot $repoRoot `
         -Candidate $candidate `
         -AllowedHarnessPaths @(
+            'tools/release-tooling.ps1',
+            'tools/verify-mosh-matrix-pc.ps1',
+            'tools/test-release-phases.ps1',
             'AGENTS.md',
             'tools/agent-compatibility-policy.ps1',
             'tools/verify-release-pc.ps1',
