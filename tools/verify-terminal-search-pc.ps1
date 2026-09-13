@@ -69,6 +69,7 @@ if (-not $DiagnosticHap) {
         -RepoRoot $repoRoot `
         -Candidate $candidate `
         -AllowedHarnessPaths @(
+            'tools/verify-host-identity-pc.ps1',
             'tools/release-tooling.ps1',
             'tools/verify-release-pc.ps1',
             'tools/verify-mosh-matrix-pc.ps1',

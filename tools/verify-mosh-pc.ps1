@@ -78,6 +78,7 @@ if ($Formal) {
     }
     $harnessDifferencePaths = @(Assert-LeanTTYCandidateHarnessCompatibility `
         -RepoRoot $repoRoot -Candidate $candidate -AllowedHarnessPaths @(
+            'tools/verify-host-identity-pc.ps1',
             'tools/test-release-phases.ps1',
             'tools/verify-mosh-pc.ps1',
             'tools/test-notification-regression.ps1',

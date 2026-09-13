@@ -865,6 +865,9 @@ try {
             try {
                 Submit-HostIdentityCommand `
                     -Command "ssh-keygen -R [127.0.0.1]:$Port" -Stage 'cleanup-known-host'
+                # Submission precedes the async durable update. Restoration sends
+                # its own input next, so require the owned endpoint to be absent.
+                Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $Port
             } catch { $cleanupFailures.Add('Known-host cleanup failed') }
         }
         if ($DefaultEcdsa -and $ecdsaSlotOwned) {
