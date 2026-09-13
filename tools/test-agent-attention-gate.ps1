@@ -1,6 +1,13 @@
 param([string]$HarnessPath = (Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1'))
 $ErrorActionPreference = 'Stop'
 $ast = [Management.Automation.Language.Parser]::ParseFile($HarnessPath, [ref]$null, [ref]$null)
+$writerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'release-tooling.ps1'), [ref]$null, [ref]$null)
+foreach ($writerName in @('Write-LeanTTYAtomicText', 'Write-LeanTTYAtomicJson')) {
+    $writer = $writerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $writerName
+    }, $true)
+    . ([scriptblock]::Create($writer.Extent.Text))
+}
 foreach ($name in @('Assert-NotificationAndReturn', 'Get-AgentAttentionFailure', 'Hide-AgentNotificationWindow',
         'Start-AgentNotificationAfterHidden', 'Invoke-AgentFocusReadinessProbe', 'Get-AgentNotificationEpisode',
         'Get-AgentNotificationLogs')) {
@@ -12,6 +19,8 @@ foreach ($name in @('Assert-NotificationAndReturn', 'Get-AgentAttentionFailure',
 $testDirectory = Join-Path ([IO.Path]::GetTempPath()) ('leantty-attention-gate-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testDirectory | Out-Null
 try {
+    $EvidenceDirectory = $testDirectory
+    $ownerEvidencePath = Join-Path $EvidenceDirectory 'controlled-notification-owner-evidence.json'
     $capturePath = Join-Path $testDirectory 'qwen-tmux-notification.json'
     @{ childExitCode = 0; output = @{ nativeAttentionSignalObserved = $true } } |
         ConvertTo-Json | Set-Content -LiteralPath $capturePath
@@ -56,6 +65,14 @@ try {
     if ($failure -notmatch '^\[harness\].*outer') {
         throw "Inner-only attention must remain a harness evidence gap, received: $failure"
     }
+    if (-not (Test-Path -LiteralPath $ownerEvidencePath)) {
+        throw 'Failure must retain the actual owner-query and parser input, not a later mixed app tail'
+    }
+    $saved = Get-Content -LiteralPath $ownerEvidencePath -Raw | ConvertFrom-Json
+    if ($saved.query.status -cne 'complete' -or $saved.query.logs -cne '' -or
+        -not $saved.parserInvoked -or $saved.processId -cne '101' -or $saved.episode -ne $null) {
+        throw 'Empty but successful owner query must be preserved exactly as rejected parser input'
+    }
     Write-Host 'Actual notification assertion rejects inner-only attribution.'
     foreach ($case in @(
         @{ count = 1; late = 0; pattern = '^\[harness\].*before minimize' },
@@ -72,7 +89,10 @@ try {
     $script:logs = $validLogs
     $script:returnClicked = $false; $script:returnObserved = $false
     $observation = @{ windowHidden = $true }
+    $priorEvidenceHash = (Get-FileHash -LiteralPath $ownerEvidencePath).Hash
     Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation $observation
+    if ((Get-FileHash -LiteralPath $ownerEvidencePath).Hash -cne $priorEvidenceHash -or
+        $observation.Contains('ownerEvidencePath')) { throw 'Success must not write failure evidence or change notification timing with file IO' }
     if (-not $script:returnClicked -or -not $script:returnObserved -or $observation.outer.afterHiddenCount -ne 1) {
         throw 'Post-hide signal must still require the actual generic-card and return observations'
     }
@@ -97,6 +117,10 @@ try {
     try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
     catch { $failure = $_.Exception.Message }
     if ($failure -cne '[harness] controlled notification query failure') { throw 'Query failure must propagate without a product or notification verdict' }
+    $saved = Get-Content -LiteralPath $ownerEvidencePath -Raw | ConvertFrom-Json
+    if ($saved.query.status -cne 'query-failed' -or $saved.query.logs -ne $null -or $saved.parserInvoked -or $saved.outer -ne $null) {
+        throw 'Query failure must not reuse a prior successful query or claim parser execution'
+    }
     $script:queryFailure = $false
     $ownerNoise = $noise.Replace('/TerminalBridge:', '/AppViewModel:')
     $script:logs = (@($hiddenLog) + @($ownerNoise) * 501 + @($attentionLog, $publishedLog)) -join "`n"
@@ -104,6 +128,11 @@ try {
     try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
     catch { $failure = $_.Exception.Message }
     if ($failure -notmatch '^\[harness\].*snapshot limit') { throw "Saturated owner query must be an explicit evidence gap: $failure" }
+    $saved = Get-Content -LiteralPath $ownerEvidencePath -Raw | ConvertFrom-Json
+    if ($saved.query.status -cne 'snapshot-limit' -or $saved.query.lineCount -ne 500 -or
+        $saved.parserInvoked -or @($saved.query.logs -split '\r?\n').Count -ne 500) {
+        throw 'Snapshot-limit failure must retain the query before rejecting it, without fabricating parser input'
+    }
     $script:logs = $validLogs
     foreach ($invalidLogs in @(
         '', $attentionLog, $publishedLog,
@@ -130,6 +159,10 @@ try {
         try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
         catch { $failure = $_.Exception.Message }
         if ($failure -notmatch '^\[unknown\].*device episode') { throw "Invalid episode qualified: $failure" }
+        $saved = Get-Content -LiteralPath $ownerEvidencePath -Raw | ConvertFrom-Json
+        if (-not $saved.parserInvoked -or $saved.episode -ne $null -or $saved.query.status -cne 'complete') {
+            throw 'Rejected ownership/order must retain the actual parser verdict without qualifying the episode'
+        }
     }
     $script:logs = $validLogs
     foreach ($missing in @('before-minimize', 'after-hidden', 'windowHidden', 'afterMinimizeStartCount')) {
@@ -152,6 +185,10 @@ try {
         try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
         catch { $failure = $_.Exception.Message }
         if ($failure -ne '[harness] Expected source Pane return not observed') { throw "Wrong return qualified: $failure" }
+        $saved = Get-Content -LiteralPath $ownerEvidencePath -Raw | ConvertFrom-Json
+        if ($saved.step -cne 'notification-return' -or $saved.episode.paneId -cne 'pane-12-1') {
+            throw 'Return failure must preserve the earlier successful episode and the correct failed boundary'
+        }
     }
     $script:returnPane = 'pane-12-1'
     $script:cardText = 'LeanTTY, qwen A terminal needs your attention.'
@@ -159,6 +196,20 @@ try {
     try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation @{ windowHidden=$true } }
     catch { $failure = $_.Exception.Message }
     if ($failure -notmatch '^\[privacy\]') { throw 'A valid episode cannot bypass notification privacy' }
+    $saved = Get-Content -LiteralPath $ownerEvidencePath -Raw | ConvertFrom-Json
+    if ($saved.step -cne 'notification-card' -or $saved.episode.paneId -cne 'pane-12-1') {
+        throw 'Card failure must retain the successful earlier episode and the distinct failed boundary'
+    }
+    $realWriter = ${function:Write-LeanTTYAtomicJson}
+    function Write-LeanTTYAtomicJson { throw 'controlled disk failure' }
+    $writeFailureObservation = @{windowHidden=$true}
+    $failure = ''
+    try { Assert-NotificationAndReturn -Stage controlled -CaptureResultPath $capturePath -Observation $writeFailureObservation -WarningAction Stop }
+    catch { $failure = $_.Exception.Message }
+    if ($failure -notmatch '^\[privacy\]' -or -not $writeFailureObservation.ownerEvidenceWriteFailed) {
+        throw 'Evidence write failure must stay observable and preserve the original failure for scenario cleanup'
+    }
+    Set-Item -LiteralPath Function:Write-LeanTTYAtomicJson -Value $realWriter
     $script:cardText = 'LeanTTY, A terminal needs your attention.'
     $script:outer.afterMinimizeStartCount = 0
     try {

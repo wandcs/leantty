@@ -749,14 +749,22 @@ function Get-AgentAttentionFailure {
 }
 
 function Get-AgentNotificationLogs {
+    param([System.Collections.IDictionary]$Snapshot = @{})
+    $Snapshot.Clear()
+    $Snapshot.status = 'query-failed'
+    $Snapshot.logs = $null
     # Filter at the device, before the tail limit: terminal write ACKs must not
     # displace the earlier visibility event from the notification episode.
     $logs = Invoke-HdcChecked -Hdc $hdc -Target $Target -Arguments @(
         'shell', "hilog -z 500 -t app -P $appProcessId -T EntryAbility,AppViewModel,BackgroundBellNotification"
     ) -Operation 'Read Agent notification owner logs'
-    if (@($logs -split '\r?\n' | Where-Object { $_ }).Count -ge 500) {
+    $Snapshot.logs = [string]$logs
+    $Snapshot.lineCount = @($logs -split '\r?\n' | Where-Object { $_ }).Count
+    if ($Snapshot.lineCount -ge 500) {
+        $Snapshot.status = 'snapshot-limit'
         throw '[harness] Agent notification owner logs reached the snapshot limit; episode completeness is unproved'
     }
+    $Snapshot.status = 'complete'
     return $logs
 }
 
@@ -809,63 +817,98 @@ function Assert-NotificationAndReturn {
     $outer = $null
     $captureName = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
     $liveProbePath = Join-Path (Split-Path $CaptureResultPath -Parent) "$captureName-live.json"
-    do {
-        $logs = Get-AgentNotificationLogs
-        $outer = Get-AgentOuterAttention -CaptureResultPath $CaptureResultPath
-        $Observation.outer = $outer
-        if ($null -ne $outer -and $outer.attentionCount -gt 0 -and $null -eq $agentSignalObservedAt) {
-            $agentSignalObservedAt = [DateTimeOffset]::UtcNow
-        }
-        $episode = Get-AgentNotificationEpisode -Logs $logs -ProcessId $appProcessId
-        if ($Observation.windowHidden -eq $true -and $null -ne $episode -and
-            $null -ne $outer -and $null -ne $outer.checkpoints.'before-minimize' -and
-            $null -ne $outer.checkpoints.'after-hidden' -and $outer.afterMinimizeStartCount -gt 0) {
-            $Observation.deviceEpisode = $episode
-            $published = $true
-            break
-        }
-        & wsl.exe --exec bash $wslToolPath probe $wslFixtureDirectory $captureName 2>$null
-        if (Test-Path -LiteralPath $liveProbePath -PathType Leaf) {
-            $liveProbe = Get-Content -LiteralPath $liveProbePath -Raw |
-                ConvertFrom-Json -Depth 30
-            $innerObserved = [bool]$liveProbe.output.nativeAttentionSignalObserved
-            $innerAvailable = $true
-            if ($liveProbe.output.nativeAttentionSignalObserved -and
-                $null -eq $agentSignalObservedAt) {
+    $ownerQuery = @{}
+    $episode = $null
+    $parserInvoked = $false
+    $completed = $false
+    $step = 'owner-query'
+    try {
+        do {
+            $step = 'owner-query'
+            $parserInvoked = $false
+            $episode = $null
+            $outer = $null
+            $logs = Get-AgentNotificationLogs -Snapshot $ownerQuery
+            $step = 'outer-observation'
+            $outer = Get-AgentOuterAttention -CaptureResultPath $CaptureResultPath
+            $Observation.outer = $outer
+            if ($null -ne $outer -and $outer.attentionCount -gt 0 -and $null -eq $agentSignalObservedAt) {
                 $agentSignalObservedAt = [DateTimeOffset]::UtcNow
             }
-        }
-        if ($null -ne $agentSignalObservedAt -and
-            ([DateTimeOffset]::UtcNow - $agentSignalObservedAt).TotalSeconds -ge 10) {
+            $step = 'episode-parser'
+            $parserInvoked = $true
+            $episode = Get-AgentNotificationEpisode -Logs $logs -ProcessId $appProcessId
+            if ($Observation.windowHidden -eq $true -and $null -ne $episode -and
+                $null -ne $outer -and $null -ne $outer.checkpoints.'before-minimize' -and
+                $null -ne $outer.checkpoints.'after-hidden' -and $outer.afterMinimizeStartCount -gt 0) {
+                $Observation.deviceEpisode = $episode
+                $published = $true
+                break
+            }
+            & wsl.exe --exec bash $wslToolPath probe $wslFixtureDirectory $captureName 2>$null
+            if (Test-Path -LiteralPath $liveProbePath -PathType Leaf) {
+                $liveProbe = Get-Content -LiteralPath $liveProbePath -Raw |
+                    ConvertFrom-Json -Depth 30
+                $innerObserved = [bool]$liveProbe.output.nativeAttentionSignalObserved
+                $innerAvailable = $true
+                if ($liveProbe.output.nativeAttentionSignalObserved -and
+                    $null -eq $agentSignalObservedAt) {
+                    $agentSignalObservedAt = [DateTimeOffset]::UtcNow
+                }
+            }
+            if ($null -ne $agentSignalObservedAt -and
+                ([DateTimeOffset]::UtcNow - $agentSignalObservedAt).TotalSeconds -ge 10) {
+                throw (Get-AgentAttentionFailure -Outer $outer -InnerObserved $innerObserved -InnerAvailable $innerAvailable)
+            }
+            if (Test-Path -LiteralPath $CaptureResultPath -PathType Leaf) {
+                $earlyCapture = Get-Content -LiteralPath $CaptureResultPath -Raw |
+                    ConvertFrom-Json -Depth 30
+                throw (Get-AgentAttentionFailure -Outer $outer `
+                    -InnerObserved ([bool]$earlyCapture.output.nativeAttentionSignalObserved) `
+                    -ChildExitCode ([int]$earlyCapture.childExitCode))
+            }
+            Start-Sleep -Milliseconds 500
+        } while ($watch.Elapsed.TotalSeconds -lt 180)
+        if (-not $published) {
             throw (Get-AgentAttentionFailure -Outer $outer -InnerObserved $innerObserved -InnerAvailable $innerAvailable)
         }
-        if (Test-Path -LiteralPath $CaptureResultPath -PathType Leaf) {
-            $earlyCapture = Get-Content -LiteralPath $CaptureResultPath -Raw |
-                ConvertFrom-Json -Depth 30
-            throw (Get-AgentAttentionFailure -Outer $outer `
-                -InnerObserved ([bool]$earlyCapture.output.nativeAttentionSignalObserved) `
-                -ChildExitCode ([int]$earlyCapture.childExitCode))
+        $step = 'notification-card'
+        $panel = Open-NotificationPanel -Stage $Stage
+        $cards = @(Get-LeanTTYLayoutNodes -Node $panel | Where-Object {
+            [string]$_.attributes.text -match '^LeanTTY, .*(?:A terminal needs your attention\.|终端有新提示)$'
+        })
+        if ($cards.Count -ne 1) {
+            throw "[product] Expected one generic Agent notification, found $($cards.Count)"
         }
-        Start-Sleep -Milliseconds 500
-    } while ($watch.Elapsed.TotalSeconds -lt 180)
-    if (-not $published) {
-        throw (Get-AgentAttentionFailure -Outer $outer -InnerObserved $innerObserved -InnerAvailable $innerAvailable)
+        if ([string]$cards[0].attributes.text -match '\b(?:agent|codex|opencode|pi|qwen|host|ssh|tmux)\b|@') {
+            throw '[privacy] Agent notification exposed source or workload information'
+        }
+        $step = 'notification-return'
+        Click-Node -Node $cards[0] -Description 'Return to native Agent notification source'
+        $script:panelOpen = $false
+        $returnPattern = 'Background BEL return applied: paneId=' + [regex]::Escape($episode.paneId) + '(?=[\s,]|$)'
+        Wait-AppLog -Pattern $returnPattern -TimeoutSeconds 20 |
+            Out-Null
+        $completed = $true
+    } finally {
+        if (-not $completed) {
+            # Keep the exact last query, not a later mixed tail. Write only after
+            # the verdict so evidence IO cannot perturb the notification wait.
+            $path = Join-Path $EvidenceDirectory "$Stage-notification-owner-evidence.json"
+            try {
+                Write-LeanTTYAtomicJson -Path $path -Depth 12 -Value ([ordered]@{
+                    schemaVersion = 1; stage = $Stage; processId = [string]$appProcessId
+                    step = $step; query = $ownerQuery; parserInvoked = $parserInvoked
+                    episode = $episode; windowHidden = $Observation.windowHidden
+                    outer = $outer
+                })
+                $Observation.ownerEvidencePath = $path
+            } catch {
+                $Observation.ownerEvidenceWriteFailed = $true
+                Write-Warning 'Unable to retain Agent notification owner evidence; original failure preserved.' -WarningAction Continue
+            }
+        }
     }
-    $panel = Open-NotificationPanel -Stage $Stage
-    $cards = @(Get-LeanTTYLayoutNodes -Node $panel | Where-Object {
-        [string]$_.attributes.text -match '^LeanTTY, .*(?:A terminal needs your attention\.|终端有新提示)$'
-    })
-    if ($cards.Count -ne 1) {
-        throw "[product] Expected one generic Agent notification, found $($cards.Count)"
-    }
-    if ([string]$cards[0].attributes.text -match '\b(?:agent|codex|opencode|pi|qwen|host|ssh|tmux)\b|@') {
-        throw '[privacy] Agent notification exposed source or workload information'
-    }
-    Click-Node -Node $cards[0] -Description 'Return to native Agent notification source'
-    $script:panelOpen = $false
-    $returnPattern = 'Background BEL return applied: paneId=' + [regex]::Escape($episode.paneId) + '(?=[\s,]|$)'
-    Wait-AppLog -Pattern $returnPattern -TimeoutSeconds 20 |
-        Out-Null
 }
 
 function Wait-AgentTuiReady {
