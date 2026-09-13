@@ -161,58 +161,9 @@ function Assert-MoshScenarioEvidence {
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Scenario
     )
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Mosh scenario evidence is missing: $Path"
-    }
-    $evidence = [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) |
-        ConvertFrom-Json -Depth 20
-    if ([int]$evidence.schemaVersion -lt 2 -or
-        [string]$evidence.gate -ne '1.6-mosh-physical-acceptance' -or
-        [string]$evidence.result -ne 'passed' -or
-        -not [bool]$evidence.acceptanceEligible -or
-        [string]$evidence.verificationMode -ne 'device-behavior-acceptance' -or
-        [string]$evidence.scenario -ne $Scenario) {
-        throw "Mosh scenario did not produce formal passing evidence: $Scenario"
-    }
-    if ([string]$evidence.candidate.hapSha256 -ne $candidateSha256 -or
-        [string]$evidence.candidate.gitCommit -ne $candidateCommit -or
-        [string]$evidence.candidate.gitTree -ne $candidateTree -or
-        [bool]$evidence.candidate.gitDirty) {
-        throw "Mosh candidate identity changed: $Scenario"
-    }
-    if ([string]$evidence.harness.gitCommit -ne $harnessCommit -or
-        [string]$evidence.harness.gitTree -ne $harnessTree -or
-        [bool]$evidence.harness.gitDirty) {
-        throw "Mosh harness identity changed: $Scenario"
-    }
-    if ([string]$evidence.cleanup.result -ne 'passed' -or
-        -not [bool]$evidence.cleanup.deviceStateRemoved -or
-        -not [bool]$evidence.cleanup.fixtureProcessesAbsent -or
-        -not [bool]$evidence.cleanup.fixtureReverseMappingRemoved -or
-        -not [bool]$evidence.cleanup.persistentNetworkPreserved -or
-        -not [bool]$evidence.cleanup.temporaryDirectoryRemoved -or
-        -not [bool]$evidence.preferences.unchanged -or
-        -not [bool]$evidence.checks.secretPatternAbsent -or
-        -not [bool]$evidence.checks.bootstrapTextAbsentFromTerminal -or
-        [string]$evidence.lastProvenBoundary -ne 'cleanup-complete') {
-        throw "Mosh cleanup, Preferences or secret audit did not pass: $Scenario"
-    }
-    if ($Scenario -eq 'wifi-network-switch' -and
-        -not [bool]$evidence.networkSwitchComparison.originalNetworkRestored) {
-        throw 'Mosh network-switch scenario did not restore the original Wi-Fi network'
-    }
-    if ($Scenario -eq 'runtime-reclaim') {
-        if ($null -eq $evidence.runtimeReclaim) { throw 'Runtime-reclaim contract is missing from formal evidence' }
-        Assert-LeanTTYRuntimeReclaimEvidence -Evidence $evidence.runtimeReclaim
-        foreach ($field in @('exercised', 'runtimeReclaimed', 'workspaceWarningObserved',
-            'remoteContentAbsent', 'sessionNotRestored')) {
-            if ($evidence.processRecovery.$field -isnot [bool] -or -not $evidence.processRecovery.$field) {
-                throw "Runtime-reclaim local recovery assertion failed: $field"
-            }
-        }
-    }
-    return $evidence
+    Assert-LeanTTYMoshScenarioEvidence -Path $Path -Scenario $Scenario `
+        -CandidateSha256 $candidateSha256 -CandidateCommit $candidateCommit `
+        -CandidateTree $candidateTree -HarnessCommit $harnessCommit -HarnessTree $harnessTree
 }
 
 if ($Resume) {

@@ -2699,7 +2699,7 @@ Assert-True (Test-Path -LiteralPath $moshMatrixPath -PathType Leaf) (
 $moshMatrix = Get-Content -LiteralPath $moshMatrixPath -Raw
 foreach ($formalMoshContract in @(
     'Get-LeanTTYMoshFormalScenarios',
-    'Assert-LeanTTYRuntimeReclaimEvidence -Evidence $evidence.runtimeReclaim',
+    'Assert-LeanTTYMoshScenarioEvidence -Path $Path -Scenario $Scenario',
     'Formal = $true',
     'acceptanceEligible = ($matrixResult',
     'Assert-MoshScenarioEvidence',
@@ -2717,6 +2717,11 @@ Assert-True (
     -not $moshMatrix.Contains('Start-Job') -and
     -not $moshMatrix.Contains('ForEach-Object -Parallel')
 ) 'Formal Mosh matrix must control the physical PC serially'
+
+$releaseTooling = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-tooling.ps1') -Raw
+Assert-True ($releaseTooling.Contains('Assert-LeanTTYRuntimeReclaimEvidence -Evidence $evidence.runtimeReclaim')) (
+    'Shared formal Mosh evidence validator omitted the runtime-reclaim contract'
+)
 
 $sshMatrixPath = Join-Path $PSScriptRoot 'verify-ssh-matrix-pc.ps1'
 Assert-True (Test-Path -LiteralPath $sshMatrixPath -PathType Leaf) (
