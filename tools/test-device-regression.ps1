@@ -2845,6 +2845,48 @@ Assert-True (
     -not $hostIdentityVerifier.Contains('sha256sum $Path')
 ) 'Host Identity verifier lacks reversible product-path preservation for an existing id_ed25519'
 
+# Execute the owning cleanup block, not a second implementation of its ordering.
+& {
+    $ast = [Management.Automation.Language.Parser]::ParseInput($hostIdentityVerifier, [ref]$null, [ref]$null)
+    $block = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text -ceq '$mappingActive' -and
+        $node.Extent.Text.Contains("-Stage 'cleanup-known-host'")
+    }, $true)
+    Assert-True ($null -ne $block) 'Missing Host Identity known-host cleanup owner'
+    $cleanup = [scriptblock]::Create($block.Extent.Text)
+    $hdc='fixture'; $Target='fixture'; $Port=32123
+    foreach ($mode in @('delayed', 'wait-failed', 'not-owned')) {
+        $probe=@{submitted=0;waited=0;pending=$false}
+        $mappingActive=($mode -ne 'not-owned')
+        $cleanupFailures=[Collections.Generic.List[string]]::new()
+        function Submit-HostIdentityCommand {
+            param($Command,$Stage)
+            Assert-True ($Command -ceq 'ssh-keygen -R [127.0.0.1]:32123' -and $Stage -ceq 'cleanup-known-host') 'Cleanup expanded beyond the owned endpoint'
+            $probe.submitted++; $probe.pending=$true
+        }
+        function Wait-LeanTTYDeviceKnownHostAbsent {
+            param($Hdc,$Target,$Port)
+            Assert-True ($probe.submitted -eq 1 -and $probe.pending -and $Port -eq 32123) 'Known-host wait lost its submitted-command boundary'
+            $probe.waited++
+            if($mode -eq 'wait-failed'){throw 'injected durable removal failure'}
+            $probe.pending=$false
+        }
+        & $cleanup
+        if($mode -eq 'not-owned') {
+            Assert-True ($probe.submitted -eq 0 -and $probe.waited -eq 0) 'Unowned endpoint was touched'
+        } else {
+            Assert-True ($probe.submitted -eq 1 -and $probe.waited -eq 1) 'Host cleanup returned after submission without waiting for durable removal'
+            if($mode -eq 'delayed') {
+                Assert-True (-not $probe.pending -and $cleanupFailures.Count -eq 0) 'Key restoration can overtake known-host cleanup'
+            } else {
+                Assert-True ($cleanupFailures.Count -eq 1 -and $cleanupFailures[0] -eq 'Known-host cleanup failed') 'Unproved removal was silently accepted'
+            }
+        }
+    }
+    Write-Host 'Host Identity cleanup ordering passed: real owner; delayed, failed and unowned cases.'
+}
+
 $deviceRegressionText = Get-Content -LiteralPath (
     Join-Path $PSScriptRoot 'device-regression.ps1'
 ) -Raw
