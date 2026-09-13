@@ -40,6 +40,10 @@
 
 ### Fixed
 
+- Keep host-key trust and removal responsive with serialized asynchronous
+  persistence, immediate pending feedback and generation-scoped cleanup. Accept
+  trust only after durable storage and projection succeed; cancelled or destroyed
+  Sessions cannot resume from a late storage result.
 - Exclude terminal-content performance probes from production builds while
   retaining bounded maintainer diagnostics in debug/test builds.
 - Preserve the latest SSH/Mosh output pause state when the native consumer is

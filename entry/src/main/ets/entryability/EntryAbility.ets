@@ -146,11 +146,9 @@ export default class EntryAbility extends UIAbility {
 
   onBackground(): void {
     AppStorage.setOrCreate('mainWindowVisible', false)
-    try {
-      DurableStateManager.collectGarbageOnce()
-    } catch (e) {
-      logger.warn('Deferred durable garbage collection failed: ' + e)
-    }
+    DurableStateManager.collectGarbageOnce().catch(() => {
+      logger.warn('Deferred durable garbage collection failed')
+    })
     logger.info('Ability onBackground');
   }
 

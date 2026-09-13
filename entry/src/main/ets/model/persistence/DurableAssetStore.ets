@@ -1,5 +1,6 @@
 import { asset } from '@kit.AssetStoreKit'
 import { BusinessError } from '@ohos.base'
+import { Logger } from '../../common/logger/Logger'
 import {
   DurableAssetFormat,
   DurableAssetManifest
@@ -9,9 +10,52 @@ const NAMESPACE: string = 'leantty.durable.v1'
 const KIND_POINTER: string = 'pointer'
 const KIND_CHUNK: string = 'chunk'
 const QUERY_PAGE_SIZE: number = 40
+const logger: Logger = new Logger('DurableAssetStore')
 
 export class DurableAssetStore {
   private generationSequence: number = 0
+
+  // The caller serializes each path's complete read/modify/write transaction and GC.
+  async writeAsync(path: string, text: string): Promise<void> {
+    this.validatePath(path)
+    let pointer: Uint8Array | null = await this.querySecretAsync(this.pointerAlias(path))
+    let previous: DurableAssetManifest | null = pointer === null ? null :
+      DurableAssetFormat.decodeManifest(pointer)
+    if (previous !== null && previous.path !== path) {
+      throw new Error('Durable asset pointer path mismatch')
+    }
+    let value: Uint8Array = DurableAssetFormat.encodeText(text)
+    let generation: string = this.nextGeneration()
+    let manifest: DurableAssetManifest = DurableAssetFormat.createManifest(path, generation, value)
+    let chunks: Uint8Array[] = DurableAssetFormat.split(value)
+    try {
+      for (let i = 0; i < chunks.length; i++) {
+        await asset.add(this.recordAttributes(this.chunkAlias(path, generation, i),
+          chunks[i], KIND_CHUNK, path, generation))
+      }
+      DurableAssetFormat.validate(manifest, await this.readGenerationAsync(manifest))
+      let encoded: Uint8Array = DurableAssetFormat.encodeManifest(manifest)
+      if (previous === null) {
+        await asset.add(this.recordAttributes(this.pointerAlias(path), encoded, KIND_POINTER, path, ''))
+      } else {
+        let update: asset.AssetMap = new Map<asset.Tag, asset.Value>()
+        update.set(asset.Tag.SECRET, encoded)
+        await asset.update(this.aliasQuery(DurableAssetFormat.encodeText(this.pointerAlias(path))), update)
+      }
+    } catch (e) {
+      this.removeGenerationAsync(path, generation).catch(() => {
+        logger.warn('Durable generation cleanup deferred after failed commit')
+      })
+      throw new Error('Failed to commit durable asset')
+    }
+    if (previous !== null) {
+      // Delete only the immutable predecessor. Never defer a scan using an old
+      // "active generation": it could remove a later writer's committed data.
+      this.removeGenerationAsync(path, previous.generation).catch(() => {
+        logger.warn('Durable old-generation cleanup deferred')
+      })
+    }
+  }
 
   write(path: string, text: string): void {
     this.validatePath(path)
@@ -172,6 +216,11 @@ export class DurableAssetStore {
   }
 
   private addRecord(alias: string, secret: Uint8Array, kind: string, path: string, generation: string): void {
+    asset.addSync(this.recordAttributes(alias, secret, kind, path, generation))
+  }
+
+  private recordAttributes(alias: string, secret: Uint8Array, kind: string,
+    path: string, generation: string): asset.AssetMap {
     let attrs: asset.AssetMap = new Map<asset.Tag, asset.Value>()
     attrs.set(asset.Tag.ALIAS, DurableAssetFormat.encodeText(alias))
     attrs.set(asset.Tag.SECRET, secret)
@@ -184,7 +233,7 @@ export class DurableAssetStore {
     if (generation.length > 0) {
       attrs.set(asset.Tag.DATA_LABEL_CRITICAL_4, DurableAssetFormat.encodeText(generation))
     }
-    asset.addSync(attrs)
+    return attrs
   }
 
   private querySecret(alias: string): Uint8Array | null {
@@ -386,6 +435,22 @@ export class DurableAssetStore {
         this.requireTextAttribute(attrs, asset.Tag.DATA_LABEL_CRITICAL_2) === KIND_CHUNK &&
         this.requireTextAttribute(attrs, asset.Tag.DATA_LABEL_CRITICAL_4) === generation) {
         this.removeAlias(aliases[i])
+      }
+    }
+  }
+
+  private async removeGenerationAsync(path: string, generation: string): Promise<void> {
+    let query: asset.AssetMap = new Map<asset.Tag, asset.Value>()
+    query.set(asset.Tag.DATA_LABEL_CRITICAL_1, DurableAssetFormat.encodeText(NAMESPACE))
+    query.set(asset.Tag.DATA_LABEL_CRITICAL_2, DurableAssetFormat.encodeText(KIND_CHUNK))
+    query.set(asset.Tag.DATA_LABEL_CRITICAL_3, DurableAssetFormat.encodeText(path))
+    query.set(asset.Tag.DATA_LABEL_CRITICAL_4, DurableAssetFormat.encodeText(generation))
+    query.set(asset.Tag.REQUIRE_ATTR_ENCRYPTED, true)
+    try {
+      await asset.remove(query)
+    } catch (e) {
+      if ((e as BusinessError).code !== asset.ErrorCode.NOT_FOUND) {
+        throw new Error('Failed to remove durable generation')
       }
     }
   }

@@ -127,7 +127,7 @@ export interface KeyCommandContext {
 }
 
 export class KeyCommandService {
-  static execute(result: KeyCommandResult, ctx: KeyCommandContext): void {
+  static async execute(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
     if (result.errorMessage.length > 0) {
       ctx.writeError(result.errorMessage +
         (result.errorMessage.startsWith('Usage: ') ? '' : '\r\nTry: help'))
@@ -157,11 +157,11 @@ export class KeyCommandService {
       return
     }
     if (result.kind === KeyCommandKind.HOST_KEY_FIND) {
-      KeyCommandService.executeHostKeyFind(result, ctx)
+      await KeyCommandService.executeHostKeyFind(result, ctx)
       return
     }
     if (result.kind === KeyCommandKind.HOST_KEY_REMOVE) {
-      KeyCommandService.executeHostKeyRemove(result, ctx)
+      await KeyCommandService.executeHostKeyRemove(result, ctx)
       return
     }
     if (result.kind === KeyCommandKind.KEYRM) { KeyCommandService.executeKeyrm(result, ctx); return }
@@ -309,10 +309,11 @@ export class KeyCommandService {
     }, () => { ctx.writeOutput(LocalCommandOutput.prompt()) })
   }
 
-  private static executeHostKeyRemove(result: KeyCommandResult, ctx: KeyCommandContext): void {
+  private static async executeHostKeyRemove(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
+    ctx.writeOutput(LocalCommandOutput.status('Updating', 'known_hosts...') + '\r\n')
     try {
       let removal: KnownHostRemovalResult =
-        KnownHostsManager.remove(ctx.context, result.sshHost, result.sshPort)
+        await KnownHostsManager.remove(ctx.context, result.sshHost, result.sshPort)
       if (removal.removed === 0) {
         ctx.writeOutput('\r\nNo host key found for ' + KeyCommandService.safeText(removal.target) +
           '.\r\n' + LocalCommandOutput.prompt())
@@ -323,14 +324,14 @@ export class KeyCommandService {
         ' host key ' + noun + ' for ' + KeyCommandService.safeText(removal.target) + '.') +
         '\r\n  Reconnect to verify and trust the new host key.\r\n' + LocalCommandOutput.prompt())
     } catch (e) {
-      logger.warn('Failed to remove host key: ' + e)
+      logger.warn('Failed to remove host key')
       ctx.writeError('The host key could not be removed.\r\nCheck the Host target and try again.')
     }
   }
 
-  private static executeHostKeyFind(result: KeyCommandResult, ctx: KeyCommandContext): void {
+  private static async executeHostKeyFind(result: KeyCommandResult, ctx: KeyCommandContext): Promise<void> {
     try {
-      let query: KnownHostQueryResult = KnownHostsManager.find(result.sshHost, result.sshPort)
+      let query: KnownHostQueryResult = await KnownHostsManager.find(result.sshHost, result.sshPort)
       if (query.found === 0) {
         ctx.writeOutput('\r\nNo host key found for ' + KeyCommandService.safeText(query.target) +
           '.\r\n' + LocalCommandOutput.prompt())
@@ -339,7 +340,7 @@ export class KeyCommandService {
       ctx.writeOutput('\r\n' + KeyCommandService.safeMultilineText(query.output) +
         LocalCommandOutput.prompt())
     } catch (e) {
-      logger.warn('Failed to find host key: ' + e)
+      logger.warn('Failed to find host key')
       ctx.writeError('The host key could not be read.\r\nCheck the Host target and try again.')
     }
   }
