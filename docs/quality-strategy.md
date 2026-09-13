@@ -320,6 +320,7 @@ can observe the result. Each failure must name the damaged responsibility.
 | --- | --- | --- |
 | `check-public-source.ps1` | `policy` | Public-tree secret, generated-file and prohibited-artifact policy |
 | `test-mosh-client.cjs` | `arkts` | Current MoshClient admission/close and SessionViewModel input/error contracts with a substituted native boundary; host-only evidence, not ArkTS compilation or device scheduling |
+| `test-durable-trust.cjs` | `arkts` | Actual async trust owners with a controlled Asset Store: serialized read/modify/write, integrity, failures, exact-generation cleanup, background GC and stale decisions; host-only, not platform latency or visible UI evidence |
 | `check-ssh-transport-flow.ps1` | `ssh-flow` | One generated N-API transport/control event schema across Rust typings and ArkTS, including removal of the retired split callbacks |
 | `check-keygen-async-flow.ps1` | `ssh-flow` | Cross-language asynchronous key-generation contract: blocking Rust work is isolated and the generated ArkTS API remains a Promise that callers await |
 | `test-terminal-policy.mjs` | `web` | Locked/generated Web assets, terminal policy behavior and necessary Web/ArkTS platform or security boundaries; product-private ArkTS control flow belongs in ArkTS or physical behavior tests |

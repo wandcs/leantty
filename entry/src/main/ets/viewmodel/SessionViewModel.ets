@@ -122,6 +122,8 @@ export class SessionViewModel {
   private commandLine: LocalCommandLine = new LocalCommandLine()
   private passwordBuffer: string = ''
   private hostKeyBuffer: string = ''
+  private hostKeyDecisionGeneration: number = 0
+  private knownHostsCommandPending: boolean = false
   private knownHostsPath: string = ''
   private commandBarVm: CommandBarViewModel = new CommandBarViewModel()
   private completionEngine: LocalCompletionEngine = new LocalCompletionEngine()
@@ -459,6 +461,7 @@ export class SessionViewModel {
   }
 
   async disconnect(): Promise<void> {
+    this.hostKeyDecisionGeneration++
     if (this.transferLifecycle.isActive()) {
       this.requestFileTransferCancellation()
       if (this.transferCompletion !== null) {
@@ -504,6 +507,7 @@ export class SessionViewModel {
   }
 
   async reconnect(): Promise<void> {
+    this.hostKeyDecisionGeneration++
     let spec: SshConnectionSpec = this.session.getConnectionSpec()
     if (this.connectionProtocol === ConnectionCommandProtocol.MOSH) {
       await this.disconnect()
@@ -596,6 +600,9 @@ export class SessionViewModel {
   }
 
   private setMode(newMode: TerminalMode): void {
+    if (this.mode !== newMode) {
+      this.hostKeyDecisionGeneration++
+    }
     let returningToLocalPrompt: boolean = this.mode !== TerminalMode.IDLE &&
       newMode === TerminalMode.IDLE
     if (newMode !== TerminalMode.IDLE) {
@@ -1371,7 +1378,7 @@ export class SessionViewModel {
   }
 
   private handleIdleInput(data: string): void {
-    if (this.localHelpPending || this.sshEnvironmentCommandPending) {
+    if (this.localHelpPending || this.sshEnvironmentCommandPending || this.knownHostsCommandPending) {
       return
     }
     let actions: TerminalInputAction[] = TerminalInputParser.parse(data, true)
@@ -1556,7 +1563,7 @@ export class SessionViewModel {
     }
   }
 
-  private submitHostKeyDecision(): void {
+  private async submitHostKeyDecision(): Promise<void> {
     if (this.mode !== TerminalMode.HOST_KEY_INPUT) {
       return
     }
@@ -1589,11 +1596,18 @@ export class SessionViewModel {
         }
         return
       }
+      // Stop accepting answers while storage yields, but keep Ctrl-C available.
+      this.setMode(TerminalMode.CONNECTING)
+      let decisionGeneration: number = this.hostKeyDecisionGeneration
+      this.writeTerminal(LocalCommandOutput.status('Saving', 'host key...') + '\r\n')
       try {
-        DurableStateManager.commitKnownHostLine(this.context, transferClient !== null ?
+        await DurableStateManager.commitKnownHostLine(this.context, transferClient !== null ?
           transferClient.getPendingKnownHostLine() : (moshClient !== null ?
             moshClient.getPendingKnownHostLine() : this.sshClient.getPendingKnownHostLine()))
       } catch (e) {
+        if (decisionGeneration !== this.hostKeyDecisionGeneration) {
+          return
+        }
         if (transferClient !== null) {
           this.transferControlFailureCode = 'HOST_KEY_ERROR'
           transferClient.verifyHostKey(false)
@@ -1604,8 +1618,13 @@ export class SessionViewModel {
             MoshErrorCode.INTERNAL, 'Host key could not be retained', '', 'client'))
         } else {
           this.sshClient.verifyHostKey(false)
-          this.onInternalSessionError('Host key could not be retained: ' + e)
+          this.onInternalSessionError('Host key could not be retained')
         }
+        return
+      }
+      // Cancel, Pane destruction, error and a later prompt revoke this decision.
+      // Persistence may already have completed; it must never resume an old Session.
+      if (decisionGeneration !== this.hostKeyDecisionGeneration) {
         return
       }
     }
@@ -2418,11 +2437,17 @@ export class SessionViewModel {
     }
   }
 
-  private executeKeyCommand(result: KeyCommandResult): void {
+  private async executeKeyCommand(result: KeyCommandResult): Promise<void> {
     if (this.context === null) {
       this.writeError('Local commands are unavailable in this Pane.',
         'Close and reopen the Pane, then try again.')
       return
+    }
+    let knownHostsCommand: boolean = result.kind === KeyCommandKind.HOST_KEY_REMOVE ||
+      result.kind === KeyCommandKind.HOST_KEY_FIND
+    let boundaryGeneration: number = this.terminalBoundaryGeneration
+    if (knownHostsCommand) {
+      this.knownHostsCommandPending = true
     }
     let ctx: KeyCommandContext = {
       context: this.context,
@@ -2435,8 +2460,16 @@ export class SessionViewModel {
         this.keypushKeyName = keyPath
         this.keypushPublicKey = pubText
       },
-      writeError: (msg: string) => { this.writeError(msg) },
-      writeOutput: (text: string) => { this.writeTerminal(text) },
+      writeError: (msg: string) => {
+        if (!knownHostsCommand || boundaryGeneration === this.terminalBoundaryGeneration) {
+          this.writeError(msg)
+        }
+      },
+      writeOutput: (text: string) => {
+        if (!knownHostsCommand || boundaryGeneration === this.terminalBoundaryGeneration) {
+          this.writeTerminal(text)
+        }
+      },
       beginKeyPassphraseChange: (keyName: string) => { this.beginKeyPassphraseChange(keyName) },
       beginKeyCommentChange: (keyName: string, hasPassphrase: boolean) => {
         this.beginKeyCommentChange(keyName, hasPassphrase)
@@ -2451,7 +2484,13 @@ export class SessionViewModel {
         this.onConfirmKeyDelete(name, fingerprint, onConfirm, onCancel)
       }
     }
-    KeyCommandService.execute(result, ctx)
+    try {
+      await KeyCommandService.execute(result, ctx)
+    } finally {
+      if (knownHostsCommand) {
+        this.knownHostsCommandPending = false
+      }
+    }
   }
 
   private showTopLevelHelp(helpText: string): void {

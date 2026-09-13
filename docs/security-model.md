@@ -133,6 +133,13 @@ answers and never infers authentication method or ownership from prompt text.
   comma-separated host fields.
 - No option may silently disable checking, auto-accept a changed key or replace
   the trust store with a second model.
+- Async trust saving must complete both durable commit and runtime projection
+  before answering the native client. Cancellation or Pane destruction revokes
+  the pending connection continuation, not a trust decision already committed
+  after an explicit `yes`. A later storage result cannot answer another prompt.
+- Concurrent trust/removal operations serialize the full read/modify/write.
+  Background GC cannot run inside an incomplete commit; deferred cleanup names
+  an exact old generation and never deletes a later committed generation.
 - Unknown, `Match` or unsupported directives that could alter the selected
   connection fail before connection or managed Host mutation; their values are
   preserved as source text but never treated as applied configuration.

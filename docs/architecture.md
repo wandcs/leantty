@@ -195,6 +195,19 @@ Session owns the user interaction. An unknown key is not committed until the
 user accepts it and `DurableStateManager.commitKnownHostLine` completes. A
 changed key stops the connection; it is never replaced automatically.
 
+Known-host reads and complete read/modify/write transactions share one queue in
+`DurableStateManager`. Platform storage calls yield through the official async
+Asset Store API; chunk verification and pointer publication still precede file
+projection and acceptance. Background GC joins that queue so it cannot delete
+an in-flight generation. Post-commit cleanup names only the immutable predecessor,
+never every generation other than an old captured "current" value.
+
+While trust is being saved, the Session shows pending feedback and accepts
+Ctrl-C but no further answers. Mode transitions and disconnect invalidate the
+pending decision before any async completion can resume a client. Local
+`ssh-keygen -F/-R` operations also wait for the queue; their output is scoped to
+the original terminal boundary, and new local input waits for completion.
+
 The current Rust session supports password, verified private-key and
 keyboard-interactive authentication, including banners, multiple prompts,
 multiple rounds, `remaining_methods` and `partial_success`. Jump and target

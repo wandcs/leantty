@@ -15,6 +15,7 @@ export class DurableStateManager {
   private static context: common.UIAbilityContext | null = null
   private static legacyMigrationPending: boolean = false
   private static garbageCollectionCompleted: boolean = false
+  private static knownHostsOperation: Promise<void> = Promise.resolve()
 
   static initialize(context: common.UIAbilityContext): void {
     DurableStateManager.context = context
@@ -26,12 +27,15 @@ export class DurableStateManager {
     await DurableStateManager.restoreSshProjection(context)
   }
 
-  static collectGarbageOnce(): void {
-    if (DurableStateManager.garbageCollectionCompleted) {
-      return
-    }
-    DurableStateManager.requireStore().garbageCollect()
-    DurableStateManager.garbageCollectionCompleted = true
+  static collectGarbageOnce(): Promise<void> {
+    // Backgrounding can occur between async chunk writes and pointer publication.
+    // GC must not classify that in-flight generation as abandoned.
+    return DurableStateManager.runKnownHostsOperation(async (): Promise<void> => {
+      if (!DurableStateManager.garbageCollectionCompleted) {
+        DurableStateManager.requireStore().garbageCollect()
+        DurableStateManager.garbageCollectionCompleted = true
+      }
+    })
   }
 
   static isLegacyMigrationPending(): boolean {
@@ -87,28 +91,43 @@ export class DurableStateManager {
       (): void => FileUtils.removeFile(configPath))
   }
 
-  static commitKnownHostLine(context: common.Context, line: string): void {
+  static async commitKnownHostLine(context: common.Context, line: string): Promise<void> {
     if (line.length === 0 || line.length > 8192 || line.includes('\n') || line.includes('\r') ||
       line.trim().split(/\s+/).length < 3) {
       throw new Error('Invalid known_hosts entry')
     }
-    let current: string | null = DurableStateManager.requireStore().read(SSH_KNOWN_HOSTS_PATH)
-    let content: string = current ?? ''
-    if (content.length > 0 && !content.endsWith('\n')) {
-      content += '\n'
-    }
-    content += line + '\n'
-    DurableStateManager.requireStore().write(SSH_KNOWN_HOSTS_PATH, content)
-    FileUtils.writeTextFile(FileUtils.getSshDir(context) + '/known_hosts', content)
+    await DurableStateManager.updateKnownHosts(context, (current: string): string => {
+      let content: string = current
+      if (content.length > 0 && !content.endsWith('\n')) {
+        content += '\n'
+      }
+      return content + line + '\n'
+    })
   }
 
-  static readKnownHosts(): string {
-    return DurableStateManager.requireStore().read(SSH_KNOWN_HOSTS_PATH) ?? ''
+  static readKnownHosts(): Promise<string> {
+    return DurableStateManager.runKnownHostsOperation(async (): Promise<string> => {
+      return await DurableStateManager.requireStore().readAsync(SSH_KNOWN_HOSTS_PATH) ?? ''
+    })
   }
 
-  static commitKnownHostsContent(context: common.Context, content: string): void {
-    DurableStateManager.requireStore().write(SSH_KNOWN_HOSTS_PATH, content)
-    FileUtils.writeTextFile(FileUtils.getSshDir(context) + '/known_hosts', content)
+  static updateKnownHosts(context: common.Context, update: (current: string) => string): Promise<void> {
+    return DurableStateManager.runKnownHostsOperation(async (): Promise<void> => {
+      let store: DurableAssetStore = DurableStateManager.requireStore()
+      let current: string = await store.readAsync(SSH_KNOWN_HOSTS_PATH) ?? ''
+      let content: string = update(current)
+      if (content !== current) {
+        await store.writeAsync(SSH_KNOWN_HOSTS_PATH, content)
+        FileUtils.writeTextFile(FileUtils.getSshDir(context) + '/known_hosts', content)
+      }
+    })
+  }
+
+  private static runKnownHostsOperation<T>(operation: () => Promise<T>): Promise<T> {
+    let result: Promise<T> = DurableStateManager.knownHostsOperation.then(operation)
+    // One failed transaction must not poison subsequent reads, writes or GC.
+    DurableStateManager.knownHostsOperation = result.then(() => {}, () => {})
+    return result
   }
 
   static captureKeyPair(context: common.Context, name: string): void {

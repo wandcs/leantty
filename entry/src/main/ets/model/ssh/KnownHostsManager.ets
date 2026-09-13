@@ -18,21 +18,20 @@ export class KnownHostsManager {
     return port === 22 ? host : '[' + host + ']:' + port.toString()
   }
 
-  static remove(context: common.Context, host: string, port: number): KnownHostRemovalResult {
-    let nativeResult = sshNative.sshRemoveKnownHostEntries(
-      DurableStateManager.readKnownHosts(), host, port)
+  static async remove(context: common.Context, host: string, port: number): Promise<KnownHostRemovalResult> {
     let result: KnownHostRemovalResult = new KnownHostRemovalResult()
     result.target = KnownHostsManager.formatTarget(host, port)
-    result.removed = nativeResult.removed
-    if (result.removed > 0) {
-      DurableStateManager.commitKnownHostsContent(context, nativeResult.content)
-    }
+    await DurableStateManager.updateKnownHosts(context, (current: string): string => {
+      let nativeResult = sshNative.sshRemoveKnownHostEntries(current, host, port)
+      result.removed = nativeResult.removed
+      return result.removed > 0 ? nativeResult.content : current
+    })
     return result
   }
 
-  static find(host: string, port: number): KnownHostQueryResult {
+  static async find(host: string, port: number): Promise<KnownHostQueryResult> {
     let nativeResult = sshNative.sshFindKnownHostEntries(
-      DurableStateManager.readKnownHosts(), host, port)
+      await DurableStateManager.readKnownHosts(), host, port)
     let result: KnownHostQueryResult = new KnownHostQueryResult()
     result.target = KnownHostsManager.formatTarget(host, port)
     result.output = nativeResult.output
