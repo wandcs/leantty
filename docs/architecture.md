@@ -219,8 +219,11 @@ values where supported.
 Native authentication prompts use structured `AuthEvent` records carrying the
 Session generation, layer and round. Interactive Sessions and file transfers
 share a structured `ControlEvent` for connection state, host-key decisions,
-layered failures and bounded output metrics. PTY bytes, close state and safe
-diagnostics use `TransportEvent`. `SshClient` validates those native records and
+layered failures and bounded output metrics. A terminal phase failure carries its
+safe diagnostic status/reason in that same control event, so `SshClient` emits
+the diagnostic before ending the Session without relying on cross-queue order.
+PTY bytes, close state and nonterminal diagnostics use `TransportEvent`.
+`SshClient` validates those native records and
 emits one `SshClientMessage` to its Session owner; business state is never
 reconstructed from string prefixes, embedded layer labels or JSON payloads.
 

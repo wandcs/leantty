@@ -40,6 +40,9 @@
 
 ### Fixed
 
+- Preserve the detailed `ssh -v` failure reason when native callbacks reach
+  ArkTS out of order, by delivering failure diagnostics with the Session-ending
+  control event. Ordinary SSH remains non-verbose.
 - Keep host-key trust and removal responsive with serialized asynchronous
   persistence, immediate pending feedback and generation-scoped cleanup. Accept
   trust only after durable storage and projection succeed; cancelled or destroyed

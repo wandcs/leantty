@@ -29,6 +29,8 @@ export interface ControlEvent {
   host: string
   port: number
   metrics: string
+  diagnosticStatus: string
+  diagnosticReason: string
 }
 export interface TransportEvent {
   kind: string

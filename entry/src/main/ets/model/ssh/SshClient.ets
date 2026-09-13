@@ -397,6 +397,7 @@ export class SshClient {
           SshErrorCode.Internal, 'Invalid native SSH control error', '', 'client'))
         return
       }
+      this.emitFailureDiagnostic(event)
       this.handleError(error)
     } else if (event.kind === 'warning') {
       this.handleWarning(event.detail)
@@ -508,6 +509,22 @@ export class SshClient {
     }
     this.handleError(new SshError(
       SshErrorCode.Network, 'Invalid native SSH transport event', '', 'client'))
+  }
+
+  private emitFailureDiagnostic(event: NativeControlEvent): void {
+    if (!this.verbose || event.diagnosticStatus.length === 0) { return }
+    let nativeEvent: NativeTransportEvent = {
+      kind: 'diagnostic', data: new Uint8Array(0), result: '', exitCode: -1, code: '', detail: '',
+      layer: event.layer, stage: event.stage, status: event.diagnosticStatus, reason: event.diagnosticReason
+    }
+    let info: SshDiagnosticInfo | null = SshClient.parseDiagnosticInfo(nativeEvent)
+    if (info === null || ['failed', 'timed_out'].indexOf(info.status) < 0) {
+      this.logger.warn('Rejected invalid SSH failure diagnostic')
+      return
+    }
+    // Render while this control event still owns the Session; handleError ends it.
+    this.logDiagnostic(info)
+    this.emitEvent(SshClientMessage.withDiagnostic(info))
   }
 
   private emitDiagnostic(layer: string, stage: string, status: string): void {

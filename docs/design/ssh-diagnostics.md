@@ -2,7 +2,7 @@
 
 > 状态：Verified；1.5.0 产品切片已闭合
 >
-> 更新日期：2026-08-21
+> 更新日期：2026-09-13
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
@@ -40,7 +40,7 @@
 
 ## 字段与数据安全
 
-native 诊断对象只允许以下字段：
+native 非终结诊断对象只允许以下字段；终结阶段失败的承载方式见下节：
 
 | 字段 | 允许值 |
 | --- | --- |
@@ -66,6 +66,40 @@ code、host-key 载荷和有界性能字段分别传递。关闭原因由 `Trans
 表达，ArkTS 只消费校验后的对象，不从 `CONNECT:`、`AUTH:`、`HOST_KEY_*:`、`ERROR:` 等文本前缀
 或 JSON 恢复业务状态。`SshClient` 再向 Pane 所有者发送单一 `SshClientMessage`，其中错误、
 changed-host-key 与诊断继续保持各自的结构化类型。
+
+### 2026-09-13 失败诊断与 Session 结束的原子事件
+
+阶段失败不再分别向 transport/control 两条回调投递诊断和错误。`SessionPhaseFailure`
+在同一个 `ControlEvent(kind=error)` 中携带 `diagnosticStatus/diagnosticReason`；只有本次
+连接开启 verbose 时才填充，其他控制事件为空。原有 session/generation、layer、stage、
+code、detail 和关闭路径不变。`SshClient` 先验证当前事件归属与错误，再用原有白名单解析
+失败元数据，发出诊断，最后执行 `handleError`。非法诊断不隐藏错误，也不输出其原文。
+普通 SSH、默认非 verbose 的 Mosh SSH bootstrap 和文件传输不增加诊断输出。
+
+依据：[OpenHarmony thread-safe callback 实现](https://github.com/openharmony/arkui_napi/blob/master/native_engine/native_safe_async_work.cpp)
+为每个实例维护队列与异步句柄；Blocking 等待队列空间，不等待 JS 完成，更不保证两个
+独立队列的消费顺序。当前上游实现不是测试机历史二进制或旧样本具体调度的证明。
+实际 `SshClient` 的控制对照证明：旧实现先收到 control error 时清空 verbose，之后丢弃
+详细诊断；观察包的一次真机样本走正常 diagnostic→control 顺序，不能声称复现了旧乱序，
+也没有排除原失败的 native 投递失败。修复消除已证明的跨队列顺序依赖，不追加随机采样、
+延迟、重试或过期事件缓存。
+
+`tools/test-ssh-client.cjs` 执行真实所有者，新增 10 项先红后绿检查：单事件的诊断先于结束、
+jump/auth/channel 元数据、非法字段、非 verbose、旧代/重复事件、重连与 Pane 隔离。
+Rust 构造测试固定 verbose 开关与原错误字段；测试入口为
+`test-regression.ps1 -Group policy,ssh-flow,arkts,rust-native`。
+本轮证据独立保存在 `build/verification/ssh-failure-order-20260913/`，不是 L4 或旧报告补通过。
+产品/native 改变，下一轮正式验收按 R4 重新建立候选，不扩大工具兼容白名单。
+
+本轮定向检查 15/15、Rust native 56/56 与额外的 Mosh 输入拒绝触发 2/2 通过，ARM64
+构建、签名与安装通过。去除临时观察日志的修复 HAP SHA-256 为
+`5ec6484effc67efde0415cc120c9f496b027d4329bd69372e194574994af92b4`。
+同一包的 `ssh-diagnostics` 通过 verbose/普通密码连接、关闭端口 `tcp_refused`、认证取消
+及配置不变检查；Mosh `fixed-endpoint` 通过 bootstrap、精确 PTY 命令、认证关闭、原页面
+恢复及配置不变检查。两项清理通过，额外只读审计确认临时指纹、SSH 测试密钥与反向映射
+缺席，终端输入可见，旧候选及失败报告哈希未变。完整报告和包内/构建前 native 哈希见
+`closing-audit.json`；两种 native 哈希因打包处理不同，不互相替代。
+零模型、无 Wi-Fi 切换、无人工锁屏/合盖；不声称已完成完整 SSH/Mosh 矩阵或正式第一段。
 
 ### 2026-08-22 结构化事件测试契约复核
 
@@ -110,7 +144,7 @@ known-host 和一次性 key 清理审计均通过；最小 ProxyJump 成功场�
 
 - parser 每条命令最多接受一个独立 `-v`；重复 `-v` 和组合 `-vv` 在网络动作前失败；
 - `verbose` 只在当前 `CommandParseResult` 和 `SshClient` 存活，不写入 `SshSession` 或 Host；
-- native 只在该连接的 flag 为 true 时调用 diagnostic callback；默认 `ssh` 不产生诊断行；
+- native 只在该连接的 flag 为 true 时投递诊断或填充失败诊断字段；默认 `ssh` 不产生诊断行；
 - 本地取消发出 fixed cancelled，remote close、driver failure 和 keepalive timeout 使用现有
   Session close/error/reconnect 路径；
 - Pane 只渲染自己的 `SshClientEvent.DIAGNOSTIC`，不建立全局诊断中心。
