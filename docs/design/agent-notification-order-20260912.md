@@ -364,3 +364,20 @@ model workloads (one long-task check and eight Agent/mode checks), with zero
 automatic retries. Stop at its first blocker. Its two real operator actions
 remain pending until the maintainer explicitly starts the second phase.
 No diagnostic report or component test replaces C3/C4.
+
+### R3 admission follow-up
+
+PR #198 merged at `40f764b552c3bbcafc7a01b542afb2562983447e` with all four CI
+checks passed. Before the next formal run, read-only admission found four
+scenario lists that rejected Agent-only paths: Mosh, search and long-task each
+omitted six paths; SSH omitted `tools/agent-compatibility-wsl.sh`. No physical
+stage or model workload started. This is an entry admission defect, not a HAP
+or product-source change.
+
+Add only those exact reviewed paths to the existing owners. Do not replace the
+lists with a broad `tools/*` rule, change executable scenario bodies, inherit
+failed C3 evidence or rebuild the unchanged candidate. The regression reads
+all five real AST-owned lists, accepts the six reviewed paths and rejects
+ArkTS, terminal HTML, app/build metadata, Rust source/lockfile and an unreviewed
+tool. Before starting R3, compare every changed path from candidate source to
+the final clean merged harness, and verify the HAP and frozen C0–C2 identities.
