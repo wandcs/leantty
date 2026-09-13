@@ -931,6 +931,9 @@ try {
         Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowedPaths -ChangedPaths @(
             'tools/host-identity-downloads.ps1',
             'tools/test-host-identity-downloads.ps1',
+            'tools/agent-compatibility-policy.ps1',
+            'tools/release-agent-continuation.ps1',
+            'tools/test-release-agent-continuation.ps1',
             'docs/design/agent-notification-order-20260912.md',
             'tools/agent-compatibility-wsl.sh',
             'tools/agent-compatibility/start_gate.py',

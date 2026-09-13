@@ -27,6 +27,11 @@ function git {
     $global:LASTEXITCODE = 0
     if ($args -contains 'rev-parse') { return ('b' * 40) }
     if ($args -contains 'diff') { return $script:changedPaths }
+    if ($args -contains 'show') {
+        $relative=($args[-1] -split ':',2)[1]
+        Get-Content -LiteralPath (Join-Path $repoRoot $relative)
+        if ($script:changeIndependentBody) { '# changed independent behavior boundary' }
+    }
 }
 try {
     $candidate = [pscustomobject]@{gitCommit=('c'*40);gitTree=('d'*40);sha256=('e'*64);gitDirty=$false}
@@ -146,6 +151,15 @@ try {
     $script:changedPaths=@('docs/design/agent-notification-order-20260912.md')
     Get-LeanTTYAgentReleaseContinuation @argsForPolicy | Out-Null
     $passed++
+    foreach($owner in @('tools/verify-ssh-auth-pc.ps1','tools/verify-mosh-pc.ps1',
+            'tools/verify-terminal-search-pc.ps1','tools/verify-long-task-notification-pc.ps1')) {
+        $script:changedPaths=@($owner)
+        Get-LeanTTYAgentReleaseContinuation @argsForPolicy | Out-Null
+        $passed++
+        $script:changeIndependentBody=$true
+        Assert-Rejected 'independent owner changed outside admission array' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        $script:changeIndependentBody=$false
+    }
     foreach ($path in @('tools/device-regression.ps1','tools/hdc-common.ps1','tools/release-tooling.ps1','entry/src/main/ets/Test.ets','leantty_ssh/Cargo.lock','tools/notification-regression.ps1','tools/agent-compatibility-wsl.sh','tools/agent-compatibility/analyze_capture.py', 'docs/design/unreviewed.md', 'docs/design/agent-notification-order-20260912.md.ps1')) {
         $script:changedPaths=@($path)
         Assert-Rejected "shared or product path $path" { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }

@@ -434,3 +434,10 @@ validator, split entry and atomic writer with external effects stubbed. It tests
 the valid limitation, version/observation/interaction failures, old-failure
 immutability, fresh qualification, prefix reuse and automatic/operator boundary.
 These software checks do not constitute physical acceptance.
+
+The first merged-harness admission stopped before device or model actions:
+Mosh, search and long-task still omitted the classifier and two continuation
+paths. Add those three exact paths to each array, test all five actual lists,
+and require AST-normalized equality outside the admission arrays for all four
+independent scenario owners. This closes the same entry chain; it does not
+change their fixtures, interaction, oracles or cleanup and therefore preserves R2.
