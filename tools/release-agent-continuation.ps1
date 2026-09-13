@@ -30,6 +30,8 @@ function Assert-LeanTTYAgentContinuationPaths {
         'tools/test-release-agent-continuation.ps1', 'tools/test-build-workflows.ps1',
         'tools/test-release-phases.ps1',
         'tools/verify-ssh-auth-pc.ps1',
+        'tools/verify-mosh-pc.ps1', 'tools/verify-terminal-search-pc.ps1',
+        'tools/verify-long-task-notification-pc.ps1',
         'docs/next-work.md', 'docs/quality-strategy.md',
         'docs/design/agent-exit-boundary-20260912.md',
         'docs/design/agent-notification-order-20260912.md'
@@ -90,12 +92,14 @@ function Get-LeanTTYAgentReleaseContinuation {
     $paths = @(& git -C $RepoRoot diff --name-only $oldCommit HEAD)
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect continuation change scope' }
     Assert-LeanTTYAgentContinuationPaths -Paths $paths
-    # SSH auth ran in the old prefix. Only its formal admission array may change;
-    # input, fixture, oracle and cleanup code must remain byte-identical.
-    if ($paths -contains 'tools/verify-ssh-auth-pc.ps1') {
-        $oldAuth = (& git -C $RepoRoot show ($oldCommit + ':tools/verify-ssh-auth-pc.ps1')) -join "`n"
-        if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect original SSH owner' }
-        $newAuth = (Get-Content -LiteralPath (Join-Path $RepoRoot 'tools/verify-ssh-auth-pc.ps1')) -join "`n"
+    # These independent owners may gain only reviewed candidate-admission paths;
+    # every byte outside that AST-owned array must retain the original behavior.
+    foreach ($admissionOwner in @('tools/verify-ssh-auth-pc.ps1', 'tools/verify-mosh-pc.ps1',
+            'tools/verify-terminal-search-pc.ps1', 'tools/verify-long-task-notification-pc.ps1')) {
+        if ($paths -notcontains $admissionOwner) { continue }
+        $oldAuth = (& git -C $RepoRoot show ($oldCommit + ':' + $admissionOwner)) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw "Cannot inspect original admission owner: $admissionOwner" }
+        $newAuth = (Get-Content -LiteralPath (Join-Path $RepoRoot $admissionOwner)) -join "`n"
         $normalized = @($oldAuth, $newAuth) | ForEach-Object {
             $tokens = $null; $errors = $null
             $ast = [Management.Automation.Language.Parser]::ParseInput($_, [ref]$tokens, [ref]$errors)
@@ -103,14 +107,14 @@ function Get-LeanTTYAgentReleaseContinuation {
                 $node -is [Management.Automation.Language.CommandAst] -and
                 $node.GetCommandName() -ceq 'Assert-LeanTTYCandidateHarnessCompatibility'
             }, $true))
-            if ($errors.Count -ne 0 -or $calls.Count -ne 1) { throw 'SSH compatibility owner is ambiguous' }
+            if ($errors.Count -ne 0 -or $calls.Count -ne 1) { throw 'Candidate compatibility owner is ambiguous' }
             $arrays = @($calls[0].CommandElements | Where-Object {
                 $_ -is [Management.Automation.Language.ArrayExpressionAst]
             })
-            if ($arrays.Count -ne 1) { throw 'SSH compatibility allowlist is ambiguous' }
+            if ($arrays.Count -ne 1) { throw 'Candidate compatibility allowlist is ambiguous' }
             $_.Remove($arrays[0].Extent.StartOffset, $arrays[0].Extent.Text.Length).Insert($arrays[0].Extent.StartOffset, '<allowlist>')
         }
-        if ($normalized[0] -cne $normalized[1]) { throw 'SSH prefix behavior changed; R3 required' }
+        if ($normalized[0] -cne $normalized[1]) { throw "Independent stage behavior changed; R3 required: $admissionOwner" }
     }
 
     $failed = $old.stages[$agentIndex]
