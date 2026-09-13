@@ -10,7 +10,7 @@ $deviceAst = [Management.Automation.Language.Parser]::ParseFile(
 if ($parseErrors.Count -gt 0) { throw 'Agent harness has PowerShell parse errors' }
 $functionSources = @{}
 foreach ($name in @('Wait-AppLog', 'Connect-AgentServer', 'Disconnect-AgentServer', 'Stop-AgentTui', 'Confirm-AgentShellReady',
-        'Focus-TerminalInput', 'Submit-LocalCommand', 'Submit-ConnectedCommand',
+        'Focus-TerminalInput', 'Submit-LocalCommand', 'Submit-ConnectedCommand', 'Remove-AgentKnownHost',
         'Invoke-AgentSelectedChecks', 'Invoke-AgentInteractionOnlyCheck',
         'Invoke-AgentProtocolInteractionCheck', 'Invoke-AgentModeCheck',
         'Invoke-Osc99CapabilityProbeCheck', 'Invoke-AgentSshPrerequisiteCheck',
@@ -43,6 +43,9 @@ function Test-Gate([string]$Name, [scriptblock]$Action) {
             $script:agentSshBoundary = 'local'
             $script:controlledLocaleChecked = $true
             $script:knownHostRemoved = $false
+            $script:knownHostRemovalSubmitted = $false
+            $knownHostCleanupAttempted = $false
+            $cleanupFailures = [Collections.Generic.List[string]]::new()
             $script:waitNumber = 0
             $script:fault = ''
             $script:connectionMode = 'prompt'
@@ -450,15 +453,24 @@ Test-Gate 'host-key-stop-is-zero-input-and-leaves-unconfirmed-session' {
         -not ($script:trace -contains 'enter') -and -not ($script:trace -contains 'ctrl-d')) 'Controlled stop advanced or sent input'
 }
 foreach ($case in @('idle', 'confirm-en', 'confirm-zh', 'wrong-owner', 'changed-process',
-        'other-dialog', 'confirmation-owner-changed', 'cancelled')) {
+        'other-dialog', 'confirmation-owner-changed', 'cancelled', 'failed-check-local',
+        'failed-check-unknown', 'removal-already-submitted', 'removal-read-fails')) {
     Test-Gate "owned-tab-cleanup-$case" {
         . (Join-Path $PSScriptRoot 'device-regression.ps1')
         . (Join-Path $PSScriptRoot 'notification-regression.ps1')
+        function Wait-LeanTTYDeviceKnownHostAbsent {
+            $script:trace.Add('known-host-absent')
+            if ($script:fault -eq 'known-host-read') { throw '[infrastructure] controlled-known-host-read-failure' }
+        }
         $script:isolatedTabCreated = $true
         $isolatedTabId = 'tab-test'
         $isolatedTabUiId = '20'
         $baselineTabState = @{ids=@('10');activeId='10';windowId='1'}
         $fixture = @{removed=$false;closeCount=0;confirmCount=0;pending=$false;stateReads=0}
+        $knownHostCleanupAttempted = $true
+        $script:agentSshBoundary = if ($case -eq 'failed-check-unknown') { 'unconfirmed' } else { 'local' }
+        $script:knownHostRemovalSubmitted = $case -eq 'removal-already-submitted'
+        if ($case -eq 'removal-read-fails') { $script:fault = 'known-host-read' }
         function New-CleanupState {
             $ids = if ($fixture.removed) { @('10') } else { @('10','20') }
             $tabs = @($ids | ForEach-Object {
@@ -490,7 +502,7 @@ foreach ($case in @('idle', 'confirm-en', 'confirm-zh', 'wrong-owner', 'changed-
             param($Node)
             if ($Node.attributes.kind -eq 'close') {
                 $fixture.closeCount++
-                if ($case -eq 'idle') { $fixture.removed=$true }
+                if ($case -in @('idle','failed-check-local','failed-check-unknown','removal-already-submitted','removal-read-fails')) { $fixture.removed=$true }
             } elseif ($Node.attributes.kind -eq 'confirm') {
                 $fixture.confirmCount++
                 if ($case -ne 'cancelled') { $fixture.removed=$true }
@@ -500,15 +512,25 @@ foreach ($case in @('idle', 'confirm-en', 'confirm-zh', 'wrong-owner', 'changed-
         function Get-LeanTTYAppLogs { if ($fixture.removed) { return 'Tab removed: tab-test' }; return '' }
         $failure = ''
         try { Close-AgentTestTab } catch { $failure=$_.Exception.Message }
-        if ($case -in @('idle','confirm-en','confirm-zh')) {
+        if ($case -in @('idle','confirm-en','confirm-zh','failed-check-local','failed-check-unknown','removal-already-submitted','removal-read-fails')) {
             Assert-Gate ($failure -eq '' -and -not $script:isolatedTabCreated -and
                 $result.resources.tabCleanup.originalTabsRestored -and $fixture.closeCount -eq 1 -and
-                $fixture.confirmCount -eq [int]($case -ne 'idle')) 'Owned closure or restoration not proved'
+                $fixture.confirmCount -eq [int]($case -in @('confirm-en','confirm-zh'))) 'Owned closure or restoration not proved'
         } else {
             Assert-Gate ($failure.Length -gt 0 -and $script:isolatedTabCreated) 'Unsafe/unknown closure was accepted'
             if ($case -in @('wrong-owner','changed-process')) { Assert-Gate ($fixture.closeCount -eq 0) 'Wrong owner received close' }
             if ($case -in @('other-dialog','confirmation-owner-changed')) { Assert-Gate ($fixture.confirmCount -eq 0) 'Unrelated dialog was accepted' }
             Assert-Gate ($fixture.closeCount -le 1 -and $fixture.confirmCount -le 1) 'Unknown close/confirmation was repeated'
+        }
+        $submitted = @($script:trace | Where-Object { $_ -eq 'local:known-host-post-clean' }).Count
+        if ($case -in @('wrong-owner','changed-process','failed-check-unknown','removal-already-submitted')) {
+            Assert-Gate ($submitted -eq 0) 'Unknown owner/state or prior submission must not receive cleanup input'
+        } else {
+            Assert-Gate ($submitted -eq 1 -and $script:knownHostRemovalSubmitted) 'Owned local failure must submit removal exactly once before closing its Tab'
+            Assert-Gate ($script:knownHostRemoved -eq ($case -ne 'removal-read-fails')) 'Removal requires observed absence, not submission ACK'
+            if ($case -eq 'removal-read-fails') {
+                Assert-Gate ($cleanupFailures.Count -eq 1 -and $fixture.removed) 'Failed removal must remain failed without preventing safe Tab closure'
+            }
         }
     }
 }
@@ -523,6 +545,21 @@ foreach ($readFails in @($false,$true)) {
         Assert-Gate ($knownHostRemoved -eq (-not $readFails) -and $cleanupFailures.Count -eq [int]$readFails -and
             @($script:trace | Where-Object {$_ -like 'local:*' -or $_ -in @('text','enter','ctrl-d')}).Count -eq 0) 'Unknown session received input or absence verdict was guessed'
     }
+}
+Test-Gate 'final-summary-includes-late-cleanup-without-rewriting-failure' {
+    $result | Add-Member -NotePropertyName commandAutomation -NotePropertyValue @{
+        local=@{businessVerdict='failed';businessPostcondition='original-check';commandCount=2}}
+    $commandObservations=@('initial','connect','late-cleanup')
+    function Get-LeanTTYDeviceCommandAutomationSummary {
+        param($Observations,$BusinessVerdict,$BusinessPostcondition)
+        return @{businessVerdict=$BusinessVerdict;businessPostcondition=$BusinessPostcondition;commandCount=$Observations.Count}
+    }
+    $refresh=$deviceAst.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+        $n.Extent.Text.StartsWith('if ($null -ne $result.commandAutomation)')},$true)
+    . ([scriptblock]::Create($refresh.Extent.Text))
+    Assert-Gate ($result.commandAutomation.local.commandCount -eq 3 -and
+        $result.commandAutomation.local.businessVerdict -eq 'failed' -and
+        $result.commandAutomation.local.businessPostcondition -eq 'original-check') 'Late cleanup is missing or replaced the original failure'
 }
 # Read each caller's real allowlist: this repair must retain the original HAP,
 # without accepting product-source or dependency changes as harness-only.

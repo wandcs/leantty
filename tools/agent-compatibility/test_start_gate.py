@@ -6,6 +6,7 @@ from pathlib import Path
 import pty
 import select
 import signal
+import subprocess
 import tempfile
 import time
 import tty
@@ -131,6 +132,46 @@ class StartGateTests(unittest.TestCase):
         (self.root / '.leantty-agent-compat').write_text('wrong\n')
         with self.assertRaises(ValueError):
             Gate(self.root, 'controlled')
+
+    def test_task_completion_needs_hidden_and_minimum_duration(self):
+        # Public benign command, no terminal relay or synthetic notification.
+        code = ('from pathlib import Path; from start_gate import Gate; '
+                'import sys; sys.exit(Gate(Path(sys.argv[1]),"controlled").task(timeout=3, minimum_duration=.3))')
+        with subprocess.Popen(['python3', '-c', code, str(self.root)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              cwd=Path(__file__).parent) as child:
+            deadline = time.monotonic() + 2
+            while not self.gate.state.exists():
+                self.assertIsNone(child.poll(), 'task exited before readiness')
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            self.assertEqual(self.gate.control('ready')['status'], 'waiting')
+            with self.assertRaises(FileNotFoundError):
+                self.gate.control('release')
+            self.hidden()
+            self.gate.control('release')
+            stdout, stderr = child.communicate(timeout=3)
+            self.assertEqual((child.returncode, stdout, stderr), (0, b'', b''))
+        state = json.loads(self.gate.state.read_text())
+        self.assertEqual(state['status'], 'task-completed')
+        self.assertGreaterEqual(state['elapsedSeconds'], .3)
+        with self.assertRaises(ValueError):
+            self.gate.task(timeout=3, minimum_duration=.3)
+
+    def test_task_timeout_or_cancel_does_not_complete(self):
+        for cancel in (False, True):
+            name = 'cancel-task' if cancel else 'expire-task'
+            gate = Gate(self.root, name)
+            gate.output.touch()
+            if cancel:
+                gate.control('cancel')
+                with self.assertRaises(ValueError):
+                    gate.task(timeout=.2, minimum_duration=.1)
+            else:
+                self.assertEqual(gate.task(timeout=.2, minimum_duration=.1), 124)
+                self.assertEqual(json.loads(gate.state.read_text())['status'], 'expired')
+            with self.assertRaises(ValueError):
+                gate.control('release')
 
 
 if __name__ == '__main__':

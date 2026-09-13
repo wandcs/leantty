@@ -35,7 +35,9 @@ for agent, mode, cancel, scenario in (
         bin_dir = root / 'bin'
         bin_dir.mkdir()
         (bin_dir / 'npm').write_text('#!/bin/sh\nprintf "%s\\n" ' + shlex.quote(directory) + '\n')
-        (bin_dir / agent).write_text('#!/bin/sh\nif [ "$1" = login ]; then exit 0; fi\nexec ' + shlex.join(producer) + '\n')
+        argv_probe = 'import json,sys; from pathlib import Path; Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]))'
+        (bin_dir / agent).write_text('#!/bin/sh\nif [ "$1" = login ]; then exit 0; fi\n' +
+            shlex.join(['python3', '-c', argv_probe, str(root / 'stub-argv.json')]) + ' "$@"\nexec ' + shlex.join(producer) + '\n')
         for executable in bin_dir.iterdir():
             executable.chmod(0o700)
         name = f'{agent}-{mode}-{scenario}'
@@ -64,6 +66,22 @@ for agent, mode, cancel, scenario in (
             if scenario == 'notification' and agent == 'qwen':
                 wait_for(lambda: (root / 'observer-ready').exists())
                 assert not (root / 'results' / f'{name}-start-gate.json').exists()
+                task = root / 'workspace' / f'.leantty-notification-{mode}'
+                assert task.is_file(), 'actual Qwen dispatcher did not prepare its scoped task'
+                argv = json.loads((root / 'stub-argv.json').read_text())
+                assert argv[argv.index('--allowed-tools') + 1] == f'Shell({task})'
+                assert argv[argv.index('--approval-mode') + 1] == 'default' and '--safe-mode' in argv
+                assert argv[argv.index('--max-tool-calls') + 1] == '1'
+                assert f'`{task}` with no arguments' in argv[argv.index('--prompt-interactive') + 1]
+                assert subprocess.run([str(task), 'unexpected'], capture_output=True).returncode == 2
+                # Exercise the generated executable with no model and no extra PTY.
+                with subprocess.Popen([str(task)], stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+                    gate = Gate(root, name)
+                    wait_for(gate.state.exists)
+                    assert gate.control('ready')['status'] == 'waiting'
+                    gate.control('cancel')
+                    output, errors = child.communicate(timeout=3)
+                    assert (child.returncode, output, errors) == (125, b'', b'')
                 observe(root, name, 'before-minimize')
                 observe(root, name, 'after-hidden')
             elif scenario == 'notification':

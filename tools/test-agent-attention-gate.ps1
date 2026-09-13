@@ -201,23 +201,24 @@ try {
         throw 'OpenCode interactive setup must not wait for an argv-prompt gate'
     }
     function Wait-AgentTuiReady {
-        param($CaptureResultPath, [switch]$RequireFocusReporting)
-        if (-not $RequireFocusReporting) { throw 'Qwen readiness must require focus reporting' }
-        $script:trace.Add('focus-ready')
+        param($CaptureResultPath, [switch]$RequireFocusReporting, [switch]$RequireFocusOut)
+        if (-not ($RequireFocusReporting -xor $RequireFocusOut)) { throw 'Qwen needs separate enable and focus-out proofs' }
+        $script:trace.Add($(if ($RequireFocusOut) { 'focus-out' } else { 'focus-ready' }))
     }
     $script:trace.Clear()
     $focusObservation = @{}
     Start-AgentNotificationAfterHidden -Agent qwen -Stage controlled -CaptureResultPath $capturePath -Observation $focusObservation
-    if (($script:trace -join '|') -ne 'focus-ready|clear-logs|before-minimize|minimize|Window visibility changed: visible=false|after-hidden' -or
-        $focusObservation.focusReportingReady -ne $true) {
-        throw 'Qwen must enable native focus reporting before the real minimize action, without an exec gate'
+    if (($script:trace -join '|') -ne 'focus-ready|wait-ready|ready|clear-logs|before-minimize|minimize|Window visibility changed: visible=false|after-hidden|focus-out|release' -or
+        $focusObservation.focusReportingReady -ne $true -or
+        $focusObservation.taskCompletionGate -ne 'hidden-and-native-focus-out-before-release') {
+        throw 'Qwen native TUI must start visibly, but its benign task completes only after actual hide and focus-out'
     }
     function Wait-AgentTuiReady { throw '[harness] native focus reporting unavailable' }
     $script:trace.Clear()
     $failure = ''
     try { Start-AgentNotificationAfterHidden -Agent qwen -Stage controlled -CaptureResultPath $capturePath -Observation @{} }
     catch { $failure = $_.Exception.Message }
-    if ($failure -notmatch '^\[harness\].*startup failed' -or $script:trace.Count -ne 0) {
+    if ($failure -notmatch '^\[harness\].*startup failed' -or ($script:trace -join '|') -ne 'cancel') {
         throw 'Missing native focus readiness must stop before minimizing, without inventing a hidden state'
     }
     foreach ($failAt in @('ready', 'hidden', 'release')) {
@@ -280,6 +281,14 @@ try {
         if ($ready -ne $counts.ready) { throw 'Alternate screen or ambiguous counters do not establish native focus readiness' }
     }
     Wait-AgentTuiReady -CaptureResultPath $capturePath # Existing non-focus callers retain their TUI gate.
+    foreach ($outCount in @(0, 1)) {
+        @{ output=@{ alternateScreen=@{enterCount=1} }; input=@{focusReporting=@{outCount=$outCount}} } |
+            ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $livePath
+        $ready = $true
+        try { Wait-AgentTuiReady -CaptureResultPath $capturePath -RequireFocusOut -TimeoutSeconds 1 }
+        catch { $ready = $false }
+        if ($ready -ne ($outCount -eq 1)) { throw 'A hidden checkpoint cannot stand in for native focus-out delivery' }
+    }
     function Wait-AgentTuiReady { $script:phase = 'ready' }
     function Clear-LeanTTYAppLogs {}
     function Get-FullLayout { return @{} }
