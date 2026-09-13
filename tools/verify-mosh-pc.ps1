@@ -79,6 +79,8 @@ if ($Formal) {
     $harnessDifferencePaths = @(Assert-LeanTTYCandidateHarnessCompatibility `
         -RepoRoot $repoRoot -Candidate $candidate -AllowedHarnessPaths @(
             'tools/verify-host-identity-pc.ps1',
+            'tools/host-identity-downloads.ps1',
+            'tools/test-host-identity-downloads.ps1',
             'docs/design/agent-notification-order-20260912.md',
             'tools/agent-compatibility-wsl.sh',
             'tools/agent-compatibility/start_gate.py',

@@ -18,7 +18,8 @@ function Get-HostIdentityDownloadsPermission {
 
 function Get-HostIdentityDownloadsLayout {
     param([string]$Stage)
-    Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -BundleName '' `
+    # Desktop app cards can share LeanTTY's label; Settings owns this lookup.
+    Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -BundleName 'com.huawei.hmos.settings' `
         -LocalPath (Join-Path $EvidenceDirectory "$Stage.json")
 }
 

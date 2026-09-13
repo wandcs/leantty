@@ -929,6 +929,8 @@ try {
         $allowedPaths = $admissionCall.CommandElements[
             $admissionCall.CommandElements.IndexOf($allowedParameter[0]) + 1].SafeGetValue()
         Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowedPaths -ChangedPaths @(
+            'tools/host-identity-downloads.ps1',
+            'tools/test-host-identity-downloads.ps1',
             'docs/design/agent-notification-order-20260912.md',
             'tools/agent-compatibility-wsl.sh',
             'tools/agent-compatibility/start_gate.py',
