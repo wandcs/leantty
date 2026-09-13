@@ -2845,6 +2845,54 @@ Assert-True (
     -not $hostIdentityVerifier.Contains('sha256sum $Path')
 ) 'Host Identity verifier lacks reversible product-path preservation for an existing id_ed25519'
 
+# Execute the actual SSH caller with controlled submission/completion boundaries.
+& {
+    $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1') -Raw
+    $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$null, [ref]$null)
+    $owner = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Submit-FocusedDeviceCommand'
+    }, $true)
+    . ([scriptblock]::Create($owner.Extent.Text))
+    $hdc='fixture'; $Target='fixture'; $appPid='42'; $FixturePort=32123; $currentStage='ssh-diagnostics'
+    $commandObservations=[Collections.Generic.List[object]]::new()
+    foreach ($mode in @('delayed', 'submit-failed', 'wait-failed', 'ordinary', 'other-endpoint')) {
+        $probe=@{submitted=0;waited=0;pending=$false}
+        function Submit-LeanTTYDeviceCommand {
+            param($Hdc,$Target,$ProcessId,$Command,$Stage,$ObservationSink,$InputNodeProvider)
+            $probe.submitted++
+            if ($mode -eq 'submit-failed') { throw 'injected submission failure' }
+            $probe.pending=$true
+        }
+        function Wait-LeanTTYDeviceKnownHostAbsent {
+            param($Hdc,$Target,$Port)
+            Assert-True ($probe.submitted -eq 1 -and $probe.pending -and $Port -eq $FixturePort) 'SSH completion wait lost its owned submission boundary'
+            $probe.waited++
+            if ($mode -eq 'wait-failed') { throw '[cleanup] injected removal failure' }
+            $probe.pending=$false
+        }
+        $command = switch ($mode) {
+            'ordinary' { 'help ssh' }
+            'other-endpoint' { 'ssh-keygen -R [127.0.0.1]:32124' }
+            default { "ssh-keygen -R [127.0.0.1]:$FixturePort" }
+        }
+        $failure=''
+        try { Submit-FocusedDeviceCommand -Command $command -LayoutName 'fixture' }
+        catch { $failure=$_.Exception.Message }
+        Assert-True ($probe.submitted -eq 1) 'SSH command was resubmitted'
+        if ($mode -eq 'submit-failed') {
+            Assert-True ($failure -eq 'injected submission failure' -and $probe.waited -eq 0) 'SSH wait followed an unconfirmed submission'
+        } elseif ($mode -in @('ordinary', 'other-endpoint')) {
+            Assert-True (-not $failure -and $probe.waited -eq 0) 'SSH owned-endpoint completion rule expanded to another command'
+        } elseif ($mode -eq 'wait-failed') {
+            Assert-True ($failure -match '^\[harness\]' -and $probe.waited -eq 1 -and $probe.pending) 'SSH cleanup failure was hidden or mislabeled product'
+        } else {
+            Assert-True (-not $failure -and $probe.waited -eq 1 -and -not $probe.pending) 'SSH caller returned at submission ACK before durable known-host removal completed'
+        }
+    }
+    Write-Host 'SSH known-host completion: 5 real-caller checks passed.'
+}
+
 # Execute the owning cleanup block, not a second implementation of its ordering.
 & {
     $ast = [Management.Automation.Language.Parser]::ParseInput($hostIdentityVerifier, [ref]$null, [ref]$null)

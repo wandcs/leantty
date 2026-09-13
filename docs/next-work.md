@@ -1,10 +1,19 @@
 # LeanTTY 当前工作
 
-当前工具修复：PR200 的 Qwen 完整内外 PTY 未发通知，按证据限定为第三方非发出，
-不证明通知通过。补齐既有 Agent-stage R2 的自动/人工分段续验，复用十五个独立
-行为阶段，重做 QH 与完整 Agent 后继续 SSH/自动 Mosh；人工阶段仍待维护者明确就绪。
-原候选、失败报告和冻结工具不变，详见
-[分类与有限续验](design/agent-notification-order-20260912.md#qwen-completed-task-without-native-emission)。
+当前停点（2026-09-13 21:18）：PR202 自动续验的 QH、Agent 八组和独立前缀均已完成，
+SSH 在指纹删除后的输入清空处停止。真实调用方/Session 所有者测试证明 submission ACK
+不等于异步删除完成；SSH 仅对本轮精确端点复用已有缺席等待，覆盖准备及正常/失败收尾，
+不改产品输入保护。一次原包零模型诊断已越过旧停点，完成 verbose/普通密码连接和命令。
+该诊断随后在关闭端口的 `tcp_refused` 事件等待处失败，原报告保持 failed；cleanup 通过，
+21:23 独立只读审计确认临时指纹/密钥/监听/映射缺席、原密钥存在、候选与旧报告未变。
+证据根：`build/verification/ssh-command-completion-20260913/`；诊断报告 SHA-256
+`ab099089a861f687e18cc02acb109ca6afaec33a7623b77ba51217d635a815b0`。
+
+下一步只诊断缺失的失败事件：实际 SshClient 对照中 diagnostic→control 可见，反序因
+handleError 清空 verbose 而丢弃；这证明顺序敏感，尚未证明真机的 N-API 到达顺序。
+不以固定延迟或移除检查替代事件归属；未改产品、不重建候选，也不将局部诊断提升为通过。
+定位后按真实差异重新判断 R1–R4，并保留可复用的 Agent/独立前缀，不默认重跑模型。
+六项自动 Mosh、两项人工与 C4 均未开始；第一段不是 awaiting-operator。
 
 > 状态：唯一有效的项目 TODO；1.5.1 已通过 AppGallery 审核并上架，进入 1.6.0 开发
 >
