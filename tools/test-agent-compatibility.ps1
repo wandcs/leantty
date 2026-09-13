@@ -422,7 +422,7 @@ try {
         $wslScript.Contains('"mouseTracking": false') -and
         $wslScript.Contains('[LeanTTY protocol](https://example.invalid/leantty-agent-protocol)') -and
         $wslScript.Contains('"terminalBell": true') -and
-        $wslScript.Contains('"notificationMode": "all"') -and
+        $wslScript.Contains('"notificationMode": "task-complete"') -and
         $wslScript.Contains('"chatRecording": false') -and
         $wslScript.Contains('touch .leantty-agent-done') -and
         $wslScript.Contains('set -g focus-events on') -and

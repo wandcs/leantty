@@ -92,12 +92,50 @@ class Gate:
                     state["status"] = "cancelled"
             raise
 
+    def task(self, timeout=60, minimum_duration=21):
+        """Benign Qwen shell task: finish only after hidden and its 20s threshold.
+
+        It emits no terminal bytes and does not mediate Agent input/output.
+        Public CLI defaults are fixed; shorter durations are for zero-model tests.
+        """
+        if not 0 < minimum_duration < timeout <= 60:
+            raise ValueError('invalid task duration')
+        started = time.monotonic()
+        with self.locked() as state:
+            if state or self.checkpoints.exists() or not self.output.exists():
+                raise ValueError('task or observation already used')
+            state.update(status='waiting', pid=os.getpid(), deadline=started + timeout,
+                         boundary='qwen-benign-task-not-native-notification',
+                         minimumDurationSeconds=minimum_duration)
+        def interrupted(signum, _frame):
+            raise SystemExit(128 + signum)
+        previous = {sig: signal.signal(sig, interrupted)
+                    for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)}
+        try:
+            while True:
+                with self.locked() as state:
+                    elapsed = time.monotonic() - started
+                    if elapsed >= timeout and state['status'] in ('waiting', 'released'):
+                        state['status'] = 'expired'
+                    if state['status'] == 'released' and elapsed >= minimum_duration:
+                        state.update(status='task-completed', elapsedSeconds=elapsed)
+                        return 0
+                    if state['status'] not in ('waiting', 'released'):
+                        return 124 if state['status'] == 'expired' else 125
+                time.sleep(.02)
+        finally:
+            with self.locked() as state:
+                if state.get('status') in ('waiting', 'released'):
+                    state['status'] = 'cancelled'
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("name")
-    parser.add_argument("action", choices=("hold", "ready", "release", "cancel"))
+    parser.add_argument("action", choices=("hold", "task", "ready", "release", "cancel"))
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     os.umask(0o077)
@@ -107,4 +145,6 @@ if __name__ == "__main__":
         raise SystemExit(gate.hold(command))
     if args.command:
         parser.error("control actions take no command")
+    if args.action == 'task':
+        raise SystemExit(gate.task())
     gate.control(args.action)

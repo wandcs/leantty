@@ -159,6 +159,18 @@ launch_agent_child() {
       # The physical harness submits this prompt only after the interactive TUI
       # is ready so the built-in notification plugin observes busy -> idle.
     elif [[ "$agent" == "qwen" ]]; then
+      # Qwen can emit approval BEL on focus-out before the OS reports hidden.
+      # Exercise its native long-task completion instead. Only this run-owned,
+      # no-argument executable is auto-approved; never enable yolo or allow bash.
+      task_path="$run_root/workspace/.leantty-notification-$mode"
+      [[ ! -e "$task_path" ]] || { echo 'Qwen task already exists' >&2; return 2; }
+      printf '#!/usr/bin/env bash\nset -euo pipefail\n[[ $# -eq 0 ]] || exit 2\nexec /usr/bin/python3 %q %q %q task\n' \
+        "$script_dir/agent-compatibility/start_gate.py" "$run_root" "$agent-$mode-$scenario" > "$task_path"
+      chmod 700 "$task_path"
+      prompt='Use the shell tool exactly once to run `'
+      prompt+="$task_path"
+      prompt+='` with no arguments. Do not use any other tool. Wait for completion, then reply exactly LEANTTY_AGENT_DONE.'
+      command_arguments+=(--allowed-tools "Shell($task_path)")
       command_arguments+=(--prompt-interactive "$prompt")
     else
       command_arguments+=("$prompt")
@@ -189,7 +201,7 @@ case "$command_name" in
 {
   "general": {
     "terminalBell": true,
-    "notificationMode": "all",
+    "notificationMode": "task-complete",
     "chatRecording": false,
     "enableAutoUpdate": false,
     "preventSystemSleep": false

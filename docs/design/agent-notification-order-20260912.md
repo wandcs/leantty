@@ -257,3 +257,110 @@ installed UiTest binary. [Playwright actionability](https://playwright.dev/docs/
 is a comparison, not platform evidence; no matching upstream issue established
 this incident's cause. [.NET FileShare](https://learn.microsoft.com/en-us/dotnet/api/system.io.fileshare)
 documents the independent diagnostic reader's sharing contract.
+
+## Qwen task-completion precondition and failed-check cleanup (2026-09-13)
+
+The PR197 automatic round stopped at Qwen 0.23.0 direct. Its sole BEL was
+inside the minimize observation interval, with no proven hidden/attention/
+publication episode. The final capture exited 0. The failed report remains
+unchanged; its unrelated completed assertions are not a notification pass.
+
+[Xterm focus reporting](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html)
+reports focus, not visibility. The
+[window visibility API](https://github.com/openharmony/docs/blob/master/en/application-dev/reference/apis-arkui/arkts-apis-window-Window.md#onwindowvisibilitychange11)
+provides a separate owner. Qwen's
+[0.23.0 notification hook](https://github.com/QwenLM/qwen-code/blob/v0.23.0/packages/cli/src/ui/hooks/useAttentionNotifications.ts)
+can emit approval BEL immediately on focus-out. That does not guarantee the
+LeanTTY window is already hidden. No matching upstream/platform report proves
+the historical client's exact receipt order.
+
+A zero-model physical contrast on the unchanged `e68758b5…7bfef` HAP proved the
+distinction: one isolated BEL was acknowledged before the actual hidden event
+and produced no notification; a second BEL released after hidden produced the
+normal generic card and same-Pane return. Both output and cleanup passed. This
+supports a faulty timing precondition, not a LeanTTY notification-loss finding
+or a blanket Qwen exemption.
+
+### Minimal repair
+
+Keep Qwen's native TUI visible until DEC 1004 is enabled. Use its documented
+`task-complete` notification mode and one benign, run-owned shell task. The
+task reuses the existing locked gate, emits no terminal bytes and finishes only
+after the real hidden event, captured native focus-out, and at least 21 seconds
+of execution. The last condition satisfies Qwen's documented 20-second
+responding threshold; it is not a guessed minimize delay. Cancellation, missing
+checkpoints, timeout and a reused gate cannot produce successful completion.
+
+The process keeps `--safe-mode`, default approval and the one-tool-call limit.
+Its only additional auto-approval names the generated run-owned executable.
+Qwen's
+[command matcher](https://github.com/QwenLM/qwen-code/blob/v0.23.0/packages/core/src/permissions/rule-parser.ts)
+uses prefix semantics, so that executable rejects every extra argument before
+doing work. Do not allow generic shell commands or enable yolo. There is no new
+dependency, PTY relay, synthetic attention in native acceptance, model retry,
+product timer or notification-policy change. The now-obsolete post-notification
+approval Enter is removed. This exercises native completion notification, not
+the former approval-notification subcase.
+
+Independently, the failed-check branch used to return before its normal
+known-host deletion. The owned-Tab close owner now removes that exact record
+before restoring the original Tab, only when the same process/workspace/Tab and
+local command boundary are proved. A submission flag is set before input;
+unknown or previously submitted actions are never repeated. Absence must be
+observed before marking removal. Final command evidence includes late cleanup
+without replacing the original failed business verdict.
+
+### Evidence and limits
+
+Evidence root: `build/verification/agent-hidden-boundary-20260913/`.
+
+- The old cleanup owner failed eight new local-boundary cases. The repaired
+  owner passes 115 cases, including process/Tab mismatch, unknown SSH, prior
+  submission, read failure and late-summary preservation. One intermediate
+  test loaded a real external observation helper over its stub; restoring that
+  stub resolved the test setup failure, not a product defect.
+- `policy,tooling` passed seven registered checks. They include ten real
+  gate/process tests and six actual PTY/dispatcher cases, with generated-command
+  argument rejection. The final summary change separately passed the 115-case
+  owner suite and `git diff --check`.
+- Twelve zero-model checks execute the exact installed Qwen 0.23.0 public hook
+  bodies with modeled React hooks: completion at 19/20/21 seconds, focus and
+  task-complete mode. They do not execute a model or prove full native-Qwen
+  behavior. Public source hashes still match the earlier probe.
+- A physical intentional failure after a proved SSH close retained its failed
+  check and passed known-host/Tab/settings/resource cleanup. No model ran.
+- 14:50:51–14:53:19: the new task-gated physical subchain passed. Native
+  focus-out was captured before release; the task took 21.016 seconds; one BEL
+  after hidden produced the generic card and returned to `pane-6-2`. The capture
+  exited 0 and raw input/output were deleted. This used a public callback
+  stand-in, not native Qwen emission.
+- That last diagnostic remains `invalid/interrupted / cleanup failed`. Its
+  ignored adapter invoked the harness in a child PowerShell scope, so implicit
+  reads saw stale initial values while `$script:` owners had already completed
+  removal. The new submission guard refused a second call before input. A pure
+  scope contrast reproduced this difference. Do not change product/harness
+  semantics for the adapter or repeat the physical subchain to turn it green.
+  Future adapters must preserve normal script scope; retain this adapter and
+  report unchanged as evidence.
+- The 14:56:36 independent read-only audit found all three diagnostic endpoints,
+  listeners, processes, directories and mappings absent. PID, original single
+  Tab/input, retained HAP and the original formal report were unchanged. No
+  cleanup command, model request or WSL lifecycle operation was needed.
+
+| Record | SHA-256 |
+| --- | --- |
+| `device-contrast/result.json` | `297073f82e7142281781e0d90045af29f409f02487cbe8c6475a500c2f38a82d` |
+| `device-failed-check-cleanup/result.json` | `3a2d4c08f200acc73a38b07cbe22545b0dead2294e3ae351fd358f9a393910fc` |
+| `device-task-gate/result.json` | `bd7301459a2fed5bbc2f4559e4e8ed019266dcac2a8ba64301ec33e877e9723f` |
+| `independent-audit.json` | `8b136166f26875e5cc1a1028675825635727e7ac19997cb806c09c8e025d5510` |
+| `qwen-public-hook-probe.json` | `171d2c0a35113086b815f7b40019c5add516f8b3b98f2810595a8d322742e00a` |
+| `software-gates-final.json` | `6e9574118c4a969afc2d381b7bd54631d92dd1ece3f51ea579d1007f27cb5927` |
+| `cleanup-final-summary.json` | `cbb33c729d05500ef0fc46222531465b293e0154fbe1d20cf51589935fb25667` |
+
+After merge, freeze the new harness, prove candidate compatibility and renew
+QH. Use R3 because the preceding formal cleanup failed: retain C0–C2 only and
+renew physical evidence. The automatic phase has a fixed budget of nine planned
+model workloads (one long-task check and eight Agent/mode checks), with zero
+automatic retries. Stop at its first blocker. Its two real operator actions
+remain pending until the maintainer explicitly starts the second phase.
+No diagnostic report or component test replaces C3/C4.

@@ -201,6 +201,7 @@ $isolatedTabId = ''
 $isolatedTabUiId = ''
 $baselineTabState = $null
 $knownHostRemoved = $false
+$knownHostRemovalSubmitted = $false
 $primaryFailure = $null
 $cleanupFailures = [Collections.Generic.List[string]]::new()
 $commandObservations = [Collections.Generic.List[object]]::new()
@@ -411,6 +412,14 @@ function Close-AgentTestTab {
         $tab = Get-AgentOwnedTab -State $state
     }
     if ($state.activeId -cne $isolatedTabUiId) { throw '[harness] Agent test Tab did not become active' }
+    # A failed check can still have proved its SSH close. Remove its fingerprint
+    # while that same local command owner exists, before restoring the user's Tab.
+    # Never resend an earlier command with an unknown result or type into SSH.
+    if ($knownHostCleanupAttempted -and -not $knownHostRemoved -and
+        -not $knownHostRemovalSubmitted -and $script:agentSshBoundary -eq 'local') {
+        try { Remove-AgentKnownHost }
+        catch { $cleanupFailures.Add('Run-scoped known-host cleanup failed before owned Tab closure') }
+    }
     $close = Find-OneNode -Layout $tab -Description 'owned Agent Tab close control' -Predicate {
         $_.attributes.type -ceq 'Text' -and $_.attributes.clickable -eq 'true' -and $_.attributes.text -ceq '✕'
     }
@@ -480,6 +489,19 @@ function Submit-LocalCommand {
             Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Command `
                 -InputNode $inputContext.node -InputLayout $inputContext.layout
         } | Out-Null
+}
+
+function Remove-AgentKnownHost {
+    if ($script:agentSshBoundary -ne 'local') {
+        throw '[harness] Local command state is unconfirmed; refusing known-host cleanup submission'
+    }
+    if ($script:knownHostRemovalSubmitted) {
+        throw '[harness] Known-host removal was already submitted; refusing a repeated command'
+    }
+    $script:knownHostRemovalSubmitted = $true
+    Submit-LocalCommand -Command "ssh-keygen -R [127.0.0.1]:$Port" -Stage 'known-host-post-clean'
+    Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $Port
+    $script:knownHostRemoved = $true
 }
 
 function Wait-AppLog {
@@ -671,7 +693,7 @@ function Set-AgentStartGate {
 
 function Start-AgentNotificationAfterHidden {
     param([string]$Agent, [string]$Stage, [string]$CaptureResultPath, [System.Collections.IDictionary]$Observation)
-    $gated = $Agent -in @('codex', 'pi')
+    $gated = $Agent -in @('codex', 'pi', 'qwen')
     try {
         if ($Agent -eq 'qwen') {
             # Qwen starts focused. tmux does not replay an earlier focus-out
@@ -681,10 +703,15 @@ function Start-AgentNotificationAfterHidden {
         }
         if ($gated) {
             $name = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
-            Wait-File -Path (Join-Path (Split-Path $CaptureResultPath -Parent) "$name-start-gate.json") -TimeoutSeconds 10
+            $gateTimeout = if ($Agent -eq 'qwen') { 30 } else { 10 }
+            Wait-File -Path (Join-Path (Split-Path $CaptureResultPath -Parent) "$name-start-gate.json") -TimeoutSeconds $gateTimeout
             Set-AgentStartGate -CaptureResultPath $CaptureResultPath -Action ready
         }
         Hide-AgentNotificationWindow -Stage $Stage -CaptureResultPath $CaptureResultPath -Observation $Observation
+        if ($Agent -eq 'qwen') {
+            Wait-AgentTuiReady -CaptureResultPath $CaptureResultPath -RequireFocusOut
+            $Observation.taskCompletionGate = 'hidden-and-native-focus-out-before-release'
+        }
         if ($gated) { Set-AgentStartGate -CaptureResultPath $CaptureResultPath -Action release }
     } catch {
         $failure = $_.Exception.Message
@@ -843,7 +870,8 @@ function Wait-AgentTuiReady {
     param(
         [Parameter(Mandatory = $true)][string]$CaptureResultPath,
         [ValidateRange(1, 30)][int]$TimeoutSeconds = 15,
-        [switch]$RequireFocusReporting
+        [switch]$RequireFocusReporting,
+        [switch]$RequireFocusOut
     )
     $captureName = [IO.Path]::GetFileNameWithoutExtension($CaptureResultPath)
     $liveProbePath = Join-Path (Split-Path $CaptureResultPath -Parent) "$captureName-live.json"
@@ -860,7 +888,8 @@ function Wait-AgentTuiReady {
                 ($focus.enableCount -is [int] -or $focus.enableCount -is [long]) -and
                 ($focus.disableCount -is [int] -or $focus.disableCount -is [long]) -and
                 $focus.enableCount -eq 1 -and $focus.disableCount -eq 0)
-            if ($liveProbe.output.alternateScreen.enterCount -gt 0 -and $focusReady) { return }
+            $focusOutReady = -not $RequireFocusOut -or $liveProbe.input.focusReporting.outCount -gt 0
+            if ($liveProbe.output.alternateScreen.enterCount -gt 0 -and $focusReady -and $focusOutReady) { return }
         }
         if (Test-Path -LiteralPath $CaptureResultPath -PathType Leaf) {
             throw '[external-agent] Agent exited before the interactive TUI became ready'
@@ -933,13 +962,6 @@ function Get-WindowSizeToggleButton {
         [string]$_.attributes.id -match '^Enhance(?:Maximize|Recover)Btn$' -and
         [string]$_.attributes.clickable -eq 'true'
     }
-}
-
-function Resume-AgentAfterAttention {
-    param([Parameter(Mandatory = $true)][string]$Agent)
-    if ($Agent -ne 'qwen') { return }
-    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    Start-Sleep -Milliseconds 700
 }
 
 function Save-CurrentAppLogs {
@@ -1143,6 +1165,13 @@ function Invoke-AgentModeCheck {
         try {
             Assert-NotificationAndReturn -Stage $stage -CaptureResultPath $captureResultPath `
                 -Observation $check.notificationObservation
+            if ($Agent -eq 'qwen') {
+                $task = Get-Content -LiteralPath (Join-Path $fixtureDirectory "results/$stage-notification-start-gate.json") -Raw | ConvertFrom-Json
+                if ($task.status -ne 'task-completed' -or $task.minimumDurationSeconds -ne 21 -or $task.elapsedSeconds -lt 21) {
+                    throw '[harness] Native notification cannot substitute for confirmed controlled task completion'
+                }
+                $check.notificationObservation.taskCompleted = $true
+            }
             $check.nativeNotification = $true
             $check.genericNotificationPayload = $true
             $check.returnApplied = $true
@@ -1151,7 +1180,6 @@ function Invoke-AgentModeCheck {
             Save-CurrentAppLogs -Name "$stage-notification-failure"
             Restore-AgentAppForContinuation
         }
-        Resume-AgentAfterAttention -Agent $Agent
         Assert-AgentSearch -Stage $stage
         $check.search = $true
         Invoke-AgentInputProbes -Stage $stage
@@ -1739,14 +1767,7 @@ function Invoke-AgentSelectedChecks {
     }
 
     if (@($result.checks | Where-Object status -eq 'failed').Count -gt 0) { return }
-    if ($script:agentSshBoundary -ne 'local') {
-        throw '[harness] Local command state is unconfirmed; refusing known-host cleanup submission'
-    }
-    Submit-LocalCommand `
-        -Command "ssh-keygen -R [127.0.0.1]:$Port" `
-        -Stage 'known-host-post-clean'
-    Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $Port
-    $script:knownHostRemoved = $true
+    Remove-AgentKnownHost
 }
 
 try {
@@ -2119,6 +2140,14 @@ try {
     }
     $result.completedAt = [DateTimeOffset]::UtcNow.ToString('o')
     try {
+        # Failed-check cleanup may submit after the main-loop summary was built.
+        # Refresh only command evidence; preserve the original business verdict.
+        if ($null -ne $result.commandAutomation) {
+            $result.commandAutomation.local = Get-LeanTTYDeviceCommandAutomationSummary `
+                -Observations $commandObservations `
+                -BusinessVerdict $result.commandAutomation.local.businessVerdict `
+                -BusinessPostcondition $result.commandAutomation.local.businessPostcondition
+        }
         Write-AgentCompatibilityProgress -Stage 'complete'
     } catch {
         $cleanupFailures.Add('Final result persistence failed; retain the last checkpoint')
