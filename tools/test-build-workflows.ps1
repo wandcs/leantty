@@ -909,6 +909,43 @@ try {
             -AllowedPaths @('tools/verify-ssh-auth-pc.ps1', 'docs/*.md')
     } -Message 'Candidate reuse accepted a product-source change'
 
+    # Read each real entry's admission list; do not duplicate its allow policy in a stub.
+    foreach ($caller in @('verify-agent-compatibility-pc.ps1', 'verify-mosh-pc.ps1',
+            'verify-ssh-auth-pc.ps1', 'verify-terminal-search-pc.ps1',
+            'verify-long-task-notification-pc.ps1')) {
+        $admissionAst = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot $caller), [ref]$null, [ref]$null)
+        $admissionCalls = @($admissionAst.FindAll({ param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'Assert-LeanTTYCandidateHarnessCompatibility'
+        }, $true))
+        Assert-True ($admissionCalls.Count -eq 1) "$caller has an ambiguous admission owner"
+        $admissionCall = $admissionCalls[0]
+        $allowedParameter = @($admissionCall.CommandElements | Where-Object {
+            $_ -is [Management.Automation.Language.CommandParameterAst] -and
+                $_.ParameterName -eq 'AllowedHarnessPaths'
+        })
+        Assert-True ($allowedParameter.Count -eq 1) "$caller omitted its explicit admission list"
+        $allowedPaths = $admissionCall.CommandElements[
+            $admissionCall.CommandElements.IndexOf($allowedParameter[0]) + 1].SafeGetValue()
+        Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowedPaths -ChangedPaths @(
+            'docs/design/agent-notification-order-20260912.md',
+            'tools/agent-compatibility-wsl.sh',
+            'tools/agent-compatibility/start_gate.py',
+            'tools/agent-compatibility/test_observe_attention_pty.py',
+            'tools/agent-compatibility/test_start_gate.py',
+            'tools/test-agent-attention-gate.ps1'
+        )
+        foreach ($rejectedPath in @('entry/src/main/ets/pages/Index.ets',
+                'entry/src/main/resources/rawfile/terminal.html', 'AppScope/app.json5',
+                'leantty_ssh/Cargo.lock', 'leantty_ssh/leantty_core/src/lib.rs',
+                'build-profile.json5', 'tools/unreviewed-tool.ps1')) {
+            Assert-Throws -Action {
+                Assert-LeanTTYHarnessOnlyPaths -AllowedPaths $allowedPaths -ChangedPaths @($rejectedPath)
+            } -Message "$caller admitted an unreviewed path: $rejectedPath"
+        }
+    }
+
     $safeHap = Join-Path $testRoot 'safe-release.hap'
     $unsafeHap = Join-Path $testRoot 'unsafe-release.hap'
     foreach ($archiveCase in @(

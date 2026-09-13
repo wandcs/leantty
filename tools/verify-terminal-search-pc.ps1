@@ -70,6 +70,12 @@ if (-not $DiagnosticHap) {
         -Candidate $candidate `
         -AllowedHarnessPaths @(
             'tools/verify-host-identity-pc.ps1',
+            'docs/design/agent-notification-order-20260912.md',
+            'tools/agent-compatibility-wsl.sh',
+            'tools/agent-compatibility/start_gate.py',
+            'tools/agent-compatibility/test_observe_attention_pty.py',
+            'tools/agent-compatibility/test_start_gate.py',
+            'tools/test-agent-attention-gate.ps1',
             'tools/release-tooling.ps1',
             'tools/verify-release-pc.ps1',
             'tools/verify-mosh-matrix-pc.ps1',
