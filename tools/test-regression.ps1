@@ -268,6 +268,12 @@ Invoke-RegressionCheck -Name 'mosh-owner-contracts' -Groups @('arkts') -Action {
     if ($LASTEXITCODE -ne 0) { throw 'Mosh owner contract tests failed' }
 }
 
+Invoke-RegressionCheck -Name 'ssh-owner-contracts' -Groups @('arkts') -Action {
+    $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
+    & $nodeExe (Join-Path $repoRoot 'tools\test-ssh-client.cjs') $typescript
+    if ($LASTEXITCODE -ne 0) { throw 'SSH owner contract tests failed' }
+}
+
 Invoke-RegressionCheck -Name 'durable-trust-contracts' -Groups @('arkts') -Action {
     $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
     & $nodeExe (Join-Path $repoRoot 'tools\test-durable-trust.cjs') $typescript

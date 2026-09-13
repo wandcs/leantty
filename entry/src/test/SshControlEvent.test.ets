@@ -21,6 +21,8 @@ class SshControlEventRecord implements NativeControlEvent {
   host: string = ''
   port: number = 0
   metrics: string = ''
+  diagnosticStatus: string = ''
+  diagnosticReason: string = ''
 }
 
 export default function sshControlEventTest(): void {

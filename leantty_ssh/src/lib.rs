@@ -77,6 +77,8 @@ pub struct ControlEvent {
     pub host: String,
     pub port: u32,
     pub metrics: String,
+    pub diagnostic_status: String,
+    pub diagnostic_reason: String,
 }
 
 struct ChangedHostKeyControl {
@@ -105,6 +107,8 @@ impl ControlEvent {
             host: String::new(),
             port: 0,
             metrics: String::new(),
+            diagnostic_status: String::new(),
+            diagnostic_reason: String::new(),
         }
     }
 
@@ -226,12 +230,6 @@ impl TransportEvent {
             status: status.to_string(),
             reason: String::new(),
         }
-    }
-
-    fn diagnostic_failure(layer: ConnectionLayer, stage: &str, reason: &str) -> Self {
-        let mut event = Self::diagnostic(layer, stage, "failed");
-        event.reason = reason.to_string();
-        event
     }
 
     fn mosh_reachability(status: &str, reason: &str) -> Self {
@@ -702,23 +700,6 @@ fn send_transport_diagnostic(
         return;
     }
     let event = TransportEvent::diagnostic(layer, stage, status);
-    let status = callback.call(event, ThreadsafeFunctionCallMode::Blocking);
-    if status != Status::Ok {
-        eprintln!("[LTTY_SSH] callback=transport_diagnostic status={}", status);
-    }
-}
-
-fn send_transport_failure_diagnostic(
-    callback: &JsTransportCallback,
-    enabled: bool,
-    layer: ConnectionLayer,
-    stage: &str,
-    reason: &str,
-) {
-    if !enabled {
-        return;
-    }
-    let event = TransportEvent::diagnostic_failure(layer, stage, reason);
     let status = callback.call(event, ThreadsafeFunctionCallMode::Blocking);
     if status != Status::Ok {
         eprintln!("[LTTY_SSH] callback=transport_diagnostic status={}", status);
@@ -1715,6 +1696,22 @@ struct SessionPhaseFailure {
 }
 
 impl SessionPhaseFailure {
+    fn control_event(&self, session_id: u32, generation: u32, verbose: bool) -> ControlEvent {
+        let mut event = ControlEvent::error(
+            session_id,
+            generation,
+            self.layer,
+            self.stage,
+            self.code,
+            &self.detail,
+        );
+        if verbose {
+            event.diagnostic_status = self.diagnostic_status.to_string();
+            event.diagnostic_reason = self.diagnostic_reason.unwrap_or("").to_string();
+        }
+        event
+    }
+
     fn failed(
         layer: ConnectionLayer,
         stage: &'static str,
@@ -1788,31 +1785,11 @@ fn report_session_phase_stop(context: &SessionPhaseContext, stop: &SessionPhaseS
     let SessionPhaseStop::Failed(failure) = stop else {
         return;
     };
-    if let Some(reason) = failure.diagnostic_reason {
-        send_transport_failure_diagnostic(
-            &context.transport_callback,
-            context.verbose,
-            failure.layer,
-            failure.stage,
-            reason,
-        );
-    } else {
-        send_transport_diagnostic(
-            &context.transport_callback,
-            context.verbose,
-            failure.layer,
-            failure.stage,
-            failure.diagnostic_status,
-        );
-    }
-    send_control_error(
+    // One terminal event owns both failure metadata and shutdown. Separate TSFN
+    // queues cannot order a transport diagnostic before this control error.
+    let _ = send_control(
         &context.control_callback,
-        context.session_id,
-        context.generation,
-        failure.layer,
-        failure.stage,
-        failure.code,
-        &failure.detail,
+        failure.control_event(context.session_id, context.generation, context.verbose),
     );
 }
 
@@ -5042,6 +5019,34 @@ MOSH SSH_CONNECTION 192.0.2.10 50000 198.51.100.8 22\n"
         assert_eq!(timeout.code, "channel");
         assert_eq!(timeout.diagnostic_status, "timed_out");
         assert_eq!(timeout.diagnostic_reason, None);
+        for failure in [&refused, &timeout] {
+            for verbose in [false, true] {
+                let event = failure.control_event(41, 7, verbose);
+                assert_eq!(event.kind, "error");
+                assert_eq!(event.session_id, "41");
+                assert_eq!(event.generation, 7);
+                assert_eq!(event.layer, failure.layer.as_str());
+                assert_eq!(event.stage, failure.stage);
+                assert_eq!(event.code, failure.code);
+                assert_eq!(event.detail, failure.detail);
+                assert_eq!(
+                    event.diagnostic_status,
+                    if verbose {
+                        failure.diagnostic_status
+                    } else {
+                        ""
+                    }
+                );
+                assert_eq!(
+                    event.diagnostic_reason,
+                    if verbose {
+                        failure.diagnostic_reason.unwrap_or("")
+                    } else {
+                        ""
+                    }
+                );
+            }
+        }
     }
 
     #[test]
