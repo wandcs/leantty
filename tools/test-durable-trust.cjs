@@ -212,11 +212,14 @@ test('remove command shows pending feedback but no success or prompt before comm
 
 const terminalTypes = compile('common/types/TerminalTypes.ets', {});
 function sessionFixture(protocol = 'ssh') {
-  const gate = deferred(), output = [], answers = [];
+  const gate = deferred(), output = [], answers = [], idleInputs = [];
   const source = 'viewmodel/SessionViewModel.ets';
   const imports = emptyImports(source);
   Object.assign(imports, {
     '../common/types/TerminalTypes': terminalTypes,
+    '../model/terminal/TerminalInputParser': { TerminalInputParser: { parse(data) {
+      idleInputs.push(data); return [];
+    } } },
     '../model/ssh/ConnectionControl': compile('model/ssh/ConnectionControl.ets', {
       '../../common/types/TerminalTypes': terminalTypes,
     }),
@@ -242,7 +245,7 @@ function sessionFixture(protocol = 'ssh') {
     onMoshError: () => output.push('failed'),
     writeError: v => output.push(v), commandBarVm: { getSshConfig() { return {}; } },
   });
-  return { owner, gate, answers, output };
+  return { owner, gate, answers, output, idleInputs };
 }
 test('closing a Pane revokes the trust decision before native disconnect finishes', async () => {
   const f = sessionFixture(), close = deferred();
@@ -282,6 +285,17 @@ test('closed local command cannot write success into a replacement page', async 
   f.owner.terminalBoundaryGeneration++;
   f.gate.resolve(); await operation;
   assert.deepEqual(f.output, ['Updating']); assert.equal(f.owner.knownHostsCommandPending, false);
+});
+test('idle Ctrl-C reaches the parser only after asynchronous known-host command completion', async () => {
+  const f = sessionFixture(); f.owner.mode = terminalTypes.TerminalMode.IDLE;
+  const operation = f.owner.executeKeyCommand({ kind: 'remove' });
+  f.owner.handleIdleInput('\x03');
+  assert.equal(f.owner.knownHostsCommandPending, true);
+  assert.deepEqual(f.idleInputs, []);
+  f.gate.resolve(); await operation;
+  f.owner.handleIdleInput('\x03');
+  assert.equal(f.owner.knownHostsCommandPending, false);
+  assert.deepEqual(f.idleInputs, ['\x03']);
 });
 for (const protocol of ['ssh', 'mosh', 'transfer']) {
   test(`${protocol} waits for durable trust, provides pending feedback and ignores duplicate Enter`, async () => {
