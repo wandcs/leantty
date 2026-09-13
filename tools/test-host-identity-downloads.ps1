@@ -60,6 +60,17 @@ foreach ($outcome in @('success', 'denied', 'pending', 'unknown')) {
 }
 
 . (Join-Path $PSScriptRoot 'host-identity-downloads.ps1')
+Test-Downloads 'settings-layout-is-scoped-to-system-settings' {
+    $hdc='unused'; $Target='unused'; $EvidenceDirectory='fixture'
+    $script:observedBundle=''
+    function Get-LeanTTYDeviceLayout { param($Hdc,$Target,$LocalPath,$BundleName)
+        $script:observedBundle=$BundleName
+        return @{attributes=@{text='settings-only'}}
+    }
+    $layout=Get-HostIdentityDownloadsLayout -Stage unit
+    Assert-Downloads ($script:observedBundle -ceq 'com.huawei.hmos.settings' -and
+        $layout.attributes.text -ceq 'settings-only') 'Downloads lookup included unrelated desktop windows'
+}
 Test-Downloads 'settings-route-does-not-depend-on-sidebar-state' {
     $hdc='unused'; $Target='unused'
     $script:navigation = [Collections.Generic.List[string]]::new()

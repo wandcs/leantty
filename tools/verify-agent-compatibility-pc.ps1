@@ -95,6 +95,8 @@ if ($DiagnosticHap) {
         -Candidate $candidate `
         -AllowedHarnessPaths @(
             'tools/verify-host-identity-pc.ps1',
+            'tools/host-identity-downloads.ps1',
+            'tools/test-host-identity-downloads.ps1',
             'tools/release-tooling.ps1',
             'tools/verify-mosh-matrix-pc.ps1',
             'tools/test-release-phases.ps1',
