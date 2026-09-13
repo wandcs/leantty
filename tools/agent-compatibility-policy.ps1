@@ -310,7 +310,8 @@ function Resolve-LeanTTYAgentNotificationAssessment {
         [Parameter(Mandatory = $true)][int]$AgentChildExitCode,
         [AllowEmptyString()][string]$NotificationFailure = '',
         [AllowNull()][object]$UpstreamEnvironment = $null,
-        [AllowNull()][object]$OuterObservation = $null
+        [AllowNull()][object]$OuterObservation = $null,
+        [AllowNull()][object]$QwenTaskEvidence = $null
     )
 
     $applicability = if ($Agent -eq 'opencode' -and $Mode -eq 'tmux') {
@@ -380,6 +381,49 @@ function Resolve-LeanTTYAgentNotificationAssessment {
         $assessment.limitation = [ordered]@{
             evidenceReference = 'docs/design/agent-exit-boundary-20260912.md#pr186-formal-stop-at-pi-tmux-forwarding'
             environment = $UpstreamEnvironment
+            outerObservation = $outer
+            observedFailure = $NotificationFailure
+        }
+        return [pscustomobject]$assessment
+    }
+
+    # A completed shell task is not Qwen's Responding-state timer. Do not turn
+    # absence at both complete producer boundaries into a LeanTTY notification
+    # failure. This excludes only this native-emission assertion, never interaction,
+    # cleanup, a broken observer, or handling of a signal that actually arrived.
+    $qwen = $QwenTaskEvidence
+    $qwenNumbersValid = $true
+    foreach ($number in @($qwen.task.minimumDurationSeconds, $qwen.capture.childExitCode,
+            $qwen.capture.output.bytes)) {
+        if ($number -isnot [int] -and $number -isnot [long]) { $qwenNumbersValid = $false }
+    }
+    if ($Agent -ceq 'qwen' -and -not $NativeAttentionObserved -and
+        $AgentChildExitCode -eq 0 -and $failureDomain -ceq 'external-agent' -and
+        $qwen.version -ceq '0.23.0' -and $qwenNumbersValid -and
+        $qwen.windowHidden -is [bool] -and $qwen.windowHidden -and
+        $qwen.focusReportingReady -is [bool] -and $qwen.focusReportingReady -and
+        $qwen.taskCompletionGate -ceq 'hidden-and-native-focus-out-before-release' -and
+        $qwen.task.status -ceq 'task-completed' -and $qwen.task.minimumDurationSeconds -eq 21 -and
+        ($qwen.task.elapsedSeconds -is [double] -or $qwen.task.elapsedSeconds -is [long] -or
+            $qwen.task.elapsedSeconds -is [int]) -and
+        $qwen.task.elapsedSeconds -ge 21 -and $qwen.task.elapsedSeconds -lt 90 -and
+        $qwen.capture.schemaVersion -eq 1 -and $qwen.capture.childExitCode -eq 0 -and
+        $qwen.capture.output.bytes -gt 0 -and
+        $qwen.capture.output.nativeAttentionSignalObserved -is [bool] -and
+        -not $qwen.capture.output.nativeAttentionSignalObserved -and
+        $outerNumbersValid -and $outer.boundary -ceq 'remote-outer-pty-not-client-receipt' -and
+        $outer.complete -is [bool] -and $outer.complete -and $outer.childExitCode -eq 0 -and
+        $outer.bytes -gt 0 -and $outer.attentionCount -eq 0 -and $outer.afterHiddenCount -eq 0 -and
+        $before -ge 0 -and $before -le $hidden -and $hidden -le $outer.bytes) {
+        $assessment.status = 'not-applicable'
+        $assessment.classification = 'not-emitted-by-agent'
+        $assessment.systemNotification = 'not-exercised'
+        $assessment.failure = ''
+        $assessment.failureDomain = 'external-agent'
+        $assessment.limitation = [ordered]@{
+            evidenceReference = 'docs/design/agent-notification-order-20260912.md#qwen-completed-task-without-native-emission'
+            environment = @{ qwenVersion = $qwen.version }
+            task = $qwen.task
             outerObservation = $outer
             observedFailure = $NotificationFailure
         }

@@ -1216,12 +1216,26 @@ function Invoke-AgentModeCheck {
         $check.captureSummary = "results/$stage-notification.json"
         $upstreamEnvironment = $null
         $finalOuter = $null
-        if ($Agent -ceq 'pi' -and $Mode -ceq 'tmux' -and
-            $deferredFailure -ceq '[unknown] Agent inner attention observed without outer attention') {
+        $qwenTaskEvidence = $null
+        if (($Agent -ceq 'pi' -and $Mode -ceq 'tmux' -and
+                $deferredFailure -ceq '[unknown] Agent inner attention observed without outer attention') -or
+            ($Agent -ceq 'qwen' -and -not $nativeAttentionObserved)) {
             Wait-File -Path (Join-Path $fixtureDirectory "results/$stage-notification-outer-final.json") -TimeoutSeconds 10
             $finalOuter = Get-AgentOuterAttention -CaptureResultPath $captureResultPath
             $check.notificationObservation.outer = $finalOuter
-            $upstreamEnvironment = Get-AgentTmuxNotificationEnvironment
+            if ($Agent -ceq 'pi') { $upstreamEnvironment = Get-AgentTmuxNotificationEnvironment }
+            if ($Agent -ceq 'qwen') {
+                $task = Get-Content -LiteralPath (Join-Path $fixtureDirectory "results/$stage-notification-start-gate.json") -Raw | ConvertFrom-Json
+                $qwenTaskEvidence = @{
+                    version = [string]$inventory.tools.qwen.version
+                    windowHidden = $check.notificationObservation.windowHidden
+                    focusReportingReady = $check.notificationObservation.focusReportingReady
+                    taskCompletionGate = $check.notificationObservation.taskCompletionGate
+                    task = $task
+                    capture = $capture
+                }
+                $check.notificationObservation.task = $task
+            }
         }
         $notificationAssessment = Resolve-LeanTTYAgentNotificationAssessment `
             -Agent $Agent `
@@ -1231,7 +1245,8 @@ function Invoke-AgentModeCheck {
             -AgentChildExitCode ([int]$capture.childExitCode) `
             -NotificationFailure $deferredFailure `
             -UpstreamEnvironment $upstreamEnvironment `
-            -OuterObservation $finalOuter
+            -OuterObservation $finalOuter `
+            -QwenTaskEvidence $qwenTaskEvidence
         $check.notificationAssessment = $notificationAssessment
         Disconnect-AgentServer
         Connect-AgentServer -Stage "$stage-final-reconnect"

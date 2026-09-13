@@ -24,6 +24,7 @@ function Assert-PhaseRejected([scriptblock]$Action, [string]$Pattern) {
 }
 
 try {
+    . (Join-Path $PSScriptRoot 'candidate-store.ps1')
     [IO.File]::WriteAllText((Join-Path $fixtureTools 'verify-release-pc.ps1'), $entryText)
     foreach ($name in @('release-tooling.ps1', 'release-agent-continuation.ps1')) {
         [IO.File]::Copy((Join-Path $PSScriptRoot $name), (Join-Path $fixtureTools $name))
@@ -85,8 +86,10 @@ $global:LASTEXITCODE=0
     function git {
         $global:LASTEXITCODE=0
         if ($args -contains 'status') { return }
+        if ($args -contains 'merge-base' -or $args -contains 'diff') { return }
         if ($args -contains 'HEAD^{tree}') { return ('c'*40) }
         if ($args -contains 'HEAD') { return ('b'*40) }
+        if ($args -contains (('b'*40)+'^{tree}')) { return ('c'*40) }
         throw 'Unexpected Git operation in phase fixture'
     }
     $entry = Join-Path $fixtureTools 'verify-release-pc.ps1'
@@ -137,6 +140,55 @@ $global:LASTEXITCODE=0
         (($phaseCalls | Select-Object -Last 2) -join '|') -eq 'operator-lock-recovery|operator-lid-recovery') 'Operator resume repeated automatic work'
     & $entry @arguments -Phase operator -Resume
     Assert-Phase ($phaseCalls.Count -eq ($automaticCalls+2)) 'Completed resume repeated operator actions'
+
+    # Real cross-harness policy and entry: synthetic old failure remains immutable;
+    # its independent prefix is reused, new QH/Agent/suffix execute, operator waits.
+    function Pin-PhaseJson([string]$Name, $Value) {
+        $path=Join-Path $testRoot $Name
+        Write-LeanTTYAtomicJson -Path $path -Value $Value -Depth 20
+        @{path=$path;sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+    }
+    $old=& $readReport
+    $old.result='failed'; $old.completeApplicablePhysicalMatrixClaimed=$false
+    $agentIndex=[Array]::IndexOf(@($old.stageOrder),'agent-compatibility')
+    $failedStage=$old.stages[$agentIndex]
+    $agentEvidence=Get-Content $failedStage.resultPath -Raw | ConvertFrom-Json -Depth 20
+    $agentEvidence.result='failed'; $agentEvidence.runMode='acceptance'
+    $resources=@{knownHostEndpoint='[127.0.0.1]:32000';tabCleanup=@{ownedTabRemoved=$true;originalTabsRestored=$true;originalActiveTabRestored=$true};notificationPermission=@{restored=$true}}
+    $agentEvidence | Add-Member resources $resources
+    $agentRef=Pin-PhaseJson 'r2-original-agent.json' $agentEvidence
+    $failedStage.status='failed';$failedStage.resultPath=$agentRef.path
+    for($index=$agentIndex+1;$index -lt $old.stages.Count;$index++) {
+        $old.stages[$index].status='pending';$old.stages[$index].attemptCount=0
+    }
+    $oldRef=Pin-PhaseJson 'r2-original/release-report.json' $old
+    $recovery=Pin-PhaseJson 'r2-recovery.json' @{result='passed';attemptId=$failedStage.attemptId;
+        originalReleaseReportSha256=$oldRef.sha256;originalAgentReportSha256=$agentRef.sha256;
+        knownHostEndpoint=$resources.knownHostEndpoint;originalReportsUnchanged=$true;knownHostAbsent=$true}
+    $audit=@{gate='agent-continuation-state-audit';result='passed';sourceReportSha256=$oldRef.sha256;
+        failedAgentSha256=$agentRef.sha256;candidateSha256=$old.candidate.sha256;target=$arguments.Target;
+        observedAt=[DateTimeOffset]::UtcNow.ToString('o');
+        agentScriptSha256=(Get-FileHash (Join-Path $fixtureTools 'verify-agent-compatibility-pc.ps1')).Hash.ToLowerInvariant()}
+    foreach($field in @('readOnly','knownHostsAbsent','fixtureProcessesAbsent','fixtureDirectoriesAbsent',
+        'listenersAbsent','hdcMappingsEmpty','workspaceRestored','notificationRestored','platformUnchanged','prefixIndependent')) {$audit[$field]=$true}
+    $manifest=Pin-PhaseJson 'r2-manifest.json' @{schemaVersion=1;scope='agent-split-R2';
+        sourceReport=$oldRef;recovery=$recovery;admission=(Pin-PhaseJson 'r2-audit.json' $audit)}
+    $arguments.EvidenceDirectory=Join-Path $testRoot 'r2-continued'
+    $r2Start=$phaseCalls.Count
+    & $entry @arguments -Phase automatic -AgentContinuationPath $manifest.path
+    $continuedPath=Join-Path $arguments.EvidenceDirectory 'release-report.json'
+    $continued=Get-Content $continuedPath -Raw | ConvertFrom-Json -Depth 20
+    Assert-Phase ($continued.result -eq 'awaiting-operator' -and
+        @($continued.stages | Where-Object status -eq 'reused').Count -eq 16) 'R2 split did not preserve candidate plus fifteen independent stages'
+    $freshCalls=@($phaseCalls | Select-Object -Skip $r2Start)
+    Assert-Phase ($freshCalls.Count -eq 9 -and $freshCalls[0] -eq 'qualify-acceptance-harness-pc.ps1' -and
+        $freshCalls[1] -eq 'verify-agent-compatibility-pc.ps1' -and
+        @($freshCalls | Where-Object {$_ -like 'operator-*'}).Count -eq 0) 'R2 repeated its prefix or started operator work'
+    Assert-Phase ((Get-FileHash $oldRef.path).Hash -ieq $oldRef.sha256) 'R2 changed its original failure'
+    & $entry @arguments -Phase operator -Resume
+    Assert-Phase ($phaseCalls.Count -eq ($r2Start+11)) 'R2 operator resume repeated an automatic stage'
+    $continued=Get-Content $continuedPath -Raw | ConvertFrom-Json -Depth 20
+    Assert-Phase ($continued.completeApplicablePhysicalMatrixClaimed) 'R2 could not complete its real validated operator suffix'
     $phaseFailAt='verify-key-passphrase-pc.ps1'
     $beforeFailure=$phaseCalls.Count
     $arguments.EvidenceDirectory=Join-Path $testRoot 'failure'

@@ -19,6 +19,48 @@ $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) (
 )
 New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
 try {
+    $qwenEvidence = @{ version='0.23.0'; windowHidden=$true; focusReportingReady=$true;
+        taskCompletionGate='hidden-and-native-focus-out-before-release';
+        task=@{status='task-completed';minimumDurationSeconds=21;elapsedSeconds=21.01};
+        capture=@{schemaVersion=1;childExitCode=0;output=@{bytes=100;nativeAttentionSignalObserved=$false}} }
+    $qwenOuter = @{boundary='remote-outer-pty-not-client-receipt';complete=$true;childExitCode=0;
+        bytes=100;attentionCount=0;afterHiddenCount=0;checkpoints=@{'before-minimize'=10;'after-hidden'=20}}
+    $qwenArguments = @{Agent='qwen';Mode='direct';NativeAttentionObserved=$false;
+        SystemNotificationCompleted=$false;AgentChildExitCode=0;
+        NotificationFailure='[external-agent] Agent exited without native attention or notification deadline expired, childExitCode=-1';
+        QwenTaskEvidence=$qwenEvidence;OuterObservation=$qwenOuter}
+    foreach ($mode in @('direct','tmux')) {
+        $qwenArguments.Mode=$mode
+        $assessment=Resolve-LeanTTYAgentNotificationAssessment @qwenArguments
+        Assert-True ($assessment.status -ceq 'not-applicable' -and
+            $assessment.classification -ceq 'not-emitted-by-agent' -and
+            $assessment.systemNotification -ceq 'not-exercised') 'Completed native Qwen non-emission is a limitation, not a product pass'
+    }
+    foreach ($mutation in @(
+        {param($x) $x.version='0.24.0'}, {param($x) $x.windowHidden=$false},
+        {param($x) $x.focusReportingReady=$null}, {param($x) $x.taskCompletionGate='other'},
+        {param($x) $x.task.status='task-timeout'}, {param($x) $x.task.elapsedSeconds=19},
+        {param($x) $x.capture.childExitCode=1}, {param($x) $x.capture.output.bytes=0},
+        {param($x) $x.capture.output.nativeAttentionSignalObserved=$true})) {
+        $copy=$qwenEvidence | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8
+        & $mutation $copy
+        $qwenArguments.QwenTaskEvidence=$copy
+        Assert-True ((Resolve-LeanTTYAgentNotificationAssessment @qwenArguments).status -ceq 'failed') 'Unproved Qwen preconditions must stop'
+    }
+    $qwenArguments.QwenTaskEvidence=$qwenEvidence
+    foreach ($mutation in @(
+        @{complete=$false}, @{attentionCount=1}, @{bytes=$null}, @{childExitCode=1},
+        @{boundary='inner'}, @{afterHiddenCount='0'})) {
+        $copy=$qwenOuter.Clone()
+        foreach($key in $mutation.Keys){$copy[$key]=$mutation[$key]}
+        $qwenArguments.OuterObservation=$copy
+        Assert-True ((Resolve-LeanTTYAgentNotificationAssessment @qwenArguments).status -ceq 'failed') 'Incomplete or contradictory outer observation must stop'
+    }
+    $qwenArguments.OuterObservation=$qwenOuter
+    foreach($failure in @('[harness] broken observer','[privacy] disclosure','[product] loss','[unknown] no proof')) {
+        $qwenArguments.NotificationFailure=$failure
+        Assert-True ((Resolve-LeanTTYAgentNotificationAssessment @qwenArguments).status -ceq 'failed') 'Qwen limitation must not hide other failures'
+    }
     # Exercise the device caller's object lifecycle, not the readiness fixture's
     # historical Add-Member workaround or the writer's source text.
     $report = New-LeanTTYAgentCompatibilityResult `

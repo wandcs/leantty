@@ -830,6 +830,14 @@ revalidated on resume and completion; original failures are never rewritten.
 This is not a general skip-stage switch or a waiver of cleanup or platform
 continuity. See [the repair contract](design/agent-exit-boundary-20260912.md#agent-local-formal-continuation).
 
+The `agent-split-R2` manifest extends the same entry to `-Phase automatic`.
+It additionally requires passed Agent cleanup and an entirely unstarted
+post-Agent suffix. Fifteen independent behavior stages may be reused; new QH,
+the complete Agent stage, SSH and automatic Mosh remain mandatory. Operator
+resume accepts only those pinned, revalidated inherited stages and all fresh
+automatic passes. It never imports individual failed Agent checks. See the
+[scope and cost decision](design/agent-notification-order-20260912.md#bounded-split-phase-r2).
+
 Checkpoint JSON is replaced atomically after each independent group. It records
 the exact candidate commit/tree/HAP hash, clean harness commit/tree, attempt and
 previous-attempt identity, result and cleanup audits. A separate `progress.json`

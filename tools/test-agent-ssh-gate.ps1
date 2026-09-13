@@ -302,12 +302,15 @@ foreach ($caller in @('Invoke-AgentInteractionOnlyCheck','Invoke-AgentProtocolIn
             -not ($script:trace -contains 'ctrl-c') -and -not ($script:trace -contains 'ctrl-d')) 'The real caller must not attempt exit input after an uncertain interaction'
     }
 }
+foreach ($thirdPartyAgent in @('pi', 'qwen')) {
 foreach ($case in @('known-limit', 'unknown-version', 'product', 'privacy', 'search', 'input', 'reconnect', 'cleanup')) {
-    Test-Gate "third-party-real-selection-$case" {
+    Test-Gate "third-party-real-selection-$thirdPartyAgent-$case" {
         $InteractionOnlyProbe = $false
-        $Agents = @('pi', 'codex'); $Modes = @('tmux')
+        $Agents = @($thirdPartyAgent, 'codex'); $Modes = @('tmux')
         $inventory.tools.pi = @{ installed = $true; version = '0.84.4' }
         $inventory.authenticationReady.pi = $true
+        $inventory.tools.qwen = @{ installed = $true; version = $(if ($case -eq 'unknown-version') {'future'} else {'0.23.0'}) }
+        $inventory.authenticationReady.qwen = $true
         $fixtureDirectory = Join-Path ([IO.Path]::GetTempPath()) ('leantty-third-party-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path (Join-Path $fixtureDirectory 'results') | Out-Null
         try {
@@ -315,6 +318,13 @@ foreach ($case in @('known-limit', 'unknown-version', 'product', 'privacy', 'sea
                 $capture = @{ childExitCode = 0; input = @{ containsCjkUtf8 = $true; bytes = 4200 }
                     output = @{ nativeAttentionSignalObserved = $true; nativeAttentionSignalKinds = @('osc-777') } }
                 if ($case -eq 'input') { $capture.input.bytes = 1 }
+                if ($agentName -eq 'qwen') {
+                    $capture.schemaVersion=1; $capture.output.bytes=100
+                    $capture.output.nativeAttentionSignalObserved=$false
+                    $capture.output.nativeAttentionSignalKinds=@()
+                    @{status='task-completed';minimumDurationSeconds=21;elapsedSeconds=21.01} |
+                        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $fixtureDirectory 'results/qwen-tmux-notification-start-gate.json')
+                }
                 $capture | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $fixtureDirectory "results/$agentName-tmux-notification.json")
             }
             function Start-Sleep {}
@@ -325,11 +335,15 @@ foreach ($case in @('known-limit', 'unknown-version', 'product', 'privacy', 'sea
                 $script:agentSshBoundary = 'shell-ready'
             }
             function Submit-ConnectedCommand {}
-            function Start-AgentNotificationAfterHidden {}
+            function Start-AgentNotificationAfterHidden { param($Observation)
+                $Observation.windowHidden=$true; $Observation.focusReportingReady=$true
+                $Observation.taskCompletionGate='hidden-and-native-focus-out-before-release'
+            }
             function Get-AgentExpectedAttentionKind { return 'osc-777' }
             function Assert-NotificationAndReturn { param($Stage)
-                if ($Stage -eq 'pi-tmux') {
+                if ($Stage -eq "$thirdPartyAgent-tmux") {
                     if ($case -in @('product', 'privacy')) { throw "[$case] controlled notification failure" }
+                    if ($thirdPartyAgent -eq 'qwen') { throw '[external-agent] Agent exited without native attention or notification deadline expired, childExitCode=-1' }
                     throw '[unknown] Agent inner attention observed without outer attention'
                 }
             }
@@ -357,7 +371,7 @@ foreach ($case in @('known-limit', 'unknown-version', 'product', 'privacy', 'sea
                 Assert-Gate ($result.checks.Count -eq 2 -and $result.checks[1].status -eq 'passed') 'Known limitation must continue the real selection'
                 $first = $result.checks[0]
                 Assert-Gate ($first.notificationAssessment.status -eq 'not-applicable' -and
-                    $first.notificationAssessment.classification -eq 'upstream-not-forwarded' -and
+                    $first.notificationAssessment.classification -eq $(if ($thirdPartyAgent -eq 'qwen') {'not-emitted-by-agent'} else {'upstream-not-forwarded'}) -and
                     -not $first.nativeNotification -and -not $first.genericNotificationPayload -and -not $first.returnApplied -and
                     $first.search -and $first.reconnect -and $first.tmuxResume) 'Exclusion must retain independent assertions without inventing notification evidence'
                 if ($case -eq 'cleanup') {
@@ -376,6 +390,7 @@ foreach ($case in @('known-limit', 'unknown-version', 'product', 'privacy', 'sea
             Remove-Item -LiteralPath $ownedRoot -Recurse -Force
         }
     }
+}
 }
 Test-Gate 'successful-selection-cleans-known-host-once' {
     function Invoke-AgentInteractionOnlyCheck { return [pscustomobject]@{ status = 'passed' } }
