@@ -3,8 +3,9 @@ param()
 $ErrorActionPreference = 'Stop'
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
 $testRoot = Join-Path $tempBase ('LeanTTY-readiness-report-' + [guid]::NewGuid().ToString('N'))
-$fixtureTools = Join-Path $testRoot 'tools'
-New-Item -ItemType Directory -Path $fixtureTools | Out-Null
+$fixtureRoot = Join-Path $testRoot 'checkout'
+$fixtureTools = Join-Path $fixtureRoot 'tools'
+New-Item -ItemType Directory -Path $fixtureTools -Force | Out-Null
 
 function Assert-ReadinessReport([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
@@ -23,7 +24,16 @@ function Get-LeanTTYCandidateRoot {
 }
 '@)
     [IO.File]::WriteAllText((Join-Path $fixtureTools 'test-regression.ps1'), @'
-param([string[]]$Group)
+param([string[]]$Group, [string]$EvidencePath)
+if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
+    throw 'Readiness must explicitly pass the software evidence path'
+}
+$checkoutPrefix = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent)).TrimEnd('\') + '\'
+if ([IO.Path]::GetFullPath($EvidencePath).StartsWith($checkoutPrefix,
+        [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Software evidence must survive checkout build cleanup'
+}
+[IO.File]::WriteAllText($EvidencePath, '{"result":"passed","releaseEligible":false}')
 $global:LASTEXITCODE = 0
 '@)
     [IO.File]::WriteAllText((Join-Path $fixtureTools 'test-agent-compatibility.ps1'),
@@ -58,6 +68,10 @@ if (-not $Metadata -or -not $PreflightOnly -or $BuildMode -ne 'release') {
                 -CandidateBasePath (Join-Path $testRoot 'candidates') -EvidencePath $reportPath
         } catch { $failure = $_.Exception.Message }
         $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json -Depth 20
+        $software = Get-Content -LiteralPath (Join-Path $testRoot "$case-software.json") -Raw |
+            ConvertFrom-Json
+        Assert-ReadinessReport ($software.result -eq 'passed' -and
+            $software.releaseEligible -eq $false) 'Readiness lost its external software evidence'
         $summary = $report.agentResultReadiness
         Assert-ReadinessReport ($null -ne $summary) 'Readiness report lost the verified Agent result summary'
         Assert-ReadinessReport ($summary.sha256 -ceq
@@ -81,6 +95,15 @@ if (-not $Metadata -or -not $PreflightOnly -or $BuildMode -ne 'release') {
                 'Later package failure was lost or subsequent preflight ran'
         }
     }
+    $failure = ''
+    try {
+        & (Join-Path $fixtureTools 'test-release-readiness.ps1') -ReleaseId 1.6.0 `
+            -ProductionCheckout (Join-Path $testRoot 'production') `
+            -ReviewCheckout (Join-Path $testRoot 'review') -ReleaseHapPath $package `
+            -EvidencePath (Join-Path $fixtureRoot 'build\verification\unsafe.json')
+    } catch { $failure = $_.Exception.Message }
+    Assert-ReadinessReport ($failure -like '*evidence must be outside the running checkout*') `
+        'Readiness allowed evidence in the checkout cleaned by Hvigor'
     Write-Host 'RELEASE READINESS REPORT TESTS PASSED: success and later-failure evidence; no model/build/device calls'
 } finally {
     $resolvedTestRoot = [IO.Path]::GetFullPath($testRoot)

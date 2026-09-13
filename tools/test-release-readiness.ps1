@@ -26,12 +26,17 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
 if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
-    $EvidencePath = Join-Path $repoRoot (
-        'build\verification\release-readiness-' +
-        [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffZ') + '.json'
-    )
+    $EvidencePath = Join-Path ([IO.Path]::GetTempPath()) (
+        'LeanTTY-readiness-' + [guid]::NewGuid().ToString('N') + '\result.json')
 }
 $EvidencePath = [IO.Path]::GetFullPath($EvidencePath)
+$checkoutPrefix = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/') +
+    [IO.Path]::DirectorySeparatorChar
+if ($EvidencePath.StartsWith($checkoutPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Readiness evidence must be outside the running checkout because Hvigor tests clean build outputs'
+}
+$softwareEvidencePath = Join-Path (Split-Path $EvidencePath -Parent) (
+    [IO.Path]::GetFileNameWithoutExtension($EvidencePath) + '-software.json')
 $productionFull = [IO.Path]::GetFullPath($ProductionCheckout)
 $reviewFull = [IO.Path]::GetFullPath($ReviewCheckout)
 $releaseHapFull = [IO.Path]::GetFullPath($ReleaseHapPath)
@@ -49,7 +54,8 @@ function Add-ReadinessCheck {
 
 try {
     Add-ReadinessCheck -Name 'focused-policy-tooling-web-arkts' -Action {
-        & (Join-Path $PSScriptRoot 'test-regression.ps1') -Group policy,tooling,web,arkts
+        & (Join-Path $PSScriptRoot 'test-regression.ps1') -Group policy,tooling,web,arkts `
+            -EvidencePath $softwareEvidencePath
         if ($LASTEXITCODE -ne 0) { throw 'Focused readiness software gate failed' }
     }
     Add-ReadinessCheck -Name 'offline-agent-notification-replay' -Action {
