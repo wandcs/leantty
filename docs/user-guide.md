@@ -2,12 +2,12 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-09-07
+> Last updated: 2026-09-16
 >
-> Applies to: the current 1.6.0 development source. The 1.5.1 GitHub release is
-> the preceding published source; AppGallery availability is confirmed through
-> 1.5.1. Check the matching GitHub Release and AppGallery entry before relying
-> on later behavior in an installed build.
+> Applies to: [GitHub Release 1.6.0](https://github.com/wandcs/leantty/releases/tag/v1.6.0),
+> published on September 16, 2026. Its AppGallery submission report is pending;
+> confirmed store availability remains at 1.5.1. Check the installed version
+> before relying on 1.6.0 behavior. The packaged offline guide is unchanged.
 
 LeanTTY is a keyboard-first SSH/Mosh terminal for a physical ARM64 HarmonyOS PC. It
 provides the TTY entry point; the shell, tmux, editor and Agent TUI continue to
