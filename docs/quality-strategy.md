@@ -2,7 +2,7 @@
 
 > Status: mandatory cross-version engineering standard
 >
-> Last updated: 2026-09-07
+> Last updated: 2026-09-13
 >
 > Product acceptance: [`vision-acceptance.md`](vision-acceptance.md)
 
@@ -31,17 +31,136 @@ unrelated regression. A small host-trust or terminal-byte change can require
 strong L1–L3 negative and recovery coverage; it still does not authorize the L4
 matrix during ordinary development.
 
+### Delivery-efficiency decisions and safeguards
+
+Apply [project principles §4.9](project-principles.md#49-交付效率与验收取舍)
+before selecting verification scope. Timely delivery and total effort are
+decision criteria alongside sufficient confidence. Default to affected checks,
+supported reuse and representative coverage; the executor must justify broader
+testing by the failure risk or decision it can change. Stop when the selected
+claim is sufficiently supported. Do not add checks merely because they exist or
+continue investigating an ordinary tool issue after the required boundary is
+resolved. Severe trust, data, input, isolation and unrecoverable failures remain
+blocking; small diffs alone do not establish low risk.
+
+Ordinary decisions need only a few sentences: what changed and can be affected,
+what will run or be reused and why, and any material remaining risk. Link existing
+reports instead of copying their fields or rebuilding historical narratives.
+The executor may select equivalent tests, remove redundant repetitions, choose
+representative combinations, defer bounded recoverable low-risk issues, or use
+equivalent recorded manual checks without renewed permission. State relevant
+blind spots; a deferred issue needs its impact, workaround and reconsideration
+trigger. Escalate only changes to user commitments, supported/trust boundaries,
+explicit maintainer acceptance requirements or material risk beyond this scope.
+An existing technical test list alone is not a permanent user commitment.
+
+Candidate identity and evidence applicability are separate facts. Reports MUST
+distinguish fresh evidence, reuse admitted by the checkpoint rules, unverified
+claims and non-blocking limitations. This governance revision does not establish
+cross-candidate C3 reuse or remove existing C1–C4 gates. A new formal candidate
+still follows R4; routine product fixes first use the affected L0–L3 checks.
+
+Independent continuation requires a qualified acceptance entry that records
+dependencies, failure isolation, restored preconditions and cleanup. Until that
+support exists, the enclosing matrix stops under the rules below; a diagnostic
+or ad hoc skip cannot fill the gap. Before another broad rerun caused only by
+missing support, compare its cumulative cost with a bounded tool change or a
+manual procedure that proves the same claim. Prefer the least costly adequate
+option and briefly justify any broad rerun. Existing reports and code-level
+dependencies may support this decision; no new generic framework or separate
+approval dossier is required. Record selected implementation work only in
+`next-work.md`; do not hot-update frozen tools or invent passing checkpoints.
+Manual evidence must identify the candidate/environment, operator actions,
+expected and observed results, retained evidence and cleanup. Oral confirmation
+alone is insufficient. A manual check must also use the applicable release
+evidence format before it can satisfy a formal gate; selecting that method does
+not make an unsupported report import work. Such an implementation gap follows
+the bounded tool-work rule below, rather than requiring a new product decision.
+
+**Research basis (2026-09-13).** The questions are how to bound failure propagation
+and when expensive end-to-end tests add enough value.
+[Playwright isolation](https://playwright.dev/docs/browser-contexts) describes
+independent browser contexts and warns about incomplete cleanup;
+[CTest fixtures](https://cmake.org/cmake/help/latest/prop_test/FIXTURES_REQUIRED.html)
+retain required setup/cleanup for selected subsets and skip tests whose fixture
+setup failed. Google's [end-to-end testing guidance](https://testing.googleblog.com/2016/09/testing-on-toilet-what-makes-good-end.html)
+reserves costly end-to-end checks for behavior smaller tests cannot reliably
+evaluate. These are design patterns, not HarmonyOS guarantees: current
+Playwright/CMake 4.4 documentation and Google's 2016 guidance do not establish
+LeanTTY stage independence or replace scenario-specific physical evidence.
+
+### Test-tool repair admission and deferred improvements
+
+The executing task may repair a tool that blocks the next authorized step or
+its required evidence. It may also admit a small delivery-efficiency repair when
+existing runs show repeated avoidable work in the current batch, a bounded fix
+is expected to cost less than the remaining repetitions, and no cheaper supported
+method proves the same claim. Briefly record the affected step, observed cost,
+repair scope, estimated effort and stop condition in `next-work.md` before
+implementation. Estimates may use existing timings; new benchmark runs and
+renewed maintainer permission are not required for this in-scope decision.
+Cosmetic cleanup, speculative gains, unrelated refactors and open-ended tooling
+remain deferred. Missing observations or unsafe cleanup remain real blockers;
+efficiency work need not be mislabeled as a product or evidence failure.
+
+If a supported path is cheaper overall, use it and defer the improvement. When
+the repair estimate is exceeded, reframe and choose a simpler adequate path or
+defer the optimization instead of expanding it. Do not bypass a mandatory check,
+weaken an assertion, ignore a failed cleanup or relabel a failure to declare the
+work unblocked. The first-failure stop and evidence-reuse rules still apply.
+An admitted repair MUST close the evidenced blocked event chain, including its
+required preconditions, observation and failure cleanup. Multiple demonstrated
+defects in that chain may be repaired together when review and rollback remain
+clear; unrelated refactors and speculative improvements stay separate.
+Repeated use of a supported recovery path MUST include cumulative cost at the
+reframing checkpoint. The independent maintenance task handles larger or
+unrelated efficiency work; coordinate ownership before selecting the same repair.
+
+For deferred non-blocking issues, keep one actionable entry in
+[`test-release-efficiency.md`](test-release-efficiency.md) and continue the main
+work. The following information is required only where it changes the handoff
+or decision; link existing evidence, omit irrelevant fields and add only new
+facts on recurrence:
+
+- discovery date, affected script/entry and scenario or stage;
+- relevant candidate and harness identities, platform/tool versions and exact
+  report or log references, with secrets and private data excluded;
+- reproduction conditions, expected and actual results, frequency and observed
+  cost or impact; distinguish observations, hypotheses and unknowns;
+- the next step that remains possible, its supported path and evidence that the
+  issue does not block it;
+- attempts already made and their outcomes, cleanup state, known boundaries,
+  proposed improvement and expected benefit;
+- likely affected paths, risks, verification needs and unresolved questions;
+- disposition as deferred for independent tool-maintenance analysis, with a
+  stable heading/reference for deduplication and later handoff.
+
+Mark decision-relevant unavailable facts as unknown; collecting this context
+MUST NOT expand into speculative debugging, new retries or duplicated audits.
+These are observations for analysis, not a second executable backlog. The
+independent scheduled tool-maintenance task periodically reviews and deduplicates
+them, selects work based on evidence and value, and records selected executable
+items only in [`next-work.md`](next-work.md). Discovery alone does not authorize
+implementation; the executing task may select only the bounded current-batch
+efficiency work admitted above, and maintenance handles other selected work.
+
+All tool repairs and improvements MUST be isolated from running acceptance
+files, candidates, evidence and shared device/environment resources. A separate
+directory alone does not isolate HDC, WSL, fixtures, ports or device state.
+Verified changes may be adopted only at the next acceptance round's startup
+boundary, with the required clean harness, renewed qualification and explicit
+R1-R4 decision. Never hot-update the active round or rewrite its old results.
+
 ### External research gate for test-system changes
 
-Before changing device automation, input injection, focus or wait behavior,
-fixtures, observation/oracle logic, failure classification, retry/rerun policy,
-scenario partitioning or release-verification tooling, the implementing agent
-MUST research the problem outside the current repository. A local code reading
-or one failed run is not enough to authorize a fix.
-
-The research MUST be performed when that individual task starts, so a previously
-saved link list does not substitute for checking the currently applicable SDK
-and tool behavior. It MUST cover, when available:
+External research answers an unresolved platform, protocol or tooling question;
+it is not a repeated ritual for every repair or task boundary. Before changing
+assumptions about input, focus, waits, fixtures, verdicts, reuse or partitioning,
+check authoritative external evidence when the existing evidence does not
+resolve the assumption. Previously checked sources may be reused when the
+question and applicable versions are unchanged and no contrary evidence exists.
+An ordinary local parser/caller repair with a demonstrated cause does not require
+repeating unrelated platform research. Use relevant sources from:
 
 1. HarmonyOS/OpenHarmony official API documentation, guides, samples, source and
    version or release notes;
@@ -51,10 +170,12 @@ and tool behavior. It MUST cover, when available:
 4. official practices from comparable automation systems, used only as design
    patterns and never presented as proof of HarmonyOS behavior.
 
-The task record MUST state the research date, precise question, source links,
-applicable platform/tool versions, agreements, conflicts and unresolved gaps.
-If no matching report is found, record that negative result instead of inventing
-an implied platform guarantee. Search summaries and forum workarounds are leads;
+Record the question, applicable versions, useful sources and conclusion in the
+existing diagnosis; reference prior research for unchanged facts. Expand on
+conflicts or unknowns only where they affect the decision. If no matching report
+is found, say so instead of inferring a guarantee. Do not exhaust all source
+categories after the material question is answered. Search summaries and forum
+workarounds are leads;
 prefer primary sources and trace each proposed workaround back to documented
 semantics or a controlled experiment.
 
@@ -76,8 +197,12 @@ hypothesis tested next. The next run MUST be the cheapest level that can
 distinguish those hypotheses.
 
 The enclosing formal matrix MUST stop at its first blocking failure or unknown
-outcome. Confirmed external limitations follow the continuity rule below. It MUST NOT be used
-as a reproduction loop. Earlier formal stages may be reused only under the
+outcome unless a qualified acceptance entry proves independent continuation
+under "Delivery-efficiency decisions and safeguards". It MUST NOT be used as a
+reproduction loop. Shared contamination, unknown input outcomes, failed cleanup
+or unproved dependencies still stop all possibly affected work. Confirmed
+third-party limitations follow the continuity rule below.
+Earlier formal stages may be reused only under the
 checkpoint rules; diagnosis uses the failed named stage, a narrower diagnostic
 or a deterministic trigger. A new full matrix is forbidden while the failed
 precondition or oracle remains ambiguous.
@@ -380,7 +505,9 @@ physical checkpoints in the fixed order below:
 Pass `-HapPath` only to start from an exact retained candidate instead of
 rebuilding C1/C2. The entry invokes the existing scripts; it does not contain a
 second device driver or acceptance implementation. It stops at the first
-failure, writes `release-report.json` and `maintainer-summary.md` atomically,
+blocking failure or unknown outcome; confirmed third-party limitations follow
+the continuity rule above. It writes `release-report.json` and
+`maintainer-summary.md` atomically,
 and records stage duration, attempts, candidate/harness identity, cleanup and
 planned/available actual model usage. It never retries a model request
 automatically. Explicit `-Resume` requires the same report, retained candidate,
@@ -602,11 +729,14 @@ native-signal, generic system-notification and return chain. OpenCode tmux is
 native attention and the notification wait ended in the external Agent domain;
 if OpenCode does emit a native signal, the complete LeanTTY notification chain
 becomes required. Pi direct/tmux and Qwen direct normally require their expected
-native signal; when that signal is captured but the exact hidden-window
+native signal. A proven upstream emission/forwarding limitation follows
+"Third-party limitations and acceptance continuity" above; an inner signal
+without outer evidence alone does not qualify. When a signal reaches the outer
+terminal but the exact hidden-window
 non-publication boundary occurs, record `platform-deferred` and
 `systemNotification=not-observed`, never a notification pass. If those paths do
 publish, generic payload and accurate return remain required. Privacy, harness,
-environment, infrastructure, unexpected product and missing required-signal
+environment, infrastructure, unexpected product and unexplained missing-signal
 failures are never downgraded by applicability. A mode may be compatible with
 an explicit non-blocking classification only after all other assertions pass.
 
@@ -815,10 +945,12 @@ evidence; operator memory, console scrollback or a diagnostic result cannot be
 combined into release acceptance.
 
 Checkpoint reuse is allowed only when the owning script/evidence format can
-record and validate it. Until a scenario supports acceptance-mode resume, rerun
-the smallest enclosing acceptance script rather than manually promoting an
-`-Only`/`runMode=diagnostic` result. SSH groups are the acceptance-mode resume
-boundary; individual stages inside a group are not.
+record and validate it. If the required acceptance-mode resume is unsupported,
+first apply "Delivery-efficiency decisions and safeguards" and record the cost
+decision. If rerunning is selected, use the smallest enclosing acceptance script;
+never manually promote an `-Only`/`runMode=diagnostic` result. SSH groups remain
+the supported acceptance-mode resume boundary; individual stages inside a group
+are not. A finer boundary requires explicit qualification before use.
 
 `verify-release-pc.ps1 -AgentContinuationPath` is the bounded cross-harness R2
 entry for an Agent-local exit repair: a new report pins the original failed
@@ -869,8 +1001,9 @@ when ready. Completed automatic work and model requests are not repeated.
 
 The same device, Test Kit/control environment and controlled server preconditions
 must remain valid across the pause. Audit them before resuming; apply the R1–R4
-table if they changed. Split mode cannot inherit an Agent continuation report or
-resume a full-mode report. C3 completes only after all 27 registered stages pass
+table if they changed. Split mode may inherit only the qualified `agent-split-R2`
+continuation described above; it cannot resume a full-mode report or import
+individual Agent checks. C3 completes only after all 27 registered stages pass
 (including the retained candidate checkpoint). A pending operator suffix is not
 a failure, a diagnostic result or permission to skip the two actions.
 
@@ -926,11 +1059,13 @@ candidate identity changed, escalate to R4.
 
 ### Failure handling procedure
 
-Record confirmed out-of-responsibility limitations and continue independent
-checks under "Third-party limitations and acceptance continuity". At the first
-blocking failure or unknown outcome:
+First apply "Third-party limitations and acceptance continuity": a confirmed
+out-of-responsibility limitation is recorded without stopping independent
+checks. At the first blocking failure or unknown outcome:
 
-1. stop the enclosing matrix before executing unrelated later stages;
+1. stop the enclosing matrix before executing later stages; independent
+   continuation requires the qualified support and isolation evidence in
+   "Delivery-efficiency decisions and safeguards", never an ad hoc skip;
 2. capture the stage, candidate/harness/attempt identities, failure domain,
    live status, relevant layout/screenshot/log evidence and cleanup result;
 3. choose the smallest diagnostic that distinguishes product, harness,
@@ -1352,6 +1487,9 @@ rendered digits and diverge from the native buffer.
 ## Result classification
 
 - **Pass:** every required assertion completed for one exact evidence identity.
+- **Third-party limitation (non-blocking):** evidence locates an unavailable
+  behavior outside LeanTTY's responsibility under the continuity rule above;
+  independent acceptance continues, but the excluded capability is not passed.
 - **Product failure:** the application produced an incorrect observable result.
 - **Harness failure:** automation used a stale selector, invalid state model or
   unreliable observation.
@@ -1364,11 +1502,11 @@ rendered digits and diverge from the native buffer.
 - **Invalid/interrupted:** the candidate changed, evidence identity is missing,
   cleanup makes the result ambiguous, or the run stopped early.
 
-Only **Pass** proves an exercised assertion. Disclosed, evidenced third-party
-limitations may coexist with complete applicable acceptance; they do not prove
-the excluded capability. All remaining applicable product assertions must pass.
-Infrastructure failures must be repaired and
-rerun; they must not be relabeled as product passes or product regressions.
+Only **Pass** proves an exercised assertion. A complete applicable acceptance
+result may include explicitly evidenced non-blocking third-party limitations,
+but must disclose them and pass every remaining applicable product assertion.
+Infrastructure failures must be repaired and rerun where they prevent required
+evidence; they must not be relabeled as product passes or product regressions.
 Unknown outcomes require a verified state reset before R1, otherwise R3.
 
 Machine evidence MUST keep the business verdict and harness stability as two
@@ -1762,6 +1900,15 @@ P95 from an undersized sample. Record first-attempt pass rate, retry-success
 rate, input mismatch rate, unknown/misclassified outcomes, cleanup failures,
 run-time human intervention and reruns that produced no new evidence. A retry
 that passes remains `flaky-harness`, never a stable first-attempt pass.
+
+At the existing reframing checkpoint, also total repeated scenario execution,
+model workloads across attempts, setup, cleanup, audit, CI and operator time.
+Zero automatic retries within an attempt does not mean zero repeated workloads
+across attempts. Separate measured costs from estimates and include the one-time
+cost of a proposed tool change. Use retained timing evidence for scope decisions;
+do not start three expensive formal runs merely to justify removing duplication.
+The three-run rule above applies to claims of measured speed or stability gains.
+An investment budget triggers a new decision, never a passing verdict or waiver.
 
 Test value is the explicit claim and failure boundary proved per unit of time,
 not the number of cases or artifacts produced. A focused run and a formal full
