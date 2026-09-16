@@ -180,6 +180,20 @@ not weaken validation. If only one build needs recovery, use
 `-SkipProductionBuild` or `-SkipReviewBuild` so the already successful build
 is verified and reused instead of rebuilt.
 
+Store text is not a packaged resource. If it is finalized after C3, keep the
+accepted product commit and both build checkouts unchanged. Commit and push the
+same-version text and any archive-tool repair separately, then run the command
+from that clean, pinned materials/tool checkout with
+`-ProductionCheckout '<unchanged production checkout>'`. `-AppGalleryCopyPath`
+must name a tracked file inside the materials/tool checkout; its commit must
+be contained by a fetched `origin` ref. The archive records its commit, tree,
+path and exact SHA-256 separately under `release-identity.json.materials`, and
+checks that those bytes did not change during the build or archive. Default
+invocation still uses one checkout for the tool, material and product source.
+This does not authorize editing the product, packaged Guide, version or build
+inputs, or reusing C3 for a different candidate. All product preflight, signing,
+manifest comparison and C4 smoke requirements remain unchanged.
+
 The lower-level production build remains available from the release checkout:
 
 ```powershell

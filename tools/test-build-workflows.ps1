@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'test-release-materials.ps1')
 & (Join-Path $PSScriptRoot 'test-device-package.ps1')
 & (Join-Path $PSScriptRoot 'test-review-smoke.ps1')
 & (Join-Path $PSScriptRoot 'test-release-evidence.ps1')
@@ -355,6 +356,10 @@ try {
             (Get-FileHash -LiteralPath $assetApp -Algorithm SHA256).Hash.ToLowerInvariant()
         )
     ) 'Release assets did not bind notes, licenses and AppGallery handoff to the package'
+    Assert-True (
+        (Get-FileHash -LiteralPath $assetCopy -Algorithm SHA256).Hash -ceq
+        (Get-FileHash -LiteralPath $assetResult.appGalleryCopy -Algorithm SHA256).Hash
+    ) 'Archived AppGallery copy bytes differ from the reviewed source'
     $releaseAssetsText = Get-Content -LiteralPath $releaseAssetsScript -Raw
     Assert-True (
         $releaseAssetsText.Contains('New-LeanTTYDeterministicZip') -and

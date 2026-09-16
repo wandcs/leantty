@@ -3,6 +3,68 @@ param()
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
+function Assert-LeanTTYAppGalleryCopy {
+    param([string]$Path, [string]$ReleaseId)
+    $storeCopy = Get-Content -LiteralPath $Path -Raw
+    if ($storeCopy -notmatch ('(?<!\d)' + [regex]::Escape($ReleaseId) + '(?!\d)') -or
+        $storeCopy -match '(?i)\b(?:TODO|TBD|PLACEHOLDER)\b|待补|占位') {
+        throw 'AppGallery copy must name the release and contain no placeholder text'
+    }
+}
+
+function Get-LeanTTYReleaseMaterialIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$Checkout,
+        [Parameter(Mandatory = $true)][string]$AppGalleryCopyPath,
+        [Parameter(Mandatory = $true)][string]$ReleaseId
+    )
+
+    $checkoutFull = [IO.Path]::GetFullPath($Checkout).TrimEnd('\')
+    $copyFull = [IO.Path]::GetFullPath($AppGalleryCopyPath)
+    if (-not $copyFull.StartsWith($checkoutFull + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'AppGallery copy must be inside the materials checkout'
+    }
+    $item = Get-Item -LiteralPath $copyFull
+    while ($null -ne $item -and $item.FullName -ne $checkoutFull) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'AppGallery copy must not use a linked path'
+        }
+        $item = if ($item -is [IO.DirectoryInfo]) { $item.Parent } else { $item.Directory }
+    }
+    $repositoryRoot = & git -C $checkoutFull rev-parse --show-toplevel
+    if ($LASTEXITCODE -ne 0 -or [IO.Path]::GetFullPath($repositoryRoot).TrimEnd('\') -ne $checkoutFull) {
+        throw 'Materials checkout must be a Git repository root'
+    }
+    $status = @(& git -C $checkoutFull status --porcelain)
+    if ($LASTEXITCODE -ne 0 -or $status.Count -ne 0) { throw 'Materials checkout must be clean' }
+    & git -C $checkoutFull symbolic-ref --quiet HEAD 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 1) { throw 'Materials checkout must be detached at its reviewed commit' }
+    $commit = & git -C $checkoutFull rev-parse HEAD
+    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') { throw 'Materials commit is missing' }
+    $tree = & git -C $checkoutFull rev-parse 'HEAD^{tree}'
+    if ($LASTEXITCODE -ne 0 -or $tree -notmatch '^[0-9a-f]{40}$') { throw 'Materials tree is missing' }
+    $remoteRefs = @(& git -C $checkoutFull for-each-ref '--format=%(refname)' --contains $commit refs/remotes/origin/)
+    if ($LASTEXITCODE -ne 0 -or $remoteRefs.Count -eq 0) {
+        throw 'Materials commit must be contained by a fetched origin ref'
+    }
+    $relative = [IO.Path]::GetRelativePath($checkoutFull, $copyFull).Replace('\', '/')
+    & git --literal-pathspecs -C $checkoutFull ls-files --error-unmatch -- $relative 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'AppGallery copy must be tracked by the materials commit' }
+    $committedBlob = & git -C $checkoutFull rev-parse "${commit}:$relative"
+    if ($LASTEXITCODE -ne 0) { throw 'Committed AppGallery copy is missing' }
+    $workingBlob = & git -C $checkoutFull hash-object "--path=$relative" -- $copyFull
+    if ($LASTEXITCODE -ne 0 -or $workingBlob -cne $committedBlob) {
+        throw 'AppGallery copy bytes differ from the materials commit'
+    }
+    Assert-LeanTTYAppGalleryCopy -Path $copyFull -ReleaseId $ReleaseId
+    return [pscustomobject][ordered]@{
+        commit = $commit
+        tree = $tree
+        path = $relative
+        sha256 = (Get-FileHash -LiteralPath $copyFull -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
 function New-LeanTTYReleaseAssets {
     param(
         [Parameter(Mandatory = $true)]
@@ -54,11 +116,7 @@ function New-LeanTTYReleaseAssets {
     $section = $changelog.Substring($sectionStart, $sectionLength).Trim()
     if ([string]::IsNullOrWhiteSpace($section)) { throw "CHANGELOG $ReleaseId section is empty" }
 
-    $storeCopy = Get-Content -LiteralPath $copyPath -Raw
-    if ($storeCopy -notmatch ('(?<!\d)' + [regex]::Escape($ReleaseId) + '(?!\d)') -or
-        $storeCopy -match '(?i)\b(?:TODO|TBD|PLACEHOLDER)\b|待补|占位') {
-        throw 'AppGallery copy must name the release and contain no placeholder text'
-    }
+    Assert-LeanTTYAppGalleryCopy -Path $copyPath -ReleaseId $ReleaseId
 
     New-Item -ItemType Directory -Path $packageDirectory, $evidenceDirectory -Force | Out-Null
     $licenseZip = Join-Path $packageDirectory "LeanTTY-$ReleaseId-licenses.zip"
@@ -95,7 +153,7 @@ function New-LeanTTYReleaseAssets {
         -DestinationPath $licenseZip `
         -Timestamp $archiveTimestamp
     Write-LeanTTYAtomicText -Path $releaseNotesPath -Content ("# LeanTTY $ReleaseId`n`n$section`n")
-    Write-LeanTTYAtomicText -Path $archivedStoreCopy -Content ($storeCopy.TrimEnd() + "`n")
+    Copy-Item -LiteralPath $copyPath -Destination $archivedStoreCopy
     $handoff = @"
 # LeanTTY $ReleaseId AppGallery handoff
 

@@ -2,7 +2,9 @@
 .SYNOPSIS
   Build, compare and archive one immutable LeanTTY AppGallery candidate.
 .DESCRIPTION
-  Run this script from a detached, clean production release checkout. It
+  Run this script from a detached, clean materials/tool checkout, normally the
+  production release checkout. Use -ProductionCheckout when only store text or
+  archive tooling was finalized after product acceptance. It
   performs the formal release preflight, builds and verifies the production
   APP/HAP, optionally builds a separate review HAP with a different test
   Profile, compares both builds, and archives only explicitly named artifacts.
@@ -26,6 +28,8 @@ param(
 
     [string]$ReviewCheckout,
 
+    [string]$ProductionCheckout,
+
     [Parameter(Mandatory = $true)]
     [string]$AppGalleryCopyPath,
 
@@ -37,26 +41,19 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$productionCheckout = Split-Path $PSScriptRoot -Parent
+$materialsCheckout = Split-Path $PSScriptRoot -Parent
+if (-not $ProductionCheckout) { $ProductionCheckout = $materialsCheckout }
+$productionCheckout = [IO.Path]::GetFullPath($ProductionCheckout)
 . (Join-Path $PSScriptRoot 'build-lock.ps1')
 . (Join-Path $PSScriptRoot 'prepare-release-assets.ps1')
-$productionBuildScript = Join-Path $PSScriptRoot 'build-all.ps1'
+$productionBuildScript = Join-Path $productionCheckout 'tools\build-all.ps1'
 $releaseRootFull = [IO.Path]::GetFullPath($ReleaseRoot)
 $releaseDirectory = Join-Path $releaseRootFull "releases\$ReleaseId"
 $packageDirectory = Join-Path $releaseDirectory 'package'
 $evidenceDirectory = Join-Path $releaseDirectory 'evidence'
-$productionPrefix = [IO.Path]::GetFullPath($productionCheckout).TrimEnd('\') + '\'
 $appGalleryCopyFull = [IO.Path]::GetFullPath($AppGalleryCopyPath)
-if (-not $appGalleryCopyFull.StartsWith(
-        $productionPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'AppGallery copy must be a reviewed file inside the production checkout'
-}
-$appGalleryCopyRelative = $appGalleryCopyFull.Substring($productionPrefix.Length).Replace('\', '/')
-& git -C $productionCheckout ls-files --error-unmatch -- $appGalleryCopyRelative 2>$null |
-    Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "AppGallery copy must be tracked by the release commit: $appGalleryCopyRelative"
-}
+$materialIdentity = Get-LeanTTYReleaseMaterialIdentity -Checkout $materialsCheckout `
+    -AppGalleryCopyPath $appGalleryCopyFull -ReleaseId $ReleaseId
 
 function Get-PathWithinRoot {
     param(
@@ -305,6 +302,7 @@ Write-LeanTTYAtomicText `
 
 $identity = [ordered]@{
     releaseId = $ReleaseId
+    materials = $materialIdentity
     commit = $production.Data.git.commit
     tree = $production.Data.git.tree
     bundleName = $production.Data.app.bundleName
@@ -364,11 +362,21 @@ if ($review) {
     )
 }
 
-New-LeanTTYReleaseAssets `
+$currentMaterialIdentity = Get-LeanTTYReleaseMaterialIdentity -Checkout $materialsCheckout `
+    -AppGalleryCopyPath $appGalleryCopyFull -ReleaseId $ReleaseId
+if (($currentMaterialIdentity | ConvertTo-Json -Compress) -cne
+    ($materialIdentity | ConvertTo-Json -Compress)) {
+    throw 'Release materials changed during the build'
+}
+$releaseAssets = New-LeanTTYReleaseAssets `
     -ReleaseId $ReleaseId `
     -Checkout $productionCheckout `
     -ReleaseDirectory $releaseDirectory `
-    -AppGalleryCopyPath $appGalleryCopyFull | Out-Null
+    -AppGalleryCopyPath $appGalleryCopyFull
+if ((Get-FileHash -LiteralPath $releaseAssets.appGalleryCopy -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+    $materialIdentity.sha256) {
+    throw 'Archived AppGallery copy does not match its material identity'
+}
 
 $prohibitedExtensions = @('.jks', '.key', '.keystore', '.p12', '.pem', '.pfx')
 $prohibitedNames = @('password.txt', 'signing.local.json5')
