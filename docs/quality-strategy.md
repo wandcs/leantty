@@ -1930,6 +1930,34 @@ runs requested to measure a distribution are measurement samples, not
 no-new-evidence reruns; an unplanned repeat with unchanged inputs and no new
 hypothesis is.
 
+## ASCII fixture input-mode preparation
+
+Before the next ASCII-driven device scenario, the executing task must observe
+the input mode while its intended input owns focus. Use current visible system
+state and the supported layout/screenshot channels. Do not infer the mode from
+a layout with no mode label. ASCII letters appearing, non-ASCII output, or a successful toggle
+command alone do not prove the mode.
+
+Record the observed original mode and its evidence. When English is already
+confirmed, do not toggle. When another mode is confirmed, use an unambiguous
+currently observed control and re-observe English before proceeding. Do not
+blindly send Shift or assume that a mode survives a window/input-method change.
+If the original or ready mode cannot be confirmed, stop before Enter and retain
+the observation gap. Keep the existing exact native-buffer check as the final
+pre-Enter guard; this preparation does not replace that check.
+
+Keep English available for the scenario's business cleanup. In finally, restore
+only a mode change owned by this scenario, before releasing its focused input,
+and observe the original mode again. A dispatched toggle is not restoration
+evidence. Failed or unavailable restoration remains failed/unknown in cleanup;
+do not overwrite the original failure or silently return shared resources as
+clean. Retain only the necessary mode and ownership evidence, not terminal bodies.
+
+The existing ime-input diagnostic requires an English baseline and is not a
+mode getter. This is an explicit preparation procedure, not a new switching
+helper. Its next use requires resource handoff and a named L2/L3 scenario;
+offline planning alone does not establish a repaired device path.
+
 ## Evidence record
 
 Atomic JSON writers MUST reject serialization-depth warnings before replacing
