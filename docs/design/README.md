@@ -50,6 +50,7 @@
 | Agent CLI/TUI 原生兼容 | Implementing / Codex 普通 SSH 与 tmux 已验证，其余三种待认证 | 1.5 | [`agent-tui-compatibility.md`](agent-tui-compatibility.md) |
 | Mosh 弱网连接 | Implementing / 开发验证已闭合，精确候选正式验收待执行 | 1.6 | [`mosh.md`](mosh.md)；[`mosh-client-rs` 接入问题](mosh-client-rs-integration-issues.md) |
 | 应用异常回收防护与恢复 | Implementing / 后台能力门已停止，工作区恢复已通过真机门 | 1.6 | [`unexpected-process-recovery.md`](unexpected-process-recovery.md) |
+| Ghostty 原生终端与会话解耦 | Accepted / 独立原型支持可行性；产品接入及完整替换验收待执行 | 1.7 | [平台预研](ghostty-native-terminal.md)；[架构边界](terminal-session-boundaries.md) |
 
 ## 最小文档结构
 

@@ -12,6 +12,13 @@ generic transport framework, nor evidence of a published 1.6 release.
 Feature-specific future designs live in [`design/`](design/README.md), and only
 [`next-work.md`](next-work.md) authorizes current work.
 
+The 1.7 [terminal/session boundary design](design/terminal-session-boundaries.md)
+separates session control, native VT state and GPU surfaces. The
+[independent prototype](design/ghostty-native-terminal.md) supports technical
+feasibility, including controlled GPU recovery. Product integration and full
+replacement acceptance remain pending; the event chains below describe the
+current Web implementation.
+
 ## System shape
 
 ```text
