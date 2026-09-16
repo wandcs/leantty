@@ -13,6 +13,14 @@
 - Do not add concepts, dependencies or abstraction layers without passing the
   decision rules in the project principles.
 - Preserve unrelated worktree changes.
+- Apply `docs/project-principles.md` §4.9 and `docs/quality-strategy.md` ->
+  "Delivery-efficiency decisions and safeguards": default to affected checks,
+  supported reuse and the least costly sufficient evidence. Justify broader
+  testing. Equivalent test/manual choices and bounded recoverable low-risk
+  deferrals are delegated decisions; use a few sentences and existing evidence.
+  Escalate changed user commitments, explicit maintainer acceptance requirements
+  or material risk beyond that scope. Missing resume support requires a cost
+  decision, not automatic broad reruns or invented passing checkpoints.
 
 ## Platform scope
 
@@ -56,15 +64,41 @@ UiTest layout channels are usable. It does not install, launch, unlock or repair
 the PC, and it does not prove product behavior. After it passes, run only the
 named physical scenario mapped to the changed claim.
 
+During product development and acceptance, repair tools that block the next
+authorized step or its required evidence. Small current-batch efficiency repairs
+may also be selected when observed timings show that remaining repeat cost
+exceeds the bounded expected fix cost and no cheaper supported method suffices.
+Record scope, effort and stop
+condition in `docs/next-work.md` before implementing; coordinate existing owners.
+Close the evidenced event chain, including required setup,
+observation and failure cleanup; multiple demonstrated defects in that chain may
+be repaired together with clear review and rollback. Keep unrelated improvements
+separate. Cosmetic or speculative gains do not qualify; do not mislabel an
+efficiency repair as a correctness blocker. Repeated recovery and rerun costs
+must enter the existing reframing checkpoint.
+
+For other non-blocking tool issues, retain a concise actionable entry in
+`docs/test-release-efficiency.md`, link existing evidence and continue the main
+work. Add only new facts when the issue recurs; do not duplicate audits or perform
+research just to fill a template. The independent maintenance task handles larger
+or unrelated improvements; executable work still belongs only in
+`docs/next-work.md`. Follow the blocker criteria, record fields and handoff rules
+in `docs/quality-strategy.md` -> "Test-tool repair admission and deferred
+improvements". Tool changes must not affect a running acceptance round; adopt
+verified changes only at the next round's startup boundary under the existing
+qualification and rerun rules.
+
 Confirmed third-party limitations outside LeanTTY's responsibility are
 non-blocking observations, not product failures or successful capability tests.
-Record evidence and continue independent acceptance without waiting for an
-upstream fix or repeated approval. Follow `docs/quality-strategy.md` ->
-"Third-party limitations and acceptance continuity"; unknown attribution is
-not an external exemption.
+Record the evidence and continue unaffected acceptance without waiting for an
+upstream fix or repeated maintainer approval. Apply the evidence, cleanup and
+contract boundaries in `docs/quality-strategy.md` -> "Third-party limitations
+and acceptance continuity"; an unknown cause is not an external exemption.
 
-For a blocking failure or unknown outcome, stop the enclosing matrix and follow the
-root-cause and reframing gate in `docs/quality-strategy.md`. Before changing code,
+For a blocking failure or unknown outcome, stop the enclosing matrix unless a
+qualified acceptance entry proves independent continuation under the isolation
+and cleanup rules in `docs/quality-strategy.md`; never invent an ad hoc skip.
+Follow its root-cause and reframing gate. Before changing code,
 record the expected result, last correct boundary, first incorrect boundary,
 authoritative state owner and one hypothesis that the next smallest diagnostic
 will distinguish. A formal matrix is acceptance evidence, not a debugging loop.
