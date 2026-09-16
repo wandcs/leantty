@@ -1333,6 +1333,12 @@ Every automated physical scenario MUST:
   the exact match. A missing exact submission acknowledgement is an unknown
   outcome and MUST NOT trigger another Enter. The final stage verdict still uses
   the controlled server, file/state or other business postcondition;
+- for asynchronous local `ssh-keygen -R/-F` commands, the submission ACK is not
+  completion. Await the real Session owner's completion after releasing its
+  pending guard, correlated by Pane, generation and submission sequence, before
+  another idle reset. Missing, cancelled or conflicting evidence must stop the
+  scenario without resending. An operation reporting failure does not establish
+  its fault domain; known-host projection absence remains a separate postcondition;
 - before Enter can submit a repository-only command inside a controlled SSH
   fixture session, require the fixture's temporary current-line snapshot to
   match the expected bytes exactly. An incomplete line may be cleared with the
