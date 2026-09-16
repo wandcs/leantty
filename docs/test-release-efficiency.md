@@ -2688,3 +2688,54 @@ fault domain 保持未知。原投影检查仍是独立后置条件，不增加�
 Mosh/LAN 调用差异由离线实际调用者反例覆盖；本轮未跑 Wi-Fi、合盖、模型或正式矩阵。
 生产隔离有源码/规则证据，正式包扫描和工具资格留给未来候选的 R4；不重开 1.6 发布。
 已知 AT16-07 PUT/GET 补丁仍未采用。活动任务和条件性后续仅由 Next Work 管理。
+
+## 2026-09-16：剩余工具维护交接
+
+维护者已授权既有任务“优化验收工具并隔离执行”接手剩余事项；执行顺序、完成条件和
+资源边界集中在 [Next Work](next-work.md#独立工具维护剩余可执行事项)。本节只追加处置，
+不复制第二份执行清单，也不把已交付的 PR #208/#209 重新列为修复。
+
+sharp 由既有 §8.46 的分析延期转为优先执行；命令输入法样本支持先离线准备最小前提
+检查，下次相关自动输入前确认并恢复原模式。AT16-07 保留到真实传输需求触发；正式
+工具资格和生产包检查留给下一候选的发布任务，维护任务负责交付清楚的采用材料。
+漏传 PreviousAttemptId 按质量策略补充关联，不改旧报告，不另建重试框架。
+
+本次只整理与派发，不运行生成器、漏洞样本、构建或真机场景，不升级依赖、不改变
+已发布 1.6 及其证据。根区混合修改和原型任务保持原归属；交接后的实现结果另行回报。
+
+
+## 2026-09-16：sharp 图标工具安全升级
+
+依据 [sharp 安全公告 GHSA-rgj7-g3m4-5g8c](https://github.com/lovell/sharp/security/advisories/GHSA-rgj7-g3m4-5g8c)
+及 [0.35.4 发布记录](https://github.com/lovell/sharp/releases/tag/v0.35.4)，
+Dependabot #6 涉及的范围为 sharp < 0.35.4；首次修复版为 0.35.4。
+本批将 tools 的最低版本从 0.35.3 升至 0.35.4，并更新锁文件中的匹配预编译包。
+新版 WASM 包要求 @emnapi/runtime ^1.11.3，因此该传递依赖从 1.11.2 升到 1.11.3；
+其余非 sharp 依赖保持不变，包括 @xmldom/xmldom 0.9.12。
+
+以 main `9f85ff6d` 的同一生成器和固定 SVG，在两份隔离目录分别锁定安装：
+`npm ci --ignore-scripts --no-audit --no-fund`。实际加载 sharp 0.35.3 / 0.35.4，
+libheif 1.23.0 / 1.23.2；执行 `node tools/generate_icons.cjs` 后，七张 PNG 均生成成功，
+六张为 1024×1024，startIcon 为 144×144。逐张文件 SHA-256 与解码 RGBA 全部相同，
+变化像素/通道均为 0；正式 AppScope/entry 图标、SVG 和生成器没有修改。
+升级后 `npm audit --json` 退出 0，已知漏洞计数为 0；未运行漏洞利用输入。
+
+sharp 的 Apache-2.0、Windows 预编译包的 Apache-2.0 AND LGPL-3.0-or-later，
+以及相关 MIT/ISC/Apache-2.0 声明均已核对，未出现许可证变更。
+这是 Windows x64 / Node 24.18.0 的工具验证；不声称运行过 Linux 原生解码器，
+也不证明任意不可信图片安全。未构建/签名 HAP、调用 HDC 或占用真机。
+
+固定输入 SHA-256：
+
+- SVG：`0cf45ddf8d161c0f69384b7987a37c18df320206ceef3af8c5d87ec7d705f28a`。
+- 生成器：`b2cb40956d541cef7247e14d03b2ddccbc03cd41338ac7d15646d58a0b65e892`。
+
+原始安装、比较脚本与逐文件结果保存在独立维护 checkout 的
+`build/maintenance/sharp-security-20260916/`，包括 `sharp-validation.json`、
+`npm-audit-after.json` 及 before/after 输出。公共提交只保留依赖清单、锁文件和本记录，
+不提交 PNG、node_modules 或私有环境资料。
+
+本批另按明确交接选择性整理 Next Work 的流程整改段、质量策略的重试关联说明及
+效率记录末尾交接段；main 上“其他既有工作”之后的内容逐字保留，没有导入并行原型。
+无产品版本递增、正式候选资格或已发布 1.6 重验。下一轮图标工具使用更新后的锁定依赖；
+运行中的任务保留当前环境。

@@ -981,6 +981,12 @@ audit before selecting the next group. Agent/mode and notification workload
 runs use the same atomic attempt/progress contract; a diagnostic retry remains
 diagnostic and cannot be promoted to acceptance.
 
+For a diagnostic or acceptance retry, pass the entry's existing
+`-PreviousAttemptId` when supported and identify the evidence or precondition
+that changed. If the argument was omitted, preserve both original reports and
+record their relationship separately. Supplemental linkage is not native resume
+evidence; do not rewrite old report fields or rerun solely to repair bookkeeping.
+
 ### Automatic work followed by operator actions
 
 When the maintainer requests two segments, use `verify-release-pc.ps1 -Phase
