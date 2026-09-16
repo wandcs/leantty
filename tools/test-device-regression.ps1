@@ -5,6 +5,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 
+& (Join-Path $PSScriptRoot 'test-command-completion.ps1')
 & (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1') -SelfTest
 & (Join-Path $PSScriptRoot 'test-mosh-runtime-contract.ps1')
 & (Join-Path $PSScriptRoot 'test-recovery-command-probes.ps1')

@@ -11,6 +11,8 @@ function Assert-LeanTTYReleasePackageExcludesAcceptanceMarkers {
             'reportPerfResult',
             'perfRender',
             'ACCEPTANCE_INPUT_SUBMIT',
+            'ACCEPTANCE_COMMAND_OWNER',
+            'ACCEPTANCE_KNOWN_HOST_COMPLETE',
             'ACCEPTANCE_INPUT_NATIVE',
             'acceptanceInputMetrics',
             'acceptanceInputOrder',

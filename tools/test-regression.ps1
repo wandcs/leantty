@@ -280,6 +280,20 @@ Invoke-RegressionCheck -Name 'durable-trust-contracts' -Groups @('arkts') -Actio
     if ($LASTEXITCODE -ne 0) { throw 'Durable trust contract tests failed' }
 }
 
+Invoke-RegressionCheck -Name 'command-completion-isolation' -Groups @('arkts') -Action {
+    $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
+    $commandTest = Join-Path $repoRoot 'tools\test-command-completion-source.cjs'
+    & $nodeExe $commandTest $typescript production
+    if ($LASTEXITCODE -ne 0) { throw 'Production command-completion isolation failed' }
+    . (Join-Path $PSScriptRoot 'acceptance-source.ps1')
+    Invoke-WithLeanTTYAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
+        & $nodeExe $commandTest $typescript enabled
+        if ($LASTEXITCODE -ne 0) { throw 'Acceptance command-completion owner tests failed' }
+    }
+    & $nodeExe $commandTest $typescript production
+    if ($LASTEXITCODE -ne 0) { throw 'Command-completion source restoration failed' }
+}
+
 Invoke-RegressionCheck -Name 'performance-diagnostic-isolation' -Groups @('arkts') -Action {
     $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
     $diagnosticTest = Join-Path $repoRoot 'tools\test-performance-diagnostics.cjs'

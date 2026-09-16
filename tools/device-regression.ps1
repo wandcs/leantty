@@ -873,21 +873,69 @@ function Get-LeanTTYAcceptanceIdleInputState {
     }
 }
 
+# Capture the very sample used for the decision, before a reset clears hilog.
+# Retain bounded protocol fields only; command/terminal bodies are never persisted.
+function Get-LeanTTYObservedCommandLogs {
+    param($Hdc, $Target, $ProcessId, [Collections.IDictionary]$Observation = $null)
+    try { $logs = Get-LeanTTYAppLogs -Hdc $Hdc -Target $Target -ProcessId $ProcessId }
+    catch {
+        if ($null -ne $Observation) { $Observation.readStatus = 'failed' }
+        throw
+    }
+    if ($null -ne $Observation) {
+        $Observation.readStatus = 'succeeded'
+        # Whitelist numeric/enum protocol fields. Never redact then retain an
+        # arbitrary line: command text can itself contain protocol delimiters.
+        $native = Get-LeanTTYAcceptanceIdleInputState -Logs $logs
+        $Observation.records = [ordered]@{
+            idleInterruptCount = [regex]::Matches($logs, 'ACCEPTANCE_IDLE_INTERRUPT cleared=true(?:\r?\n|$)').Count
+            nativeInput = if ($null -eq $native) { $null } else {
+                [ordered]@{ kind = $native.kind; inputLength = $native.input.Length
+                    nonAsciiCount = [regex]::Matches($native.input, '[^\x00-\x7f]').Count
+                    completionActive = $native.completionActive; menuActive = $native.menuActive }
+            }
+            submissions = @([regex]::Matches($logs,
+                'ACCEPTANCE_INPUT_SUBMIT sequence=(?<sequence>\d+),kind=(?<kind>command|password|keyboard-interactive|private-key-passphrase)(?:,|\r?\n|$)'
+            ) | Select-Object -Last 16 | ForEach-Object {
+                [ordered]@{ sequence = [long]$_.Groups['sequence'].Value; kind = $_.Groups['kind'].Value }
+            })
+            completions = @([regex]::Matches($logs,
+                'ACCEPTANCE_KNOWN_HOST_COMPLETE pane=[^,\r\n]+,generation=(?<generation>\d+),sequence=(?<sequence>\d+),result=(?<result>completed|failed|cancelled)(?:\r?\n|$)'
+            ) | Select-Object -Last 16 | ForEach-Object {
+                [ordered]@{ generation = [long]$_.Groups['generation'].Value
+                    sequence = [long]$_.Groups['sequence'].Value; result = $_.Groups['result'].Value }
+            })
+        }
+        if ($null -ne $native) {
+            $Observation.lastNativeInput = $Observation.records.nativeInput
+        }
+    }
+    return $logs
+}
+
 function Wait-LeanTTYAcceptanceIdleInputState {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
         [Parameter(Mandatory = $true)][string]$Target,
         [Parameter(Mandatory = $true)][string]$ProcessId,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Expected,
-        [ValidateRange(1, 30)][int]$TimeoutSeconds = 10
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 10,
+        [Collections.IDictionary]$Observation = $null
     )
 
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $lastState = $null
     $lastChangeAt = 0L
     while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
-        $logs = Get-LeanTTYAppLogs -Hdc $Hdc -Target $Target -ProcessId $ProcessId
+        $logs = Get-LeanTTYObservedCommandLogs -Hdc $Hdc -Target $Target -ProcessId $ProcessId -Observation $Observation
         $state = Get-LeanTTYAcceptanceIdleInputState -Logs $logs
+        if ($null -ne $Observation) {
+            $Observation.parsed = if ($null -eq $state) { $null } else {
+                [ordered]@{ kind = $state.kind; inputLength = $state.input.Length
+                    completionActive = $state.completionActive; menuActive = $state.menuActive
+                    exact = ($state.input -ceq $Expected) }
+            }
+        }
         if ($null -ne $state) {
             if ($state.input -ceq $Expected) {
                 $state | Add-Member -NotePropertyName exact -NotePropertyValue $true
@@ -912,6 +960,11 @@ function Wait-LeanTTYAcceptanceIdleInputState {
     if ($null -eq $lastState) {
         throw '[harness] Acceptance package exposed no native command-buffer result'
     }
+    if ($null -ne $Observation) {
+        $Observation.parsed = [ordered]@{ kind = $lastState.kind; inputLength = $lastState.input.Length
+            completionActive = $lastState.completionActive; menuActive = $lastState.menuActive
+            exact = $false; source = 'last-observed-state' }
+    }
     $lastState | Add-Member -NotePropertyName exact -NotePropertyValue $false
     $lastState | Add-Member `
         -NotePropertyName observationMs `
@@ -923,7 +976,8 @@ function Reset-LeanTTYDeviceCommandInput {
     param(
         [Parameter(Mandatory = $true)][string]$Hdc,
         [Parameter(Mandatory = $true)][string]$Target,
-        [Parameter(Mandatory = $true)][string]$ProcessId
+        [Parameter(Mandatory = $true)][string]$ProcessId,
+        [Collections.IDictionary]$Observation = $null
     )
 
     Clear-LeanTTYAppLogs -Hdc $Hdc -Target $Target
@@ -931,7 +985,56 @@ function Reset-LeanTTYDeviceCommandInput {
     Wait-LeanTTYAppLog `
         -Hdc $Hdc -Target $Target -ProcessId $ProcessId `
         -Pattern 'ACCEPTANCE_IDLE_INTERRUPT cleared=true' `
-        -TimeoutSeconds 10 | Out-Null
+        -TimeoutSeconds 10 -Observation $Observation | Out-Null
+}
+
+function Wait-LeanTTYKnownHostCommandCompletion {
+    param(
+        [Parameter(Mandatory = $true)][string]$Hdc,
+        [Parameter(Mandatory = $true)][string]$Target,
+        [Parameter(Mandatory = $true)][string]$ProcessId,
+        [Parameter(Mandatory = $true)][string]$Command,
+        [Parameter(Mandatory = $true)][string]$SubmissionLogs,
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Observation,
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 10
+    )
+    $ownerPattern = 'ACCEPTANCE_COMMAND_OWNER pane=(?<pane>[^,\s]+),generation=(?<generation>\d+) ' +
+        'ACCEPTANCE_INPUT_SUBMIT sequence=(?<sequence>\d+),kind=command,input=' +
+        [regex]::Escape($Command) + '(?:\r?\n|$)'
+    $owners = @([regex]::Matches($SubmissionLogs, $ownerPattern) | ForEach-Object {
+        'pane=' + $_.Groups['pane'].Value + ',generation=' + $_.Groups['generation'].Value +
+        ',sequence=' + $_.Groups['sequence'].Value
+    } | Select-Object -Unique)
+    if ($owners.Count -ne 1) {
+        $Observation.status = 'unknown-owner'
+        throw '[unknown] Known-host command has no unique submission owner; do not resend'
+    }
+    $Observation.owner = $owners[0]
+    $pattern = 'ACCEPTANCE_KNOWN_HOST_COMPLETE ' + [regex]::Escape($owners[0]) +
+        ',result=(?<result>completed|failed|cancelled)(?:\r?\n|$)'
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $logs = $SubmissionLogs
+    $Observation.status = 'pending'
+    while ($true) {
+        $results = @([regex]::Matches($logs, $pattern) | ForEach-Object { $_.Groups['result'].Value } | Select-Object -Unique)
+        if ($results.Count -gt 1) {
+            $Observation.status = 'conflicting'
+            throw '[unknown] Conflicting known-host completion evidence; do not resend'
+        }
+        if ($results.Count -eq 1) {
+            $Observation.status = $results[0]
+            if ($results[0] -eq 'completed') { return }
+            if ($results[0] -eq 'failed') { throw '[unknown] Known-host operation failed; cause is not established' }
+            throw '[unknown] Known-host command owner was cancelled or replaced; restart the isolated scenario'
+        }
+        if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            $Observation.status = 'missing'
+            throw '[unknown] Known-host completion was not observed; do not resend'
+        }
+        Start-Sleep -Milliseconds 250
+        try { $logs = Get-LeanTTYObservedCommandLogs -Hdc $Hdc -Target $Target -ProcessId $ProcessId -Observation $Observation }
+        catch { $Observation.status = 'observation-failed'; throw }
+    }
 }
 
 function Submit-LeanTTYDeviceCommand {
@@ -950,6 +1053,7 @@ function Submit-LeanTTYDeviceCommand {
 
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $mismatches = [Collections.Generic.List[object]]::new()
+    $logObservations = [Collections.Generic.List[object]]::new()
     $observation = [ordered]@{
         stage = $Stage
         inputMethod = 'harmony-uitest-focus-verified-inputText'
@@ -964,6 +1068,8 @@ function Submit-LeanTTYDeviceCommand {
         durationMs = 0
         lastProvenBoundary = 'none'
         mismatches = $mismatches
+        completion = $null
+        logObservations = $logObservations
     }
     try {
         $hasStaticCommand = $PSBoundParameters.ContainsKey('Command')
@@ -983,7 +1089,9 @@ function Submit-LeanTTYDeviceCommand {
         )) {
             throw '[harness] Verified command submission does not accept command separators'
         }
-        Reset-LeanTTYDeviceCommandInput -Hdc $Hdc -Target $Target -ProcessId $ProcessId
+        $resetObservation = [ordered]@{ phase = 'initial-reset'; readStatus = 'not-observed' }
+        $logObservations.Add($resetObservation)
+        Reset-LeanTTYDeviceCommandInput -Hdc $Hdc -Target $Target -ProcessId $ProcessId -Observation $resetObservation
         $observation.lastProvenBoundary = 'input-reset-verified'
         for ($inputAttempt = 1; $inputAttempt -le $MaxInputAttempts; $inputAttempt++) {
             $observation.inputAttempts = $inputAttempt
@@ -1008,9 +1116,11 @@ function Submit-LeanTTYDeviceCommand {
                 throw '[harness] Input preparer produced an invalid expected command'
             }
             $observation.expectedLength = $expectedCommand.Length
+            $inputObservation = [ordered]@{ phase = 'native-buffer'; attempt = $inputAttempt; readStatus = 'not-observed' }
+            $logObservations.Add($inputObservation)
             $state = Wait-LeanTTYAcceptanceIdleInputState `
                 -Hdc $Hdc -Target $Target -ProcessId $ProcessId -Expected $expectedCommand `
-                -TimeoutSeconds 10
+                -TimeoutSeconds 10 -Observation $inputObservation
             $actual = [string]$state.input
             $observation.actualLength = $actual.Length
             if ($state.exact) {
@@ -1024,18 +1134,29 @@ function Submit-LeanTTYDeviceCommand {
                     throw '[unknown] Enter dispatch outcome is unknown; restart the isolated scenario'
                 }
                 $observation.lastProvenBoundary = 'enter-dispatched'
+                $submitObservation = [ordered]@{ phase = 'submission'; readStatus = 'not-observed' }
+                $logObservations.Add($submitObservation)
                 $submittedPattern = (
                     'ACCEPTANCE_INPUT_SUBMIT sequence=\d+,kind=command,input=' +
                     [regex]::Escape($expectedCommand) + '(?:\r?\n|$)'
                 )
                 try {
-                    Wait-LeanTTYAppLog `
+                    $submissionLogs = Wait-LeanTTYAppLog `
                         -Hdc $Hdc -Target $Target -ProcessId $ProcessId `
-                        -Pattern $submittedPattern -TimeoutSeconds 10 | Out-Null
+                        -Pattern $submittedPattern -TimeoutSeconds 10 -Observation $submitObservation
                 } catch {
                     throw '[unknown] Command submission outcome is unknown; restart the isolated scenario'
                 }
                 $observation.lastProvenBoundary = 'submission-acknowledged'
+                # Only asynchronous known-host commands need this owner barrier.
+                if ($expectedCommand -cmatch '^\s*ssh-keygen\s+-[RF]\s+') {
+                    $observation.completion = [ordered]@{ status = 'not-observed'; owner = $null }
+                    Wait-LeanTTYKnownHostCommandCompletion `
+                        -Hdc $Hdc -Target $Target -ProcessId $ProcessId `
+                        -Command $expectedCommand -SubmissionLogs $submissionLogs `
+                        -Observation $observation.completion
+                    $observation.lastProvenBoundary = 'known-host-command-completed'
+                }
                 $observation.result = 'passed'
                 return [pscustomobject]$observation
             }
@@ -1055,8 +1176,10 @@ function Submit-LeanTTYDeviceCommand {
                 "attempt=$inputAttempt expectedLength=$($expectedCommand.Length) " +
                 "actualLength=$($actual.Length) firstMismatchIndex=$mismatchIndex"
             ) -ForegroundColor Yellow
+            $resetObservation = [ordered]@{ phase = 'mismatch-reset'; attempt = $inputAttempt; readStatus = 'not-observed' }
+            $logObservations.Add($resetObservation)
             Reset-LeanTTYDeviceCommandInput `
-                -Hdc $Hdc -Target $Target -ProcessId $ProcessId
+                -Hdc $Hdc -Target $Target -ProcessId $ProcessId -Observation $resetObservation
             $observation.lastProvenBoundary = 'input-reset-verified'
         }
         throw '[harness] UiTest could not prepare the exact native command buffer before Enter'
@@ -1177,12 +1300,13 @@ function Wait-LeanTTYAppLog {
         [Parameter(Mandatory = $true)][string]$Target,
         [Parameter(Mandatory = $true)][string]$ProcessId,
         [Parameter(Mandatory = $true)][string]$Pattern,
-        [ValidateRange(1, 60)][int]$TimeoutSeconds = 10
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 10,
+        [Collections.IDictionary]$Observation = $null
     )
 
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
-        $logs = Get-LeanTTYAppLogs -Hdc $Hdc -Target $Target -ProcessId $ProcessId
+        $logs = Get-LeanTTYObservedCommandLogs -Hdc $Hdc -Target $Target -ProcessId $ProcessId -Observation $Observation
         if ($logs -match $Pattern) { return $logs }
         Start-Sleep -Milliseconds 1000
     }

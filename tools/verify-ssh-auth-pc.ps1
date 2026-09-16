@@ -889,13 +889,13 @@ function Submit-FocusedDeviceCommand {
             )
         } | Out-Null
     if ($Command -ceq "ssh-keygen -R [127.0.0.1]:$FixturePort") {
-        # Submission precedes durable removal. Starting the next command while
-        # removal is pending would send its Ctrl-C reset into the busy input guard.
+        # The shared submit helper has awaited the owning operation. Projection
+        # absence is a separate postcondition, never a completion signal.
         try {
             Wait-LeanTTYDeviceKnownHostAbsent -Hdc $hdc -Target $Target -Port $FixturePort
         } catch {
             if ($_.Exception.Message.StartsWith('[cleanup]', [StringComparison]::Ordinal)) {
-                throw "[harness] SSH known-host removal completion was not observed: $($_.Exception.Message)"
+                throw "[harness] SSH known-host removal postcondition failed: $($_.Exception.Message)"
             }
             throw
         }

@@ -1893,6 +1893,46 @@ function Add-LeanTTYAcceptanceSource {
         }
         $text.session = Set-LeanTTYAcceptanceSourceText $text.session $inputPoint.anchor $replacement
     }
+    # Observe the existing owner; do not introduce a second busy/idle state.
+    $keyOwnerStart = $text.session.IndexOf('  private async executeKeyCommand(')
+    $keyOwnerEnd = $text.session.IndexOf('  private showTopLevelHelp(', $keyOwnerStart)
+    $keyOwner = $text.session.Substring($keyOwnerStart, $keyOwnerEnd - $keyOwnerStart)
+    $observedKeyOwner = Set-LeanTTYAcceptanceSourceText $keyOwner `
+        '    let boundaryGeneration: number = this.terminalBoundaryGeneration' `
+        @"
+    let acceptanceSequence: number = this.acceptanceInputSequence
+    let acceptancePane: string = encodeURIComponent(this.paneId)
+    let acceptanceCommandFailed: boolean = false
+    let acceptanceCommandReturned: boolean = false
+    let boundaryGeneration: number = this.terminalBoundaryGeneration
+"@
+    $observedKeyOwner = Set-LeanTTYAcceptanceSourceText $observedKeyOwner `
+        '      writeError: (msg: string) => {' `
+        "      writeError: (msg: string) => {`n        acceptanceCommandFailed = true"
+    $observedKeyOwner = Set-LeanTTYAcceptanceSourceText $observedKeyOwner `
+        @"
+      await KeyCommandService.execute(result, ctx)
+    } finally {
+      if (knownHostsCommand) {
+        this.knownHostsCommandPending = false
+      }
+"@ `
+        @"
+      await KeyCommandService.execute(result, ctx)
+      acceptanceCommandReturned = true
+    } finally {
+      if (knownHostsCommand) {
+        this.knownHostsCommandPending = false
+        if (ACCEPTANCE_TESTS) {
+          let outcome: string = boundaryGeneration !== this.terminalBoundaryGeneration ? 'cancelled' :
+            (!acceptanceCommandReturned || acceptanceCommandFailed ? 'failed' : 'completed')
+          this.logger.info('ACCEPTANCE_KNOWN_HOST_COMPLETE pane=' + acceptancePane +
+            ',generation=' + boundaryGeneration.toString() + ',sequence=' + acceptanceSequence.toString() +
+            ',result=' + outcome)
+        }
+      }
+"@
+    $text.session = Set-LeanTTYAcceptanceSourceText $text.session $keyOwner $observedKeyOwner
     $keyChangeAnchor = @'
   private submitKeyPassphraseChangeStage(): void {
     if (this.mode !== TerminalMode.KEY_PASSPHRASE_CHANGE_INPUT) {
@@ -1931,7 +1971,9 @@ function Add-LeanTTYAcceptanceSource {
       this.acceptanceInputSequence++
       let commandDetail: string = kind === 'command' ? ',input=' +
         SessionViewModel.terminalSafeText(this.commandLine.getText()) : ''
-      this.logger.info('ACCEPTANCE_INPUT_SUBMIT sequence=' + this.acceptanceInputSequence.toString() +
+      let owner: string = kind === 'command' ? 'ACCEPTANCE_COMMAND_OWNER pane=' +
+        encodeURIComponent(this.paneId) + ',generation=' + this.terminalBoundaryGeneration.toString() + ' ' : ''
+      this.logger.info(owner + 'ACCEPTANCE_INPUT_SUBMIT sequence=' + this.acceptanceInputSequence.toString() +
         ',kind=' + kind + commandDetail)
     }
   }
