@@ -514,3 +514,36 @@ C0–C2 和先前观察到的锁屏、合盖、Wi-Fi 恢复事实保留；旧通
 61 分钟及一次锁屏、一次合盖，但在本轮证据下，它才是现行规则支持的完整 C3 路径。
 因此保留原候选并采用 R3，不引入跨 harness 继承机制，不以诊断补写正式 Pass。
 进入下一轮前重新 QH，并先说明自动阶段、人工 READY、次数和预估时间；本轮不启动。
+
+## 2026-09-17 历史输入身份与交付证据补录
+
+本节补录本地主线外的 09-11/12 观察，不改变上方实现记录、当时失败报告或当前发布状态。
+
+09-11 的 PR #179 正式轮沿用原 HAP，QH、Mosh 八项和长任务通知通过，随后在
+`codex/direct` 的一次 `yes` 输入后停止；未发 Enter、未启动 Agent 模型。原生 Web 的
+type、window、accessibility ID 和 bounds 均相同，hierarchy 的祖先索引由 1 变 0；
+虚拟输入的 ID、bounds 与 hierarchy 变化。最后正确边界为唯一焦点和 UiTest 单次输入返回，
+首个错误边界是操作后的 native Web 比较。没有保留原始前后布局，不能补造或据此证明
+自然丢字、真实焦点漂移或所有平台 ID 的长期稳定性。
+
+占位节点与保留路径调用真实判定的六个离线反例显示：相同 owner 接受、仅 hierarchy
+变化拒绝、恢复路径接受；替换 native ID、窗口变化和同 Web 多终端均拒绝。它定位了旧
+谓词的重排误拒绝边界，不是真机自然事件的完整复现。后续 PR #180 保留 fresh layout、
+唯一 owner/焦点、父子归属、单次输入和失败不发 Enter；其实现与验证以上方记录为准。
+
+证据入口为本地 `build/verification/release-1.6.0-r3-pr179-20260911/`，包括正式 Agent
+`result.json`、`predicate-projection.json` 和 `closing-audit.json`。该 Agent 失败报告
+SHA-256 为 `d291fd020f3278a264fbbdd7427a3980b604e71bf6640ad466ef386bd034e169`。
+收尾确认自有 Tab 关闭、原 Tab/激活页及通知策略恢复，临时信任、监听、夹具和映射缺席。
+
+| 后续交付 | 合并身份 | 证据边界 |
+| --- | --- | --- |
+| PR #180 | `d479e8b1220dc9c5fed8be2efc55135fd77eccd3` | 四项 CI 通过；合并工具与真机诊断 `f4bbe8e` 一致，其余为文档补充 |
+| PR #181 | `0ac39fb6c7353195e02c8b3621f31bda63e4b463` | 四项 CI 通过；工具与真机诊断 `7039f8a` 一致，修正 Mosh 调用方身份合同 |
+
+两次交付分别保留 `delivery-audit.json`，不覆盖诊断 `closing-audit.json`，也不改写旧候选、
+冻结来源或报告。开发验证不等于正式 QH、完整矩阵或新增模型调用授权。
+
+第三方限制适用现行[质量策略](../quality-strategy.md#third-party-limitations-and-acceptance-continuity)：
+Pi/tmux 的精确证据边界可以非阻塞记录，但未验证能力不能称通过，未知原因也不能豁免。
+本地旧稿“脚本适配仍待执行”的状态已被后续实现取代，不恢复到 Next Work。

@@ -652,3 +652,36 @@ use the installed public bytes. No exact matching upstream issue was found.
 [Huawei lifecycle guidance](https://developer.huawei.com/consumer/cn/doc/doccenter-dev-faq/faqs-ability-94)
 does not promise remote PTY focus replay. These source boundaries and the real
 tmux contrast, rather than an inferred product defect, determine the repair.
+
+## 2026-09-17 Historical stops and boundary evidence
+
+This section preserves selected local-only observations from September 12.
+The existing implementation sections above remain authoritative for their
+respective changes. These historical stops do not reopen completed release
+work or turn old failed reports into passing evidence.
+
+| Historical boundary | Observation and implication | Local evidence root under `build/verification/` |
+| --- | --- | --- |
+| PR #183 formal R2, caller input context | QH passed; Agent stopped before the first trust response. The caller supplied a node without its paired layout, selecting the virtual-hierarchy fallback. An offline counterexample distinguished this omission from a changed native owner; missing live pre-input layout still prevents proving the failed attempt retained that owner. | `agent-r2-continuation-20260912/` |
+| PR #184 formal R2, Qwen/tmux notification | Seven Agent/mode checks passed. The eighth had an inner BEL but no proven post-background outer delivery; SSH did not start. Cleanup was initially unconfirmed, so the report stayed invalid/interrupted. Separate recovery and a closing audit proved the fixture fingerprint and owned resources absent. | `agent-input-context-20260912/` |
+| Zero-model BEL comparison | Controlled direct/tmux probes separated child PTY output, tmux client output, background timing and LeanTTY publication. Cumulative inner bytes could not determine whether a notification reached the application after hiding. The observer/start-gate repairs above followed this boundary analysis. | `agent-bell-boundary-20260912/` |
+| PR #186 Pi/tmux forwarding | The child emitted OSC 777 but the reviewed tmux path did not forward it. The later evidence-bound classifier records an upstream limitation while retaining failures for missing or contradictory evidence; it does not claim notification success. | `agent-start-gate-20260912/` |
+| PR #187 continuation, Qwen/tmux emission | The new classification allowed independent continuation; the first seven Agent modes passed. Qwen's remaining emission precondition required focus/hook investigation, not another product exemption or a longer timeout. | `agent-third-party-20260912/` |
+| Qwen focus readiness | Version-matched hook checks and a controlled tmux double-PTY comparison distinguished enabling focus reporting before versus after the focus event. This justified the fixture readiness repair above, without changing LeanTTY's product semantics. | `agent-emission-contract-20260912/` |
+
+The PR #183 stop retained Agent result SHA-256
+`5b9960f8613290487bf38040cfa712a6c20d63c3aa6c243cee90f266afeea6b9`
+and release report SHA-256
+`7c82320109ea86989471dd3d112037994a57b7783b162f402d47dca6c608cbdc`.
+The PR #184 stop retained Agent result SHA-256
+`70403e8e66491e8cc85aa099c7d7c767c8dd95ad0b533a8588b8389bccb39a87`
+and release report SHA-256
+`16ebf363b9b31e90a5743ab33489dd7155c3cef806f62386056034f1625930a6`.
+Separate recovery/audit files did not alter those reports. Planned model
+budgets were not inferred to be actual usage counts.
+
+The broader chronology is indexed in the
+[acceptance history](../test-release-efficiency.md#2026-09-1716-验收历史补录).
+The exact local originals remain backed up under the ignored
+`build/verification/workspace-sync-20260917/preserved/` directory. This
+archival update ran no device scenario, model request or release gate.

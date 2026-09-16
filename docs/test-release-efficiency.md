@@ -2766,3 +2766,95 @@ text 标签。不能据此推断所有设备都不可读取模式，但当前材
 本轮仅静态读取、规则整理、公开源策略和 diff 检查。未请求设备、未构建/签名 HAP，
 未更改输入法、键盘配置或 WSL。方案仍待下一次已授权 ASCII 场景的命名 L2/L3 验证，
 不能称为输入法故障已修复；AT16-07 与正式候选资格继续按既有条件触发。
+
+## 2026-09-17：1.6 验收历史补录
+
+本节从根目录尚未提交的记录提取 09-10 至 09-16 的停点与证据索引。编号沿用本地原稿
+8.42–8.90，保留历史关联，不恢复为活动 TODO。原稿逐字备份在本地忽略目录
+`build/verification/workspace-sync-20260917/preserved/`；原始报告与失败不改写。
+下表的“通过”“待修理”和停止状态均属于所列日期，不能替代当前[发布状态](release/1.6.0-status.md)。
+
+### 结论与后续处置
+
+- **输入身份与收尾：** PR #179 补全失败投影和自有 Tab 收尾；随后现场定位到 native Web
+  hierarchy 变化。PR #180/#181 修正操作内 owner 比较与调用方配对，保留真实 Pane/窗口
+  切换拒绝。没有据此证明全部历史自然丢字的根因。详见[输入证据补录](design/agent-tui-compatibility.md#2026-09-17-历史输入身份与交付证据补录)。
+- **Agent 通知：** 内层 PTY 的 BEL/OSC 不等于已到达 LeanTTY；先建立内外层、后台状态、
+  启动与焦点前提，再判断产品接收。Pi/tmux 限制采用精确证据约束的非阻塞分类，未验证
+  能力不能写成通知通过。Qwen 的 hook 和时序同样不能只凭 shell 时长推断。
+  详见[退出与通知补录](design/agent-exit-boundary-20260912.md#2026-09-17-historical-stops-and-boundary-evidence)。
+- **资产与 SSH：** PR #194 闭合主机信任持久化响应性/顺序；后续修理区分输入提交、异步
+  命令完成、状态收尾及终态诊断。PR #204 修复诊断跨回调顺序，PR #209 后的命令完成
+  与输入法记录仍以上方原章节为准，不能用旧根区工具覆盖它们。
+- **效率和外部前提：** 维护者撤回 WSL 生命周期管理方案；自动/人工阶段后来经 PR #196
+  分开。sharp 历史延期已由 PR #210 安全升级取代，ASCII 离线方案经 PR #211 交付但仍待
+  命名真机验证。保留曾经的停点，不把它们重新列成未处理缺陷。
+- **正式收口：** 09-16 人工锁屏/合盖和 C3、C4 后续完成；签名标签、GitHub Release 与
+  production APP 已交付。商店仍等待维护者回报，历史失败没有因最终交付而被改成通过。
+
+### 历史索引
+
+路径均相对于本地仓库，表示证据定位入口，不是公开附件或新增测试通过声明。
+“见相邻批次”表示原节没有独立完整目录标记，应从原稿和关联批次查证，不补造来源。
+
+| 原编号 | 当时的停点、修复或处置 | 本地证据入口 |
+| --- | --- | --- |
+| 8.42 | R4 正式验收推进至合盖恢复失败（2026-09-10） | `build/verification/release-1.6.0-r4-pr176-20260909/` |
+| 8.43 | R4 在 OpenSSH 前置环境停止（2026-09-11） | `build/verification/release-1.6.0-r4-pr177-20260910/` |
+| 8.44 | 维护者保持 WSL 运行后按 R2 续跑（2026-09-11） | `build/verification/release-1.6.0-r2-wsl-manual-20260911/` |
+| 8.45 | R2 在长任务通知前置条件停止（2026-09-11） | `build/verification/release-1.6.0-r2-wsl-manual-20260911/` |
+| 8.46 | 图标工具 sharp 告警非阻塞移交（2026-09-11） | `build/verification/release-1.6.0-r3-pr178-20260911/` |
+| 8.47 | 正式入口缺少人工阶段前暂停（2026-09-11） | 见相邻批次与本地原稿 |
+| 8.48 | PR #178 正式资格验证通过（2026-09-11） | `build/verification/release-1.6.0-r3-pr178-20260911/` |
+| 8.49 | R3 通过 Mosh 与长任务后停在 Agent 信任输入（2026-09-11） | `build/verification/release-1.6.0-r3-pr178-20260911/` |
+| 8.50 | Agent 信任输入取证与自有 Tab 收尾修复（2026-09-11） | `build/verification/agent-trust-cleanup-20260911/` |
+| 8.51 | R3 捕获 native Web 结构路径误判条件（2026-09-11） | `build/verification/release-1.6.0-r3-pr179-20260911/` |
+| 8.52 | native Web 身份判定修复与定向验证（2026-09-12） | `build/verification/native-web-owner-20260912/` |
+| 8.53 | Mosh 跨阶段身份合同与旧证据继承核定（2026-09-12） | `build/verification/input-contract-resume-20260912/` |
+| 8.54 | R3 在 OpenCode 退出后的 SSH 关闭观察停止（2026-09-12） | `build/verification/release-1.6.0-r3-pr181-20260912/` |
+| 8.55 | Agent 退出边界的局部修复与零模型验证（2026-09-12） | `build/verification/agent-exit-boundary-20260912/` |
+| 8.56 | Agent R2 入口打通后在信任输入前停止（2026-09-12） | `build/verification/agent-r2-continuation-20260912/` |
+| 8.57 | Agent 调用补齐布局上下文后的定向验证与正式续跑（2026-09-12） | `build/verification/agent-input-context-20260912/` |
+| 8.58 | 通知内外边界零模型对照与判据反例（2026-09-12） | `build/verification/agent-bell-boundary-20260912/` |
+| 8.59 | Agent 通知观察器修复与准备命令边界（2026-09-12） | `build/verification/agent-attention-observer-20260912/` |
+| 8.60 | PR185 正式 R2 在 Pi 隐藏过渡区间停止（2026-09-12） | `build/verification/agent-attention-observer-20260912/` |
+| 8.61 | Agent 确定性启动门开发验证（2026-09-12） | `build/verification/agent-start-gate-20260912/checkout` |
+| 8.62 | PR186 正式 R2 在 Pi tmux 转发边界停止（2026-09-12） | `build/verification/agent-start-gate-20260912/` |
+| 8.63 | 第三方限制分类修复与合并授权停点（2026-09-12） | `build/verification/agent-third-party-20260912/` |
+| 8.64 | PR187 续跑验证第三方分类并在 Qwen/tmux 发送前提处停止（2026-09-12） | `build/verification/agent-third-party-20260912/` |
+| 8.65 | Qwen 通知启动前提的零模型诊断与最小修理（2026-09-12） | `build/verification/agent-emission-contract-20260912/` |
+| 8.66 | 通知观察时序修理与诊断脚本误判（2026-09-12） | `build/verification/agent-notification-order-20260912/` |
+| 8.67 | 精确文档准入补齐与 PR190 正式续跑（2026-09-12） | `build/verification/agent-r2-pr189-20260912/` |
+| 8.68 | Agent 通知专用日志采集修复与 PR191 续跑（2026-09-12） | `build/verification/agent-notification-source-20260912/` |
+| 8.69 | Pi/tmux 公开身份查询行尾修复与 PR192 续验（2026-09-12） | `build/verification/agent-public-identity-20260912/` |
+| 8.70 | Agent 焦点准备修正、零模型对照与 PR193（2026-09-12） | `build/verification/software-focused-20260912T150326123Z.json` |
+| 8.71 | PR193 正式续验遇测试机充电离线暂停（2026-09-12） | `build/verification/agent-r2-pr193-20260912/` |
+| 8.72 | 无人值守恢复、窗口对照与指纹耗时诊断（2026-09-13） | `build/verification/unattended-20260913/` |
+| 8.73 | 指纹异步持久化修复、定向验证及 PR194（2026-09-13） | `build/verification/trust-async-20260913/` |
+| 8.74 | 新 R4 候选准备：依赖遗漏与证据目录修正（2026-09-13） | `build/verification/release-1.6.0-r4-pr194-20260913/` |
+| 8.75 | sharp 构图工具告警：非本轮验收阻塞（2026-09-13） | 见相邻批次与本地原稿 |
+| 8.76 | 正式验收按自动与人工两段执行（2026-09-13） | 见相邻批次与本地原稿 |
+| 8.77 | 分段首轮 Host 身份：随机端点的旧信任状态（2026-09-13） | 见相邻批次与本地原稿 |
+| 8.78 | 默认 ECDSA 收尾缺少异步完成等待（2026-09-13） | `build/verification/host-cleanup-await-20260913/default-ecdsa-diagnostic/` |
+| 8.79 | 分段 R3 自动轮：Qwen 最小化过渡区间与失败收尾（2026-09-13） | `build/verification/release-1.6.0-r4-pr194-20260913/` |
+| 8.80 | Qwen 任务完成前提、失败清理与 R3 准入（2026-09-13） | `build/verification/agent-hidden-boundary-20260913/` |
+| 8.81 | Downloads 布局混入桌面同名控件，修复与新 R3（2026-09-13） | `build/verification/release-1.6.0-r4-pr194-20260913/` |
+| 8.82 | PR200 自动轮：Qwen 未发出原生通知与收尾（2026-09-13） | `build/verification/release-1.6.0-r4-pr194-20260913/` |
+| 8.83 | Qwen 输出分类、有限 R2 与自动续验（2026-09-13） | `build/verification/qwen-split-continuation-20260913/` |
+| 8.84 | SSH 命令完成等待与失败诊断新边界（2026-09-13） | `build/verification/ssh-command-completion-20260913/checkout` |
+| 8.85 | SSH 失败诊断跨回调顺序修复（2026-09-13） | `build/verification/ssh-failure-order-20260913/checkout` |
+| 8.86 | PR204 新候选自动段与通知证据缺口（2026-09-13） | `build/verification/release-1.6.0-r4-pr204-20260913/` |
+| 8.87 | Agent 通知失败的真实判定输入留存与 R2 续验（2026-09-13—14） | `build/verification/agent-notification-evidence-20260913/` |
+| 8.88 | Mosh 准备阶段异步命令与 idle reset 的定向诊断（2026-09-16） | `build/verification/idle-reset-diagnostic-20260916/` |
+| 8.89 | 人工锁屏合盖与正式 C3 闭合（2026-09-16） | `build/verification/operator-20260916/closing-audit.json` |
+| 8.90 | C4 材料来源分离、正式构建与最终 smoke（2026-09-16） | `build/verification/c4-materials-20260916/` |
+
+### 命令完成观察器的合并前评审
+
+PR #208 交付后，命令完成补丁的初稿曾先保存整行，再按分隔符遮盖输入；合成反例证明
+输入本身含分隔符时会留下内容。补丁在采用前改为固定数值/枚举投影，五个独立反例复核
+通过，并区分“操作失败”与“已证明工具根因”。这是未采用补丁的评审修正，不是已发布
+应用泄漏证据；没有真实秘密或设备调用。原始评审和 `log-projection-rereview.json`
+留在本地，最终交付身份与定向验证以上方 PR #209 记录为准。
+
+本次只做历史提取、链接与公开源码检查，没有重跑设备、模型或发布矩阵。
