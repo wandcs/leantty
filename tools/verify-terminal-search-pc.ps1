@@ -151,18 +151,18 @@ $hapLength = (Get-Item -LiteralPath $HapPath).Length
 
 function Get-TerminalSearchInputNodes {
     param([Parameter(Mandatory = $true)]$Layout)
-    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        [string]$_.attributes.type -eq 'textField' -and
-        [string]$_.attributes.hint -match '^(?:Find text|Search text|查找内容)' -and
+    return @(Get-LeanTTYVisibleLayoutNodes -Node $Layout | Where-Object {
+        [string]$_.attributes.type -eq 'TextInput' -and
+        [string]$_.attributes.id -match '^native-search-pane-[0-9]+-[0-9]+$' -and
         [string]$_.attributes.visible -eq 'true'
     })
 }
 
 function Get-TerminalSearchContainerNodes {
     param([Parameter(Mandatory = $true)]$Layout)
-    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        [string]$_.attributes.type -eq 'search' -and
-        [string]$_.attributes.text -in @('Find in terminal', '在终端中查找') -and
+    return @(Get-LeanTTYVisibleLayoutNodes -Node $Layout | Where-Object {
+        [string]$_.attributes.type -eq 'Row' -and
+        [string]$_.attributes.id -match '^native-search-panel-pane-[0-9]+-[0-9]+$' -and
         [string]$_.attributes.visible -eq 'true'
     })
 }
@@ -170,12 +170,7 @@ function Get-TerminalSearchContainerNodes {
 function Get-LeanTTYTerminalContentTop {
     param([Parameter(Mandatory = $true)]$Layout)
 
-    $contentTops = @(Get-LeanTTYLayoutNodes -Node $Layout | ForEach-Object {
-        if ([string]$_.attributes.type -ne 'Web' -or
-            [string]$_.attributes.visible -ne 'true' -or
-            [string]$_.attributes.originalText -notmatch 'terminal\.html$') {
-            return
-        }
+    $contentTops = @(Get-LeanTTYTerminalInputNodes -Layout $Layout | ForEach-Object {
         $bounds = [string]$_.attributes.bounds
         if ($bounds -match '^\[\d+,(?<top>\d+)\]\[\d+,\d+\]$') {
             return [int]$Matches.top
@@ -190,7 +185,7 @@ function Get-LeanTTYTerminalContentTop {
 function Get-LeanTTYTabNodes {
     param([Parameter(Mandatory = $true)]$Layout)
     $contentTop = Get-LeanTTYTerminalContentTop -Layout $Layout
-    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
+    return @(Get-LeanTTYVisibleLayoutNodes -Node $Layout | Where-Object {
         if ([string]$_.attributes.type -ne 'Stack' -or
             [string]$_.attributes.clickable -ne 'true' -or
             [string]::IsNullOrWhiteSpace([string]$_.attributes.description)) {
@@ -204,55 +199,25 @@ function Get-LeanTTYTabNodes {
 
 function Get-LeanTTYActiveTerminalInputNodes {
     param([Parameter(Mandatory = $true)]$Layout)
-    $contentTop = Get-LeanTTYTerminalContentTop -Layout $Layout
-    $result = [Collections.Generic.List[object]]::new()
-    $visit = {
-        param($Node, [bool]$InsideActiveSurface)
-        if ($null -eq $Node) { return }
-        $inside = $InsideActiveSurface
-        if ([string]$Node.attributes.type -eq '__Common__') {
-            $bounds = [string]$Node.attributes.bounds
-            if ($bounds -match '^\[\d+,(?<top>\d+)\]\[\d+,(?<bottom>\d+)\]$' -and
-                [int]$Matches.top -ge $contentTop -and [int]$Matches.bottom -gt ($contentTop + 20)) {
-                $inside = [string]$Node.attributes.opacity -eq '1.000000' -and
-                    [string]$Node.attributes.zIndex -eq '1'
-            }
-        }
-        if ($inside -and
-            [string]$Node.attributes.type -eq 'textField' -and
-            [string]$Node.attributes.hint -eq 'Terminal input' -and
-            [string]$Node.attributes.visible -eq 'true') {
-            $result.Add($Node)
-        }
-        foreach ($child in @($Node.children)) {
-            & $visit $child $inside
-        }
-    }
-    & $visit $Layout $false
-    return @($result)
+    return @(Get-LeanTTYTerminalInputNodes -Layout $Layout)
 }
 
 function Get-LeanTTYActiveTerminalSurfaceNodes {
     param([Parameter(Mandatory = $true)]$Layout)
-    $contentTop = Get-LeanTTYTerminalContentTop -Layout $Layout
+    return @(Get-LeanTTYTerminalInputNodes -Layout $Layout)
+}
 
-    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        if ([string]$_.attributes.type -ne '__Common__' -or
-            [string]$_.attributes.opacity -ne '1.000000' -or
-            [string]$_.attributes.zIndex -ne '1') {
-            return $false
-        }
-        $bounds = [string]$_.attributes.bounds
-        if ($bounds -notmatch '^\[\d+,(?<top>\d+)\]\[\d+,(?<bottom>\d+)\]$' -or
-            [int]$Matches.top -lt $contentTop -or [int]$Matches.bottom -le ($contentTop + 20)) {
-            return $false
-        }
-        return @(Get-LeanTTYLayoutNodes -Node $_ | Where-Object {
-            [string]$_.attributes.type -eq 'Web' -and
-            [string]$_.attributes.visible -eq 'true' -and
-            [string]$_.attributes.originalText -match 'terminal\.html$'
-        }).Count -eq 1
-    })
+function Wait-NativeTerminalAbsent {
+    param([string]$PaneId, [string]$LayoutName, [int]$TimeoutSeconds = 40)
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath (Join-Path $EvidenceDirectory $LayoutName)
+        # Inspect the whole retained tree: hidden is not the same as detached.
+        $nodes = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object { [string]$_.attributes.id -ceq $PaneId })
+        if ($nodes.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 500
+    } while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    throw '[product] Retained native terminal did not detach after idle timeout'
 }
 
 function Wait-TerminalWorkspaceState {
@@ -270,17 +235,11 @@ function Wait-TerminalWorkspaceState {
     do {
         $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $path
         $terminalInputs = @(Get-LeanTTYActiveTerminalInputNodes -Layout $layout)
-        $activePaneBounds = [Collections.Generic.List[string]]::new()
-        foreach ($terminalInput in $terminalInputs) {
-            $bounds = [string]$terminalInput.attributes.bounds
-            if (-not $activePaneBounds.Contains($bounds)) { $activePaneBounds.Add($bounds) }
+        $activePaneIds = @($terminalInputs | ForEach-Object { [string]$_.attributes.id })
+        if (@($activePaneIds | Select-Object -Unique).Count -ne $activePaneIds.Count) {
+            throw '[harness] Duplicate native Pane identifiers in workspace layout'
         }
-        $activeSurfaces = @(Get-LeanTTYActiveTerminalSurfaceNodes -Layout $layout)
-        $activePaneCount = if ($terminalInputs.Count -gt 0) {
-            $activePaneBounds.Count
-        } else {
-            $activeSurfaces.Count
-        }
+        $activePaneCount = $activePaneIds.Count
         $focusedTerminalInputs = @($terminalInputs | Where-Object {
             [string]$_.attributes.focused -eq 'true'
         })
@@ -289,8 +248,8 @@ function Wait-TerminalWorkspaceState {
         $tabs = @(Get-LeanTTYTabNodes -Layout $layout)
         $focusedIndex = if ($focusedTerminalInputs.Count -eq 1) {
             [Array]::IndexOf(
-                $activePaneBounds,
-                [string]$focusedTerminalInputs[0].attributes.bounds
+                $activePaneIds,
+                [string]$focusedTerminalInputs[0].attributes.id
             )
         } else {
             -1
@@ -331,10 +290,9 @@ function Wait-TerminalWorkspaceState {
 
 function Get-TerminalSearchResultNodes {
     param([Parameter(Mandatory = $true)]$Layout)
-    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        [string]$_.attributes.visible -eq 'true' -and
-        ([string]$_.attributes.text -match '^(?:No results|未找到结果|[1-9][0-9]*/[1-9][0-9]*)$' -or
-            [string]$_.attributes.originalText -match '^(?:No results|未找到结果|[1-9][0-9]*/[1-9][0-9]*)$')
+    return @(Get-LeanTTYVisibleLayoutNodes -Node $Layout | Where-Object {
+        [string]$_.attributes.type -eq 'Text' -and
+        [string]$_.attributes.id -match '^native-search-result-pane-[0-9]+-[0-9]+$'
     })
 }
 
@@ -432,10 +390,7 @@ function Invoke-TerminalSearchShortcut {
 function Clear-TerminalSearchQuery {
     param([Parameter(Mandatory = $true)][ValidateRange(1, 4096)][int]$CharacterCount)
 
-    # ArkWeb on this physical PC does not receive an injected Ctrl+A chord in
-    # its focused HTML input. Delete the known bounded test query one character
-    # at a time so this gate measures search behavior rather than that injector
-    # limitation.
+    # Delete only the known bounded query; do not alter unrelated terminal text.
     for ($index = 0; $index -lt $CharacterCount; $index++) {
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2055
     }
@@ -448,7 +403,7 @@ function Invoke-TerminalSearchPrevious {
         -LocalPath (Join-Path $EvidenceDirectory 'layout-search-previous-control.json')
     $previous = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
         [string]$_.attributes.type -eq 'button' -and
-        [string]$_.attributes.originalText -eq 'Previous match, Shift+Enter' -and
+        [string]$_.attributes.id -match '^native-search-prev-pane-[0-9]+-[0-9]+$' -and
         [string]$_.attributes.visible -eq 'true'
     })
     if ($previous.Count -ne 1) {
@@ -777,7 +732,7 @@ try {
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $missingQuery
         $missing = Wait-TerminalSearchQueryState `
             -ExpectedQuery $missingQuery `
-            -ExpectedResultPattern '^(?:No results|未找到结果)$' `
+            -ExpectedResultPattern '^0/0$' `
             -LayoutName 'layout-ascii-query-no-results.json'
 
         Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length
@@ -886,7 +841,7 @@ try {
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Usage: mosh'
         Wait-TerminalSearchQueryState `
             -ExpectedQuery 'Usage: mosh' `
-            -ExpectedResultPattern '^(?:No results|未找到结果)$' `
+            -ExpectedResultPattern '^0/0$' `
             -LayoutName 'layout-ownership-right-no-result.json' | Out-Null
 
         Invoke-TerminalWorkspaceChord -Action 'focus-left'
@@ -945,7 +900,7 @@ try {
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text 'Usage: mosh'
         Wait-TerminalSearchQueryState `
             -ExpectedQuery 'Usage: mosh' `
-            -ExpectedResultPattern '^(?:No results|未找到结果)$' `
+            -ExpectedResultPattern '^0/0$' `
             -LayoutName 'layout-ownership-second-tab-no-result.json' | Out-Null
         Invoke-TerminalWorkspaceChord -Action 'next-tab'
         Wait-TerminalWorkspaceState `
@@ -1006,9 +961,10 @@ try {
             -PaneCount 1 -TabCount 1 -SearchCount 0 `
             -LayoutName 'layout-warm-initial.json' | Out-Null
         Invoke-TerminalWorkspaceChord -Action 'new-tab'
-        Wait-TerminalWorkspaceState `
+        $warmTab = Wait-TerminalWorkspaceState `
             -PaneCount 1 -TabCount 2 -SearchCount 0 `
-            -LayoutName 'layout-warm-second-tab.json' | Out-Null
+            -LayoutName 'layout-warm-second-tab.json'
+        $warmPaneId = [string]@(Get-LeanTTYTerminalInputNodes -Layout $warmTab.layout)[0].attributes.id
         Invoke-TerminalSearchShortcut
         $searchClosed = $false
         Wait-TerminalWorkspaceState `
@@ -1021,12 +977,7 @@ try {
             -PaneCount 1 -TabCount 2 -SearchCount 0 `
             -LayoutName 'layout-warm-tab-inactive.json' | Out-Null
         $searchClosed = $true
-        $evictionLogs = Wait-SearchAppLog `
-            -Pattern 'TerminalBridge: PERF bridge reason=destroy' `
-            -TimeoutSeconds 40
-        if ($evictionLogs -match 'ArkWeb renderer exited') {
-            throw '[environment] Renderer exit invalidated the warm-tab eviction observation'
-        }
+        Wait-NativeTerminalAbsent -PaneId $warmPaneId -LayoutName 'layout-warm-evicted.json' -TimeoutSeconds 40
         Invoke-TerminalWorkspaceChord -Action 'next-tab'
         Wait-TerminalWorkspaceState `
             -PaneCount 1 -TabCount 2 -SearchCount 0 `
@@ -1042,7 +993,8 @@ try {
             result = 'passed'
             durationMs = $timer.ElapsedMilliseconds
             retentionMilliseconds = 30000
-            productionEvictionObserved = $evictionLogs -match 'TerminalBridge: PERF bridge reason=destroy'
+            productionEvictionObserved = $true
+            evictedPaneId = $warmPaneId
             queryAbsentAfterRemount = $true
             terminalFocusRestored = $true
         })
@@ -1082,10 +1034,10 @@ try {
             -ActionText 'Acceptance: Rebuild Renderer' `
             -LayoutPrefix 'layout-lifecycle-renderer'
         $rendererLogs = Wait-SearchAppLog `
-            -Pattern 'TerminalBridge: PERF bridge reason=destroy' `
+            -Pattern 'Acceptance renderer rebuild requested=true,pane=' `
             -TimeoutSeconds 20
         $rendererLogs = Wait-SearchAppLog `
-            -Pattern 'TerminalBridge: Bridge initialized' `
+            -Pattern 'Terminal ready, terminal output recovered' `
             -TimeoutSeconds 20
         Wait-TerminalWorkspaceState `
             -PaneCount 1 -TabCount 1 -SearchCount 0 `
@@ -1107,8 +1059,8 @@ try {
             durationMs = $timer.ElapsedMilliseconds
             processPreservedAcrossMinimizeRestore = $true
             queryClearedOnMinimize = $true
-            rendererBridgeDestroyed = $rendererLogs -match 'TerminalBridge: PERF bridge reason=destroy'
-            rendererBridgeReinitialized = $rendererLogs -match 'TerminalBridge: Bridge initialized'
+            nativeRebuildRequested = $rendererLogs -match 'Acceptance renderer rebuild requested=true,pane='
+            nativeSurfaceReady = $rendererLogs -match 'Terminal ready, terminal output recovered'
             queryAbsentAfterRendererRebuild = $true
             terminalFocusRestoredByCommandSubmit = $focusLogs -match
                 'ACCEPTANCE_INPUT_SUBMIT sequence=\d+,kind=command'
@@ -1215,7 +1167,7 @@ try {
     }
     [IO.File]::WriteAllText(
         (Join-Path $EvidenceDirectory 'device-terminal-search.json'),
-        (ConvertTo-Json -InputObject $evidence -Depth 7),
+        (ConvertTo-Json -InputObject $evidence -Depth 12),
         [Text.UTF8Encoding]::new($false)
     )
 }

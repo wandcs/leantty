@@ -35,8 +35,9 @@ method shown on the GitHub profile rather than publishing the details.
 - Passwords and passphrases are not intentionally persisted and sensitive Rust
   values are zeroized where supported.
 - Host keys are checked against OpenSSH-compatible `known_hosts` data.
-- The ArkWeb terminal uses a Content Security Policy and a validated bridge
-  protocol.
+- The native terminal validates bounded commands and retains Session/input
+  ownership across asynchronous callbacks. Remote terminal effects pass
+  restricted clipboard, notification and link policies.
 - Clipboard reads occur for paste. Writes occur for local copy or a bounded
   OSC 52 request; OSC 52 reads are rejected.
 - Signing keys and production credentials are kept outside the source
@@ -51,16 +52,17 @@ behavior and deletion limitations are disclosed in
 
 - Development builds use a local test-signing identity and are not official
   distribution artifacts.
-- ArkWeb/xterm.js currently requires CSP `unsafe-eval`.
+- Native terminal parsing and rendering share the application process; native
+  memory-safety defects remain a security risk.
 - Ordinary uninstall is not complete erasure of persistent LeanTTY assets; the
   current source does not provide a one-step erase-all command.
 - On-device diagnostic logs can contain host endpoints, remote-controlled
   titles, key paths/fingerprints and other operational metadata even though
   LeanTTY does not upload them.
 - LeanTTY inherits security assumptions and update cadence from HarmonyOS,
-  ArkWeb and its third-party dependencies.
+  Ghostty VT, the local guide's ArkWeb view and other third-party dependencies.
 - Terminal output and remote applications are untrusted input; bugs in parsing,
-  rendering or bridge validation may still exist.
+  rendering or native boundary validation may still exist.
 
 Official release provenance and hashes are published separately from the source
 tree. A package obtained from an unofficial fork should not be treated as an

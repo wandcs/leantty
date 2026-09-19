@@ -8,6 +8,7 @@
 param(
     [string]$DevEcoHome = $env:DEVECO_HOME,
     [string]$WslDistribution = $env:LEANTTY_WSL_DISTRO,
+    [string]$SdkNativeHome = '',
     [switch]$Force,
     [switch]$SkipCopy,
     [switch]$Offline
@@ -17,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'build-lock.ps1')
 . (Join-Path $PSScriptRoot 'rust-wsl.ps1')
+. (Join-Path $PSScriptRoot 'formal-build-environment.ps1')
 
 Invoke-WithLeanTTYBuildLock -RepoRoot $repoRoot -Operation 'build-native' -Action {
 # ── Detect DevEco Studio ──
@@ -36,11 +38,11 @@ if ($deveco -eq '') {
     throw 'DevEco Studio not found. Set DEVECO_HOME.'
 }
 
-    $sdkDir = Join-Path $deveco 'sdk'
-    if (Test-Path -LiteralPath 'C:\ohos-sdk') {
-        $sdkDir = 'C:\ohos-sdk'
-    }
-    $ndkDir = Join-Path $sdkDir 'default\openharmony'
+$sdk = if ($SdkNativeHome) {
+    Resolve-LeanTTYHarmonySdk -DevEcoHome $deveco -NativeHome $SdkNativeHome
+} else { Resolve-LeanTTYHarmonySdk -DevEcoHome $deveco }
+$sdkDir = $sdk.sdkHome
+$ndkDir = $sdk.openHarmony
 $llvmBin = Join-Path $ndkDir 'native\llvm\bin'
 $jbrBin  = Join-Path $deveco 'jbr\bin'
 
@@ -80,8 +82,23 @@ $clangWslWrapper = Join-Path $PSScriptRoot 'ohos-aarch64-clang-wsl.sh'
 $arWslWrapper = Join-Path $PSScriptRoot 'ohos-aarch64-ar-wsl.sh'
 
 # ── Content hash check ──
+$wslPrefix = Get-LeanTTYWslPrefix -Distribution $WslDistribution
+$rustVersion = (& wsl.exe @wslPrefix --cd (ConvertTo-LeanTTYWslPath $repoRoot) `
+    -- env RUSTUP_TOOLCHAIN=stable rustc -vV | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Unable to identify the WSL Rust compiler' }
+$nativeBuildInputs = @(
+    $PSCommandPath, (Join-Path $PSScriptRoot 'formal-build-environment.ps1'),
+    $rustWslScript, $clangWslWrapper, $arWslWrapper, $cargoConfig,
+    (Join-Path $sdk.native 'oh-uni-package.json'),
+    (Join-Path $llvmBin 'clang.exe'), (Join-Path $llvmBin 'ld.lld.exe'), (Join-Path $llvmBin 'llvm-ar.exe')
+)
+$nativeBuildIdentity = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+    [Text.Encoding]::UTF8.GetBytes((@($sdk.native, $rustVersion) + @($nativeBuildInputs | ForEach-Object {
+        (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash
+    })) -join '|')
+))
 function Get-SourceHash {
-    $inputs = @()
+    $inputs = @($nativeBuildIdentity)
     foreach ($inputFile in @(
         $cargoManifest,
         $cargoLock,
@@ -138,6 +155,15 @@ foreach ($t in $targets) {
         continue
     }
     Write-Host "[build-native] Building $target ..." -ForegroundColor Yellow
+    $identityFile = $soPath + '.toolchain-hash'
+    if (-not (Test-Path -LiteralPath $identityFile) -or
+        (Get-Content -LiteralPath $identityFile -Raw).Trim() -cne $nativeBuildIdentity) {
+        # Cargo cannot detect replacement of an external SDK at the same path.
+        # Clear only this target's release artifacts when its build identity changes.
+        Invoke-LeanTTYRustWsl -RepoRoot $repoRoot -Distribution $WslDistribution -CargoArguments @(
+            'clean', '--manifest-path', './leantty_ssh/Cargo.toml', '--target', $target, '--release'
+        )
+    }
     $targetKey = $target.Replace('-', '_')
     $wslNdkDir = ConvertTo-LeanTTYWslPath -WindowsPath $ndkDir -Distribution $WslDistribution
     $wslClangWrapper = ConvertTo-LeanTTYWslPath `
@@ -201,6 +227,7 @@ foreach ($t in $targets) {
         }
         Copy-Item -LiteralPath $cargoOutput -Destination $dest -Force
         Get-SourceHash | Set-Content -LiteralPath ($dest + '.build-hash') -NoNewline
+        $nativeBuildIdentity | Set-Content -LiteralPath ($dest + '.toolchain-hash') -NoNewline
     }
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash
     Write-Host "[build-native] $($t.Abi) OK  SHA256=$hash" -ForegroundColor Green

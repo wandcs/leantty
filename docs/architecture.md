@@ -2,7 +2,7 @@
 
 > Status: current implementation baseline
 >
-> Last updated: 2026-09-07
+> Last updated: 2026-09-19
 >
 > Governing rules: [`project-principles.md`](project-principles.md)
 
@@ -13,11 +13,66 @@ Feature-specific future designs live in [`design/`](design/README.md), and only
 [`next-work.md`](next-work.md) authorizes current work.
 
 The 1.7 [terminal/session boundary design](design/terminal-session-boundaries.md)
-separates session control, native VT state and GPU surfaces. The
-[independent prototype](design/ghostty-native-terminal.md) supports technical
-feasibility, including controlled GPU recovery. Product integration and full
-replacement acceptance remain pending; the event chains below describe the
-current Web implementation.
+separates session control, native VT state and GPU surfaces. Both debug and
+release use the native renderer. Web terminal assets, the Bridge protocol and
+serialized framebuffer recovery have been removed. This source state does not
+claim formal release acceptance; evidence and remaining gates are in Next Work.
+
+`TerminalSurfaceController` exposes input, resize, ready, pressure and system
+effect callbacks. `SessionViewModel` owns local commands, authentication,
+SSH/Mosh routing and connection-boundary output ordering.
+
+### Native terminal
+
+`PaneRuntime` owns `NativeTerminalController` across XComponent lifetimes. One
+serial C++ worker owns the pinned Ghostty VT, official text/font objects and
+EGL/GLES surface. Surface loss retains the VT; close stops input, drains admitted
+commands and joins the worker before releasing the Pane. A regular VT with approximately 10,000 physical history lines and
+a separate zero-history temporary Mosh VT preserve page ownership.
+The first Mosh output frame begins its temporary page before admission, even
+when it precedes the connection notification; the later notification is
+idempotent. End-page and local completion output retain queue order.
+
+Output is copied before admission: 256 KiB chunks, a 1 MiB native outstanding
+byte limit, and a 2 MiB ArkTS pending/inflight limit. A zero admission result
+accepts no bytes. Consumption events release pressure and complete ordered
+barriers independently of frame presentation. Rejected capacity is retained in
+ArkTS; missing callback progress or overflow fails visibly and stops the Session.
+Input generations fence focus/authentication changes; replies retain their
+original Session output generation and never enter local command routing.
+
+The window/workspace owner sends native visibility directly through the Pane's
+surface controller, including when backgrounding has suspended ArkUI component
+updates. The VT worker pauses rendering, cursor blink and drag scroll for hidden
+Panes while consuming output and producing replies. Visibility is independent of
+focus so both split Panes render. Returning revalidates the Surface and advances
+the display generation; only its successful frame can reopen input admission.
+
+NativeWindow and EGL resources belong to the worker. Official text-line drawing
+rasterizes graphemes into a bounded 2048-square RGBA atlas (16 MiB, at most 4096
+cached tiles); GLES submits dirty frames with no idle redraw loop. The system
+IME attaches only to a presented, focused Pane. Its preview stays local and its
+committed text uses Ghostty's current-mode key encoder. The same worker owns
+selection gestures, bounded clipboard formatting, history search and mouse
+encoding. ArkUI owns the transient search input and IME preview; queries never
+enter the session. Complete OSC frames retain their original output owner and
+pass the existing clipboard, attention and user-activated link policy.
+ArkUI's pre-IME key handler leaves ordinary text and editing keys to the IME;
+the post-IME handler forwards keys returned unconsumed, preferring the platform
+Unicode value. This preserves candidate selection without dropping digits in
+IME modes that do not commit them through the text callback.
+After local renderer retries report an unavailable surface, the controller
+invalidates input and requests the existing Pane surface rebuild at most once
+per 30 seconds. It retains the VT and Session; replacement presentation restores
+input readiness. Surface identities reject late destruction of the old display.
+NativeWindow creation rejection reports display unavailability through the same
+path without terminating the VT worker. Invalid arguments and core/queue failures
+remain errors; this distinction does not turn unrelated failures into recovery.
+Repeated failures within that interval remain visibly unavailable; this bounded
+rebuild is not evidence of recovery from every persistent driver failure.
+Development replacement checks are recorded in the
+[migration audit](native-terminal-migration-1.7.md). Formal candidate and release
+gates remain separate in `next-work.md`.
 
 ## System shape
 
@@ -34,8 +89,7 @@ HarmonyOS UIAbility / App Shell
                       │   ├─ SshClient → N-API → Rust/russh → SSH server
                       │   └─ MoshClient → N-API → SSH bootstrap + Rust/mosh-client → UDP server
                       └─ TerminalSurfaceController
-                          ├─ TerminalOutputBuffer
-                          └─ TerminalBridge → ArkWeb/xterm.js
+                          └─ NativeTerminalController → N-API → Ghostty VT + EGL/GLES
 
 System services
   ├─ HarmonyOS Asset Store and Preferences
@@ -45,7 +99,7 @@ System services
   └─ system browser
 ```
 
-The core ownership rule is `App Shell → Tab → Pane → Session`. A WebView,
+The core ownership rule is `App Shell → Tab → Pane → Session`. An XComponent,
 array index, visible label or currently selected tab is never the identity of a
 Session.
 
@@ -57,15 +111,15 @@ Session.
 | ApplicationWorkspace | `viewmodel/ApplicationWorkspace.ets` | The one process-scoped AppViewModel and stable split ratio across WindowStage/Page recreation | Persistence across process termination, protocol state or terminal rendering policy |
 | AppViewModel | `viewmodel/AppViewModel.ets` | Stable Tab/Pane identifiers, active Tab/Pane, the Pane/runtime registry and ordered runtime disposal | SSH protocol state, terminal rendering policy or system focus adaptation |
 | PaneRuntime | `viewmodel/PaneRuntime.ets` | The pairing and lifecycle of one Pane identity, SessionViewModel and TerminalSurfaceController | Cross-pane state or workspace ordering |
-| SessionViewModel | `viewmodel/SessionViewModel.ets` | Local command/prompt interaction, terminal presentation and routing user actions to the owning Session | SSH lifecycle transitions, global Tab ordering or Web rendering internals |
+| SessionViewModel | `viewmodel/SessionViewModel.ets` | Local command/prompt interaction, terminal presentation and routing user actions to the owning Session | SSH lifecycle transitions, global Tab ordering or terminal rendering internals |
 | SshSession | `model/ssh/SshSession.ets` | The allowed connection, authentication, host-verification, connected, failure, close, reconnect and transfer-handoff transitions for one Pane | Prompt text, terminal rendering or native transport decoding |
 | SshClient | `model/ssh/SshClient.ets` | One N-API session handle, native event decoding and request/response correlation | UI text, Tab/Pane ownership or persistent asset policy |
 | MoshClient | `model/mosh/MoshClient.ets` | One native Mosh handle, structured event correlation and shared bounded close completion | Protocol timers, prediction policy or terminal-page interpretation |
 | Rust Mosh layer | `leantty_ssh/src/lib.rs` | SSH bootstrap, validated IPv4 endpoint, one library Session, ordered input, output flow and close/cancel | Pane selection, UI text or a second reachability timer |
 | Rust SSH layer | `leantty_ssh/src/lib.rs` | Ordered jump/target connection phases, host-key callback, authentication transport, PTY, SSH channel, byte stream, cancellation, keepalive and route cleanup | ArkUI state and user-facing decisions |
-| TerminalSurfaceController | `model/terminal/TerminalSurfaceController.ets` | One terminal surface lifecycle, in-process snapshot and detached output buffer | SSH authentication or persistent terminal history |
-| TerminalBridge | `model/bridge/TerminalBridge.ets` | Validated ArkTS/ArkWeb message transport, output acknowledgements and backpressure | Session business state or terminal-content repair |
-| ArkWeb/xterm.js | `resources/rawfile/terminal.html` | Terminal emulation, rendering, local selection, input encoding and size measurement | SSH state, credentials or application persistence |
+| TerminalSurfaceController | `model/terminal/TerminalSurfaceController.ets` | Pane-owned terminal interaction and display attachment | SSH authentication or persistent terminal history |
+| NativeTerminalController | `model/terminal/NativeTerminalController.ets` | Bounded command admission, callback generations, IME and display lifecycle | SSH state, credentials or persistence |
+| Native terminal worker | `cpp/terminal/` | Ghostty VT, page/viewport, text layout and EGL/GLES presentation | Session routing or application persistence |
 | DurableStateManager | `model/persistence/DurableStateManager.ets` | The mapping between durable asset names and runtime projections | Session/terminal restoration |
 
 ## Workspace and Session ownership
@@ -75,8 +129,8 @@ Session.
 - a Tab owns `panes[]` and one `activePaneId`;
 - a Pane has a stable ID and owns exactly one runtime;
 - at most two Panes are allowed in a Tab;
-- each runtime owns its own `SessionViewModel`, active SSH or Mosh client, output buffer and
-  Web terminal controller; and
+- each runtime owns its own `SessionViewModel`, active SSH or Mosh client and
+  native terminal controller; and
 - removing a Pane or Tab unlinks and disposes its runtime through the same
   owner, so switching or closing cannot reuse another Pane's connection or terminal
   state.
@@ -116,8 +170,8 @@ keyboard input at ltty>
   → SessionViewModel presents the accepted event
   → raw output callback
   → TerminalSurfaceController
-  → binary TerminalBridge packet
-  → xterm.js
+  → NativeTerminalController ordered command queue
+  → native VT worker and GPU display
 ```
 
 `run_session` is only the phase orchestrator. Each connection phase returns one
@@ -134,15 +188,13 @@ parser status to that value, `SshSession` owns a defensive copy for reconnect,
 and concrete private-key paths are resolved while mapping the value to
 `SshConnectOptions`. No second field-by-field reconnect request is maintained.
 
-Terminal input follows the reverse path. xterm sends terminal data through the
-versioned Bridge, `SessionViewModel` decides whether the current mode consumes
-it as a local command, host-key answer, password/passphrase or connected PTY
-input, and only connected PTY bytes reach Rust.
+Native IME and key events become terminal input after focus and generation
+validation. `SessionViewModel` routes the input to local commands, authentication
+or the connected Session. Terminal replies carry the original remote owner.
 
-Resize starts with the dimensions measured by xterm. The result crosses the
-validated Bridge, is routed to the owning Session, and becomes an SSH PTY
-resize (or Mosh resize for a Mosh Session). UI estimates are not an authoritative
-terminal size.
+The native worker reports its first real grid and subsequent column/row changes.
+The Session dispatches those dimensions to SSH or Mosh; pixel-only movement does
+not trigger redundant remote resize notifications.
 
 ### Mosh connection
 
@@ -185,7 +237,7 @@ local put/get command
 ```
 
 File bytes move only between the local descriptor and Rust/SFTP; they do not
-cross ArkTS, the WebView Bridge or terminal output. Local paths stay beneath
+cross ArkTS, the terminal renderer or terminal output. Local paths stay beneath
 the authorized Downloads root and use no-follow descriptor ownership. A
 transfer never reuses the interactive PTY Session, and transfer, Pane and
 generation identifiers reject late events after cancellation or teardown.
@@ -234,88 +286,39 @@ PTY bytes, close state and nonterminal diagnostics use `TransportEvent`.
 emits one `SshClientMessage` to its Session owner; business state is never
 reconstructed from string prefixes, embedded layer labels or JSON payloads.
 
-## Terminal Bridge and output flow
+## Terminal output and system effects
 
-The control protocol is `H2|direction|channel|kind|payload` with explicit
-direction, channel and message-kind allowlists. Terminal output uses binary
-packets containing a magic value, sequence and byte length so SSH/Mosh bytes do
-not need to be rewritten as control text.
+SSH and Mosh output enters the same bounded native command queue. VT consumption
+releases pressure and completes ordered barriers; presentation is separately
+acknowledged by the current display generation. Overflow or stalled progress
+fails visibly rather than silently discarding bytes. Mosh input rejection stops
+the Session and restores the retained local page before reporting the failure.
 
-`TerminalBridge` limits in-flight messages and applies high/low-water
-backpressure. xterm acknowledges rendered output; backpressure propagates to
-the owning SSH or Mosh session instead of letting unbounded output accumulate.
-Pause/resume retains the latest desired state rather than queuing transitions.
-If the
-hard pending-data limit is nevertheless exceeded, the rejected bytes are
-counted and logged as dropped output; that path must not be treated as complete
-delivery.
+Remote bytes, links and OSC payloads remain untrusted. The native terminal
+validates the bounded supported OSC effects; ArkTS checks the current Session
+owner before clipboard, notification or browser effects. Terminal replies never
+become local commands. Notifications discard remote title/body after validation;
+OSC 52 supports clipboard writes only. Shared browser and file safety remain in
+their owning services.
 
-Mosh input is ordered and bounded. Rejected native admission stops the Session,
-drains received output and reports failure on the restored local page; it never
-resends text or accepts later input into a potentially incomplete command.
-Output-observer UTF-8 decoding exists only while a consumer such as Keypush is
-registered; ordinary terminal output remains on the binary path.
-
-Remote output, terminal titles, OSC sequences and Bridge messages are untrusted
-input. xterm handles terminal emulation, while ArkTS validates the limited
-system effects that can leave the terminal surface, such as clipboard writes
-and URL opens. The Web boundary accepts only bounded OSC 9, well-formed
-`OSC 777;notify;title;body`, and complete receive-only OSC 99 title/body frames
-whose metadata is limited to `i/p/e/d`. It discards every remote field after
-validation and emits the same empty-payload control message as BEL. A valid,
-bounded OSC 99 `p=?` query is answered synchronously through ordinary terminal
-input with only `p=title,body` and the echoed query ID; the ID is not retained or
-logged. Incomplete chunks, actions, close/alive operations and all other
-notification protocols have no LeanTTY system effect or response.
-
-Terminal transparency has one composition owner per region. The ArkUI Chrome
-and content surfaces own their selected alpha; ArkWeb and xterm's default
-background use zero render alpha so that surface is visible. The xterm default
-still carries LeanTTY's one fixed logical background RGB `#1E1E2E`; terminal
-queries such as OSC 11 therefore receive the palette color independently of
-window transparency. Explicit ANSI or TrueColor cell backgrounds, foreground
-glyphs, the cursor and selection retain upstream xterm rendering semantics and
-are not assigned a second LeanTTY alpha. The Bridge does not inspect or rewrite
-terminal output to infer visual intent.
-
-xterm's render model packs background colors and non-color flags into one
-integer. LeanTTY's version-locked WebGL asset patch normalizes the value to its
-color-mode and RGB bits at `RectangleRenderer.updateBackgrounds`; therefore
-dim, italic, underline, overline, OSC 8 hyperlink and protected attributes do
-not turn a logical default background into a rectangle. Real ANSI, 256-color
-and TrueColor backgrounds, inverse, selection and decorations remain on their
-existing upstream paths. `tools/web-terminal/build.mjs` is the single patch
-entry; its module records the upstream source identity, input hash, exact render
-site and removal rule so an xterm update fails instead of carrying the patch
-forward silently.
-
-The terminal requests WebGL on every normal surface. Its reported renderer
-state distinguishes requested and actual renderer plus the fallback reason.
-DOM is used only after WebGL initialization failure or context loss; it is not
-selected by device or application heuristics. This keeps the accelerated path
-as the product default while preserving an observable recovery path when a
-WebGL context cannot render reliably.
+Native drawing leaves default-background cells transparent so the application
+surface owns transparency. Explicit cell colors, inverse colors, glyphs,
+selection and search decorations retain their own rendering semantics. EGL/GLES
+is required. Display recovery retains the VT and rebuilds the GPU surface;
+there is no DOM or CPU fallback.
 
 ## Lifecycle and terminal recovery
 
-`TerminalSurfaceController` owns an in-memory framebuffer snapshot and output
-received while its ArkWeb surface is detached. Before a surface is rebuilt, the
-latest requested snapshot is committed; after attach, the snapshot is restored
-before detached output is flushed. Clipboard, title and bell side effects are
-not serialized into the framebuffer checkpoint.
+The Pane owns the VT independently of its XComponent. Detach or display recovery
+keeps parsed history, modes, selection and page state in that worker; reattach
+renders the retained state without serialized snapshots or output replay.
+Hidden terminals consume output while rendering is suspended. Pane disposal
+closes its Session and joins the worker before releasing resources.
 
-This is renderer recovery, not Session persistence:
-
-- the snapshot and detached-output buffer live only in the application process;
-- application termination and reinstall do not restore terminal contents;
-- an SSH disconnect remains visible and returns through the defined recovery
-  path; and
-- durable shell work belongs in a remote tool such as tmux or screen.
-
-The UIAbility records foreground/background state, captures terminal
-checkpoints before relevant surface teardown, enables system geometry auto-save, and
-asks before terminating active sessions. Main-window geometry belongs to the
-system auto-save API, not to an application replayed rectangle.
+Process termination does not preserve terminal contents or remote Sessions.
+Durable shell work belongs in tmux or screen. The UIAbility publishes visibility,
+enables system geometry auto-save and asks before terminating active Sessions;
+the application does not replay its own window rectangle.
 
 `PaneInfo.needsAttention` remains the sole authority for BEL attention. A
 background system notification is only a removable external side effect: it
@@ -328,10 +331,10 @@ destruction cancel the side effect. A stale Want can open the application but
 cannot reconstruct or redirect terminal ownership.
 
 This notification path is not a background execution owner. When HarmonyOS
-suspends ArkTS/ArkWeb after the whole window is hidden, later SSH output can be
+suspends application execution after the whole window is hidden, later SSH output can be
 buffered but its BEL/OSC attention cannot be parsed and published until the app
 runs again. LeanTTY does not add a resident service, foreground disguise or a
-second native terminal parser to bypass that lifecycle; durable remote work
+second lifecycle owner to bypass that lifecycle; durable remote work
 still belongs in tmux or screen, and system notification is best effort.
 
 ## Persistent state
@@ -366,6 +369,15 @@ size go through the durable authority. The first run after the storage change
 migrates verified legacy files and Preferences; later runs remove projections
 that no longer have a durable authority.
 
+After SSH preparation, command models share one application-level `SshConfig`.
+Host lookup, completion, connection parsing and edits therefore use the same
+committed configuration across existing Panes. Command text and history remain
+Pane-owned. Host edits and config imports commit synchronously through
+`DurableStateManager`; a failed commit restores the previous in-memory view as
+well as the projection rollback enforced by `SshConfigCommitPolicy`. Downloads
+authorization may yield before import/export, so those operations use the shared
+configuration current when authorization completes.
+
 Persistent assets are configured to survive an ordinary uninstall for the same
 application identity; exact asset/signature/lifecycle behavior remains a
 physical-device release gate. Passwords, passphrases, command history, Session
@@ -383,9 +395,8 @@ across uninstall/reinstall.
 - Key/config export and file-transfer local I/O use the authorized Downloads
   boundary and refuse explicit overwrite; file transfer additionally uses
   no-follow descriptors and task-owned temporary files.
-- The embedded ArkWeb terminal has file access, online image access, DOM
-  storage, mixed content and zoom disabled. Its packaged CSP still requires
-  `unsafe-inline` and `unsafe-eval` for the current xterm bundle.
+- The native terminal executes no remote JavaScript and has no WebView or
+  network/file navigation surface. The standalone local HTML guide remains packaged.
 - Only credential-free HTTP and HTTPS links that pass normalization can be
   handed to the system browser.
 - Signing identities, package artifacts and release evidence stay outside the

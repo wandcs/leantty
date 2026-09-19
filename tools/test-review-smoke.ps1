@@ -17,11 +17,11 @@ function New-ReviewLayout([string]$ActiveLabel='Active tab: ', [int]$Panes=1, [s
     $children=@(New-UiNode @{type='Stack';clickable='true';description='ltty';text='';accessibilityId='45'})
     $children += New-UiNode @{type='Stack';clickable='true';description='ltty';text='';accessibilityId=$(if($Duplicate){'45'}else{'53'})}
     foreach ($index in 1..$Panes) {
-        $children += New-UiNode @{hint='Terminal input';focused=$(if($index -eq $Panes){'true'}else{'false'})}
+        $children += New-UiNode @{type='XComponent';id="native-terminal-pane-1-$index";focused=$(if($index -eq $Panes){'true'}else{'false'})}
     }
     # A retained hidden Tab must not inflate the active Pane count.
     $children += New-UiNode @{type='__Common__';hitTestBehavior='HitTestMode.None'} @(
-        New-UiNode @{hint='Terminal input';focused='false'})
+        New-UiNode @{type='XComponent';id='native-terminal-pane-2-1';focused='false'})
     return New-UiNode @{} $children
 }
 foreach ($count in 1..2) {

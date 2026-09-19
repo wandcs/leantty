@@ -1,5 +1,4 @@
-import { AnsiColors, ChromeColors, TerminalColors } from './ThemeConstants'
-import { XtermTheme, TerminalThemeState } from './TerminalTheme'
+import { ChromeColors, TerminalColors } from './ThemeConstants'
 
 export enum TransparencyMode {
   HIGH = 0,
@@ -120,7 +119,6 @@ export class TransparencyPolicy {
 }
 
 export class AppTheme {
-  terminal: TerminalThemeState
   terminalColors: TerminalColors
   chrome: ChromeColors
   transparencyMode: TransparencyMode
@@ -134,8 +132,6 @@ export class AppTheme {
     this.chrome.tabBackground = TransparencyPolicy.chromeTabBackground(transparencyMode)
     this.chrome.tabHoverBackground = TransparencyPolicy.chromeTabHoverBackground(transparencyMode)
     this.chrome.tabActiveBackground = TransparencyPolicy.chromeTabActiveBackground(transparencyMode)
-    this.terminal = new TerminalThemeState(new XtermTheme(
-      this.terminalColors, new AnsiColors()))
   }
 
   background(windowTransparencyAvailable: boolean = true): string {

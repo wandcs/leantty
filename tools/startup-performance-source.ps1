@@ -8,6 +8,7 @@
 #>
 
 . (Join-Path $PSScriptRoot 'acceptance-source.ps1')
+. (Join-Path $PSScriptRoot 'native-startup-source.ps1')
 
 function Add-LeanTTYStartupPerformanceSource {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
@@ -15,10 +16,6 @@ function Add-LeanTTYStartupPerformanceSource {
     $files = [ordered]@{
         entryAbility = Join-Path $RepoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
         durableState = Join-Path $RepoRoot 'entry\src\main\ets\model\persistence\DurableStateManager.ets'
-        terminalPane = Join-Path $RepoRoot 'entry\src\main\ets\view\components\TerminalPane.ets'
-        bridgeProtocol = Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
-        terminalBridge = Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
-        terminalHtml = Join-Path $RepoRoot 'entry\src\main\resources\rawfile\terminal.html'
     }
     $text = @{}
     foreach ($name in $files.Keys) {
@@ -84,145 +81,6 @@ function Add-LeanTTYStartupPerformanceSource {
     $text.durableState = Set-LeanTTYAcceptanceSourceText `
         $text.durableState $durableInitializeAnchor $durableInitializeReplacement
 
-    $text.terminalPane = Set-LeanTTYAcceptanceSourceText $text.terminalPane `
-        "import { TerminalMode } from '../../common/types/TerminalTypes'" `
-        ("import { TerminalMode } from '../../common/types/TerminalTypes'`n" +
-            "import { Logger } from '../../common/logger/Logger'")
-    $text.terminalPane = Set-LeanTTYAcceptanceSourceText $text.terminalPane `
-        "@Component`nexport struct TerminalPane" `
-        ("const startupPerformanceLogger: Logger = new Logger('StartupPerformance')`n`n" +
-            "@Component`nexport struct TerminalPane")
-    $text.terminalPane = Set-LeanTTYAcceptanceSourceText $text.terminalPane `
-        "        .onPageEnd(() => {`n          this.onWebControllerReady(this.webCtrl)" `
-        ("        .onPageEnd(() => {`n" +
-            "          startupPerformanceLogger.info('STARTUP_PERF phase=T3')`n" +
-            '          this.onWebControllerReady(this.webCtrl)')
-
-    $text.bridgeProtocol = Set-LeanTTYAcceptanceSourceText $text.bridgeProtocol `
-        "  static readonly KIND_RENDERER_STATE: string = 'rendererState'" `
-        ("  static readonly KIND_RENDERER_STATE: string = 'rendererState'`n" +
-            "  static readonly KIND_STARTUP_PERF: string = 'startupPerf'")
-    $text.bridgeProtocol = Set-LeanTTYAcceptanceSourceText $text.bridgeProtocol `
-        "    if (kind === BridgeProtocol.KIND_OPEN_URL &&" `
-        ("    if (kind === BridgeProtocol.KIND_STARTUP_PERF && payload !== 'T4' && payload !== 'T5') {`n" +
-            "      return null`n" +
-            "    }`n" +
-            '    if (kind === BridgeProtocol.KIND_OPEN_URL &&')
-    $text.bridgeProtocol = Set-LeanTTYAcceptanceSourceText $text.bridgeProtocol `
-        "      kind === BridgeProtocol.KIND_RENDERER_STATE ||" `
-        ("      kind === BridgeProtocol.KIND_RENDERER_STATE ||`n" +
-            '      kind === BridgeProtocol.KIND_STARTUP_PERF ||')
-
-    $terminalBridgeAnchor = @'
-    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_RENDERER_STATE) {
-'@
-    $terminalBridgeReplacement = @'
-    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_STARTUP_PERF) {
-      this.logger.info('STARTUP_PERF phase=' + msg.payload)
-      return
-    }
-    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_RENDERER_STATE) {
-'@
-    $text.terminalBridge = Set-LeanTTYAcceptanceSourceText `
-        $text.terminalBridge $terminalBridgeAnchor $terminalBridgeReplacement
-
-    $terminalVariablesAnchor = @'
-    var bellAttentionGate = LeanTTYTerminalPolicy.createBellAttentionGate();
-'@
-    $terminalVariablesReplacement = @'
-    var startupPromptPaintScheduled = false;
-    var startupPromptPainted = false;
-    var startupInputAwaitingEcho = false;
-    var startupExpectedInputCode = 0;
-    var startupInputPaintScheduled = false;
-    var startupInputPainted = false;
-    var startupPaintPhase = '';
-    var bellAttentionGate = LeanTTYTerminalPolicy.createBellAttentionGate();
-'@
-    $text.terminalHtml = Set-LeanTTYAcceptanceSourceText `
-        $text.terminalHtml $terminalVariablesAnchor $terminalVariablesReplacement
-
-    $sendControlAnchor = @'
-    function acknowledgeBellAttention() {
-'@
-    $sendControlReplacement = @'
-    function scheduleStartupPaint(phase) {
-      if (!term || startupPaintPhase.length > 0) return;
-      startupPaintPhase = phase;
-      term.refresh(0, term.rows - 1);
-    }
-
-    function reportStartupPaint() {
-      if (startupPaintPhase.length === 0) return;
-      var phase = startupPaintPhase;
-      startupPaintPhase = '';
-      if (phase === 'T4') {
-        startupPromptPainted = true;
-      } else if (phase === 'T5') {
-        startupInputPainted = true;
-      }
-      sendBridgeControl('startupPerf', phase);
-    }
-
-    function acknowledgeBellAttention() {
-'@
-    $text.terminalHtml = Set-LeanTTYAcceptanceSourceText `
-        $text.terminalHtml $sendControlAnchor $sendControlReplacement
-
-    $terminalDataAnchor = @'
-      term.onData(function(data) {
-        if (!restoringSnapshot) {
-          sendBridgeData('terminal', data);
-        }
-      });
-'@
-    $terminalDataReplacement = @'
-      term.onData(function(data) {
-        if (!restoringSnapshot) {
-          if (data === 'a' && startupPromptPainted && !startupInputPainted && !startupInputPaintScheduled) {
-            startupInputAwaitingEcho = true;
-            startupExpectedInputCode = 97;
-          }
-          sendBridgeData('terminal', data);
-        }
-      });
-'@
-    $text.terminalHtml = Set-LeanTTYAcceptanceSourceText `
-        $text.terminalHtml $terminalDataAnchor $terminalDataReplacement
-    $text.terminalHtml = Set-LeanTTYAcceptanceSourceText $text.terminalHtml `
-        '      term.onRender(function() {' `
-        ("      term.onRender(function() {`n" +
-            '        reportStartupPaint();')
-
-    $terminalWriteAnchor = @'
-      term.write(terminalBytes, function() {
-        sendBridgeControl('writeAck',
-          terminalPacket.sequence.toString() + ',' + terminalBytes.byteLength.toString());
-        onComplete();
-        reportInteractiveReadyAfterPaint();
-      });
-'@
-    $terminalWriteReplacement = @'
-      term.write(terminalBytes, function() {
-        if (!startupPromptPainted && !startupPromptPaintScheduled) {
-          startupPromptPaintScheduled = true;
-          scheduleStartupPaint('T4');
-        } else if (startupInputAwaitingEcho && startupExpectedInputCode > 0 &&
-            terminalBytes.indexOf(startupExpectedInputCode) >= 0 &&
-            !startupInputPainted && !startupInputPaintScheduled) {
-          startupInputAwaitingEcho = false;
-          startupInputPaintScheduled = true;
-          scheduleStartupPaint('T5');
-        }
-        sendBridgeControl('writeAck',
-          terminalPacket.sequence.toString() + ',' + terminalBytes.byteLength.toString());
-        onComplete();
-        reportInteractiveReadyAfterPaint();
-      });
-'@
-    $text.terminalHtml = Set-LeanTTYAcceptanceSourceText `
-        $text.terminalHtml $terminalWriteAnchor $terminalWriteReplacement
-
     foreach ($name in $files.Keys) {
         [IO.File]::WriteAllText($files[$name], $text[$name])
     }
@@ -236,12 +94,9 @@ function Invoke-WithLeanTTYStartupPerformanceSource {
     )
 
     $paths = @(
+        Join-Path $RepoRoot 'entry/src/main/ets/model/terminal/NativeTerminalController.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
         Join-Path $RepoRoot 'entry\src\main\ets\model\persistence\DurableStateManager.ets'
-        Join-Path $RepoRoot 'entry\src\main\ets\view\components\TerminalPane.ets'
-        Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
-        Join-Path $RepoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
-        Join-Path $RepoRoot 'entry\src\main\resources\rawfile\terminal.html'
     )
     $backups = @{}
     foreach ($path in $paths) {
@@ -249,6 +104,7 @@ function Invoke-WithLeanTTYStartupPerformanceSource {
     }
     try {
         Add-LeanTTYStartupPerformanceSource -RepoRoot $RepoRoot | Out-Null
+        Add-LeanTTYNativeStartupSource -RepoRoot $RepoRoot -Mode cold
         & $Action
     } finally {
         foreach ($path in $paths) {

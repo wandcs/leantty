@@ -1,4 +1,3 @@
-import webview from '@ohos.web.webview'
 import { Logger } from '../common/logger/Logger'
 import { TerminalSurfaceController } from '../model/terminal/TerminalSurfaceController'
 import { SessionViewModel } from './SessionViewModel'
@@ -20,13 +19,6 @@ export class PaneRuntime {
     this.viewModel.bindTerminalSurface(this.surface)
   }
 
-  attachSurface(ctrl: webview.WebviewController): void {
-    if (this.disposed) {
-      return
-    }
-    this.detachSurface()
-    this.surface.attach(ctrl)
-  }
 
   detachSurface(): void {
     this.surface.detach()
@@ -60,5 +52,6 @@ export class PaneRuntime {
       logger.warn('Pane disconnect failed: ' + e)
     }
     this.detachSurface()
+    await this.surface.dispose()
   }
 }

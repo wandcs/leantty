@@ -5,13 +5,13 @@ import { Logger } from '../common/logger/Logger';
 import { UserPreferences } from '../model/settings/UserPreferences';
 import { InteractionPolicy } from '../model/ui/InteractionPolicy';
 import { DurableStateManager } from '../model/persistence/DurableStateManager';
-import webview from '@ohos.web.webview';
 import { BusinessError } from '@ohos.base';
 import { ApplicationCloseCoordinator } from '../model/ui/ApplicationCloseCoordinator';
 import { BackgroundBellNotification } from '../model/ui/BackgroundBellNotification';
 import { UiText } from '../model/ui/UiText';
 import { WindowGridSnapPolicy } from '../model/ui/WindowGridSnapPolicy';
 import { UnexpectedExitRecoveryStore } from '../model/persistence/UnexpectedExitRecoveryStore';
+import { ApplicationWorkspace } from '../viewmodel/ApplicationWorkspace';
 
 const logger: Logger = new Logger('EntryAbility')
 const FALLBACK_TITLE_BUTTON_WIDTH: number = 140
@@ -70,14 +70,6 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate('backgroundBellReturnPaneId', '')
     AppStorage.setOrCreate('backgroundBellReturnToken', 0)
     this.publishBackgroundBellReturnRequest(want)
-    try {
-      webview.WebviewController.setRenderProcessMode(webview.RenderProcessMode.SINGLE)
-      webview.WebviewController.setWebDestroyMode(webview.WebDestroyMode.FAST_MODE)
-      logger.info('ArkWeb configured: renderProcessMode=' +
-        webview.WebviewController.getRenderProcessMode().toString() + ', destroyMode=fast')
-    } catch (e) {
-      logger.error('Failed to configure ArkWeb process lifecycle: ' + e)
-    }
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
     } catch (err) {
@@ -290,10 +282,21 @@ export default class EntryAbility extends UIAbility {
       logger.warn('Window grid snap skipped because display density is unavailable: ' + e)
       return
     }
-    let targetWidth: number = widthChanged ?
-      WindowGridSnapPolicy.snapWidth(endRect.width, fontSize, density) : endRect.width
-    let targetHeight: number = heightChanged ?
-      WindowGridSnapPolicy.snapHeight(endRect.height, fontSize, density) : endRect.height
+    let targetWidth: number = endRect.width
+    let targetHeight: number = endRect.height
+    let runtime = ApplicationWorkspace.getInstance().getViewModel().getActivePaneRuntime()
+    let metrics = runtime?.surface.getNativeCellMetrics(
+      Math.max(8, Math.min(96, Math.round(fontSize * density))), Math.round(8 * density)) ?? null
+    // A pending font/density change must not snap using stale metrics.
+    if (metrics === null) { return }
+    if (widthChanged) {
+      targetWidth = WindowGridSnapPolicy.snapNativeExtent(endRect.width,
+        2 * metrics.insetPixels, metrics.cellWidth, 2)
+    }
+    if (heightChanged) {
+      targetHeight = WindowGridSnapPolicy.snapNativeExtent(endRect.height,
+        Math.round(40 * density) + 2 * metrics.insetPixels, metrics.cellHeight, 1)
+    }
     try {
       let limits: window.WindowLimits = this.mainWindow.getWindowLimits()
       targetWidth = WindowGridSnapPolicy.clampExtent(targetWidth, limits.minWidth, limits.maxWidth)

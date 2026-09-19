@@ -1,6 +1,6 @@
 # 1.7 终端与会话架构边界
 
-> 状态：Accepted；1.7 架构设计基线，尚未实现或通过运行验证
+> 状态：开发期完整替换已验证；正式候选验收仍独立待执行
 >
 > 设计日期：2026-09-11；原型结果交接：2026-09-17
 >
@@ -8,7 +8,7 @@
 > [1.7 路线图](../roadmap.md)。活动工作只在 [next-work.md](../next-work.md) 维护。
 >
 > 本文完成“明确架构边界”；平台与依赖可行性见 [Ghostty 原生终端预研](ghostty-native-terminal.md)。
-> [architecture.md](../architecture.md) 继续描述当前 Web 实现，不能把本文当成已实现架构。
+> [architecture.md](../architecture.md) 描述当前 debug/release 单一原生路径；本文保留设计合同及迁移依据。
 
 ## 决策与范围
 
@@ -24,9 +24,10 @@ Ghostty 自行封装、鸿蒙官方基础能力优先和 GLES 主路径继续沿
 接口或目录。`SessionViewModel` 可以继续作为会话编排入口，已有状态机不因名称含 SSH
 就先做通用化改写。
 
-## 当前代码给出的拆分依据
+## 设计时的拆分依据
 
-核对范围为 2026-09-11 工作树，包含未提交的 1.6 改动，不是已冻结或发布的版本。
+下表保留 2026-09-11 工作树的设计依据，包含当时未提交的 1.6 改动，不是当前实现清单。
+其中 Web 专用入口已在后续替换批删除；现状见 architecture 与既有需求迁移审计。
 
 | 当前入口 | 已存在的责任 | 1.7 调整 |
 | --- | --- | --- |
@@ -34,10 +35,10 @@ Ghostty 自行封装、鸿蒙官方基础能力优先和 GLES 主路径继续沿
 | [SessionViewModel](../../entry/src/main/ets/viewmodel/SessionViewModel.ets)：`handleBridgeMessage`、`handleTerminalInput`、`finishSessionTerminalOwnership` | 同时处理 Bridge 消息、输入路由、认证、协议选择和终端边界复位 | 移除 Bridge 类型依赖；保留输入所有者与会话切换策略，通过终端合同执行复位 |
 | [SshSession](../../entry/src/main/ets/model/ssh/SshSession.ets)、SshClient、[MoshClient](../../entry/src/main/ets/model/mosh/MoshClient.ets) | SshSession 是现有共享业务生命周期权威；具体客户端关联 native handle、认证轮次、数据与结束事件 | 保留当前允许的状态转换；Mosh 库继续拥有预测、状态同步、可达性和关闭协议 |
 | [TerminalSurfaceController](../../entry/src/main/ets/model/terminal/TerminalSurfaceController.ets)：`beginMoshSessionPage`、`writeMoshBytes`、`endMoshSessionPage` | 显示控制器含 Mosh 页面切换策略、快照捕获与待输出队列 | 页面选择归会话控制；终端运行时提供明确的页面操作，GPU 不认识 Mosh |
-| [TerminalOutputBuffer](../../entry/src/main/ets/model/terminal/TerminalOutputBuffer.ets) 与 TerminalBridge | 保存快照、隐藏时字节和背压状态，以恢复被销毁的 Web 终端 | 原生 VT 存活时继续消费输出；删除仅为 Web 恢复存在的快照与重放路径 |
-| [terminal.html](../../entry/src/main/resources/rawfile/terminal.html)：`term.onData`、`writeTerminalPacket` | xterm 编码输入与协议回写；write 回调发送 ACK | 输入来源在新边界显式区分；解析完成与帧显示完成分开报告 |
+| `TerminalOutputBuffer` 与 `TerminalBridge`（现已删除） | 保存快照、隐藏时字节和背压状态，以恢复被销毁的 Web 终端 | 原生 VT 存活时继续消费输出；删除仅为 Web 恢复存在的快照与重放路径 |
+| `terminal.html`（现已删除）：`term.onData`、`writeTerminalPacket` | xterm 编码输入与协议回写；write 回调发送 ACK | 输入来源在新边界显式区分；解析完成与帧显示完成分开报告 |
 
-`writeAck` 当前来自 xterm 的 write 完成回调，证明解析完成，不证明画面已显示。
+旧版 `writeAck` 来自 xterm 的 write 完成回调，证明解析完成，不证明画面已显示。
 这一点也已记录在 [Session 状态隔离合同](terminal-session-state-isolation.md)。原生接入
 不应把 GPU 提交或垂直同步变成接收下一批终端字节的前提。
 
@@ -224,17 +225,13 @@ Ghostty 官方 [terminal.h](https://github.com/ghostty-org/ghostty/blob/82938b63
 
 ## 实施入口与验证边界
 
-独立原型先实现可用的原生终端、文字/GLES 和输入链；生产接入前只做必要的会话解耦。
-旧 SurfaceController 适配终端合同时可以继续使用现有 Bridge、快照和 Mosh 页面机制，
-不为过渡版本重写一遍。新的 VT/Surface 生命周期、临时 VT 和字节消费确认随原生实现落地。
+原型通过后，产品已接入原生 VT/Surface 生命周期、临时 VT 和字节消费确认，后续替换批
+删除 Web、Bridge、快照回放与 xterm 依赖。debug/release 使用同一原生路径，本地 HTML
+指南保留。architecture、coding-guide、security-model 按当前实现同步。
 
-原生正式替换时，按验证后的实际行为同步 architecture、coding-guide、security-model
-及产品原则中描述当前 Web renderer 的条款。当前 WebGL/DOM 故障恢复合同仍适用于现有
-实现；本文不能用来提前删除恢复路径。
-
-责任迁移的具体入口是 SessionViewModel 的 Bridge 消息分发、输入路由、finish/reset，
-SurfaceController 的 Mosh 页面策略、快照及流控，以及 terminal.html 的输入编码、选区、
-搜索和系统效果。SSH/Mosh 协议库、文件传输数据路径、资产和工作区模型继续沿用。
+SessionViewModel 保留输入路由、会话边界 reset 与页面策略，SurfaceController 暴露窄的
+终端操作；VT worker 拥有输入编码、选区、搜索与受限系统效果。SSH/Mosh 协议库、文件
+传输数据路径、资产和工作区模型继续沿用。迁移证据见[既有需求审计](../native-terminal-migration-1.7.md)。
 
 | 验证层级 | 必须证明的行为 |
 | --- | --- |
@@ -243,10 +240,11 @@ SurfaceController 的 Mosh 页面策略、快照及流控，以及 terminal.html
 | L2 原生边界 | 固定 Ghostty 构建/ABI，缓冲与回调寿命，RenderState 并发访问，分配/销毁失败；不依赖 WebView 的合成输入输出链 |
 | L3 物理 ARM64 PC | SSH/Mosh/合成来源驱动同一个终端与 GPU 实现；键盘/IME/粘贴/搜索、resize、双 Pane、窗口重建和 GPU 故障恢复；真实尾部输出、历史与系统效果合同 |
 
-以上是后续实现的验收约束，不表示本轮运行过这些场景。本轮完成依据是现有代码、已发布
-交互合同和固定上游头文件的静态核对，以及文档一致性检查。具体活动顺序只在 next-work
-中维护。
+以上是实现的验收约束，不表示一次完整发布矩阵通过。设计时依据为代码、已发布交互合同
+和固定上游头文件；后续开发证据及其包身份、限制见迁移审计和 next-work。
 
-独立原型已经验证技术可行性和受控 GPU 恢复，见[研究结论](ghostty-native-terminal.md#2026-09-16-第四至八轮与原型结论)及[追加诊断](ghostty-native-terminal.md#2026-09-16-gpu-恢复链追加诊断)。产品接入仍需确定生产队列/scrollback/缓存预算、线程数量、文字映射细节、具体 ABI，以及实际 GPU
-故障下如何保持可用。它们不改变本轮确定的所有权；如平台无法实现这些边界，或只能通过
-丢失历史、弱化安全、破坏输入或增加长期双路径实现，则停止产品接入并回到方案取舍。
+独立原型已验证技术可行性和受控 GPU 恢复，见[研究结论](ghostty-native-terminal.md#2026-09-16-第四至八轮与原型结论)及[追加诊断](ghostty-native-terminal.md#2026-09-16-gpu-恢复链追加诊断)。当前产品为每 Pane 单串行 worker、上游整页淘汰的约一万行
+常规历史、零历史临时 VT、1 MiB native / 2 MiB ArkTS 有界输出、16 MiB 字形图集及
+API 24 N-API。维护者已接受 GPU 持续不可用时 App 无法使用；不保留 CPU/Web 后备路径。
+Surface 重建保留进程内 VT，但不承诺所有驱动故障都能恢复。上述决定不改变会话所有权、
+历史、安全或输入合同；若只能通过弱化它们或增加长期兼容路径实现，须回到方案取舍。

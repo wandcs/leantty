@@ -1,10 +1,8 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { CommandParser, TransferCommandResult } from '../main/ets/model/command/CommandParser'
 import { SshConfig } from '../main/ets/model/ssh/SshConfig'
-import { BridgeMessage, BridgeProtocol } from '../main/ets/model/bridge/BridgeProtocol'
 import { InteractionPolicy } from '../main/ets/model/ui/InteractionPolicy'
 import { KeyCodeMap } from '../main/ets/common/constants/KeyCodeMap'
-import { TerminalOutputBuffer } from '../main/ets/model/terminal/TerminalOutputBuffer'
 import { TerminalInputAction, TerminalInputActionKind, TerminalInputParser } from '../main/ets/model/terminal/TerminalInputParser'
 import { LocalCommandLine } from '../main/ets/model/terminal/LocalCommandLine'
 import { SessionViewModel } from '../main/ets/viewmodel/SessionViewModel'
@@ -222,27 +220,7 @@ export default function terminalInteractionTest() {
       expect(matches[0]).assertEqual('get prod:')
     })
 
-    it('reportsCopySelectionResultsIncludingAnEmptySelection', 0, () => {
-      expect(BridgeProtocol.copySelectionResult('copied text').serialize())
-        .assertEqual('H2|W2N|CONTROL|copySelection|copied text')
-      expect(BridgeProtocol.copySelectionResult('').serialize())
-        .assertEqual('H2|W2N|CONTROL|copySelection|')
-    })
 
-    it('acceptsOnlyWebToNativeUrlOpenControls', 0, () => {
-      let openUrl: BridgeMessage | null =
-        BridgeProtocol.parse('H2|W2N|CONTROL|openUrl|https://example.com/path?q=1')
-      expect(openUrl !== null).assertEqual(true)
-      if (openUrl !== null) {
-        expect(openUrl.kind).assertEqual(BridgeProtocol.KIND_OPEN_URL)
-        expect(openUrl.payload).assertEqual('https://example.com/path?q=1')
-      }
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|openUrl|https://example.com')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|DATA|openUrl|https://example.com')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|openUrl|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|openUrl|' +
-        'x'.repeat(BridgeProtocol.MAX_URL_PAYLOAD_LENGTH + 1))).assertEqual(null)
-    })
 
     it('allowsOnlyNormalizedCredentialFreeHttpUrls', 0, () => {
       expect(BrowserLauncher.normalizeHttpUrl('https://example.com/path?q=1'))
@@ -255,90 +233,9 @@ export default function terminalInteractionTest() {
       expect(BrowserLauncher.normalizeHttpUrl('https://example.com/\nnext')).assertEqual(null)
     })
 
-    it('encodesTerminalFocusAndBlurAsSeparateBridgeMessages', 0, () => {
-      expect(BridgeProtocol.focus().serialize()).assertEqual('H2|N2W|CONTROL|focus|')
-      expect(BridgeProtocol.blur().serialize()).assertEqual('H2|N2W|CONTROL|blur|')
-      expect(BridgeProtocol.clearSelection().serialize()).assertEqual('H2|N2W|CONTROL|clearSelection|')
-    })
 
-    it('routesTerminalSurfaceActionsThroughBridgeControls', 0, () => {
-      expect(BridgeProtocol.fit().serialize()).assertEqual('H2|N2W|CONTROL|fit|')
-      expect(BridgeProtocol.fontSize(18).serialize()).assertEqual('H2|N2W|CONTROL|fontSize|18')
-      let localization: string = '{"language":"zh-CN"}'
-      expect(BridgeProtocol.localization(localization).serialize())
-        .assertEqual('H2|N2W|CONTROL|localization|' + localization)
-      expect(BridgeProtocol.parse(BridgeProtocol.localization(localization).serialize()) !== null).assertEqual(true)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|localization|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|localization|' +
-        'x'.repeat(BridgeProtocol.MAX_LOCALIZATION_PAYLOAD_LENGTH + 1))).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|localization|' + localization)).assertEqual(null)
-      expect(BridgeProtocol.inputSecurity(true).serialize())
-        .assertEqual('H2|N2W|CONTROL|inputSecurity|masked')
-      expect(BridgeProtocol.inputSecurity(false).serialize())
-        .assertEqual('H2|N2W|CONTROL|inputSecurity|plain')
-      expect(BridgeProtocol.copySelection().serialize()).assertEqual('H2|N2W|CONTROL|copySelection|')
-      expect(BridgeProtocol.parse(BridgeProtocol.copySelection().serialize()) !== null).assertEqual(true)
-      expect(BridgeProtocol.secondaryAction().serialize()).assertEqual('H2|N2W|CONTROL|secondaryAction|')
-      expect(BridgeProtocol.copyOrInterrupt().serialize()).assertEqual('H2|N2W|CONTROL|copyOrInterrupt|')
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|copyOrInterrupt|unexpected') === null).assertEqual(true)
-      expect(BridgeProtocol.searchOpen().serialize()).assertEqual('H2|N2W|CONTROL|searchOpen|')
-      expect(BridgeProtocol.searchClose().serialize()).assertEqual('H2|N2W|CONTROL|searchClose|')
-    })
 
-    it('preservesDirectionalBridgePayloadsWithoutJsonEncoding', 0, () => {
-      let raw: string = BridgeProtocol.write('a|b:c\r\n').serialize()
-      let parsed: BridgeMessage | null = BridgeProtocol.parse(raw)
-      expect(parsed !== null).assertEqual(true)
-      if (parsed !== null) {
-        expect(parsed.direction).assertEqual(BridgeProtocol.DIRECTION_NATIVE_TO_WEB)
-        expect(parsed.channel).assertEqual(BridgeProtocol.CHANNEL_DATA)
-        expect(parsed.kind).assertEqual(BridgeProtocol.KIND_TERMINAL)
-        expect(parsed.payload).assertEqual('a|b:c\r\n')
-      }
-      expect(BridgeProtocol.parse('D:legacy')).assertEqual(null)
-    })
 
-    it('rejectsUnknownOrMisdirectedBridgeMessages', 0, () => {
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|unknown|payload')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|bell|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|title|remote-title')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|bellAttention|unexpected')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|attentionAcknowledged|unexpected')).assertEqual(null)
-      let bellAttention: BridgeMessage | null =
-        BridgeProtocol.parse('H2|W2N|CONTROL|bellAttention|')
-      expect(bellAttention !== null).assertEqual(true)
-      if (bellAttention !== null) {
-        expect(bellAttention.kind).assertEqual(BridgeProtocol.KIND_BELL_ATTENTION)
-        expect(bellAttention.payload).assertEqual('')
-      }
-      let attentionAcknowledged: BridgeMessage | null =
-        BridgeProtocol.parse('H2|W2N|CONTROL|attentionAcknowledged|')
-      expect(attentionAcknowledged !== null).assertEqual(true)
-      if (attentionAcknowledged !== null) {
-        expect(attentionAcknowledged.kind).assertEqual(BridgeProtocol.KIND_ATTENTION_ACKNOWLEDGED)
-        expect(attentionAcknowledged.payload).assertEqual('')
-      }
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|ready|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|theme|{}')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|DATA|resize|80,24')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|DATA|terminal|ok') !== null).assertEqual(true)
-      expect(BridgeProtocol.parse('H2|W2N|DATA|terminal|ok') !== null).assertEqual(true)
-      let searchOpen: BridgeMessage | null = BridgeProtocol.parse('H2|N2W|CONTROL|searchOpen|')
-      expect(searchOpen !== null).assertEqual(true)
-      if (searchOpen !== null) {
-        expect(searchOpen.kind).assertEqual(BridgeProtocol.KIND_SEARCH_OPEN)
-        expect(searchOpen.payload).assertEqual('')
-      }
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|searchOpen|query')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|searchClose|query')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchState|open') !== null).assertEqual(true)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchState|composing') !== null).assertEqual(true)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchState|closed') !== null).assertEqual(true)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchState|unknown')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|inputSecurity|secret')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|searchOpen|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|DATA|searchOpen|')).assertEqual(null)
-    })
 
     it('routesPhysicalTabToTerminalCompletion', 0, () => {
       let tab: string = KeyCodeMap.toAnsi(KeyCodeMap.TAB, false, false, false)
@@ -359,56 +256,8 @@ export default function terminalInteractionTest() {
       expect(escapeActions[0].kind).assertEqual(TerminalInputActionKind.ESCAPE)
     })
 
-    it('rejectsRemovedReplayMessagesAndKeepsOsc52DirectionBounded', 0, () => {
-      expect(BridgeProtocol.clipboardWriteResult('中文').serialize())
-        .assertEqual('H2|W2N|CONTROL|clipboardWrite|中文')
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|replayBegin|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|replayBegin|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|releaseBuffers|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|clipboardWrite|text')).assertEqual(null)
-    })
 
-    it('allowsOnlyBoundedDirectionalTerminalSnapshotControls', 0, () => {
-      expect(BridgeProtocol.snapshotRequest(7).serialize())
-        .assertEqual('H2|N2W|CONTROL|snapshotRequest|7')
-      expect(BridgeProtocol.restoreSnapshot('\u001b[31mhistory').serialize())
-        .assertEqual('H2|N2W|CONTROL|restoreSnapshot|\u001b[31mhistory')
-      let snapshot: BridgeMessage | null =
-        BridgeProtocol.parse('H2|W2N|CONTROL|snapshot|7|\u001b[31mhistory')
-      expect(snapshot !== null).assertEqual(true)
-      if (snapshot !== null) {
-        expect(snapshot.kind).assertEqual(BridgeProtocol.KIND_SNAPSHOT)
-        expect(snapshot.payload).assertEqual('7|\u001b[31mhistory')
-      }
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|snapshotRequest|')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|snapshotRequest|0')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|snapshotRequest|07')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|restoreComplete|') !== null).assertEqual(true)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|restoreComplete|unexpected')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|snapshot|history')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|restoreSnapshot|history')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|snapshotRequest|unexpected')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|snapshot|' +
-        'x'.repeat(BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH + 1))).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|restoreSnapshot|' +
-        'x'.repeat(BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH + 1))).assertEqual(null)
-    })
 
-    it('allowsOnlyBoundedTerminalPageReplacementControls', 0, () => {
-      expect(BridgeProtocol.terminalPageReplace('', 0).serialize())
-        .assertEqual('H2|N2W|CONTROL|terminalPageReplace|0|')
-      expect(BridgeProtocol.terminalPageReplace('\u001b[32moriginal', 7).serialize())
-        .assertEqual('H2|N2W|CONTROL|terminalPageReplace|7|\u001b[32moriginal')
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|terminalPageReplaceComplete|') !== null)
-        .assertEqual(true)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|terminalPageReplaceComplete|unexpected'))
-        .assertEqual(null)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|terminalPageReplace|original')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|terminalPageReplace|invalid|original')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|terminalPageReplace|07|original')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|terminalPageReplace|' +
-        'x'.repeat(BridgeProtocol.MAX_SNAPSHOT_PAYLOAD_LENGTH + 1))).assertEqual(null)
-    })
 
     it('encodesShiftedDigitsAndAltPunctuation', 0, () => {
       expect(KeyCodeMap.toAnsi(KeyCodeMap.NUM_1, false, false, true)).assertEqual('!')
@@ -430,94 +279,9 @@ export default function terminalInteractionTest() {
       expect(KeyCodeMap.toAnsi(KeyCodeMap.ARROW_DOWN, false, false, true, false)).assertEqual('\u001b[1;2B')
     })
 
-    it('buffersOnlyOutputProducedWhileTheTerminalSurfaceIsDetached', 0, () => {
-      let output: TerminalOutputBuffer = new TerminalOutputBuffer(6)
-      output.append(new Uint8Array([1, 2, 3, 4]))
-      expect(output.isOutputPaused()).assertEqual(false)
-      output.append(new Uint8Array([5, 6]))
-      expect(output.isOutputPaused()).assertEqual(true)
-      expect(output.getDetachedByteCount()).assertEqual(6)
-      let detachedChunks: Uint8Array[] = output.takeDetachedChunks()
-      expect(detachedChunks.length).assertEqual(2)
-      expect(detachedChunks[0][0]).assertEqual(1)
-      expect(detachedChunks[1][1]).assertEqual(6)
-      output.markAttached()
-      expect(output.isOutputPaused()).assertEqual(false)
-      output.append(new Uint8Array([7, 8, 9, 10, 11, 12]))
-      expect(output.getDetachedByteCount()).assertEqual(0)
-      output.setBridgeBackpressured(true)
-      expect(output.isOutputPaused()).assertEqual(true)
-      output.releaseDisconnectedFlowControl()
-      expect(output.isOutputPaused()).assertEqual(false)
-      output.markDetached()
-      output.append(new Uint8Array([13, 14]))
-      expect(output.getDetachedByteCount()).assertEqual(2)
-      expect(output.takeDetachedChunks()[0][1]).assertEqual(14)
-    })
 
-    it('keepsEmptyTerminalOutputOutOfTheOrderedAckQueue', 0, () => {
-      expect(BridgeProtocol.canQueueTerminalPayload(0)).assertEqual(false)
-      expect(BridgeProtocol.canQueueTerminalPayload(-1)).assertEqual(false)
-      expect(BridgeProtocol.canQueueTerminalPayload(1)).assertEqual(true)
-      expect(BridgeProtocol.canQueueTerminalPayload(4096)).assertEqual(true)
-    })
 
-    it('keepsTheLatestTerminalSnapshotAcrossSurfaceReplacement', 0, () => {
-      let output: TerminalOutputBuffer = new TerminalOutputBuffer(16)
-      expect(output.getSnapshot()).assertEqual('')
-      output.replaceSnapshot('\u001b[31mold', 7)
-      expect(output.getSnapshot()).assertEqual('\u001b[31mold')
-      expect(output.getSnapshotViewport()).assertEqual(7)
-      output.markAttached()
-      output.append(new Uint8Array([1, 2]))
-      output.markDetached()
-      expect(output.getSnapshot()).assertEqual('\u001b[31mold')
-      output.markSessionReset('\u001b[?25h')
-      expect(output.getSnapshot()).assertEqual('\u001b[31mold\u001b[?25h')
-      output.append(new Uint8Array([3, 4]))
-      expect(output.takeDetachedChunks()[0][1]).assertEqual(4)
-      output.replaceSnapshot('\u001b[32mnew', 3)
-      expect(output.getSnapshot()).assertEqual('\u001b[32mnew')
-      expect(output.getSnapshotViewport()).assertEqual(3)
-      output.replaceSnapshot('', 0)
-      expect(output.getSnapshot()).assertEqual('')
-    })
 
-    it('isolatesOneMoshPageFromTheOriginalSnapshotAndOtherPanes', 0, () => {
-      let firstPane: TerminalOutputBuffer = new TerminalOutputBuffer(16)
-      let secondPane: TerminalOutputBuffer = new TerminalOutputBuffer(16)
-      firstPane.replaceSnapshot('original-first', 7)
-      secondPane.replaceSnapshot('original-second', 2)
 
-      expect(firstPane.beginSessionPage()).assertEqual(true)
-      expect(firstPane.isSessionPageActive()).assertEqual(true)
-      expect(firstPane.getSessionPageBaseSnapshot()).assertEqual('original-first')
-      expect(firstPane.getSessionPageBaseViewport()).assertEqual(7)
-      expect(firstPane.getSnapshot()).assertEqual('')
-      firstPane.replaceSnapshot('mosh-current-screen', 4)
-
-      expect(firstPane.getSnapshot()).assertEqual('mosh-current-screen')
-      expect(secondPane.getSnapshot()).assertEqual('original-second')
-      expect(secondPane.isSessionPageActive()).assertEqual(false)
-      expect(firstPane.endSessionPage()).assertEqual('original-first')
-      expect(firstPane.isSessionPageActive()).assertEqual(false)
-      expect(firstPane.getSnapshot()).assertEqual('original-first')
-      expect(firstPane.getSnapshotViewport()).assertEqual(7)
-    })
-
-    it('keepsBothMoshAndOriginalSnapshotsAcrossSurfaceReplacement', 0, () => {
-      let output: TerminalOutputBuffer = new TerminalOutputBuffer(16)
-      output.replaceSnapshot('original-history', 9)
-      output.beginSessionPage()
-      output.replaceSnapshot('mosh-repaint', 3)
-      output.markDetached()
-
-      expect(output.getSnapshot()).assertEqual('mosh-repaint')
-      expect(output.getSessionPageBaseSnapshot()).assertEqual('original-history')
-      expect(output.getSessionPageBaseViewport()).assertEqual(9)
-      expect(output.endSessionPage()).assertEqual('original-history')
-      expect(output.getSnapshot()).assertEqual('original-history')
-      expect(output.getSnapshotViewport()).assertEqual(9)
-    })
   })
 }

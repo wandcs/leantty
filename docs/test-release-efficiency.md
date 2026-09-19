@@ -2,13 +2,106 @@
 
 > 状态：当前工程流程的原因说明、已采用决策与后续测量口径
 >
-> 更新日期：2026-08-28
+> 更新日期：2026-09-19
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
 > 测试权威：[`quality-strategy.md`](quality-strategy.md)
 >
 > 发布权威：[`release-process.md`](release-process.md)
+
+### 2026-09-19：Mosh 观察器与调用者布局样本迁移
+
+Mosh 验收器仍等待已删除的 Web owner、xterm ACK 和快照指纹，无法用于单一原生包。
+本批在真实 VT worker 的 begin/end 和控制器 consumed/search 边界增加仅验收观察，
+保留原生页面，不恢复旧协议。页面摘要与搜索隔离分别判断，搜索必须等当前查询完成，
+不能把旧的 0/0 当负向结果。输出/消费时间只命名为实际观察到的边界，不声称像素延迟。
+
+完整 device helpers 的旧源码断言和 Agent gate 的 14 个 Web 布局样本随后失败；
+只迁移样本和对应错误分类，保留身份、窗口、重复目标、提交前停止及清理合同。
+Agent 分析器首次误在沙箱身份调用 WSL，返回 E_ACCESSDENIED；改用规定的桌面身份。
+失败日志全部保留。最终工具检查通过，四项真机 Mosh 场景与清理通过，没有模型调用
+或产品实现改动。证据为 `build/verification/1.7-native-mosh-harness/`；首三轮与新增
+原本地历史负向搜索的第四轮分别记录，不回填旧报告。
+
+### 2026-09-19：原生性能记录的日志采集边界
+
+`build/verification/1.7-native-performance-harness/` 第一轮已产生完整有序的
+`NATIVE_OUTPUT_PROBE`，共享日志查询却未包含生产者标签，等待超时；该轮清理通过。
+第二轮把两个原生标签放进主查询，超过 hilog 每次最多 10 个标签的限制，设备明确
+返回 `Max tag count is 10 [CODE: -42]`，连接前停止。夹具和映射清理通过；信任删除
+的确认也受同一查询故障阻断，保留该轮 cleanup failed，不改写为通过。
+
+最小修复将原生标签放进既有第二组 Mosh 查询，删除无生产者的 TerminalBridge
+标签，不增加查询次数或查询全部应用日志。软件检查现在执行实际查询函数并限制每组
+标签数；修复后先在设备读日志并完成同端口信任删除、独立不存在审计，再启动下一轮。
+补做清理记录为 `round2-followup-cleanup.json`。这两次失败都未要求产品代码修改。
+
+### 2026-09-19：uinput 数字 Unicode 与原生验收工具迁移
+
+原生 IME 诊断中，`中文` 提交正确，随后 `aa11` 得到 `aa!!`。同一键码在系统
+TextInput 得到 `aa11`，释放修饰键后终端仍得到 `aa!!`。临时诊断包确认数字 1
+在 IME 前后均为 `unicode=33,shift=false,ctrl=false,alt=false`，错误已存在于平台
+交给应用的事件，不能归因为 Ghostty 编码或中文提交错序。
+[上游 uinput 源码](https://github.com/openharmony/multimodalinput_input/blob/master/tools/inject_event/src/input_manager_command.cpp)
+的 `KeyCodeToUnicode` 无条件返回 `transitioned`，数字 1 对应 `0x21`，与实机字段吻合。
+现有 UiTest `keyEvent` 通道实测为 `unicode=0`，产品已有键码映射得到正确的 `aa11`。
+IME 诊断的提交后 ASCII 改用这一现成通道；原生产品 Unicode 处理保持不变，不增加
+注入器兼容逻辑。普通原始 uinput 数字样本不得直接当成实体键盘错误。
+
+两个初始对照样本因临时脚本使用 `C:/` 路径导致 HDC 布局文件接收失败，未取得输入
+样本；只读核对临时 Tab 均已关闭。标准 Windows 路径的只读对照成功后修正临时脚本。
+本轮未修改共享 HDC 文件传输实现或重启服务。
+
+`build/verification/1.7-native-harness/` 保留签名包、边界日志和全部失败/有效样本。
+普通包的五项搜索、密码认证、明文/隐藏输入、系统 IME 与分屏输入隔离通过定向检查，
+临时状态清理通过；诊断源文件原样恢复，普通包已恢复。首轮搜索报告的深层提交记录
+被 JSON depth 7 转成类型名，场景判据和布局仍保留；写入深度改为 12，并以实际报告
+写入器回归验证。该旧报告不补造丢失字段，也不升级为正式验收。
+
+### 2026-09-17：原生交互开发的固定 SSH 输出样本
+
+UiTest 文字注入的 emoji 显示为问号，OSC 文本在普通参数和完整 shell 引号两条路径下
+均与受控服务端快照不同。输入链原因未完全定位，不将自动注入成功当作精确字节证据，
+也不声称自然 emoji 输入已通过。固定服务器输出和 OSC 52 系统粘贴均显示正确彩色 emoji，
+故未为此改动产品 Unicode 处理。
+
+按 next-work 的本批准入，为既有 SSH 夹具加入无参数的 `ltty-terminal-sample`：仅发送
+376 字节固定公开样式、Unicode、链接、标题及剪贴板样本，不接受任意输出或 shell 执行。
+命令边界断言通过，旧轮清理后才启动采用；真机确认字重、装饰、中文、组合字符、彩色
+emoji、OSC 52 和不信任远端标题。证据位于本地 `build/verification/1.7-native-interaction/`。
+
+自动 Ctrl+点击尚未取得系统打开结果；VT 的普通 URL/OSC 8 元数据测试通过。保留该物理
+激活证据缺口，与后续完整键盘/Mosh 验收一起处理；不为开发中且仍未发布替换的路径
+临时扩大日志、工具框架或重跑全矩阵。正式替换前仍须闭合，当前不记为通过。
+
+09-17 续验补充：按 OpenHarmony 的
+[uinput 官方说明](https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/dfx/uinput.md)
+在五秒 `enable_key_status` 租期内保持 Ctrl，并在 finally 释放和关闭状态注入。
+仍未观察到系统打开，不能将此前失败归因于修饰键或宣布工具修复；停止盲点，下一批
+观察坐标/修饰键/原生链接事件/系统分派边界。Navigation SSH 中部分数字输入亦缺失，
+本地及 Mosh 的数字对照成功，原因未定；未修改产品输入语义。证据在本地
+`build/verification/1.7-native-continuity/`，活动诊断仅维护于 `next-work.md`。
+
+09-17 输入/链接诊断补充：固定数值日志将数字缺失定位到原生 Pane 的 IME 后按键处理，
+产品修复和双 SSH 精确字节验证已闭合。自然拼音候选选择 😊 后，Navigation 收到
+`f0 9f 98 8a`；此前 Password 夹具的 ASCII 命令缓冲空快照是判据不适用，不是 emoji
+输入丢失证据。复用现成原字节观察即可，无须新增夹具协议。
+
+两种有界 uinput Ctrl 保持方式都使鼠标在正确坐标到达，但 `mods=0`，未触发链接。
+按本批准入尝试 SDK UiTest 的单操作组合点击：临时 ohosTest 首次因错误的产品目标配置
+失败，唯一一次配置修正后因生成的 TestAbility 缺少 `List.test` 入口失败。达到约定上限
+后停止，没有安装测试模块；恢复主构建配置并删除生成模块。下一次链接取证先比较
+具备完整测试入口的最小驱动与人工点击成本，不能再复用已失败的分离键鼠注入。日志和
+数值边界在 `build/verification/1.7-native-input-links/`。这仍是开发证据缺口，不是正式
+通过、第三方豁免或产品链接策略变更。
+
+09-17 续批按 25 分钟及一次诊断修正准入，补齐 SDK 测试套件入口和参数键名，签名
+构建成功。包内检查发现自定义 runner 未进入字节码，显式引用后再次运行仍只得到
+测试框架 `App died`；未取得点击资格，也未创建 SSH 测试状态。已验证只卸载
+`native_pointer_probe_test` 模块、恢复应用，清除生成目录并还原构建配置。停止该工具
+路线，继续独立的产品恢复修复；下一次链接取证需要已具运行资格的入口或真实按键
+点击，不再把临时测试框架作为主线前置。证据在 `build/verification/1.7-native-link-recovery/`。
 
 本文解释 LeanTTY 的测试和发布为什么耗时、哪些证据不能省略，以及如何在不降低用户
 信任和可靠性的前提下减少重复构建、重复验收和发布返工。本文只记录原因、边界、决策
@@ -18,6 +111,19 @@
 测试范围、候选复用和重跑规则只以 `quality-strategy.md` 为准；正式发布命令和顺序只以
 `release-process.md` 为准；当前是否需要执行发布工作只以 `next-work.md` 为准。本文不
 复制或修改这些权威流程。
+
+### 2026-09-18：原生性能诊断中的工具边界
+
+`build/verification/1.7-native-memory-input/` 记录了三个非产品失败：HDC 的逐键释放
+耗时使 20 键计划超出六秒负载窗口；Windows 混合分隔符源路径被 file send 当成目录
+结构；设备拒绝 smaps 元数据及独立 ELF 执行。按实测缩短派发间隔后 Native/Web 各
+40 个输入样本通过；传输改用 `Get-Item.FullName` 后路径正确，但程序仍被系统拒绝，
+隔离测试没有执行。对应临时文件、目录与运行库均清理，不改变设备权限。
+
+`Invoke-HdcChecked` 未将部分 shell 的 `Operation not permitted`/`Permission denied`
+文本转为失败；当前诊断用预期记录数和明确不可用标记防止空结果假通过，未修改共享
+工具。后续独立工具维护可评估这两种错误文本的检查反例，避免将工具问题混入产品
+资源回收结论。当前产品定位入口保留在 next-work，已有效输入/输出证据不重跑。
 
 ## 2026-08-28：1.5.1 已采用实现
 
@@ -2766,6 +2872,14 @@ text 标签。不能据此推断所有设备都不可读取模式，但当前材
 本轮仅静态读取、规则整理、公开源策略和 diff 检查。未请求设备、未构建/签名 HAP，
 未更改输入法、键盘配置或 WSL。方案仍待下一次已授权 ASCII 场景的命名 L2/L3 验证，
 不能称为输入法故障已修复；AT16-07 与正式候选资格继续按既有条件触发。
+
+09-19 新样本：原生关闭冒烟首次未先准备英文模式，公开 `help mosh` 只提交了 `help`，
+截图直接显示 `mosh` 仍在中文候选框；精确缓冲检查因此在 Enter 前停止。这次有明确
+预编辑证据，不泛化为原生丢字。取消候选并关闭隔离 Tab 后，通过当前输入法菜单选择
+英文，两个命令的精确输入/单次提交和 Tab 关闭通过，finally 恢复中文拼音；未修改
+共享输入工具或产品语义。证据：`build/verification/1.7-close-ownership/` 的
+`first-input-input.log`、`input-top.png`、`ascii-prepared-*`、`qualified-*` 和
+`chinese-restored-*`。后续 ASCII 场景必须先落实既有显式准备，不重复依赖当前模式猜测。
 
 ## 2026-09-17：1.6 验收历史补录
 

@@ -10,9 +10,8 @@
 > **当前支持范围：** 物理 ARM64 HarmonyOS PC 与键鼠场景。MatePad 和纯触控场景尚未支持。
 >
 > **当前版本状态：** [GitHub Release 1.6.0](https://github.com/wandcs/leantty/releases/tag/v1.6.0)
-> 已于 2026-09-16 发布，提审包和材料已交付维护者，等待 AppGallery 提交回报。
-> 已确认在 AppGallery 上架的版本仍为 1.5.1（维护者于 2026-08-29 确认）；
-> GitHub 发布不代表商店已上架。详见 [发布记录](docs/release/1.6.0-status.md)。
+> 已于 2026-09-16 发布；维护者于 2026-09-20 确认同版本已通过 AppGallery 审核并上架。
+> 当前已确认的商店版本为 **1.6.0**。详见 [发布记录](docs/release/1.6.0-status.md)。
 
 ## 为什么选择 LeanTTY
 
@@ -54,7 +53,7 @@ tmux 兼容基线。当远端程序发出受支持的终端提醒信号时，Lea
 - 多标签、每个标签最多双分屏、终端搜索、链接打开与系统剪贴板
 - 当前前台分屏中的受控单文件 `put` / `get`
 - 中英文原生界面；命令、技术输出和远端终端内容保持原样
-- ArkTS / ArkUI 应用外壳、Rust / russh SSH 传输与 ArkWeb / xterm.js 终端渲染
+- ArkTS / ArkUI 应用外壳、Rust / russh SSH 传输；当前 1.7 开发源码使用 Ghostty VT 与原生 GLES 终端渲染
 
 ## 开始使用
 

@@ -4,7 +4,7 @@
 > earlier feature set; use `CHANGELOG.md` and the matching GitHub release to
 > determine the behavior of a specific version.
 >
-> Last updated: 2026-09-07
+> Last updated: 2026-09-19
 
 LeanTTY is designed as a local, account-free terminal. It does not include an
 analytics SDK, advertising SDK, account system, telemetry service or LeanTTY
@@ -43,7 +43,7 @@ the protocol data needed to establish and use the requested session.
 | Main-window rectangle | HarmonyOS system window auto-save, not the Asset Store | Let the system place the window; abnormal exits may still restore defaults |
 | Unexpected-exit recovery record | Bounded app-private Preferences: schema/run generation, clean marker, Tab/Pane counts and order, active positions and split ratio | Restore only layout after an unclean exit, with fresh offline Pane identities |
 | Passwords, private-key passphrases and authentication answers | Process memory only; not intentionally persisted | Complete the active authentication exchange |
-| Live Sessions, Mosh bootstrap keys, local command history and terminal screen/scrollback | Process memory only; excluded from durable recovery | Run the current session and recover an ArkWeb surface within that process |
+| Live Sessions, Mosh bootstrap keys, local command history and terminal screen/scrollback | Process memory only; excluded from durable recovery | Run the current session and reconstruct its native display surface within that process |
 | Exported key files | The user's Downloads directory after explicit export and permission approval | Give the user a portable copy of a selected key pair |
 | Clipboard text | HarmonyOS system clipboard after copy/paste or an accepted OSC 52 clipboard write | Interoperate with the local desktop and terminal applications |
 | Diagnostic logs | HarmonyOS logging facilities under system control | Diagnose lifecycle, connection and rendering failures |

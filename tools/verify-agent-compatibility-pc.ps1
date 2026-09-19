@@ -1095,9 +1095,9 @@ function Assert-AgentSearch {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
         $layout = Get-FullLayout -Name "$Stage-search"
-        $inputs = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
-            [string]$_.attributes.type -eq 'textField' -and
-            [string]$_.attributes.hint -match '^(?:Find text|Search text|查找内容)' -and
+        $inputs = @(Get-LeanTTYVisibleLayoutNodes -Node $layout | Where-Object {
+            [string]$_.attributes.type -eq 'TextInput' -and
+            [string]$_.attributes.id -match '^native-search-pane-[0-9]+-[0-9]+$' -and
             [string]$_.attributes.visible -eq 'true'
         })
         if ($inputs.Count -eq 1) { break }
@@ -1110,7 +1110,8 @@ function Assert-AgentSearch {
     $watch.Restart()
     do {
         $layout = Get-FullLayout -Name "$Stage-search-result"
-        $labels = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+        $labels = @(Get-LeanTTYVisibleLayoutNodes -Node $layout | Where-Object {
+            [string]$_.attributes.id -match '^native-search-result-pane-[0-9]+-[0-9]+$' -and
             [string]$_.attributes.text -match '^[1-9][0-9]*/[1-9][0-9]*$'
         })
         if ($labels.Count -eq 1) { $matched = $true; break }

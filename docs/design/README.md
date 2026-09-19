@@ -3,6 +3,10 @@
 本目录为跨组件或高风险功能保存专项技术方案。每份文档只围绕一个大的功能点，说明
 用户问题、范围、所有权、实现候选、未决问题、验证方法和停止条件。
 
+历史版本方案中的 Web/xterm/Bridge 入口记录当时的实现，不是 1.7 当前入口。既有用户
+合同继续适用，已确认的差异及原生实现位置见[迁移审计](../native-terminal-migration-1.7.md)，
+当前所有权见[架构](../architecture.md)；不因保存历史方案而恢复已删除路径。
+
 ## 状态
 
 | 状态 | 含义 |
@@ -50,7 +54,7 @@
 | Agent CLI/TUI 原生兼容 | Implementing / Codex 普通 SSH 与 tmux 已验证，其余三种待认证 | 1.5 | [`agent-tui-compatibility.md`](agent-tui-compatibility.md) |
 | Mosh 弱网连接 | Implementing / 开发验证已闭合，精确候选正式验收待执行 | 1.6 | [`mosh.md`](mosh.md)；[`mosh-client-rs` 接入问题](mosh-client-rs-integration-issues.md) |
 | 应用异常回收防护与恢复 | Implementing / 后台能力门已停止，工作区恢复已通过真机门 | 1.6 | [`unexpected-process-recovery.md`](unexpected-process-recovery.md) |
-| Ghostty 原生终端与会话解耦 | Accepted / 独立原型支持可行性；产品接入及完整替换验收待执行 | 1.7 | [平台预研](ghostty-native-terminal.md)；[架构边界](terminal-session-boundaries.md) |
+| Ghostty 原生终端与会话解耦 | Implementing / 开发期完整替换已验证；待合入及正式候选验收 | 1.7 | [平台预研](ghostty-native-terminal.md)；[架构边界](terminal-session-boundaries.md) |
 
 ## 最小文档结构
 

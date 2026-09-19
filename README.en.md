@@ -13,10 +13,9 @@ and coding-agent work.**
 > mouse. MatePad and touch-first use are not supported yet.
 >
 > **Current release status:** [GitHub Release 1.6.0](https://github.com/wandcs/leantty/releases/tag/v1.6.0)
-> was published on September 16, 2026. The submission package and materials have
-> been handed to the maintainer; an AppGallery submission report is pending.
-> The latest confirmed AppGallery version remains 1.5.1, as reported by the
-> maintainer on August 29. A GitHub release does not establish store availability.
+> was published on September 16, 2026. On September 20, the maintainer confirmed
+> that the same version had passed AppGallery review and was available in the store.
+> The latest confirmed AppGallery version is **1.6.0**.
 > See the [release record](docs/release/1.6.0-status.md).
 
 ## Why LeanTTY
@@ -71,8 +70,8 @@ not inspect terminal content to guess whether a task has finished.
 - Controlled single-file `put` / `get` in the current foreground pane
 - Native Chinese and English UI; commands, technical output and remote content
   remain unchanged
-- ArkTS / ArkUI application shell, Rust / russh SSH transport and ArkWeb /
-  xterm.js terminal rendering
+- ArkTS / ArkUI application shell and Rust / russh SSH transport; the current
+  1.7 development source uses Ghostty VT and native GLES terminal rendering
 
 ## Get started
 

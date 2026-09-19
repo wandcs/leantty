@@ -5,6 +5,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
 
+& (Join-Path $PSScriptRoot 'test-native-device-harness.ps1')
 & (Join-Path $PSScriptRoot 'test-command-completion.ps1')
 & (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1') -SelfTest
 & (Join-Path $PSScriptRoot 'test-mosh-runtime-contract.ps1')
@@ -32,166 +33,7 @@ function Assert-Throws {
     if (-not $threw) { throw $Message }
 }
 
-& {
-    $authAst = [Management.Automation.Language.Parser]::ParseFile(
-        (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1'), [ref]$null, [ref]$null)
-    foreach ($name in @('Get-AuthInputWebEvidence', 'Get-AuthFixturePasswordEvidence',
-        'Save-AuthFixturePasswordEvidence', 'Submit-AuthValue', 'Assert-NoSecretExposure', 'Write-AuthEvidence')) {
-        $definition = $authAst.FindAll({ param($node)
-            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
-        }, $true) | Select-Object -First 1
-        Assert-True ($null -ne $definition) "Missing authentication evidence helper: $name"
-        Invoke-Expression $definition.Extent.Text
-    }
-    $sampleLogs = 'irrelevant runtime-secret-value' + "`n" +
-        'ACCEPTANCE_INPUT_WEB 32,22,0,22,22,0,32,0,0,1,1,0'
-    $web = Get-AuthInputWebEvidence -Logs $sampleLogs
-    Assert-True ($web.status -eq 'observed' -and $web.reportCount -eq 1 -and
-        $web.latest.dataPrintableUnits -eq 32 -and $web.latest.imeKeydowns -eq 22) (
-        'Web evidence did not preserve the typed aggregate counters'
-    )
-    foreach ($invalid in @('', 'ACCEPTANCE_INPUT_WEB 1,2,3',
-        'ACCEPTANCE_INPUT_WEB 1,2,3,4,5,6,7,8,9,10,11,12,13',
-        'ACCEPTANCE_INPUT_WEB 1,2,3,4,5,6,7,8,9,10,11,99999999999999')) {
-        $missing = Get-AuthInputWebEvidence -Logs $invalid
-        Assert-True ($missing.status -eq 'missing' -and $null -eq $missing.latest) (
-            'Missing or malformed metrics were promoted to zero counts'
-        )
-    }
-    $fixtureLogs = @(
-        'auth method=password scenario=Password result=matched',
-        'auth method=password scenario=Mosh result=reject expected_bytes=32 received_bytes=31 overlap_mismatches=23 length_delta=-1',
-        'auth method=password scenario=runtime-secret-value result=matched',
-        'auth method=password scenario=Password result=matched secret=runtime-secret-value'
-    ) -join "`n"
-    $fixture = Get-AuthFixturePasswordEvidence -Logs $fixtureLogs
-    Assert-True ($fixture.status -eq 'observed' -and $fixture.events.Count -eq 2 -and
-        $fixture.unparsedEventCount -eq 2 -and $fixture.events[0].exactCredentialMatch -eq $true -and
-        $null -eq $fixture.events[0].receivedBytes -and $fixture.events[1].receivedBytes -eq 31 -and
-        $fixture.events[1].lengthDelta -eq -1) 'Fixture evidence invented byte counts or accepted an unsafe log line'
-    Assert-True ((@($web, $fixture) | ConvertTo-Json -Depth 12) -notmatch 'runtime-secret-value') (
-        'Authentication evidence retained raw application or fixture text'
-    )
-
-    # Exercise real submission/audit functions; only external device boundaries are mocked.
-    $hdc = 'unused'; $Target = 'unused'; $appPid = '100'
-    $EvidenceDirectory = [IO.Path]::GetTempPath()
-    $secrets = @('runtime-secret-value'); $currentStage = 'password-success'
-    $authInputObservations = [Collections.Generic.List[object]]::new()
-    function Focus-ActiveCommandInput { return @{ attributes = @{} } }
-    function Clear-LeanTTYAppLogs {}
-    function Get-LeanTTYAppLogs { return $sampleLogs.Replace('runtime-secret-value', 'redacted') }
-    function Get-LeanTTYDeviceLayout { return @{ attributes = @{} } }
-    function Wait-AuthLog {}
-    $script:authEnterCalls = 0
-    $script:rejectAuthTarget = $false
-    function Invoke-TemporaryFixtureAuthText {
-        if ($script:rejectAuthTarget) {
-            throw (New-LeanTTYTextInputFailure -Phase after -ExpectedNode $null -CurrentNodes @() `
-                -Message '[harness] synthetic target rejection')
-        }
-    }
-    function Invoke-LeanTTYDeviceKey { $script:authEnterCalls++ }
-    Submit-AuthValue -Value 'runtime-secret-value' -LayoutName 'password.json'
-    Assert-True ($authInputObservations.Count -eq 1 -and
-        $authInputObservations[0].submitAckObserved -and $authInputObservations[0].web.latest.dataPrintableUnits -eq 32) (
-        'Successful authentication submission lost pre-Enter metrics'
-    )
-    $script:rejectAuthTarget = $true
-    Assert-Throws { Submit-AuthValue -Value 'runtime-secret-value' -LayoutName 'password.json' } 'Target rejection was swallowed'
-    Assert-True ($script:authEnterCalls -eq 1 -and $authInputObservations.Count -eq 2 -and
-        $authInputObservations[1].result -eq 'failed' -and
-        $authInputObservations[1].textTargetFailure.phase -eq 'after' -and
-        $authInputObservations[1].web.latest.dataPrintableUnits -eq 32) (
-        'Failed authentication did not retain evidence before cleanup, or sent Enter after rejection'
-    )
-    function Get-LeanTTYAppLogs { throw 'synthetic unavailable logs' }
-    Assert-Throws { Submit-AuthValue -Value 'runtime-secret-value' -LayoutName 'password.json' } 'Missing logs replaced the original failure'
-    Assert-True ($authInputObservations[2].web.status -eq 'unavailable' -and
-        $authInputObservations[2].textTargetFailure.phase -eq 'after') 'Diagnostic read failure hid the original target failure'
-    Assert-True (($authInputObservations | ConvertTo-Json -Depth 12) -notmatch 'runtime-secret-value') 'Submission record exposed credentials'
-    $script:rejectAuthTarget = $false
-    function Get-LeanTTYAppLogs { return '' }
-    Submit-AuthValue -Value 'runtime-secret-value' -LayoutName 'password.json'
-    Assert-True ($script:authEnterCalls -eq 2 -and $authInputObservations[3].submitAckObserved -and
-        $authInputObservations[3].web.status -eq 'missing' -and $null -eq $authInputObservations[3].web.latest) (
-        'Absent acceptance metrics became an authentication gate or a fabricated zero observation'
-    )
-
-    function Get-LeanTTYAppLogs { return 'runtime-secret-value' }
-    Assert-Throws { Submit-AuthValue -Value 'runtime-secret-value' -LayoutName 'password.json' } 'Secret exposure did not stop submission'
-    Assert-True ($script:authEnterCalls -eq 2 -and $authInputObservations[4].result -eq 'failed' -and
-        -not $authInputObservations[4].enterAttempted) 'Privacy audit failure sent Enter'
-
-    function Get-LeanTTYAppLogs { return '' }
-    function Wait-AuthLog { throw 'synthetic ACK timeout' }
-    Assert-Throws { Submit-AuthValue -Value 'runtime-secret-value' -LayoutName 'password.json' } 'Missing submission ACK was swallowed'
-    Assert-True ($script:authEnterCalls -eq 3 -and $authInputObservations[5].enterAttempted -and
-        -not $authInputObservations[5].submitAckObserved -and $authInputObservations[5].result -eq 'failed') (
-        'Failed ACK was promoted to success or retried'
-    )
-    function Focus-ActiveCommandInput {
-        throw (New-LeanTTYTextInputFailure -Phase before -ExpectedNode $null -CurrentNodes @() `
-            -Message '[harness] synthetic pre-focus rejection')
-    }
-    $script:unscopedAuthRead = $false
-    function Get-LeanTTYAppLogs { $script:unscopedAuthRead = $true; return $sampleLogs }
-    Assert-Throws { Submit-AuthValue -Value 'runtime-secret-value' -LayoutName 'password.json' } 'Pre-focus rejection was swallowed'
-    Assert-True ($script:authEnterCalls -eq 3 -and -not $script:unscopedAuthRead -and
-        $authInputObservations[6].web.status -eq 'not-captured' -and
-        $authInputObservations[6].textTargetFailure.phase -eq 'before') (
-        'Pre-focus failure captured unscoped logs or sent Enter'
-    )
-
-    $fixtureStderr = 'unused-fixture-path'
-    function Test-Path { return $true }
-    function Read-FixtureLogText { return $fixtureLogs }
-    Save-AuthFixturePasswordEvidence
-    $fixtureLogs = '' # Model cleanup after retention, for both successful and failed runs.
-    Assert-True ($script:fixturePasswordEvidence.events.Count -eq 2) 'Fixture cleanup erased retained authentication outcomes'
-
-    # Run the real final writer and read its JSON; no HDC, signing or fixture process.
-    $startedAt = [DateTimeOffset]::UtcNow
-    $scenarioResult = 'failed'; $runMode = 'diagnostic'; $DiagnosticHap = 'synthetic-no-device'
-    $commandObservations = [Collections.Generic.List[object]]::new()
-    $connectedInputObservations = [Collections.Generic.List[object]]::new()
-    $checks = @(); $selectedStageNames = @(); $harnessDifferencePaths = @()
-    $candidate = @{ sha256 = 'synthetic'; gitCommit = 'synthetic'; gitTree = 'synthetic'; gitDirty = $true }
-    $textTargetFailure = $authInputObservations[6].textTargetFailure
-    $evidencePath = Join-Path ([IO.Path]::GetTempPath()) ('leantty-auth-evidence-' + [Guid]::NewGuid().ToString('N') + '.json')
-    try {
-        Write-AuthEvidence
-        $json = [IO.File]::ReadAllText($evidencePath)
-        $saved = $json | ConvertFrom-Json -Depth 20
-        Assert-True ($saved.result -eq 'failed' -and $saved.runMode -eq 'diagnostic' -and
-            $saved.inputBoundary.submissions.Count -eq 7 -and
-            $saved.inputBoundary.submissions[0].web.latest.dataPrintableUnits -eq 32 -and
-            $null -eq $saved.inputBoundary.submissions[3].web.latest -and
-            $saved.inputBoundary.submissions[6].textTargetFailure.phase -eq 'before' -and
-            $saved.inputBoundary.fixturePassword.events[1].receivedBytes -eq 31 -and
-            $saved.inputBoundary.textTargetFailure.phase -eq 'before') (
-            'Final authentication JSON lost nested failure, counters, nulls or fixture outcomes'
-        )
-        Assert-True ($saved.inputBoundary.webScope -eq 'process-log-since-clear-before-enter-unsettled' -and
-            $saved.inputBoundary.fixtureScope -eq 'run-ordered-password-events-no-submission-correlation' -and
-            $json -notmatch 'runtime-secret-value') 'Final authentication report lost scope labels or exposed input'
-    } finally {
-        if ([IO.File]::Exists($evidencePath)) { Remove-Item -LiteralPath $evidencePath -Force }
-    }
-    function Test-Path { return $false }
-    Save-AuthFixturePasswordEvidence
-    Assert-True ($script:fixturePasswordEvidence.status -eq 'missing' -and
-        $script:fixturePasswordEvidence.events.Count -eq 0) 'Missing fixture log reused stale evidence'
-    function Test-Path { return $true }
-    function Read-FixtureLogText { throw 'synthetic unavailable fixture log' }
-    Save-AuthFixturePasswordEvidence
-    Assert-True ($script:fixturePasswordEvidence.status -eq 'unavailable' -and
-        $script:fixturePasswordEvidence.events.Count -eq 0) 'Fixture read failure hid its status or reused stale evidence'
-    $source = $authAst.Extent.Text
-    Assert-True ($source.LastIndexOf('Save-AuthFixturePasswordEvidence') -lt
-        $source.LastIndexOf('Remove-Item -LiteralPath $fixtureRoot') -and
-        $source.Contains('inputBoundary = [ordered]@{')) 'Authentication report does not retain evidence before fixture cleanup'
-}
+& (Join-Path $PSScriptRoot 'test-auth-input-evidence.ps1')
 
 $deleteKeyButtonTexts = @(Resolve-LeanTTYDialogButtonTexts -ButtonText 'Delete key')
 Assert-True (
@@ -239,293 +81,11 @@ $layout = @'
 }
 '@ | ConvertFrom-Json -Depth 20
 
-Assert-True (
-    (Get-LeanTTYTerminalInputText -Layout $layout) -eq 'ssh-keygen -p -f regression_key'
-) 'Terminal input text was not read from the accessibility layout'
-
-$focusedTextLayout = @'
-{
-  "attributes":{"type":"root","focused":"true","bounds":"[0,0][100,100]"},
-  "children":[
-    {"attributes":{"type":"textField","accessibilityId":"search-node","hint":"Search text Find","focused":"true","bounds":"[10,10][50,30]"},"children":[]},
-    {"attributes":{"type":"textField","accessibilityId":"terminal-node","hint":"Terminal input","focused":"false","bounds":"[10,60][50,80]"},"children":[]}
-  ]
-}
-'@ | ConvertFrom-Json -Depth 20
-$focusedTextInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $focusedTextLayout)
-Assert-True (
-    $focusedTextInputs.Count -eq 1 -and
-    $focusedTextInputs[0].attributes.hint -eq 'Search text Find'
-) 'Targeted text input did not select the unique focused text field'
-
-$warmPaneLayout = @'
-{"attributes":{},"children":[
- {"attributes":{"type":"__Common__","opacity":"0.000000","hitTestBehavior":"HitTestMode.None"},"children":[
-  {"attributes":{"type":"textField","hint":"Terminal input","visible":"true","bounds":"[10,10][30,30]"},"children":[]}]},
- {"attributes":{"type":"__Common__","opacity":"1.000000","hitTestBehavior":"HitTestMode.Default"},"children":[
-  {"attributes":{"type":"textField","hint":"Terminal input","opacity":"0.000000","visible":"true","bounds":"[40,10][60,30]"},"children":[]}]}
-]}
-'@ | ConvertFrom-Json -Depth 10
-Assert-True (@(Get-LeanTTYTerminalInputNodes -Layout $warmPaneLayout).Count -eq 1) (
-    'Hidden warm Tab inputs must be excluded without excluding the active xterm transparent textarea'
-)
-
-& {
-    $script:capturedHdcCalls = [Collections.Generic.List[object]]::new()
-    function Get-HdcUiLayout {
-        param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
-        return $focusedTextLayout
-    }
-    function Invoke-FakeHdc {
-        $script:capturedHdcCalls.Add(@($args))
-        $global:LASTEXITCODE = 0
-    }
-
-    Invoke-LeanTTYDeviceText `
-        -Hdc 'Invoke-FakeHdc' `
-        -Target 'regression-device' `
-        -Text 'ssh-keygen -p -f regression_key' `
-        -InputNode ([pscustomobject]@{
-            attributes = [pscustomobject]@{
-                type = 'textField'
-                accessibilityId = 'search-node'
-                hint = 'Search text Find'
-                focused = 'true'
-                bounds = '[9,9][49,29]'
-            }
-        })
-    Assert-True (
-        $script:capturedHdcCalls.Count -eq 1 -and
-        $script:capturedHdcCalls[0].Count -eq 9 -and
-        $script:capturedHdcCalls[0][0] -eq '-t' -and
-        $script:capturedHdcCalls[0][1] -eq 'regression-device' -and
-        $script:capturedHdcCalls[0][2] -eq 'shell' -and
-        $script:capturedHdcCalls[0][3] -eq 'uitest' -and
-        $script:capturedHdcCalls[0][4] -eq 'uiInput' -and
-        $script:capturedHdcCalls[0][5] -eq 'inputText' -and
-        $script:capturedHdcCalls[0][6] -eq 30 -and
-        $script:capturedHdcCalls[0][7] -eq 20 -and
-        $script:capturedHdcCalls[0][8] -eq 'ssh-keygen -p -f regression_key'
-    ) 'Device text did not revalidate and target the current focused UiTest text field'
-}
-
-& {
-    $script:regeneratedIdentityHdcCalls = 0
-    function Get-HdcUiLayout {
-        param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
-        return $focusedTextLayout
-    }
-    function Invoke-FakeHdc {
-        $script:regeneratedIdentityHdcCalls++
-        $global:LASTEXITCODE = 0
-    }
-
-    Invoke-LeanTTYDeviceText `
-        -Hdc 'Invoke-FakeHdc' `
-        -Target 'regression-device' `
-        -Text 'same-target-after-layout-refresh' `
-        -InputNode ([pscustomobject]@{
-            attributes = [pscustomobject]@{
-                type = 'textField'
-                accessibilityId = 'previous-search-node'
-                hint = 'Search text Find'
-                focused = 'true'
-                bounds = '[10,10][50,30]'
-            }
-        })
-    Assert-True ($script:regeneratedIdentityHdcCalls -eq 1) (
-        'Device text rejected the same semantic and geometric target after UiTest regenerated its opaque ID'
-    )
-}
-
-& {
-    $script:staleTargetInputCalls = 0
-    function Get-HdcUiLayout {
-        param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
-        return $focusedTextLayout
-    }
-    function Invoke-FakeHdc {
-        $script:staleTargetInputCalls++
-        $global:LASTEXITCODE = 0
-    }
-
-    $targetFailure = $null
-    try {
-        Invoke-LeanTTYDeviceText `
-            -Hdc 'Invoke-FakeHdc' `
-            -Target 'regression-device' `
-            -Text 'must-not-reach-terminal' `
-            -InputNode ([pscustomobject]@{
-                attributes = [pscustomobject]@{
-                    type = 'textField'
-                    accessibilityId = 'terminal-node'
-                    hint = 'Terminal input'
-                    focused = 'true'
-                    bounds = '[10,60][50,80]'
-                }
-            })
-    } catch { $targetFailure = $_.Exception }
-    Assert-True ($null -ne $targetFailure) 'Device text accepted a target whose focus had moved to another field'
-    $detail = $targetFailure.Data['LeanTTYTextInputFailure']
-    Assert-True ($null -ne $detail -and $detail.phase -eq 'before' -and
-        $detail.focusedCount -eq 1 -and $detail.targets[0].attributes.hint.equal -eq $false) (
-        'Pre-input rejection lost its content-free target comparison'
-    )
-    $serializedDetail = $detail | ConvertTo-Json -Depth 12
-    Assert-True ($serializedDetail -notmatch 'Terminal input|Search text Find|terminal-node|must-not-reach-terminal') (
-        'Target rejection evidence retained field content or opaque identifiers'
-    )
-    Assert-True ($script:staleTargetInputCalls -eq 0) (
-        'Device text reached UiTest after the intended target lost focus'
-    )
-}
-
-& {
-    $script:ownerCheckLayouts = 0
-    $script:ownerCheckInputs = 0
-    function Get-HdcUiLayout {
-        param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
-        $script:ownerCheckLayouts++
-        $focusedIndex = if ($script:ownerCheckLayouts -eq 1) { 0 } else { 1 }
-        return [pscustomobject]@{ attributes = @{}; children = @(0, 1 | ForEach-Object {
-            [pscustomobject]@{ attributes = [pscustomobject]@{
-                type = 'textField'; hint = 'Terminal input'; bounds = '[10,10][30,30]'
-                hierarchy = "ROOT1,0,$_"; hostWindowId = '1'
-                focused = $(if ($_ -eq $focusedIndex) { 'true' } else { 'false' })
-            }; children = @() }
-        }) }
-    }
-    function Invoke-FakeHdc {
-        $script:ownerCheckInputs++
-        $global:LASTEXITCODE = 0
-    }
-    $targetFailure = $null
-    try {
-        Invoke-LeanTTYDeviceText -Hdc 'Invoke-FakeHdc' -Target 'regression-device' -Text 'probe'
-    } catch { $targetFailure = $_.Exception }
-    Assert-True ($null -ne $targetFailure) 'Text input must fail immediately when its click transfers focus to an overlapping Pane'
-    $detail = $targetFailure.Data['LeanTTYTextInputFailure']
-    Assert-True ($null -ne $detail -and $detail.phase -eq 'after' -and
-        $detail.targets[0].expectedPath.indices -join ',' -eq '0,0' -and
-        $detail.targets[0].currentPath.indices -join ',' -eq '0,1' -and
-        $detail.targets[0].sameRoot -eq $true -and
-        $detail.targets[0].attributes.bounds.equal -eq $true) (
-        'Post-input rejection lost the changed tree path at overlapping geometry'
-    )
-    Assert-True (($detail | ConvertTo-Json -Depth 12) -notmatch 'ROOT1|Terminal input|probe') (
-        'Post-input rejection exposed layout identifiers or content'
-    )
-    Assert-True ($script:ownerCheckInputs -eq 1 -and $script:ownerCheckLayouts -eq 2) (
-        'Owner loss must capture one post-input layout and never retry or send Enter'
-    )
-}
-
-& {
-    $expected = [pscustomobject]@{ attributes = [pscustomobject]@{
-        type='textField'; hint='Terminal input'; hierarchy='ROOT1,0,0'; hostWindowId='1'
-        accessibilityId='old'; bounds='[10,10][30,30]'
-    } }
-    $moved = [pscustomobject]@{ attributes = [pscustomobject]@{
-        type='textField'; hint='Terminal input'; hierarchy='ROOT1,0,0'; hostWindowId='1'
-        accessibilityId='new'; bounds='[40,10][60,30]'
-    } }
-    Assert-True (Test-LeanTTYSameTextInputTarget -ExpectedNode $expected -CurrentNode $moved) (
-        'Within one input operation, cursor movement and regenerated opaque IDs must preserve the same tree target'
-    )
-    $moved.attributes.hierarchy = 'ROOT1,0,1'
-    $moved.attributes.bounds = $expected.attributes.bounds
-    $moved.attributes.accessibilityId = $expected.attributes.accessibilityId
-    Assert-True (-not (Test-LeanTTYSameTextInputTarget -ExpectedNode $expected -CurrentNode $moved)) (
-        'Matching bounds or an opaque ID must not override a different current tree owner'
-    )
-    $moved.attributes.hierarchy = 'ROOT-private-host,secret-text'
-    $failure = New-LeanTTYTextInputFailure -Message 'test-only' -Phase after `
-        -ExpectedNode $expected -CurrentNodes @($moved)
-    $detail = $failure.Data['LeanTTYTextInputFailure']
-    Assert-True (-not $detail.targets[0].currentPath.valid -and $null -eq $detail.targets[0].sameRoot -and
-        ($detail | ConvertTo-Json -Depth 12) -notmatch 'private-host|secret-text|old|new') (
-        'Malformed hierarchy was leaked or treated as known structural identity'
-    )
-}
-
-& {
-    # The native Web owner survives a DOM renderer change; its virtual textarea
-    # path, opaque ID and cursor-following bounds do not have to survive it.
-    function New-WebOwnerLayout($after, $case) {
-        $webPath = if ($after -and $case -in @('other-pane', 'ancestor-reindex')) { 'ROOT1,1' } else { 'ROOT1,0' }
-        $webId = if ($after -and $case -in @('replaced-web', 'other-pane')) { 'web-new' } else { 'web-owner' }
-        $windowId = if ($after -and $case -eq 'other-window') { '2' } else { '1' }
-        if (($after -and $case -eq 'missing-id-after') -or (-not $after -and $case -eq 'missing-id-before')) { $webId = '' }
-        if ($case -eq 'blank-id') { $webId = ' ' }
-        if (($after -and $case -eq 'missing-window-after') -or (-not $after -and $case -eq 'missing-window-before')) { $windowId = '' }
-        $hint = if ($after -and $case -eq 'search') { 'Search text Find' } else { 'Terminal input' }
-        $leaf = [pscustomobject]@{attributes=[pscustomobject]@{
-            type='textField'; hint=$hint; focused='true'; hostWindowId=$windowId
-            hierarchy=($webPath + $(if ($after) { ',0,2,0,0' } else { ',0,0,2,0,0' }))
-            accessibilityId=$(if ($after) { 'input-new' } else { 'input-old' })
-            bounds=$(if ($after) { '[80,20][100,40]' } else { '[10,10][30,30]' })
-        };children=@()}
-        $children = @($leaf)
-        if ($after -and $case -eq 'ambiguous') {
-            $leaf.attributes.hierarchy = $webPath + ',0,0,2,0,0'
-            $children += [pscustomobject]@{attributes=@{type='textField';hint='Terminal input';focused='false'};children=@()}
-        }
-        $web = [pscustomobject]@{attributes=[pscustomobject]@{
-            type='Web'; hierarchy=$webPath; accessibilityId=$webId; hostWindowId=$windowId
-            bounds='[0,0][200,200]'
-        };children=$children}
-        if ($after -and $case -eq 'leaf-window-mismatch') { $leaf.attributes.hostWindowId = '2' }
-        $roots = @($web)
-        if (($after -and $case -eq 'duplicate-id-after') -or
-                (-not $after -and $case -eq 'duplicate-id-before') -or $case -eq 'other-visible-pane') {
-            # A second Web may occupy identical bounds, but must have a distinct
-            # native identity. Reject duplicate IDs even if only one is focused.
-            $peerId = if ($case -eq 'other-visible-pane') { 'peer-web' } else { $webId }
-            $roots += [pscustomobject]@{attributes=@{type='Web';hierarchy='ROOT1,2';
-                accessibilityId=$peerId;hostWindowId=$windowId;bounds='[0,0][200,200]'};children=@(
-                [pscustomobject]@{attributes=@{type='textField';hint='Terminal input';focused='false'};children=@()}
-            )}
-        }
-        return [pscustomobject]@{attributes=@{};children=$roots}
-    }
-    $acceptedCases = @('same-web', 'ancestor-reindex', 'other-visible-pane')
-    foreach ($case in @('same-web', 'ancestor-reindex', 'other-visible-pane', 'other-pane', 'replaced-web',
-            'other-window', 'search', 'ambiguous', 'missing-id-before', 'missing-id-after', 'blank-id',
-            'missing-window-before', 'missing-window-after', 'duplicate-id-before', 'duplicate-id-after',
-            'leaf-window-mismatch')) {
-        $script:webOwnerLayoutReads = 0
-        $script:webOwnerInputs = 0
-        function Get-HdcUiLayout {
-            param($Hdc, $Target, $LocalPath, $BundleName, $Operation)
-            $script:webOwnerLayoutReads++
-            return New-WebOwnerLayout ($script:webOwnerLayoutReads -gt 1) $case
-        }
-        function Invoke-FakeHdc { $script:webOwnerInputs++; $global:LASTEXITCODE = 0 }
-        $failure = $null
-        try { Invoke-LeanTTYDeviceText -Hdc 'Invoke-FakeHdc' -Target 'regression-device' -Text 'public-owner-probe' }
-        catch { $failure = $_.Exception }
-        if ($case -in $acceptedCases) {
-            Assert-True ($null -eq $failure) "Same unique native Web owner must survive structural reindexing: $case"
-        } else {
-            Assert-True ($null -ne $failure) "Terminal input must reject changed or ambiguous owner: $case"
-            $owners = $failure.Data['LeanTTYTextInputFailure'].webOwners
-            Assert-True ($owners.expectedPresent -and $owners.targets.Count -eq 1) 'Missing native Web failure comparison'
-            if ($case -in @('other-pane', 'replaced-web')) {
-                Assert-True (-not $owners.targets[0].attributes.accessibilityId.equal) 'Web identity comparison was lost'
-            }
-            Assert-True (($owners | ConvertTo-Json -Depth 12) -notmatch 'web-owner|web-new|input-old|input-new|Terminal input|Search text') 'Web comparison leaked raw attributes'
-        }
-        Assert-True ($script:webOwnerInputs -eq 1 -and $script:webOwnerLayoutReads -eq 2) (
-            'Web owner comparison must not add input retries or Enter'
-        )
-    }
-}
-
 foreach ($focusCount in @(0, 5)) {
     & {
         function Get-HdcUiLayout {
             return @{ attributes = @{}; children = @(for ($index = 0; $index -lt $focusCount; $index++) {
-                @{ attributes = @{ type = 'textField'; hint = 'private-hint'; focused = 'true';
+                @{ attributes = @{ type = 'TextInput'; hint = 'private-hint'; focused = 'true';
                     hierarchy = "ROOT123,$index"; bounds = '[0,0][20,20]' }; children = @() }
             }) }
         }
@@ -1115,7 +675,7 @@ Assert-True (
         'EntryAbility,IndexPage,'
     ) -and
     $deviceRegressionText.Contains(
-        'TerminalSurfaceController,TerminalBridge,AppViewModel,BackgroundBellNotification'
+        'TerminalSurfaceController,AppViewModel,BackgroundBellNotification'
     ) -and
     -not $deviceRegressionText.Contains('EntryAbility,Index,IndexPage')
 ) 'Device log query omits the Pane attention state owner'
@@ -1209,91 +769,6 @@ Assert-True (
     ) -and
     $deviceRegressionSource.Contains('-T MoshClient')
 ) 'Device application log capture omits authentication or window lifecycle events'
-
-$splitLayout = @'
-{
-  "attributes": {"bounds":"[0,0][3120,1955]","hint":""},
-  "children": [
-    {"attributes":{"bounds":"[127,495][145,536]","hint":"Terminal input","focused":"false"},"children":[]},
-    {"attributes":{"bounds":"[1694,135][1712,176]","hint":"Terminal input","focused":"true"},"children":[]}
-  ]
-}
-'@ | ConvertFrom-Json -Depth 20
-$splitInputs = @(Get-LeanTTYTerminalInputNodes -Layout $splitLayout)
-Assert-True (
-    $splitInputs.Count -eq 2 -and
-    $splitInputs[0].attributes.bounds -eq '[127,495][145,536]' -and
-    $splitInputs[1].attributes.bounds -eq '[1694,135][1712,176]'
-) 'Terminal input nodes did not preserve layout traversal order'
-
-# Web bounds can overlap in UiTest while each hidden textarea follows its own
-# cursor. Pane selection must survive both reversed and identical cursor X.
-$overlappingPaneLayout = @'
-{
-  "attributes": {"type":"Stack","bounds":"[0,0][2000,1000]"},
-  "children": [
-    {"attributes":{"type":"Web","bounds":"[1000,0][2000,1000]"},"children":[
-      {"attributes":{"type":"textField","bounds":"[1613,589][1632,630]","hint":"Terminal input","focused":"true"},"children":[]}
-    ]},
-    {"attributes":{"type":"Web","bounds":"[1000,0][2000,1000]"},"children":[
-      {"attributes":{"type":"textField","bounds":"[1541,749][1560,790]","hint":"Terminal input","focused":"false"},"children":[]}
-    ]}
-  ]
-}
-'@ | ConvertFrom-Json -Depth 20
-$orderedPaneInputs = @(Get-LeanTTYTerminalInputNodes -Layout $overlappingPaneLayout)
-Assert-True (
-    $orderedPaneInputs.Count -eq 2 -and
-    [object]::ReferenceEquals($orderedPaneInputs[0], $overlappingPaneLayout.children[0].children[0]) -and
-    [object]::ReferenceEquals($orderedPaneInputs[1], $overlappingPaneLayout.children[1].children[0]) -and
-    $orderedPaneInputs[0].attributes.focused -ceq 'true'
-) 'Pane order was reversed by hidden textarea cursor coordinates'
-$overlappingPaneLayout.children[1].children[0].attributes.bounds = '[1613,749][1632,790]'
-$orderedPaneInputs = @(Get-LeanTTYTerminalInputNodes -Layout $overlappingPaneLayout)
-Assert-True (
-    [object]::ReferenceEquals($orderedPaneInputs[0], $overlappingPaneLayout.children[0].children[0]) -and
-    [object]::ReferenceEquals($orderedPaneInputs[1], $overlappingPaneLayout.children[1].children[0])
-) 'Pane order changed when cursor X coordinates were identical'
-
-& {
-    $script:focusLayoutIndex = 0
-    $script:focusClickCalls = [Collections.Generic.List[object]]::new()
-    $focusLayouts = @(
-        (@'
-{"attributes":{"bounds":"[0,0][0,0]","hint":""},"children":[]}
-'@ | ConvertFrom-Json -Depth 20),
-        (@'
-{"attributes":{"bounds":"[0,0][3120,1955]","hint":""},"children":[{"attributes":{"bounds":"[127,495][145,536]","hint":"Terminal input","focused":"true"},"children":[]},{"attributes":{"bounds":"[1694,135][1712,176]","hint":"Terminal input","focused":"false"},"children":[]}]}
-'@ | ConvertFrom-Json -Depth 20)
-    )
-    function Invoke-FocusHdc {
-        $script:focusClickCalls.Add(@($args))
-        $global:LASTEXITCODE = 0
-    }
-    function Get-LeanTTYDeviceLayout {
-        param($Hdc, $Target, $LocalPath)
-        $layout = $focusLayouts[[Math]::Min($script:focusLayoutIndex, $focusLayouts.Count - 1)]
-        $script:focusLayoutIndex++
-        return $layout
-    }
-
-    $focusedLayout = Set-LeanTTYTerminalInputFocus `
-        -Hdc 'Invoke-FocusHdc' `
-        -Target 'regression-device' `
-        -InputNode $splitInputs[0] `
-        -LocalPath 'unused.json' `
-        -TimeoutSeconds 2
-    $focusedNodes = @(Get-LeanTTYTerminalInputNodes -Layout $focusedLayout | Where-Object {
-        [string]$_.attributes.focused -eq 'true'
-    })
-    Assert-True (
-        $script:focusClickCalls.Count -eq 1 -and
-        ($script:focusClickCalls[0] -join ' ') -match 'uiInput click 136 516' -and
-        $script:focusLayoutIndex -eq 2 -and
-        $focusedNodes.Count -eq 1 -and
-        $focusedNodes[0].attributes.bounds -eq '[127,495][145,536]'
-    ) 'Terminal focus gate did not accept one focused post-click snapshot'
-}
 
 Assert-True (
     $deviceRegressionSource.Contains(
@@ -1587,7 +1062,7 @@ foreach ($scriptName in @(
             $content.Contains("'uitest uiInput keyEvent 2072 2045 2038'") -and
             $content.Contains("'uinput -K -u 2038 -u 2045 -u 2072'") -and
             $content.Contains("Invoke-AuthPerfSample -CaseId 'russhmain'") -and
-            $content.Contains('"completenessPercent":100') -and
+            $content.Contains('NATIVE_OUTPUT_PROBE case=') -and
             $content.Contains("'resize cols=\d+ rows=\d+'") -and
             $content.Contains("'ltty-input-check afterperf'") -and
             $content.Contains("'input case=afterperf result=matched'") -and
@@ -1643,19 +1118,19 @@ foreach ($scriptName in @(
             $content.Contains("'window-renderer-lifecycle'") -and
             $content.Contains("'uitest uiInput keyEvent 2072 2045 2022'") -and
             -not $content.Contains("'uitest uiInput keyEvent 2047 2054'") -and
-            $content.Contains("'Previous match, Shift+Enter'") -and
+            $content.Contains("'^native-search-prev-pane-[0-9]+-[0-9]+$'") -and
             $content.Contains('-RequireSearchInputFocus $false') -and
             -not $content.Contains("'uitest uiInput keyEvent 2072 2017'") -and
             $content.Contains('Clear-TerminalSearchQuery -CharacterCount $query.Length') -and
             $content.Contains('Clear-TerminalSearchQuery -CharacterCount $missingQuery.Length') -and
             $content.Contains("'LEANTTY_NO_RESULT_ZXQVK'") -and
-            $content.Contains("'^(?:Find text|Search text|查找内容)'") -and
+            $content.Contains("'^native-search-pane-[0-9]+-[0-9]+$'") -and
             $content.Contains('[AllowEmptyString()]') -and
-            $content.Contains("'^(?:No results|未找到结果)$'") -and
+            $content.Contains("'^0/0$'") -and
             $content.Contains('wrappedForward = $true') -and
             $content.Contains('wrappedBackward = $true') -and
-            $content.Contains("'TerminalBridge: PERF bridge reason=destroy'") -and
-            $content.Contains("'TerminalBridge: Bridge initialized'") -and
+            $content.Contains("'layout-warm-evicted.json'") -and
+            $content.Contains("'Terminal ready, terminal output recovered'") -and
             $content.Contains("'Acceptance: Rebuild Renderer'") -and
             $content.Contains("'EnhanceMinimizeBtn'") -and
             $content.Contains("Invoke-LocalTerminalCommand -Command 'help mosh'") -and
@@ -1673,15 +1148,13 @@ foreach ($scriptName in @(
             $content.Contains("'pane-scroll-after-focus-switch.png'") -and
             $content.Contains("'tab-scroll-first-return.png'") -and
             $content.Contains('singleTabSinglePaneRestored = $workspaceRestored') -and
-            $content.Contains('$activePaneBounds') -and
+            $content.Contains('$activePaneIds') -and
             $content.Contains('[Collections.Generic.List[string]]::new()') -and
-            $content.Contains('$activePaneBounds.Contains($bounds)') -and
+            $content.Contains('$activePaneIds.Count') -and
             $content.Contains('Get-LeanTTYActiveTerminalInputNodes') -and
             $content.Contains('Get-LeanTTYActiveTerminalSurfaceNodes') -and
             $content.Contains('-RequireTerminalFocus $false') -and
             $content.Contains('terminalFocusRestoredByCommandSubmit') -and
-            $content.Contains("attributes.opacity -eq '1.000000'") -and
-            $content.Contains("attributes.zIndex -eq '1'") -and
             $content.Contains('does not ') -and
             $content.Contains('satisfy physical-keyboard or Chinese/English IME acceptance') -and
             $content.Contains("'layout-search-open.json'") -and
@@ -1726,7 +1199,7 @@ foreach ($scriptName in @(
   "children": [
     {"attributes":{"type":"Stack","clickable":"true","description":"active","bounds":"[143,67][470,135]"},"children":[]},
     {"attributes":{"type":"Stack","clickable":"true","description":"content decoy","bounds":"[143,300][470,368]"},"children":[]},
-    {"attributes":{"type":"Web","visible":"true","originalText":"resource:/RAWFILE/terminal.html","bounds":"[121,135][2926,1926]"},"children":[]}
+    {"attributes":{"type":"XComponent","visible":"true","id":"native-terminal-pane-1-1","bounds":"[121,135][2926,1926]"},"children":[]}
   ]
 }
 '@ | ConvertFrom-Json -Depth 10
@@ -1742,10 +1215,10 @@ foreach ($scriptName in @(
   "children": [
     {"attributes":{"type":"__Common__","opacity":"1.000000","zIndex":"0","bounds":"[2584,67][2645,128]"},"children":[]},
     {"attributes":{"type":"__Common__","opacity":"1.000000","zIndex":"1","bounds":"[121,135][2926,1926]"},"children":[
-      {"attributes":{"type":"Web","visible":"true","originalText":"resource:/RAWFILE/terminal.html","bounds":"[121,135][2926,1926]"},"children":[]}
+      {"attributes":{"type":"XComponent","visible":"true","id":"native-terminal-pane-1-1","bounds":"[121,135][2926,1926]"},"children":[]}
     ]},
     {"attributes":{"type":"__Common__","opacity":"0.000000","zIndex":"0","bounds":"[121,135][2926,1926]"},"children":[
-      {"attributes":{"type":"Web","visible":"true","originalText":"resource:/RAWFILE/terminal.html","bounds":"[121,135][2926,1926]"},"children":[]}
+      {"attributes":{"type":"XComponent","visible":"true","id":"native-terminal-pane-1-1","bounds":"[121,135][2926,1926]"},"children":[]}
     ]}
   ]
 }
@@ -1753,7 +1226,7 @@ foreach ($scriptName in @(
         $activeSurfaces = @(Get-LeanTTYActiveTerminalSurfaceNodes -Layout $rendererRebuiltLayout)
         Assert-True (
             $activeSurfaces.Count -eq 1 -and
-            [string]$activeSurfaces[0].attributes.zIndex -eq '1'
+            [string]$activeSurfaces[0].attributes.id -eq 'native-terminal-pane-1-1'
         ) 'Renderer-rebuilt layout did not retain one observable active terminal Surface'
     }
     if ($scriptName -eq 'verify-proxy-jump-pc.ps1') {
@@ -1823,11 +1296,11 @@ foreach ($predictionContract in @(
     @{ Source = $moshManifest; Text = 'tag = "v0.1.1"' },
     @{ Source = $moshManifest; Text = 'version = "=0.1.1"' },
     @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_MOSH_OUTPUT mode=' },
-    @{ Source = $acceptanceSource; Text = 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=' },
+    @{ Source = ([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'native-page-acceptance-source.ps1'))); Text = 'ACCEPTANCE_NATIVE_WRITE_CONSUMED pane=' },
     @{ Source = $moshIndexPage; Text = 'runtime.viewModel.getMode() === TerminalMode.IDLE' },
     @{ Source = $moshSessionViewModel; Text = 'if (this.requestRuntimeRecoveryBeforeIdleInput(sourceSurface))' },
     @{ Source = $moshSessionViewModel; Text = '!surface.ownsMoshSessionPage()' },
-    @{ Source = $moshTerminalSurface; Text = 'return this.moshPageRequested || this.outputBuffer.isSessionPageActive()' },
+    @{ Source = $moshTerminalSurface; Text = 'return this.nativeMoshPage' },
     @{ Source = $moshIndexPage; Text = 'runtime.surface.ownsMoshSessionPage()' },
     @{ Source = $moshIndexPage; Text = 'this.recoverReclaimedRuntimeSessions(requestedPaneId)' },
     @{ Source = $moshSessionViewModel; Text = 'this.terminalResetPending' },
@@ -1862,31 +1335,25 @@ Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be p
     }
     function New-MoshOwnerTestLayout {
         $changed = $state.reads -ge $case.at
-        $webPath = if ($changed -and $case.change -eq 'reindex') { 'ROOT1,1' } else { 'ROOT1,0' }
-        $webId = if ($changed -and $case.change -eq 'replacement') { 'other-web' } else { 'owner-web' }
+        $path = if ($changed -and $case.change -in @('reindex','virtual')) { 'ROOT1,1,0' } else { 'ROOT1,0,0' }
+        $id = if ($changed -and $case.change -eq 'replacement') { 'other-component' } else { 'owner-component' }
         $windowId = if ($changed -and $case.change -eq 'window') { '2' } else { '1' }
-        if ($changed -and $case.change -eq 'missing') { $webId = '' }
-        $leafPath = if ($changed -and $case.change -eq 'virtual') { ',0,2,0' } else { ',0,0' }
+        if ($changed -and $case.change -eq 'missing') { $id = '' }
         $leaf = [pscustomobject]@{ attributes = @{
-            type = 'textField'; hint = 'Terminal input'; focused = 'true'; hostWindowId = $windowId
-            hierarchy = $webPath + $leafPath; accessibilityId = 'virtual-input'; bounds = '[10,10][30,30]'
+            type = $(if ($changed -and $case.change -eq 'nonterminal') { 'TextInput' } else { 'XComponent' })
+            id = 'native-terminal-pane-1-1'; focused = 'true'; hostWindowId = $windowId
+            hierarchy = $path; accessibilityId = $id; bounds = '[10,10][30,30]'
         }; children = @() }
-        $web = [pscustomobject]@{ attributes = @{
-            type = 'Web'; hierarchy = $webPath; accessibilityId = $webId; hostWindowId = $windowId
-        }; children = @($leaf) }
-        $children = @($web)
-        if ($changed -and $case.change -eq 'no-web') { $children = @($leaf) }
-        if ($changed -and $case.change -in @('duplicate', 'two-focused', 'peer')) {
-            $peerId = if ($case.change -eq 'duplicate') { $webId } else { 'peer-web' }
-            $peerFocus = if ($case.change -eq 'two-focused') { 'true' } else { 'false' }
-            $children += [pscustomobject]@{ attributes = @{
-                type = 'Web'; hierarchy = 'ROOT1,3'; accessibilityId = $peerId; hostWindowId = $windowId
-            }; children = @([pscustomobject]@{ attributes = @{
-                type = 'textField'; hint = 'Terminal input'; focused = $peerFocus; hostWindowId = $windowId
-                hierarchy = 'ROOT1,3,0,0'; bounds = '[40,10][60,30]'
-            }; children = @() }) }
+        $children = @([pscustomobject]@{ attributes=@{type='Stack'}; children=@($leaf) })
+        if ($changed -and $case.change -in @('duplicate','two-focused','peer')) {
+            $children += [pscustomobject]@{ attributes=@{type='Stack'}; children=@([pscustomobject]@{attributes=@{
+                type='XComponent'; id=$(if ($case.change -eq 'duplicate') { 'native-terminal-pane-1-1' } else { 'native-terminal-pane-1-2' })
+                accessibilityId=$(if ($case.change -eq 'duplicate') { $id } else { 'peer-component' })
+                focused=$(if ($case.change -eq 'two-focused') { 'true' } else { 'false' })
+                hostWindowId=$windowId; hierarchy='ROOT1,3,0'; bounds='[40,10][60,30]'
+            };children=@()}) }
         }
-        return [pscustomobject]@{ attributes = @{}; children = $children }
+        return [pscustomobject]@{ attributes=@{};children=$children }
     }
     $cases = @(
         @{ change='stable'; at=1; text=1; enter=1; cancel=0 },
@@ -1904,7 +1371,7 @@ Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be p
         @{ change='missing'; at=4; text=1; enter=0; cancel=0 },
         @{ change='duplicate'; at=1; text=0; enter=0; cancel=0 },
         @{ change='duplicate'; at=4; text=1; enter=0; cancel=0 },
-        @{ change='no-web'; at=1; text=0; enter=0; cancel=0 },
+        @{ change='nonterminal'; at=1; text=0; enter=0; cancel=0 },
         @{ change='two-focused'; at=4; text=1; enter=0; cancel=0 },
         @{ change='reindex'; at=5; retry='once'; text=2; enter=1; cancel=1 },
         @{ change='replacement'; at=5; retry='once'; text=1; enter=0; cancel=1 },
@@ -1991,8 +1458,8 @@ Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be p
     Invoke-Expression $definition.Extent.Text
     $logs = @('09-06 23:03:16.554 6549 6549 I tag: ACCEPTANCE_MOSH_INPUT_REJECTION receivedBytes=42',
         '09-06 23:03:16.555 6549 6549 I tag: ACCEPTANCE_MOSH_INPUT_REJECTION kind=full',
-        '09-06 23:03:16.557 6549 6549 I tag: ACCEPTANCE_TERMINAL_WRITE_ACK bytes=42',
-        '09-06 23:03:16.597 6549 6549 I tag: ACCEPTANCE_PAGE_REPLACED_FINGERPRINT 2,normal,71,36,0,0123456789abcdef') -join "`n"
+        '09-06 23:03:16.557 6549 6549 I tag: ACCEPTANCE_NATIVE_WRITE_CONSUMED pane=pane-1-1 sequence=8 owner=17 bytes=42',
+        '09-06 23:03:16.597 6549 6549 I tag: ACCEPTANCE_NATIVE_PAGE pane=pane-1-1 sequence=9 action=restored page=3 cols=71 rows=36 screen=0 viewport=0 total=36 hash=0123456789abcdef') -join "`n"
     $observation = Get-MoshInputRejectionObservation -Logs $logs
     Assert-True ($observation.nativeErrorKind -ceq 'Full' -and $observation.receivedOutputBytes -eq 42 -and
         $observation.outputAcknowledgedBeforeRestore) 'Input rejection lost its actual drain observations'
@@ -2016,106 +1483,7 @@ Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be p
         )
     }
 }
-& {
-    $fingerprintFunction = $moshVerifierAst.FindAll({
-        param($node)
-        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -eq 'Test-MoshPageFingerprintRestored'
-    }, $true) | Select-Object -First 1
-    Invoke-Expression $fingerprintFunction.Extent.Text
-    $original = [pscustomobject]@{ cols = 144; rows = 36; identity = 'normal,144,36,15,aaa' }
-    $same = [pscustomobject]@{ cols = 144; rows = 36; identity = 'normal,144,36,15,aaa' }
-    $changed = [pscustomobject]@{ cols = 144; rows = 36; identity = 'normal,144,36,15,bbb' }
-    Assert-True (Test-MoshPageFingerprintRestored $original $same) 'Equal geometry and framebuffer must pass'
-    Assert-True (-not (Test-MoshPageFingerprintRestored $original $changed)) 'Changed framebuffer must fail'
-    foreach ($geometry in @(@(71, 36), @(144, 18))) {
-        $changed.cols = $geometry[0]
-        $changed.rows = $geometry[1]
-        $failure = ''
-        try { Test-MoshPageFingerprintRestored $original $changed | Out-Null } catch { $failure = $_.Exception.Message }
-        Assert-True ($failure.StartsWith('[harness] Exact page fingerprint comparison')) `
-            'Different geometry must reject the comparison, not claim content loss or a pass'
-    }
-}
-& {
-    # Execute the real survivor reconnect branch; substitute only device/fixture boundaries.
-    $paneCloseBranches = @($moshVerifierAst.FindAll({ param($node)
-        $node -is [Management.Automation.Language.IfStatementAst] -and
-            $node.Clauses[0].Item1.Extent.Text -ceq '$Scenario -eq ''pane-close''' -and
-            $node.Clauses[0].Item2.Extent.Text.Contains('$closedPaneServerPid =')
-    }, $true))
-    Assert-True ($paneCloseBranches.Count -eq 1) 'Missing or ambiguous Pane-close survivor branch'
-    $paneCloseBody = [scriptblock]::Create((
-        $paneCloseBranches[0].Clauses[0].Item2.Statements.Extent.Text -join "`n"
-    ))
-    foreach ($definition in $moshVerifierAst.FindAll({ param($node)
-        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -in @('Get-MoshSessionPageBaseline', 'Test-MoshPageFingerprintRestored')
-    }, $true)) { Invoke-Expression $definition.Extent.Text }
-    function Write-LiveStatus {}
-    function Clear-LeanTTYAppLogs {}
-    function Close-ActiveMoshPane {}
-    function Test-MoshTerminalSearch { return $true }
-    function Reset-LeanTTYDeviceCommandInput {}
-    function Clear-MoshSessionControlFiles {}
-    function Submit-LocalCommand {}
-    function Wait-LeanTTYAppLog {}
-    function Submit-InteractiveValue {}
-    function Wait-ControlFile {}
-    function Read-ControlledLinuxPid { return 202 }
-    function Read-MoshSession { return @{ pid = 201; port = 60042; serverPort = 60042 } }
-    function Submit-MoshInput { $observations.commands++ }
-    function Wait-ControlFileMatch {}
-    function Wait-WslProcessAbsent { return 10 }
-    function Test-WslProcessPresent { return $true }
-    function Get-MoshLifecycleObservation { return @{ closed = $observations.closed; error = $false } }
-    function Get-MoshSnapshotFingerprint {
-        if ($observations.missingSnapshot -or $observations.visiblePageRead) {
-            throw '[harness] Saved Mosh page snapshot fingerprint was missing or ambiguous'
-        }
-        return $survivorOriginal
-    }
-    function Get-MoshTerminalFingerprint {
-        $observations.visiblePageRead = $true
-        $observations.closed = $false
-        return $survivorMosh
-    }
-    $attemptId = '0123456789abcdef'
-    $survivorOriginal = [pscustomobject]@{
-        generation = 1; cols = 144; rows = 36; identity = 'normal,144,36,8,survivor'
-    }
-    $survivorMosh = [pscustomobject]@{
-        generation = 2; cols = 144; rows = 36; identity = 'normal,144,36,0,remote'
-    }
-    foreach ($oldCols in @(71, 144)) {
-        $originalPageFingerprint = [pscustomobject]@{
-            generation = 7; cols = $oldCols; rows = 36; identity = "normal,$oldCols,36,0,closed-pane"
-        }
-        $moshPageFingerprint = $null
-        $originalPageHiddenDuringSession = $false
-        $observations = @{ commands = 0; missingSnapshot = $false; visiblePageRead = $false }
-        . $paneCloseBody
-        Assert-True ($originalPageFingerprint.identity -ceq $survivorOriginal.identity) (
-            'Survivor reconnect retained the closed Pane baseline, including when geometry matches'
-        )
-        Assert-True ($moshPageFingerprint.identity -ceq $survivorMosh.identity -and
-            $originalPageHiddenDuringSession -and $observations.commands -eq 1) (
-            'Original and Mosh fingerprints must both belong to the surviving Session'
-        )
-        Assert-True (Test-MoshPageFingerprintRestored $originalPageFingerprint $survivorOriginal) (
-            'Survivor restoration did not compare with its own baseline'
-        )
-    }
-    $observations = @{ commands = 0; missingSnapshot = $true; visiblePageRead = $false }
-    Assert-Throws { . $paneCloseBody } 'Reconnect must reject missing snapshot evidence, not reuse an old baseline'
-    $observations = @{ commands = 0; missingSnapshot = $false; visiblePageRead = $false }
-    $survivorMosh.generation = $survivorOriginal.generation
-    Assert-Throws { . $paneCloseBody } 'Reconnect must still prove a new Mosh page generation'
-    $survivorMosh.generation = 2
-    $observations = @{ commands = 0; missingSnapshot = $false; visiblePageRead = $false; closed = $true }
-    Assert-Throws { . $paneCloseBody } 'Fingerprint capture must not erase a pre-existing survivor close event'
-    Assert-True (-not $observations.visiblePageRead) 'Observe survivor lifecycle before fingerprint capture clears logs'
-}
+& (Join-Path $PSScriptRoot 'test-native-mosh-evidence.ps1')
 & {
     $focusFunction = $moshVerifierAst.FindAll({
         param($node)
@@ -2123,7 +1491,14 @@ Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be p
             $node.Name -eq 'Focus-MoshPane'
     }, $true) | Select-Object -First 1
     Invoke-Expression $focusFunction.Extent.Text
-    $paneLayout = $overlappingPaneLayout | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $paneLayout = [pscustomobject]@{ attributes=@{}; children=@(
+        foreach ($number in 1..2) {
+            [pscustomobject]@{ attributes=@{type='Stack'};children=@([pscustomobject]@{attributes=@{
+                type='XComponent';id="native-terminal-pane-1-$number";accessibilityId="component-$number"
+                hostWindowId='1';focused='false';bounds='[10,10][30,30]'
+            };children=@()}) }
+        }
+    ) }
     $paneLayout.children[1].children[0].attributes.bounds = '[1541,749][1560,790]'
     $script:paneFocusLayoutsRead = 0
     $script:paneFocusShortcuts = [Collections.Generic.List[string]]::new()
@@ -2162,16 +1537,6 @@ Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be p
         Focus-MoshPane -Side 'left' -Name 'ambiguous-focus'
     } -Message 'Mosh Pane focus accepted two focused owners'
 }
-$moshHashFunction = $moshVerifierAst.FindAll({
-    param($node)
-    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
-        $node.Name -eq 'Get-MoshAcceptanceTextHash'
-}, $true) | Select-Object -First 1
-Assert-True ($null -ne $moshHashFunction) 'Mosh verifier search hash helper is missing'
-Invoke-Expression $moshHashFunction.Extent.Text
-Assert-True (
-    (Get-MoshAcceptanceTextHash -Value 'help') -ceq '3871a3fa7c715c94'
-) 'Mosh verifier search hash does not match the acceptance Web implementation'
 foreach ($functionName in @(
     'ConvertTo-MoshIpv4Number',
     'Get-MoshEndpointRoute',
@@ -2414,8 +1779,8 @@ foreach ($moshContract in @(
     'Wait-MoshPredictionRelayDrop',
     'Submit-MoshCanonicalCommand',
     'predictionRelayDroppedPackets =',
-    'predictionVisibleLatencyMs =',
-    'predictionRenderLatencyMs =',
+    'predictionOutputLatencyMs =',
+    'predictionConsumptionLatencyMs =',
     'predictionWarmupSamples =',
     "@('uiInput', 'text', `$Text)",
     'Prediction measurement was invalidated by a terminal resize',
@@ -2428,7 +1793,7 @@ foreach ($moshContract in @(
     "plannedModelRequests = 0",
     "'agent-compatibility-wsl.sh'",
     'codex-direct-interaction.json',
-    'active-mosh-page-survived-arkweb-surface-rebuild-and-restored-the-original-page',
+    'active-mosh-page-survived-native-surface-rebuild-and-restored-the-original-page',
     'Invoke-MoshSurfaceRebuild',
     'moshPageRetainedAfterRebuild = $surfaceRebuildPageRetained',
     'injected-mosh-session-error-restored-the-original-page-and-rejected-session-output',
@@ -2606,27 +1971,15 @@ Assert-True (-not $moshVerifier.Contains('已连接 WLAN')) `
     'Mosh Wi-Fi switching still infers connection state from localized system UI text'
 
 Assert-True (
-    $acceptanceSource.Contains('acceptancePageReplacedFingerprint') -and
-    $acceptanceSource.Contains('acceptanceSnapshotFingerprint') -and
-    $acceptanceSource -match
-      '(?s)\$snapshotReplacement\s*=.*?if \(snapshot !== null\).*?reportAcceptanceSnapshotFingerprint\(\).*?for \(var j = 0;' -and
-    $acceptanceSource -match
-      '(?s)\$pageReplacementReplacement\s*=.*?var completeReplacement = function\(\).*?reportAcceptancePageReplacedFingerprint\(\).*?onComplete\(\)' -and
-    $moshVerifier.Contains('function Get-MoshSnapshotFingerprint') -and
-    $moshVerifier.Contains('ACCEPTANCE_SNAPSHOT_FINGERPRINT') -and
-    $moshVerifier.Contains('function Get-MoshPageReplacementFingerprint') -and
-    $moshVerifier.Contains('ACCEPTANCE_PAGE_REPLACED_FINGERPRINT') -and
+    $moshVerifier.Contains('function Get-MoshNativePageFingerprint') -and
+    $moshVerifier.Contains('ACCEPTANCE_NATIVE_PAGE pane=') -and
     $moshVerifier.Contains('restoredBeforeLocalOutput = $restoredPageFingerprint') -and
-    $moshVerifier.Contains('postExit = $postExitPageFingerprint')
-) 'Mosh page restoration lacks an acknowledged pre-local-output xterm fingerprint oracle'
-Assert-True (
-    $moshVerifier.Contains('function Get-MoshTerminalFingerprint') -and
-    $moshVerifier.Contains('ACCEPTANCE_TERMINAL_FINGERPRINT') -and
-    $moshVerifier.Contains('ACCEPTANCE_SEARCH_RESULT') -and
+    $moshVerifier.Contains('ACCEPTANCE_NATIVE_SEARCH_QUERY pane=') -and
+    $moshVerifier.Contains('ACCEPTANCE_NATIVE_SEARCH_RESULT pane=') -and
     $moshVerifier.Contains('Intended terminal Search field lost focus before query delivery') -and
-    -not $moshVerifier.Contains("-Name 'mosh-original-page-restored-search'") -and
-    -not $moshVerifier.Contains("-Name 'mosh-abnormal-original-page-restored-search'")
-) 'Mosh page restoration and Search must retain independent direct oracles'
+    -not $moshVerifier.Contains('ACCEPTANCE_SNAPSHOT_FINGERPRINT') -and
+    -not $moshVerifier.Contains('Get-LeanTTYTerminalInputWebOwner')
+) 'Mosh page restoration and native query generation must retain independent direct oracles'
 Assert-True (
     $moshVerifier.Contains('function Get-MoshEndpointRoute') -and
     $moshVerifier.Contains('endpointRoute') -and
@@ -2958,7 +2311,7 @@ $indexPage = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
 ) -Raw
 $terminalPane = Get-Content -LiteralPath (
-    Join-Path $repoRoot 'entry\src\main\ets\view\components\TerminalPane.ets'
+    Join-Path $repoRoot 'entry\src\main\ets\view\components\NativeTerminalPane.ets'
 ) -Raw
 $entryAbility = Get-Content -LiteralPath (
     Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
@@ -2998,9 +2351,9 @@ Assert-True (
 ) 'Config import/export physical verifier lost input, persistence, conflict, evidence or cleanup controls'
 Assert-True (
     $terminalPane.Contains('.onKeyPreIme') -and
-    $terminalPane.Contains('.onInterceptKeyEvent') -and
+    $terminalPane.Contains('.onKeyEvent') -and
     -not $terminalPane.Contains('.onKeyEventDispatch')
-) 'Terminal Web owns unhandled key dispatch; the generic component dispatcher must not shadow it'
+) 'Native terminal must route pre-IME and unconsumed IME keys through its owning key handler'
 Assert-True (
     -not $sessionViewModel.Contains('ACCEPTANCE_INPUT_SUBMIT') -and
     $acceptanceSource.Contains("import { ACCEPTANCE_TESTS } from 'BuildProfile'") -and
@@ -3176,7 +2529,7 @@ Assert-True (
 
 foreach ($productionSource in @(
     'entry\src\main\ets\pages\Index.ets',
-    'entry\src\main\ets\model\bridge\TerminalBridge.ets',
+    'entry\src\main\ets\model\terminal\NativeTerminalController.ets',
     'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets',
     'entry\src\main\ets\viewmodel\SessionViewModel.ets'
 )) {
@@ -3301,230 +2654,6 @@ Assert-True (
     $unexpectedRecoveryUninstallVerifier.Contains('exactCandidateReinstalled = $true')
 ) 'Unexpected-recovery uninstall scenario lost its fresh-install or durable-asset boundary'
 
-. (Join-Path $PSScriptRoot 'input-order-evidence.ps1')
-$traceLine = 'ACCEPTANCE_INPUT_ORDER 1234567;1;0;1;0,12,2,0,1,0,1,1,1,0,0,0'
-$traceParsed = ConvertFrom-LeanTTYInputOrderEvidence -Logs $traceLine -Token '1234567'
-Assert-True ($traceParsed.complete -and $traceParsed.rows.Count -eq 1 -and
-    $traceParsed.rows[0][2] -eq 2 -and -not $traceParsed.contentEqualityObserved) 'Numeric trace parsing failed'
-foreach ($invalidTrace in @('', ($traceLine + "`n" + $traceLine),
-    $traceLine.Replace(';0;1;', ';0;2;'), $traceLine.Replace('0,12,2', '1,12,2'),
-    $traceLine.Replace('0,12,2', '0,12,9'), $traceLine.Replace('0,12,2', '0,200001,2'),
-    ($traceLine + 'private-sentinel'), $traceLine.Replace(';1;0;1;', ';1;0;17;'))) {
-    Assert-Throws { ConvertFrom-LeanTTYInputOrderEvidence -Logs $invalidTrace -Token '1234567' } `
-        'Malformed, missing, duplicate or unbounded input-order evidence was accepted'
-}
-$earlyTrace = ConvertFrom-LeanTTYInputOrderEvidence -Logs $traceLine.Replace(';1;0;1;', ';3;0;1;') -Token '1234567'
-Assert-True (-not $earlyTrace.complete -and $earlyTrace.stopReason -eq 'mode-or-replay') 'Early trace end was promoted'
-$otherTrace = $traceLine.Replace('1234567', '7654321') + "`n" + $traceLine
-Assert-True ((ConvertFrom-LeanTTYInputOrderEvidence -Logs $otherTrace -Token '1234567').rows.Count -eq 1) `
-    'Trace token isolation failed'
-
-$attributionLine = 'ACCEPTANCE_INPUT_ORDER 1234567;1;0;1;0,1,2,0,1,0,1,31,31,0,0,1/1,200000,9,0,31,31,1,31,31,1,1,0'
-$attributionParsed = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $attributionLine -Token '1234567' -Mode 0
-Assert-True ($attributionParsed.complete -and $attributionParsed.summary.exact -and
-    $attributionParsed.rows.Count -eq 2 -and -not $attributionParsed.contentRecorded) 'Attribution evidence parser failed'
-foreach ($invalidAttribution in @('', ($attributionLine + "`n" + $attributionLine),
-    $attributionLine.Replace(';0;1;', ';0;2;'), $attributionLine.Replace(',9,0,31,31,1,', ',9,0,31,30,1,'),
-    $attributionLine.Replace('1,200000,9', '1,600001,9'), ($attributionLine + 'private-sentinel'))) {
-    Assert-Throws { ConvertFrom-LeanTTYInputAttributionEvidence -Logs $invalidAttribution -Token '1234567' -Mode 0 } `
-        'Invalid attribution trace was accepted'
-}
-Assert-Throws { ConvertFrom-LeanTTYInputAttributionEvidence -Logs $attributionLine -Token '1234567' -Mode 1 } `
-    'Different attribution mode was accepted'
-Assert-True (-not (ConvertFrom-LeanTTYInputAttributionEvidence -Logs $attributionLine.Replace(';1;0;1;', ';2;0;1;') `
-    -Token '1234567' -Mode 0).complete) 'Truncated attribution trace was promoted'
-
-$observerLine = 'ACCEPTANCE_OBSERVER_FINAL 1234567;6;1;180;1;0'
-Assert-True ((ConvertFrom-LeanTTYObserverEvidence -Logs $observerLine -Token '1234567' -Profile 6).exact) 'Observer final parser failed'
-foreach ($invalidObserver in @('', ($observerLine + "`n" + $observerLine), $observerLine.Replace(';6;', ';5;'),
-    $observerLine.Replace(';1;180;', ';0;180;'), $observerLine.Replace(';180;1;', ';179;1;'),
-    $observerLine.Replace('1234567', '7654321'), ($observerLine + 'private-sentinel'))) {
-    Assert-Throws { ConvertFrom-LeanTTYObserverEvidence -Logs $invalidObserver -Token '1234567' -Profile 6 } `
-        'Invalid or stale observer final accepted'
-}
-$observerMissing = ConvertFrom-LeanTTYObserverEvidence -Logs $observerLine.Replace(';180;1;0', ';179;0;19') -Token '1234567' -Profile 6
-Assert-True (-not $observerMissing.exact -and $observerMissing.firstMismatchIndex -eq 18) 'Observer mismatch hidden'
-$syntheticNative = ConvertFrom-LeanTTYObserverEvidence -Logs 'ACCEPTANCE_OBSERVER_FINAL 1234567;8;1;30;0;31' -Token '1234567' -Profile 8
-Assert-True ($syntheticNative.units -eq 30 -and -not $syntheticNative.exact) 'Synthetic missing native output was hidden'
-$syntheticRows = [Collections.Generic.List[string]]::new()
-for ($caseIndex = 0; $caseIndex -lt 50; $caseIndex++) {
-    $caseId = $caseIndex % 5
-    $outputUnits = if ($caseId -eq 1) { 0 } else { 1 }
-    $downSeen = if ($caseId -lt 2) { 1 } else { 0 }
-    $syntheticRows.Add("$caseIndex,$caseIndex,17,$caseId,$([Math]::Floor($caseIndex / 5)),1,1,$outputUnits,$outputUnits,$downSeen,0,1")
-}
-$syntheticRows.Add('50,50,9,8,40,30,0,40,0,0,0,0')
-$syntheticLines = @(for ($part = 0; $part -lt 4; $part++) {
-    'ACCEPTANCE_INPUT_ORDER 1234567;1;' + $part + ';4;' +
-        (($syntheticRows | Select-Object -Skip ($part * 16) -First 16) -join '/')
-}) -join "`n"
-$syntheticEvidence = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $syntheticLines -Token '1234567' -Mode 8
-Assert-True ($syntheticEvidence.complete -and $syntheticEvidence.syntheticCases.Count -eq 50 -and
-    $syntheticEvidence.summary.actualUnits -eq 30) 'Synthetic fixed-set evidence parser failed'
-Assert-True ($syntheticEvidence.eventKinds.syntheticCase -eq 17 -and $syntheticEvidence.eventColumns[3] -eq 'caseId' -and
-    $null -eq $syntheticEvidence.summary.textareaUnits) 'Synthetic schema mislabeled columns or invented final textarea measurement'
-$syntheticCancelled = ConvertFrom-LeanTTYInputAttributionEvidence -Logs 'ACCEPTANCE_INPUT_ORDER 1234567;3;0;1;0,10,9,8,40,0,0,0,0,0,0,0' -Token '1234567' -Mode 8
-Assert-True (-not $syntheticCancelled.complete -and $syntheticCancelled.syntheticCases.Count -eq 0) 'Cancelled synthetic run was promoted'
-foreach ($invalidSynthetic in @($syntheticLines.Replace('50,50,9,8,40,30', '50,50,9,8,40,31'),
-    $syntheticLines.Replace('0,0,17,0,0', '0,0,17,1,0'),
-    $syntheticLines.Replace(',0,1/', ',1,1/'), ($syntheticLines + "`n" + $syntheticLines))) {
-    Assert-Throws { ConvertFrom-LeanTTYInputAttributionEvidence -Logs $invalidSynthetic -Token '1234567' -Mode 8 } `
-        'Malformed synthetic sequence, totals or duplicate evidence accepted'
-}
-$chainLine = 'ACCEPTANCE_INPUT_ORDER 1234567;1;0;1;0,1,15,1,0,0,0,0,0,0,0,1/1,2,16,1,1,0,1,1,1,1,0,1/2,3,6,1,0,0,0,0,0,1,0,1/3,4,12,0,0,0,0,180,0,1,180,1/4,200000,9,4,180,180,1,180,180,1,1,0'
-$chainParsed = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $chainLine -Token '1234567' -Mode 4
-Assert-True ($chainParsed.complete -and $chainParsed.summary.exact -and $chainParsed.summary.expectedUnits -eq 180 -and
-    $null -eq $chainParsed.summary.domIsLettersOnly -and $chainParsed.rows.Count -eq 5) 'Chain evidence parser failed'
-foreach ($invalidChain in @($chainLine.Replace(',9,4,180,180,1,', ',9,4,31,31,1,'),
-    $chainLine.Replace(';0;1;', ';0;257;'), $chainLine.Replace('2,3,6,1,0', '2,3,6,0,0'),
-    $chainLine.Replace('1,2,16,1,1', '1,2,16,1,2'), $chainLine.Replace('1234567', '7654321'))) {
-    Assert-Throws { ConvertFrom-LeanTTYInputAttributionEvidence -Logs $invalidChain -Token '1234567' -Mode 4 } `
-        'Invalid chain evidence was accepted'
-}
-$chainMismatch = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $chainLine.Replace(',9,4,180,180,1,', ',9,4,180,179,0,') -Token '1234567' -Mode 4
-Assert-True ($chainMismatch.complete -and -not $chainMismatch.summary.exact) 'Missing input was hidden'
-
-& {
-    # Exercise the diagnostic owner with device boundaries replaced, not the parser.
-    $diagnosticAst = [Management.Automation.Language.Parser]::ParseFile(
-        (Join-Path $PSScriptRoot 'diagnose-text-input-pc.ps1'), [ref]$null, [ref]$null)
-    foreach ($name in @('Invoke-InputOrderDiagnostic', 'Get-SingleFocusedDiagnosticInputNode',
-        'Get-TextInputMismatchIndex')) {
-        $definition = $diagnosticAst.Find({ param($node)
-            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
-        }, $true)
-        Assert-True ($null -ne $definition) "Input diagnostic owner missing: $name"
-        . ([scriptblock]::Create($definition.Extent.Text))
-    }
-    $Scenario = 'input-attribution'; $hdc = 'unused'; $resolvedTarget = 'unused'; $appProcessId = '100'
-    $EvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) ('leantty-input-owner-test-' + [Guid]::NewGuid().ToString('N'))
-    function Wait-LeanTTYTerminalInputLayout { return @{} }
-    function Get-LeanTTYTerminalInputNodes { return @{ attributes = @{ focused = 'true' } } }
-    function Clear-LeanTTYAppLogs {}
-    function Invoke-HdcChecked { param($Hdc, $Target, $Arguments, $Operation) $deviceActions.Add($Operation) }
-    function Submit-LeanTTYDeviceCommand {
-        param($Hdc, $Target, $ProcessId, $Command, $Stage, $MaxInputAttempts, $ObservationSink, $InputNodeProvider)
-        Assert-True ($Command -cmatch '^__acceptance_input_attribution_[1578]_([1-9][0-9]{6})$' -and
-            $MaxInputAttempts -eq 1) 'Diagnostic arming must remain single-shot'
-        $probeState.token = $Matches[1]
-        $ObservationSink.Add([ordered]@{ enterCount = 1 })
-    }
-    function Wait-LeanTTYAppLog {
-        param($Hdc, $Target, $ProcessId, $Pattern, $TimeoutSeconds)
-        if ($Pattern -ceq 'Tab added: ') { return 'Tab added: owned-input-tab title=Terminal' }
-        if ($Pattern.StartsWith('Tab removed: ')) { return 'Tab removed: owned-input-tab' }
-        if ($Pattern.StartsWith('ACCEPTANCE_OBSERVER_READY') -or $Pattern.EndsWith(';0;0;0;')) { return $Pattern }
-        return $probeLogs.Replace('1234567', $probeState.token)
-    }
-    function Invoke-LeanTTYDeviceText {
-        param($Hdc, $Target, $InputNode, $Text)
-        $deliveredVectors.Add($Text)
-        if ($loseTarget) {
-            throw (New-LeanTTYTextInputFailure -Phase after -ExpectedNode $null -CurrentNodes @() `
-                -Message '[harness] controlled owner loss')
-        }
-    }
-    function Get-LastAcceptanceInputState { return $expectedVector }
-    function Reset-LeanTTYDeviceCommandInput { $probeState.resets++ }
-    foreach ($case in @(
-        @{ mode = 1; loseTarget = $false }, @{ mode = 5; loseTarget = $false },
-        @{ mode = 7; loseTarget = $false }, @{ mode = 8; loseTarget = $false },
-        @{ mode = 1; loseTarget = $true }
-    )) {
-        $AttributionMode = $case.mode; $loseTarget = $case.loseTarget
-        $probeState = @{ token = ''; resets = 0 }
-        $deliveredVectors = [Collections.Generic.List[string]]::new()
-        $deviceActions = [Collections.Generic.List[string]]::new()
-        $expectedVector = if ($AttributionMode -eq 1) { '0123456789abcdefghijklmnopqrstu' }
-            elseif ($AttributionMode -eq 8) { 'a' * 40 } else { 'ssh-keygen -R [127.0.0.1]:2223' * 6 }
-        $probeLogs = switch ($AttributionMode) {
-            1 { $attributionLine.Replace(',9,0,31,', ',9,1,31,') }
-            5 { 'ACCEPTANCE_OBSERVER_FINAL 1234567;5;1;180;1;0' }
-            7 { $chainLine + "`nACCEPTANCE_OBSERVER_FINAL 1234567;7;1;180;1;0`nACCEPTANCE_INPUT_CHAIN_NATIVE 1234567;1;180" }
-            8 { $syntheticLines + "`nACCEPTANCE_OBSERVER_FINAL 1234567;8;1;30;0;31`nACCEPTANCE_INPUT_CHAIN_NATIVE 1234567;30;30" }
-        }
-        $result = Invoke-InputOrderDiagnostic
-        $expectedDeliveries = if ($AttributionMode -eq 8) { 0 } else { 1 }
-        Assert-True ($result.vectorAttempts -eq $expectedDeliveries -and
-            $deliveredVectors.Count -eq $expectedDeliveries -and -not $result.vectorSubmitted -and
-            $result.armingObservations.Count -eq 1) 'Diagnostic injected or submitted an unexpected vector'
-        if ($expectedDeliveries -eq 1) {
-            Assert-True ($deliveredVectors[0] -ceq $expectedVector) 'Diagnostic changed the public input vector'
-        }
-        if ($loseTarget) {
-            Assert-True ($result.result -eq 'failed' -and $result.cleanup -eq 'failed' -and
-                $result.textTargetFailure.phase -eq 'after' -and $probeState.resets -eq 0 -and
-                $deviceActions.Count -eq 1 -and $result.trace.complete) (
-                'Owner loss must retain available trace without further reset or close keys'
-            )
-        } else {
-            Assert-True ($result.result -eq 'completed' -and $result.cleanup -eq 'passed' -and
-                $probeState.resets -eq 1 -and $deviceActions.Count -eq 2) 'Diagnostic did not close its completed probe'
-            if ($AttributionMode -eq 5) {
-                Assert-True ($null -eq $result.trace -and $result.native.exact -and
-                    -not $result.observationProfile.logsPolledDuringInjection -and
-                    -not $result.observationProfile.zeroOverhead) 'Observer control invented trace or zero overhead'
-            }
-            if ($AttributionMode -eq 8) {
-                Assert-True ($result.synthetic.mechanismReproduced -and -not $result.synthetic.deviceCauseProven) (
-                    'Synthetic mechanism must not be promoted to natural device causality'
-                )
-            }
-        }
-    }
-}
-
-& {
-    # Run the real performance submission and JSON reader, not a parallel validator.
-    $ast = [Management.Automation.Language.Parser]::ParseFile(
-        (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1'), [ref]$null, [ref]$null)
-    foreach ($name in @('Invoke-AuthPerfSample', 'Get-AuthPerfRenderRecord')) {
-        $definition = @($ast.FindAll({ param($node)
-            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
-        }, $true))
-        Assert-True ($definition.Count -eq 1) "Missing or ambiguous performance owner: $name"
-        Invoke-Expression $definition[0].Extent.Text
-    }
-    $state = @{ commands = [Collections.Generic.List[string]]::new(); failure = ''; waits = 0; logs = '' }
-    function Submit-ConnectedInput { param($Text) $state.commands.Add($Text) }
-    function Get-FixtureLogMatchCount { return 0 }
-    function Wait-FixtureLogMatchCount {
-        $state.waits++
-        if (($state.failure -eq 'prepare' -and $state.waits -eq 1) -or
-            ($state.failure -eq 'run' -and $state.waits -eq 2)) { throw 'controlled fixture timeout' }
-    }
-    function Clear-LeanTTYAppLogs {}
-    function Wait-AuthLog { if ($state.failure -eq 'render') { throw 'controlled render timeout' } }
-    function Get-LeanTTYAppLogs { return $state.logs }
-    $valid = @{ caseId = 'fixture_01'; schemaVersion = 2; contentOrdered = $true
-        visibleTailConfirmed = $true; mismatches = 0; completenessPercent = 100 }
-    $state.logs = 'PERF render ' + ($valid | ConvertTo-Json -Compress)
-    $record = Invoke-AuthPerfSample -CaseId fixture_01
-    Assert-True ($record.commandAttempts -eq 1 -and $state.commands.Count -eq 2) (
-        'Valid schema-2 evidence must prepare and run exactly once'
-    )
-    foreach ($case in @(
-        @{ field = 'schemaVersion'; value = 1 },
-        @{ field = 'contentOrdered'; value = $false },
-        @{ field = 'visibleTailConfirmed'; value = $false },
-        @{ field = 'mismatches'; value = 1 },
-        @{ field = 'mismatches'; value = $null },
-        @{ field = 'caseId'; value = 'another_case' }
-    )) {
-        $bad = $valid.Clone(); $bad[$case.field] = $case.value
-        $state.logs = 'PERF render ' + ($bad | ConvertTo-Json -Compress)
-        $state.commands.Clear(); $state.waits = 0
-        Assert-Throws { Invoke-AuthPerfSample -CaseId fixture_01 } (
-            "Headline completeness must not hide invalid evidence: $($case.field)"
-        )
-        Assert-True ($state.commands.Count -eq 2) 'Rejected evidence must not resubmit the stream'
-    }
-    foreach ($failure in @('prepare', 'run', 'render')) {
-        $state.failure = $failure; $state.commands.Clear(); $state.waits = 0
-        Assert-Throws { Invoke-AuthPerfSample -CaseId fixture_01 } 'Unknown outcomes must stop without retries'
-        $expectedCommands = if ($failure -eq 'prepare') { 1 } else { 2 }
-        Assert-True ($state.commands.Count -eq $expectedCommands) 'An uncertain stage dispatched more input'
-    }
-}
+& (Join-Path $PSScriptRoot 'test-native-performance-evidence.ps1')
 
 Write-Host 'Device regression helper tests passed.' -ForegroundColor Green

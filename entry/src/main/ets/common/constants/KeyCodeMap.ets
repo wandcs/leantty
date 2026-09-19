@@ -81,7 +81,7 @@ export class KeyCodeMap {
     return ''
   }
 
-  private static toPrintable(keyCode: number, shiftKey: boolean): string {
+  static toPrintable(keyCode: number, shiftKey: boolean): string {
     if (keyCode >= 2017 && keyCode <= 2042) {
       return String.fromCharCode(keyCode - 2017 + (shiftKey ? 65 : 97))
     }

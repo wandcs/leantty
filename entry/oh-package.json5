@@ -7,6 +7,7 @@
   "license": "Apache-2.0",
   "repository": "https://github.com/wandcs/leantty",
   "dependencies": {
-    "libleantty_ssh.so": "file:./src/main/cpp/types/libleantty_ssh"
+    "libleantty_ssh.so": "file:./src/main/cpp/types/libleantty_ssh",
+    "libleantty_terminal.so": "file:./src/main/cpp/types/libleantty_terminal"
   }
 }

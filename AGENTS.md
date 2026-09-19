@@ -12,6 +12,13 @@
 - Files under `docs/archive/` are historical and do not authorize new work.
 - Do not add concepts, dependencies or abstraction layers without passing the
   decision rules in the project principles.
+- Obtain explicit maintainer confirmation before starting compatibility work
+  that adds complexity, including fallback backends, adaptation layers, special
+  branches or expanded support for exceptional environments. First explain the
+  affected scenario, evidence of need, benefit, maintenance and testing cost,
+  and simpler alternatives. This gate includes implementation probes; a general
+  instruction to continue development is not approval. Follow the compatibility
+  approval rule in `docs/project-principles.md` section 3.
 - Preserve unrelated worktree changes.
 - Apply `docs/project-principles.md` §4.9 and `docs/quality-strategy.md` ->
   "Delivery-efficiency decisions and safeguards": default to affected checks,

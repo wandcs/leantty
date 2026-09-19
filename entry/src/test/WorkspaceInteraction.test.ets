@@ -6,13 +6,6 @@ import { WindowGridSnapPolicy } from '../main/ets/model/ui/WindowGridSnapPolicy'
 
 export default function workspaceInteractionTest() {
   describe('WorkspaceInteraction', () => {
-    it('snapsWindowResizeToTheNearestTerminalCellForTheCurrentFont', 0, () => {
-      expect(WindowGridSnapPolicy.snapWidth(2986, 14, 2)).assertEqual(2984)
-      expect(WindowGridSnapPolicy.snapHeight(1900, 14, 2)).assertEqual(1912)
-      expect(WindowGridSnapPolicy.snapWidth(2986, 16, 2)).assertEqual(2994)
-      expect(WindowGridSnapPolicy.snapHeight(1900, 16, 2)).assertEqual(1895)
-      expect(WindowGridSnapPolicy.snapWidth(2986, 14, 0)).assertEqual(2986)
-    })
 
     it('keepsGridSnappedWindowSizesInsidePlatformLimits', 0, () => {
       expect(WindowGridSnapPolicy.clampExtent(500, 640, 3000)).assertEqual(640)

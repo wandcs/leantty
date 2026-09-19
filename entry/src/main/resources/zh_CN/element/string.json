@@ -58,6 +58,10 @@
     { "name": "search_next_match", "value": "下一个匹配项，Enter" },
     { "name": "search_close", "value": "关闭查找，Esc" },
     { "name": "search_type_to_find", "value": "输入要查找的内容" },
-    { "name": "search_no_results", "value": "未找到结果" }
+    { "name": "search_no_results", "value": "未找到结果" },
+    { "name": "search_query_too_large", "value": "查找内容超过 1 MiB（UTF-8），请缩短后重试。" },
+    { "name": "search_busy", "value": "终端正忙，请按 Enter 重试查找。" },
+    { "name": "terminal_display_unavailable", "value": "终端暂时无法显示，输入已暂停。" },
+    { "name": "terminal_display_retry", "value": "重试显示" }
   ]
 }

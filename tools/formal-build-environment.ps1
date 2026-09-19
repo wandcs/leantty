@@ -7,6 +7,24 @@ function Test-LeanTTYOhpmLockfileTextEqual {
         $utf8.GetString($After).Replace("`r`n", "`n").TrimEnd("`n")
 }
 
+function Resolve-LeanTTYHarmonySdk {
+    param([Parameter(Mandatory)][string]$DevEcoHome, [string]$NativeHome = $env:OHOS_NATIVE_HOME)
+    $native = if ([string]::IsNullOrWhiteSpace($NativeHome)) {
+        Join-Path $DevEcoHome 'sdk/default/openharmony/native'
+    } else { $NativeHome }
+    $native = [IO.Path]::GetFullPath($native).TrimEnd('\', '/')
+    $openHarmony = Split-Path $native -Parent
+    $sdkHome = Split-Path (Split-Path $openHarmony -Parent) -Parent
+    $nativeMetadata = Get-Content -LiteralPath (Join-Path $native 'oh-uni-package.json') -Raw | ConvertFrom-Json
+    $etsMetadata = Get-Content -LiteralPath (Join-Path $openHarmony 'ets/oh-uni-package.json') -Raw | ConvertFrom-Json
+    if ($nativeMetadata.apiVersion -ne '24' -or $etsMetadata.apiVersion -ne '24' -or
+        $nativeMetadata.version -cne $etsMetadata.version) {
+        throw 'LeanTTY requires one matching API 24 Native/ETS SDK'
+    }
+    return [pscustomobject]@{ sdkHome = $sdkHome; openHarmony = $openHarmony; native = $native;
+        version = [string]$nativeMetadata.version }
+}
+
 function Resolve-LeanTTYDevEcoBuildTools {
     param([string]$DevEcoHome = $env:DEVECO_HOME)
 

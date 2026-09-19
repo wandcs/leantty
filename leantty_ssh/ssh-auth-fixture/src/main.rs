@@ -68,6 +68,20 @@ const PERF_OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
 const PASTE_PREPARE_COMMAND: &str = "ltty-paste-prepare";
 const INPUT_CHECK_COMMAND: &str = "ltty-input-check";
 const TERMINAL_DIRTY_COMMAND: &str = "ltty-terminal-dirty";
+const TERMINAL_SAMPLE_COMMAND: &str = "ltty-terminal-sample";
+// Fixed public output, never arbitrary shell execution or caller-provided OSC.
+const TERMINAL_SAMPLE: &str = concat!(
+    "\r\nLTTY_NATIVE_SAMPLE_BEGIN\r\n",
+    "\x1b[0mNORMAL \x1b[1mBOLD \x1b[0;3mITALIC \x1b[0;2mFAINT\x1b[0m\r\n",
+    "\x1b[4:2mDOUBLE \x1b[4:3;58:2::255:0:0mCURLY ",
+    "\x1b[0;4:4mDOT \x1b[4:5mDASH \x1b[0;9mSTRIKE \x1b[0;53mOVER\x1b[0m\r\n",
+    "\x1b[38;2;255;128;0mRGB\x1b[0m Unicode: 中文 😀 e\u{301}\r\n",
+    "Plain link: https://example.com/\r\n",
+    "\x1b]8;;https://example.org/\x1b\\OSC8 link\x1b]8;;\x1b\\\r\n",
+    "\x1b]0;UNTRUSTED_REMOTE_TITLE\x07",
+    "\x1b]52;c;8J+YgA==\x07",
+    "LTTY_NATIVE_SAMPLE_END\r\nfixture> "
+);
 const EXIT_COMMAND: &str = "ltty-exit";
 const BELL_COMMAND: &str = "ltty-bell";
 const BELL_MIN_DELAY_MS: u64 = 100;
@@ -1937,6 +1951,10 @@ impl Handler for FixtureServer {
                 );
                 session.data(channel, response.into_bytes())?;
             }
+            Some(FixtureCommand::TerminalSample) => {
+                eprintln!("terminal sample bytes={} state=sent", TERMINAL_SAMPLE.len());
+                session.data(channel, TERMINAL_SAMPLE.as_bytes())?;
+            }
             Some(FixtureCommand::Exit) => {
                 eprintln!("shell command=exit result=closed");
                 session.data(channel, b"logout\r\n".as_slice())?;
@@ -2025,6 +2043,7 @@ enum FixtureCommand {
     Paste(PasteRequest),
     InputCheck(String),
     TerminalDirty(String),
+    TerminalSample,
     Exit,
     Bell(BellRequest),
 }
@@ -2041,6 +2060,12 @@ fn parse_fixture_command(input: &[u8]) -> Option<FixtureCommand> {
     let kind = parts.next()?;
     if kind == EXIT_COMMAND {
         return parts.next().is_none().then_some(FixtureCommand::Exit);
+    }
+    if kind == TERMINAL_SAMPLE_COMMAND {
+        return parts
+            .next()
+            .is_none()
+            .then_some(FixtureCommand::TerminalSample);
     }
     let case_id = parts.next()?;
     if kind == INPUT_CHECK_COMMAND {
@@ -3199,6 +3224,17 @@ MOSH CONNECT 60043 4NeCCgvZFe2RnPgrcU1PQw\n",
             Some(FixtureCommand::TerminalDirty("dirty01".to_string()))
         );
         assert_eq!(parse_fixture_command(b"ltty-terminal-dirty bad:id"), None);
+        assert_eq!(
+            parse_fixture_command(b"ltty-terminal-sample"),
+            Some(FixtureCommand::TerminalSample)
+        );
+        assert_eq!(
+            parse_fixture_command(b"ltty-terminal-sample injected"),
+            None
+        );
+        assert!(TERMINAL_SAMPLE.contains("Unicode: 中文 😀 e\u{301}"));
+        assert!(TERMINAL_SAMPLE.contains("\x1b]52;c;8J+YgA==\x07"));
+        assert!(TERMINAL_SAMPLE.len() < 1024);
         assert_eq!(
             parse_fixture_command(b"ltty-exit"),
             Some(FixtureCommand::Exit)

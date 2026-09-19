@@ -1,0 +1,28 @@
+{
+  "ghosttyCommit": "82938b633ba646db38591d969c3c526332bd7e65",
+  "ghosttyUrl": "https://github.com/ghostty-org/ghostty/archive/82938b633ba646db38591d969c3c526332bd7e65.zip",
+  "ghosttySha256": "ad0127fbae7046b0fed3ab31112d47aeaa1a8e61909893a52c1b8fe1f5a93949",
+  "zigVersion": "0.16.0",
+  "zigUrl": "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip",
+  "zigSha256": "68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e",
+  "packages": [
+    {
+      "name": "uucode.tar.gz",
+      "url": "https://deps.files.ghostty.org/uucode-2826a37a4562284fdacd8fa029d49509cc9bffcd.tar.gz",
+      "sha256": "7e76fc7fab1e7ac728c52b35bbb3e5b8c639841abfc7fe1a4bcb13050594bc9e",
+      "zigHash": "uucode-0.2.0-ZZjBPlK5VADj7fdoq7G8LIHzD5o6FSkcBXXrRWr4jnrA"
+    },
+    {
+      "name": "zlib.tar.gz",
+      "url": "https://deps.files.ghostty.org/zlib-1220fed0c74e1019b3ee29edae2051788b080cd96e90d56836eea857b0b966742efb.tar.gz",
+      "sha256": "17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c",
+      "zigHash": "N-V-__8AAB0eQwD-0MdOEBmz7intriBReIsIDNlukNVoNu6o"
+    },
+    {
+      "name": "themes.tgz",
+      "url": "https://deps.files.ghostty.org/ghostty-themes-release-20260831-151010-752a9c0.tgz",
+      "sha256": "83653eb837baeb5bfc7d50c91b7d44772796e08c1c243134e11c5edf6c8d15c5",
+      "zigHash": "N-V-__8AAEFmBABuDGOKxAI6VMg41b9euMZ-z7HS9EcUdaor"
+    }
+  ]
+}

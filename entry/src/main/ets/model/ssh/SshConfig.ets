@@ -46,12 +46,24 @@ export class SshConfigHost {
 }
 
 export class SshConfig {
+  // Application configuration is shared; command input and history remain Pane-owned.
+  private static shared: SshConfig | null = null
   private hosts: SshConfigHost[] = []
   private loaded: boolean = false
   private sourceText: string = ''
   private pendingUpserts: string[] = []
   private pendingRemovals: string[] = []
   private managedAliases: string[] = []
+
+  static getShared(context: common.Context): SshConfig {
+    let config: SshConfig | null = SshConfig.shared
+    if (config === null) {
+      config = new SshConfig()
+      config.load(context)
+      SshConfig.shared = config
+    }
+    return config
+  }
 
   load(context: common.Context): void {
     this.hosts = []
@@ -206,15 +218,7 @@ export class SshConfig {
   }
 
   saveConfig(context: common.Context): void {
-    let sshDir: string = FileUtils.getSshDir(context)
-    FileUtils.ensureDir(sshDir)
-    let configPath: string = sshDir + '/config'
-    let content: string = this.previewConfigText()
-    if (this.sourceText.length > 0) {
-      FileUtils.writeTextFile(configPath + '.leantty.bak', this.sourceText)
-    }
-    DurableStateManager.commitSshConfig(context, content)
-    this.loadFromText(content)
+    this.commitConfigText(context, this.previewConfigText())
   }
 
   previewConfigText(): string {
@@ -238,13 +242,20 @@ export class SshConfig {
   }
 
   private commitConfigText(context: common.Context, content: string): void {
-    let sshDir: string = FileUtils.getSshDir(context)
-    FileUtils.ensureDir(sshDir)
-    if (this.sourceText.length > 0) {
-      FileUtils.writeTextFile(sshDir + '/config.leantty.bak', this.sourceText)
+    let previous: string = this.sourceText
+    try {
+      let sshDir: string = FileUtils.getSshDir(context)
+      FileUtils.ensureDir(sshDir)
+      if (previous.length > 0) {
+        FileUtils.writeTextFile(sshDir + '/config.leantty.bak', previous)
+      }
+      DurableStateManager.commitSshConfig(context, content)
+      this.loadFromText(content)
+    } catch (e) {
+      // A failed commit must not leave an uncommitted Host visible to other Panes.
+      this.loadFromText(previous)
+      throw new Error('SSH config was not saved: ' + e)
     }
-    DurableStateManager.commitSshConfig(context, content)
-    this.loadFromText(content)
   }
 
   private validateImportedText(content: string, allowEmpty: boolean): void {

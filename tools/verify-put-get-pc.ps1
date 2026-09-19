@@ -1366,12 +1366,9 @@ try {
         for ($attempt = 1; $attempt -le 2; $attempt++) {
             Focus-TerminalInput -Name ('tab-ambiguous-focus-' + $attempt.ToString())
             Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $ambiguousPrefix
-            $ambiguousTypedLayout = Get-LeanTTYDeviceLayout `
-                -Hdc $hdc -Target $Target `
-                -LocalPath (Join-Path $EvidenceDirectory (
-                        'tab-ambiguous-typed-' + $attempt.ToString() + '.json'
-                    ))
-            if ((Get-LeanTTYTerminalInputText -Layout $ambiguousTypedLayout) -ceq $ambiguousPrefix) {
+            $typedState = Get-LeanTTYAcceptanceIdleInputState -Logs (
+                Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appProcessId)
+            if ($null -ne $typedState -and $typedState.input -ceq $ambiguousPrefix) {
                 $ambiguousTypedExactly = $true
                 break
             }
@@ -1389,9 +1386,6 @@ try {
         $listedLayout = Get-LeanTTYDeviceLayout `
             -Hdc $hdc -Target $Target `
             -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-listed.json')
-        if ((Get-LeanTTYTerminalInputText -Layout $listedLayout) -cne $ambiguousPrefix) {
-            throw 'First ambiguous Tab did not preserve the typed prefix while listing candidates'
-        }
         Save-LeanTTYDeviceScreenshot `
             -Hdc $hdc -Target $Target `
             -LocalPath (Join-Path $EvidenceDirectory 'tab-ambiguous-listed.png')

@@ -314,19 +314,20 @@ if (-not $deveco) {
     }
 }
 if (-not $deveco) { throw 'DevEco Studio not found. Set DEVECO_HOME.' }
+$sdk = Resolve-LeanTTYHarmonySdk -DevEcoHome $deveco
 
 $nodeExe = Join-Path $deveco 'tools\node\node.exe'
 $hvigorJs = Join-Path $deveco 'tools\hvigor\bin\hvigorw.js'
 $ohpm = Join-Path $deveco 'tools\ohpm\bin\ohpm.bat'
 $jbrBin = Join-Path $deveco 'jbr\bin'
 $javaExe = Join-Path $jbrBin 'java.exe'
-$signToolJar = Join-Path $deveco 'sdk\default\openharmony\toolchains\lib\hap-sign-tool.jar'
+$signToolJar = Join-Path $sdk.openHarmony 'toolchains\lib\hap-sign-tool.jar'
 if (-not (Test-Path -LiteralPath $ohpm -PathType Leaf)) {
     throw "DevEco OHPM tool is missing: $ohpm"
 }
 
 $env:NODE_OPTIONS = ''
-$env:DEVECO_SDK_HOME = Join-Path $deveco 'sdk'
+$env:DEVECO_SDK_HOME = $sdk.sdkHome
 $env:JAVA_HOME = Join-Path $deveco 'jbr'
 $env:PATH = "$jbrBin;$env:PATH"
 
@@ -344,7 +345,9 @@ if ($Clean) {
 }
 
 $nativeTypePackage = Join-Path $repoRoot 'entry\oh_modules\libleantty_ssh.so'
-if (-not (Test-Path -LiteralPath $nativeTypePackage -PathType Container)) {
+$terminalTypePackage = Join-Path $repoRoot 'entry\oh_modules\libleantty_terminal.so'
+if (-not (Test-Path -LiteralPath $nativeTypePackage -PathType Container) -or
+    -not (Test-Path -LiteralPath $terminalTypePackage -PathType Container)) {
     if ($Offline) {
         throw 'Offline build requires prepare-formal-build-inputs.ps1 first'
     }
@@ -360,13 +363,17 @@ if (-not (Test-Path -LiteralPath $nativeTypePackage -PathType Container)) {
     }
 }
 
-$nativeArgs = @{}
+$nativeArgs = @{ SdkNativeHome = $sdk.native }
 if ($ForceNative -or $Clean) { $nativeArgs['Force'] = $true }
 if ($Offline) { $nativeArgs['Offline'] = $true }
 & (Join-Path $PSScriptRoot 'build-native.ps1') @nativeArgs
 if ($LASTEXITCODE -ne 0) { throw 'ARM64 native build failed' }
 $nativeSo = Join-Path $repoRoot 'entry\libs\arm64-v8a\libleantty_ssh.so'
 if (-not (Test-Path -LiteralPath $nativeSo)) { throw "Native output missing: $nativeSo" }
+
+& (Join-Path $PSScriptRoot 'build-terminal-native.ps1') -Offline:$Offline `
+    -SdkNativeHome $sdk.native -Acceptance:($BuildMode -eq 'debug')
+if ($LASTEXITCODE -ne 0) { throw 'ARM64 terminal build failed' }
 
 $hapArgs = @(
     $hvigorJs,
@@ -549,6 +556,19 @@ if ($Metadata) {
         $noticeArtifacts += [ordered]@{
             path = Get-RepoRelativePath $noticeDestination
             sha256 = (Get-FileHash -LiteralPath $noticeDestination -Algorithm SHA256).Hash
+        }
+    }
+
+    $terminalLicenseDir = Join-Path $licenseDir 'terminal-native'
+    New-Item -ItemType Directory -Force -Path $terminalLicenseDir | Out-Null
+    $terminalNotices = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'build/native-terminal/licenses') -File)
+    if ($terminalNotices.Count -ne 7) { throw 'Pinned native terminal notices are incomplete' }
+    foreach ($notice in $terminalNotices) {
+        $destination = Join-Path $terminalLicenseDir $notice.Name
+        Copy-Item -LiteralPath $notice.FullName -Destination $destination -Force
+        $noticeArtifacts += [ordered]@{
+            path = Get-RepoRelativePath $destination
+            sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
         }
     }
 

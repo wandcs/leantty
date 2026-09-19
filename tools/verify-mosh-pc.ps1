@@ -340,7 +340,6 @@ $moshPageDiscardedAfterSession = $false
 $originalPageFingerprint = $null
 $moshPageFingerprint = $null
 $restoredPageFingerprint = $null
-$postExitPageFingerprint = $null
 $inputRejectionEvidence = $null
 $agentCompatibilityPassed = $false
 $agentVersion = ''
@@ -360,10 +359,10 @@ $predictionAlwaysClosedGracefully = $false
 $predictionRelayDelayMs = 40
 $predictionRttBaselineMs = -1
 $predictionConfirmationThresholdMs = -1
-$predictionVisibleLatencyMs = -1
-$predictionRenderLatencyMs = -1
-$predictionOutageVisibleLatencyMs = -1
-$predictionOutageRenderLatencyMs = -1
+$predictionOutputLatencyMs = -1
+$predictionConsumptionLatencyMs = -1
+$predictionOutageOutputLatencyMs = -1
+$predictionOutageConsumptionLatencyMs = -1
 $predictionRelayDroppedPackets = 0
 $predictionWarmupSamples = [Collections.Generic.List[object]]::new()
 $paneCloseOldOutputAbsent = $false
@@ -942,7 +941,7 @@ function Focus-ActiveTerminalInput {
                     if ($focusedInputs.Count -ne 1 -or -not (Test-LeanTTYSameTextInputTarget `
                             -ExpectedNode $node -CurrentNode $focusedInputs[0] `
                             -ExpectedLayout $layout -CurrentLayout $focusedLayout)) {
-                        throw '[harness] Mosh focus changed its intended native Web'
+                        throw '[harness] Mosh focus changed its intended native terminal'
                     }
                     $layout = $focusedLayout
                     $node = $focusedInputs[0]
@@ -952,11 +951,11 @@ function Focus-ActiveTerminalInput {
                 $focusedInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $layout)
                 if ($focusedInputs.Count -ne 1 -or
                     -not [object]::ReferenceEquals($node, $focusedInputs[0]) -or
-                    $null -eq (Get-LeanTTYTerminalInputWebOwner -Layout $layout -InputNode $node)) {
-                    throw '[harness] Mosh input requires one focused terminal with a native Web owner'
+                    -not (Test-LeanTTYSameTextInputTarget -ExpectedNode $node -CurrentNode $node -ExpectedLayout $layout -CurrentLayout $layout)) {
+                    throw '[harness] Mosh input requires one uniquely identified focused native terminal'
                 }
                 # Keep the node and the layout that owns it together only for
-                # this command. Virtual textarea paths may change after output.
+                # this command. Layout paths may change after output.
                 return [pscustomobject]@{ node = $node; layout = $layout }
             }
             return $node
@@ -1172,22 +1171,22 @@ function Get-MoshPredictionTiming {
         "(?m)^(?<timestamp>\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}).*" +
         "ACCEPTANCE_MOSH_OUTPUT mode=$Mode,bytes=[1-9][0-9]*\s*$"
     )
-    $render = [regex]::Match(
+    $consumption = [regex]::Match(
         $Logs,
         '(?m)^(?<timestamp>\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3}).*' +
-        'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=[1-9][0-9]*\s*$'
+        'ACCEPTANCE_NATIVE_WRITE_CONSUMED [^\r\n]* bytes=[1-9][0-9]*\s*$'
     )
-    if (-not $input.Success -or -not $output.Success -or -not $render.Success) {
-        throw '[harness] Prediction timing did not contain one input, public VT output and renderer ACK'
+    if (-not $input.Success -or -not $output.Success -or -not $consumption.Success) {
+        throw '[harness] Prediction timing did not contain one input, public VT output and native worker consumption'
     }
     $inputTime = ConvertFrom-MoshHilogTimestamp -Timestamp $input.Groups['timestamp'].Value
     $outputTime = ConvertFrom-MoshHilogTimestamp -Timestamp $output.Groups['timestamp'].Value
-    $renderTime = ConvertFrom-MoshHilogTimestamp -Timestamp $render.Groups['timestamp'].Value
+    $consumptionTime = ConvertFrom-MoshHilogTimestamp -Timestamp $consumption.Groups['timestamp'].Value
     if ($outputTime -lt $inputTime) { $outputTime = $outputTime.AddYears(1) }
-    if ($renderTime -lt $inputTime) { $renderTime = $renderTime.AddYears(1) }
+    if ($consumptionTime -lt $inputTime) { $consumptionTime = $consumptionTime.AddYears(1) }
     return [pscustomobject][ordered]@{
-        visibleLatencyMs = [long]($outputTime - $inputTime).TotalMilliseconds
-        renderLatencyMs = [long]($renderTime - $inputTime).TotalMilliseconds
+        outputLatencyMs = [long]($outputTime - $inputTime).TotalMilliseconds
+        consumptionLatencyMs = [long]($consumptionTime - $inputTime).TotalMilliseconds
     }
 }
 
@@ -1217,24 +1216,24 @@ function Invoke-MoshPredictionProbe {
             -Pattern "ACCEPTANCE_MOSH_OUTPUT mode=$Mode,bytes=[1-9][0-9]*" `
             -TimeoutSeconds 10
         $logs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-            -Pattern 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=[1-9][0-9]*' -TimeoutSeconds 10
+            -Pattern 'ACCEPTANCE_NATIVE_WRITE_CONSUMED [^\r\n]* bytes=[1-9][0-9]*' -TimeoutSeconds 10
         $timing = Get-MoshPredictionTiming -Logs $logs -Mode $Mode
         $predictionWarmupSamples.Add([pscustomobject][ordered]@{
             mode = $Mode
             byteIndex = $index + 1
-            visibleLatencyMs = $timing.visibleLatencyMs
-            renderLatencyMs = $timing.renderLatencyMs
+            outputLatencyMs = $timing.outputLatencyMs
+            consumptionLatencyMs = $timing.consumptionLatencyMs
         }) | Out-Null
         if ($index -eq 0 -and $ExpectVisible) {
-            $script:predictionRttBaselineMs = $timing.visibleLatencyMs
+            $script:predictionRttBaselineMs = $timing.outputLatencyMs
             if ($predictionRttBaselineMs -le $predictionRelayDelayMs) {
                 throw '[harness] Controlled prediction relay delay was not observable in authoritative VT output'
             }
             $script:predictionConfirmationThresholdMs = $predictionRelayDelayMs
         } elseif ($ExpectVisible -and
-            $timing.visibleLatencyMs -lt $predictionConfirmationThresholdMs) {
-            $script:predictionVisibleLatencyMs = $timing.visibleLatencyMs
-            $script:predictionRenderLatencyMs = $timing.renderLatencyMs
+            $timing.outputLatencyMs -lt $predictionConfirmationThresholdMs) {
+            $script:predictionOutputLatencyMs = $timing.outputLatencyMs
+            $script:predictionConsumptionLatencyMs = $timing.consumptionLatencyMs
             $predictionObserved = $true
             break
         }
@@ -1258,13 +1257,13 @@ function Invoke-MoshPredictionProbe {
                 -Pattern "ACCEPTANCE_MOSH_OUTPUT mode=$Mode,bytes=[1-9][0-9]*" `
                 -TimeoutSeconds 10
             $logs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-                -Pattern 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=[1-9][0-9]*' -TimeoutSeconds 10
+                -Pattern 'ACCEPTANCE_NATIVE_WRITE_CONSUMED [^\r\n]* bytes=[1-9][0-9]*' -TimeoutSeconds 10
             $timing = Get-MoshPredictionTiming -Logs $logs -Mode $Mode
-            if ($timing.visibleLatencyMs -gt 250) {
+            if ($timing.outputLatencyMs -gt 250) {
                 throw '[product] Always prediction exceeded the bounded full-loss visibility interval'
             }
-            $script:predictionOutageVisibleLatencyMs = $timing.visibleLatencyMs
-            $script:predictionOutageRenderLatencyMs = $timing.renderLatencyMs
+            $script:predictionOutageOutputLatencyMs = $timing.outputLatencyMs
+            $script:predictionOutageConsumptionLatencyMs = $timing.consumptionLatencyMs
         } else {
             Start-Sleep -Milliseconds 1500
             $blockedLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
@@ -1299,7 +1298,7 @@ function Invoke-MoshPredictionProbe {
         -Pattern "ACCEPTANCE_MOSH_OUTPUT mode=$Mode,bytes=[1-9][0-9]*" `
         -TimeoutSeconds 10 | Out-Null
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-        -Pattern 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=[1-9][0-9]*' -TimeoutSeconds 10 | Out-Null
+        -Pattern 'ACCEPTANCE_NATIVE_WRITE_CONSUMED [^\r\n]* bytes=[1-9][0-9]*' -TimeoutSeconds 10 | Out-Null
     return [pscustomobject][ordered]@{
         confirmedPrefix = $confirmedPrefix
         outageCharacter = $outageCharacter
@@ -1392,180 +1391,66 @@ function Get-MoshPreferencesDigest {
     return $match.Groups['digest'].Value.ToLowerInvariant()
 }
 
-function Get-MoshTerminalSearchResultLabel {
-    param([Parameter(Mandatory = $true)]$Layout)
-    $nodes = @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        [string]$_.attributes.visible -eq 'true' -and
-        ([string]$_.attributes.text -match '^(?:No results|未找到结果|[1-9][0-9]*/[1-9][0-9]*)$' -or
-            [string]$_.attributes.originalText -match '^(?:No results|未找到结果|[1-9][0-9]*/[1-9][0-9]*)$')
-    })
-    if ($nodes.Count -ne 1) { return '' }
-    $text = [string]$nodes[0].attributes.text
-    if (-not [string]::IsNullOrWhiteSpace($text)) { return $text }
-    return [string]$nodes[0].attributes.originalText
-}
-
-function Get-MoshAcceptanceTextHash {
-    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
-
-    $first = [uint64]2166136261
-    $second = [uint64]5381
-    $mask32 = [uint64][uint32]::MaxValue
-    foreach ($byte in [Text.Encoding]::UTF8.GetBytes($Value)) {
-        $first = (($first -bxor [uint64]$byte) * [uint64]16777619) -band $mask32
-        $second = (($second * [uint64]33) -bxor [uint64]$byte) -band $mask32
-    }
-    return ('{0:x8}{1:x8}' -f [uint32]$first, [uint32]$second)
-}
-
-function Get-MoshTerminalFingerprint {
-    param([Parameter(Mandatory = $true)][string]$Name)
-
-    Focus-ActiveTerminalInput -Name "$Name-focus.json" | Out-Null
-    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
-    Invoke-LeanTTYSerializedUiTest `
-        -Hdc $hdc -Target $targetId -Arguments @('acceptance-terminal-fingerprint') `
-        -Operation 'Capture direct xterm page fingerprint' `
-        -Action {
-            & $hdc -t $targetId shell (
-                'uinput -K -d 2072 -d 2045 -d 2047 -d 2037 ' +
-                '-u 2037 -u 2047 -u 2045 -u 2072'
-            ) | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                throw '[environment] Unable to invoke the acceptance terminal fingerprint shortcut'
-            }
-        } | Out-Null
-    Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-        -Pattern 'ACCEPTANCE_TERMINAL_FINGERPRINT [0-9]+,(normal|alternate),' `
-        -TimeoutSeconds 15 | Out-Null
-    $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
-    [IO.File]::WriteAllText(
-        (Join-Path $EvidenceDirectory "$Name.log"),
-        $logs + "`n",
-        [Text.UTF8Encoding]::new($false)
+function Get-MoshNativePageFingerprint {
+    param(
+        [Parameter(Mandatory)][ValidateSet('saved','active','restored')][string]$Action,
+        [Parameter(Mandatory)][string]$PaneId,
+        [string]$Logs = ''
     )
-    $matches = [regex]::Matches(
-        $logs,
-        'ACCEPTANCE_TERMINAL_FINGERPRINT (?<generation>[0-9]+),(?<buffer>normal|alternate),' +
-        '(?<cols>[0-9]+),(?<rows>[0-9]+),(?<viewport>[0-9]+),(?<hash>[0-9a-f]{16})'
-    )
-    if ($matches.Count -ne 1) {
-        throw '[harness] Direct xterm page fingerprint was missing or ambiguous'
+    if ([string]::IsNullOrWhiteSpace($Logs)) {
+        $Logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
     }
+    $pattern = 'ACCEPTANCE_NATIVE_PAGE pane=' + [regex]::Escape($PaneId) +
+        ' sequence=(?<sequence>[1-9][0-9]*) action=' + $Action +
+        ' page=(?<page>[1-9][0-9]*) cols=(?<cols>[1-9][0-9]*) rows=(?<rows>[1-9][0-9]*)' +
+        ' screen=(?<screen>[01]) viewport=(?<viewport>[0-9]+) total=(?<total>[1-9][0-9]*) hash=(?<hash>[0-9a-f]{16})(?=\s|$)'
+    $matches = [regex]::Matches($Logs, $pattern)
+    if ($matches.Count -ne 1) { throw "[harness] Native $Action page fingerprint missing or ambiguous for $PaneId" }
     $match = $matches[0]
-    $fingerprint = [pscustomobject][ordered]@{
-        generation = [int]$match.Groups['generation'].Value
-        buffer = $match.Groups['buffer'].Value
-        cols = [int]$match.Groups['cols'].Value
-        rows = [int]$match.Groups['rows'].Value
-        viewport = [int]$match.Groups['viewport'].Value
-        hash = $match.Groups['hash'].Value
+    return [pscustomobject]@{
+        pane = $PaneId; action = $Action
+        sequence = [long]$match.Groups['sequence'].Value; page = [long]$match.Groups['page'].Value
+        cols = [int]$match.Groups['cols'].Value; rows = [int]$match.Groups['rows'].Value
+        identity = ($match.Value -split ' cols=',2)[1]
     }
-    $fingerprint | Add-Member -NotePropertyName identity -NotePropertyValue (
-        '{0},{1},{2},{3},{4}' -f $fingerprint.buffer, $fingerprint.cols,
-        $fingerprint.rows, $fingerprint.viewport, $fingerprint.hash
-    )
-    return $fingerprint
 }
 
 function Test-MoshPageFingerprintRestored {
-    param(
-        [Parameter(Mandatory = $true)][object]$Original,
-        [Parameter(Mandatory = $true)][object]$Restored
-    )
-
+    param([Parameter(Mandatory)][object]$Original, [Parameter(Mandatory)][object]$Restored)
     if ($Original.cols -ne $Restored.cols -or $Original.rows -ne $Restored.rows) {
         throw '[harness] Exact page fingerprint comparison requires matching terminal geometry; use a resize/reflow control for changed dimensions'
     }
-    return $Original.identity -ceq $Restored.identity
+    return $Original.action -ceq 'saved' -and $Restored.action -ceq 'restored' -and
+        $Original.pane -ceq $Restored.pane -and $Original.page -eq $Restored.page -and
+        $Restored.sequence -gt $Original.sequence -and $Original.identity -ceq $Restored.identity
 }
 
 function Get-MoshPageReplacementFingerprint {
-    param(
-        [Parameter(Mandatory = $true)][string]$Name,
-        [string]$Logs = ''
-    )
-
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][object]$Original, [string]$Logs = '')
     if ([string]::IsNullOrWhiteSpace($Logs)) {
         Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-            -Pattern 'ACCEPTANCE_PAGE_REPLACED_FINGERPRINT [0-9]+,(normal|alternate),' `
-            -TimeoutSeconds 15 | Out-Null
+            -Pattern 'ACCEPTANCE_NATIVE_PAGE .*action=restored ' -TimeoutSeconds 15 | Out-Null
         $Logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
     }
-    $matches = [regex]::Matches(
-        $Logs,
-        'ACCEPTANCE_PAGE_REPLACED_FINGERPRINT (?<generation>[0-9]+),(?<buffer>normal|alternate),' +
-        '(?<cols>[0-9]+),(?<rows>[0-9]+),(?<viewport>[0-9]+),(?<hash>[0-9a-f]{16})'
-    )
-    if ($matches.Count -ne 1) {
-        throw '[harness] Acknowledged Mosh page-replacement fingerprint was missing or ambiguous'
-    }
-    [IO.File]::WriteAllText(
-        (Join-Path $EvidenceDirectory "$Name.log"),
-        $matches[0].Value + "`n",
-        [Text.UTF8Encoding]::new($false)
-    )
-    $match = $matches[0]
-    $fingerprint = [pscustomobject][ordered]@{
-        generation = [int]$match.Groups['generation'].Value
-        buffer = $match.Groups['buffer'].Value
-        cols = [int]$match.Groups['cols'].Value
-        rows = [int]$match.Groups['rows'].Value
-        viewport = [int]$match.Groups['viewport'].Value
-        hash = $match.Groups['hash'].Value
-    }
-    $fingerprint | Add-Member -NotePropertyName identity -NotePropertyValue (
-        '{0},{1},{2},{3},{4}' -f $fingerprint.buffer, $fingerprint.cols,
-        $fingerprint.rows, $fingerprint.viewport, $fingerprint.hash
-    )
-    return $fingerprint
-}
-
-function Get-MoshSnapshotFingerprint {
-    param([Parameter(Mandatory = $true)][string]$Name)
-
-    $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
-    $matches = [regex]::Matches(
-        $logs,
-        'ACCEPTANCE_SNAPSHOT_FINGERPRINT (?<generation>[0-9]+),(?<buffer>normal|alternate),' +
-        '(?<cols>[0-9]+),(?<rows>[0-9]+),(?<viewport>[0-9]+),(?<hash>[0-9a-f]{16})'
-    )
-    if ($matches.Count -ne 1) {
-        throw '[harness] Saved Mosh page snapshot fingerprint was missing or ambiguous'
-    }
-    [IO.File]::WriteAllText(
-        (Join-Path $EvidenceDirectory "$Name.log"),
-        $matches[0].Value + "`n",
-        [Text.UTF8Encoding]::new($false)
-    )
-    $match = $matches[0]
-    $fingerprint = [pscustomobject][ordered]@{
-        generation = [int]$match.Groups['generation'].Value
-        buffer = $match.Groups['buffer'].Value
-        cols = [int]$match.Groups['cols'].Value
-        rows = [int]$match.Groups['rows'].Value
-        viewport = [int]$match.Groups['viewport'].Value
-        hash = $match.Groups['hash'].Value
-    }
-    $fingerprint | Add-Member -NotePropertyName identity -NotePropertyValue (
-        '{0},{1},{2},{3},{4}' -f $fingerprint.buffer, $fingerprint.cols,
-        $fingerprint.rows, $fingerprint.viewport, $fingerprint.hash
-    )
-    return $fingerprint
+    $record = Get-MoshNativePageFingerprint -Action restored -PaneId $Original.pane -Logs $Logs
+    $record | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "$Name.json") -Encoding utf8
+    return $record
 }
 
 function Get-MoshSessionPageBaseline {
-    param([Parameter(Mandatory = $true)][string]$Name)
-
-    # The snapshot belongs to this connection, not a previous Pane/Session.
-    # Read it before the direct fingerprint helper clears the connection logs.
-    $original = Get-MoshSnapshotFingerprint -Name "$Name-original-page-snapshot-fingerprint"
-    $mosh = Get-MoshTerminalFingerprint -Name "$Name-session-page-fingerprint"
-    $hidden = $mosh.generation -gt $original.generation -and $mosh.identity -cne $original.identity
-    if (-not $hidden) {
-        throw '[product] Mosh Session did not replace the original xterm page'
-    }
-    return [pscustomobject]@{ original = $original; mosh = $mosh; originalHidden = $hidden }
+    param([Parameter(Mandatory)][string]$Name)
+    # Read both worker observations from this connection without clearing logs.
+    $node = Focus-ActiveTerminalInput -Name "$Name-page-owner.json"
+    $paneId = ([string]$node.attributes.id).Substring('native-terminal-'.Length)
+    $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
+    $original = Get-MoshNativePageFingerprint -Action saved -PaneId $paneId -Logs $logs
+    $mosh = Get-MoshNativePageFingerprint -Action active -PaneId $paneId -Logs $logs
+    $hidden = $original.sequence -eq $original.page -and $mosh.page -eq $original.page -and
+        $mosh.sequence -eq $original.sequence -and $mosh.identity -cne $original.identity
+    if (-not $hidden) { throw '[product] Mosh did not activate an independent native VT page' }
+    $record = [pscustomobject]@{ original = $original; mosh = $mosh; originalHidden = $hidden }
+    $record | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "$Name-page-baseline.json") -Encoding utf8
+    return $record
 }
 
 function Get-MoshInputRejectionObservation {
@@ -1575,7 +1460,7 @@ function Get-MoshInputRejectionObservation {
     $stamp = '(?m)^(?<timestamp>\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})[^\r\n]*'
     $received = [regex]::Matches($Logs, $stamp + 'ACCEPTANCE_MOSH_INPUT_REJECTION receivedBytes=(?<bytes>[1-9][0-9]*)')
     $full = [regex]::Matches($Logs, $stamp + 'ACCEPTANCE_MOSH_INPUT_REJECTION kind=full')
-    $restored = [regex]::Matches($Logs, $stamp + 'ACCEPTANCE_PAGE_REPLACED_FINGERPRINT ')
+    $restored = [regex]::Matches($Logs, $stamp + 'ACCEPTANCE_NATIVE_PAGE pane=(?<pane>pane-[0-9]+-[0-9]+) sequence=[1-9][0-9]* action=restored ')
     if ($received.Count -ne 1 -or $full.Count -ne 1 -or $restored.Count -ne 1 -or
         $Logs -match 'ACCEPTANCE_MOSH_INPUT_REJECTION (state=precondition-failed|kind=unexpected)') {
         throw '[harness] Input rejection lacks one real Full, received output or page restoration'
@@ -1583,7 +1468,7 @@ function Get-MoshInputRejectionObservation {
     $receivedAt = ConvertFrom-MoshHilogTimestamp $received[0].Groups['timestamp'].Value
     $fullAt = ConvertFrom-MoshHilogTimestamp $full[0].Groups['timestamp'].Value
     $restoredAt = ConvertFrom-MoshHilogTimestamp $restored[0].Groups['timestamp'].Value
-    $acks = @([regex]::Matches($Logs, $stamp + 'ACCEPTANCE_TERMINAL_WRITE_ACK bytes=[1-9][0-9]*') | Where-Object {
+    $acks = @([regex]::Matches($Logs, $stamp + 'ACCEPTANCE_NATIVE_WRITE_CONSUMED pane=' + [regex]::Escape($restored[0].Groups['pane'].Value) + ' sequence=[1-9][0-9]* owner=[1-9][0-9]* bytes=[1-9][0-9]*') | Where-Object {
         $ackAt = ConvertFrom-MoshHilogTimestamp $_.Groups['timestamp'].Value
         $ackAt -gt $receivedAt -and $ackAt -lt $restoredAt
     })
@@ -1646,7 +1531,7 @@ function Invoke-MoshInputRejection {
     $faultLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
     [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'input-rejection-device-app.log'), $faultLogs)
     $observation = Get-MoshInputRejectionObservation -Logs $faultLogs
-    $faultRestored = Get-MoshPageReplacementFingerprint -Name 'input-rejection-restored' -Logs $faultLogs
+    $faultRestored = Get-MoshPageReplacementFingerprint -Name 'input-rejection-restored' -Original $faultBaseline.original -Logs $faultLogs
     $exact = Test-MoshPageFingerprintRestored -Original $faultBaseline.original -Restored $faultRestored
     if (-not $exact) { throw '[product] Input rejection did not restore its original page exactly' }
     Wait-WslProcessAbsent -LinuxPid $faultSession.pid -TimeoutSeconds 8 | Out-Null
@@ -1686,80 +1571,60 @@ function Invoke-MoshInputRejection {
 }
 
 function Test-MoshTerminalSearch {
-    param(
-        [Parameter(Mandatory = $true)][string]$Query,
-        [Parameter(Mandatory = $true)][bool]$ExpectMatch,
-        [Parameter(Mandatory = $true)][string]$Name
-    )
-    Focus-ActiveTerminalInput -Name "$Name-before.json" | Out-Null
-    & $hdc -t $targetId shell 'uitest uiInput keyEvent 2072 2045 2022' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to open terminal search' }
-    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $input = $null
-    while ($stopwatch.Elapsed.TotalSeconds -lt 15) {
-        $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $targetId `
-            -LocalPath (Join-Path $EvidenceDirectory "$Name-open.json")
-        $inputs = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
-            [string]$_.attributes.type -eq 'textField' -and
-            [string]$_.attributes.hint -match '^(?:Find text|Search text|查找内容)' -and
-            [string]$_.attributes.visible -eq 'true'
-        })
-        if ($inputs.Count -eq 1) { $input = $inputs[0]; break }
-        Start-Sleep -Milliseconds 200
-    }
-    if ($null -eq $input) { throw '[product] Terminal search did not open over Mosh output' }
-    $inputBounds = [string]$input.attributes.bounds
-    $queryHash = Get-MoshAcceptanceTextHash -Value $Query
-    Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+    param([Parameter(Mandatory)][string]$Query, [Parameter(Mandatory)][bool]$ExpectMatch,
+        [Parameter(Mandatory)][string]$Name)
+    $terminalNode = Focus-ActiveTerminalInput -Name "$Name-before.json"
+    $paneId = ([string]$terminalNode.attributes.id).Substring('native-terminal-'.Length)
+    Invoke-LeanTTYSerializedUiTest -Hdc $hdc -Target $targetId `
+        -Arguments @('uiInput','keyEvent','2072','2045','2022') -Operation 'Open native Mosh search' | Out-Null
     try {
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $targetId -Text $Query -InputNode $input
-        $queryExact = $false
-        $stopwatch.Restart()
-        while ($stopwatch.Elapsed.TotalSeconds -lt 5) {
-            $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $targetId `
-                -LocalPath (Join-Path $EvidenceDirectory "$Name-query.json")
-            $currentInputs = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
-                [string]$_.attributes.type -eq 'textField' -and
-                [string]$_.attributes.hint -match '^(?:Find text|Search text|查找内容)' -and
-                [string]$_.attributes.visible -eq 'true'
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $input = $null
+        do {
+            $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $targetId -LocalPath (Join-Path $EvidenceDirectory "$Name-open.json")
+            $inputs = @(Get-LeanTTYVisibleLayoutNodes -Node $layout | Where-Object {
+                $_.attributes.type -eq 'TextInput' -and $_.attributes.id -ceq "native-search-$paneId"
             })
-            if ($currentInputs.Count -ne 1 -or
-                [string]$currentInputs[0].attributes.bounds -cne $inputBounds -or
-                [string]$currentInputs[0].attributes.focused -ne 'true') {
+            if ($inputs.Count -eq 1) { $input = $inputs[0]; break }
+            Start-Sleep -Milliseconds 200
+        } while ($timer.Elapsed.TotalSeconds -lt 10)
+        if ($null -eq $input) { throw '[product] Native Mosh search did not open' }
+        Clear-LeanTTYAppLogs -Hdc $hdc -Target $targetId
+        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $targetId -Text $Query -InputNode $input
+        $queryPattern = 'ACCEPTANCE_NATIVE_SEARCH_QUERY pane=' + [regex]::Escape($paneId) +
+            ' generation=(?<generation>[1-9][0-9]*) length=' + $Query.Length + '(?=\s|$)'
+        $logs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid -Pattern $queryPattern -TimeoutSeconds 10
+        $queries = [regex]::Matches($logs, $queryPattern)
+        $generation = $queries[$queries.Count - 1].Groups['generation'].Value
+        $resultPattern = 'ACCEPTANCE_NATIVE_SEARCH_RESULT pane=' + [regex]::Escape($paneId) +
+            ' generation=' + $generation + ' result=(?<index>[0-9]+),(?<count>[0-9]+)(?=\s|$)'
+        $logs = Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid -Pattern $resultPattern -TimeoutSeconds 10
+        $completed = [regex]::Matches($logs, $resultPattern)
+        $completedCount = [int]$completed[$completed.Count - 1].Groups['count'].Value
+        $timer.Restart()
+        do {
+            $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $targetId -LocalPath (Join-Path $EvidenceDirectory "$Name-result.json")
+            $visible = @(Get-LeanTTYVisibleLayoutNodes -Node $layout)
+            $inputs = @($visible | Where-Object { $_.attributes.type -eq 'TextInput' -and $_.attributes.id -ceq "native-search-$paneId" })
+            if ($inputs.Count -ne 1 -or $inputs[0].attributes.focused -ne 'true' -or
+                -not (Test-LeanTTYSameTextInputTarget -ExpectedNode $input -CurrentNode $inputs[0])) {
                 throw '[harness] Intended terminal Search field lost focus before query delivery'
             }
-            $actualQuery = [string]$currentInputs[0].attributes.originalText
-            if ([string]::IsNullOrEmpty($actualQuery)) {
-                $actualQuery = [string]$currentInputs[0].attributes.text
+            $actual = [string]$inputs[0].attributes.text
+            if (-not $actual) { $actual = [string]$inputs[0].attributes.originalText }
+            $results = @($visible | Where-Object { $_.attributes.type -eq 'Text' -and $_.attributes.id -ceq "native-search-result-$paneId" })
+            if ($actual -ceq $Query -and $results.Count -eq 1) {
+                $label = [string]$results[0].attributes.text
+                if (-not $label) { $label = [string]$results[0].attributes.originalText }
+                if ($label -match '^(?<index>[0-9]+)/(?<count>[0-9]+)$') {
+                    $count = [int]$Matches['count']
+                    if ($count -eq $completedCount -and (($ExpectMatch -and $count -gt 0) -or (-not $ExpectMatch -and $count -eq 0))) { return $true }
+                }
             }
-            if ($actualQuery -ceq $Query) {
-                $queryExact = $true
-                break
-            }
-            Start-Sleep -Milliseconds 100
-        }
-        if (-not $queryExact) {
-            throw '[harness] Terminal Search did not receive the exact query before result evaluation'
-        }
-        $searchPattern = 'ACCEPTANCE_SEARCH_RESULT ' + $Query.Length + ',' + $queryHash + ','
-        Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-            -Pattern ([regex]::Escape($searchPattern)) -TimeoutSeconds 15 | Out-Null
-        $searchLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
-        $resultMatches = [regex]::Matches(
-            $searchLogs,
-            [regex]::Escape($searchPattern) + '(?<index>-?[0-9]+),(?<count>[0-9]+)'
-        )
-        if ($resultMatches.Count -lt 1) {
-            throw '[harness] SearchAddon did not emit a result for the exact query'
-        }
-        $resultCount = [int]$resultMatches[$resultMatches.Count - 1].Groups['count'].Value
-        if (($ExpectMatch -and $resultCount -lt 1) -or (-not $ExpectMatch -and $resultCount -ne 0)) {
-            throw "[product] Terminal SearchAddon result did not satisfy the Mosh query contract: $Name"
-        }
-    } finally {
-        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070
-    }
-    return $true
+            Start-Sleep -Milliseconds 200
+        } while ($timer.Elapsed.TotalSeconds -lt 10)
+        throw "[product] Native search query/result did not satisfy the Mosh contract: $Name"
+    } finally { Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $targetId -KeyCode 2070 }
 }
 
 function Assert-MoshTerminalSurfaceFocused {
@@ -1769,13 +1634,6 @@ function Assert-MoshTerminalSurfaceFocused {
         [string]$_.attributes.focused -eq 'true'
     })
     if ($inputs.Count -eq 1) { return }
-    $webs = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
-        [string]$_.attributes.type -eq 'Web' -and
-        [string]$_.attributes.visible -eq 'true' -and
-        [string]$_.attributes.focused -eq 'true' -and
-        [string]$_.attributes.originalText -match 'terminal\.html$'
-    })
-    if ($webs.Count -eq 1) { return }
     throw '[environment] Active Mosh terminal surface was not focused for physical key input'
 }
 
@@ -2399,7 +2257,7 @@ function Invoke-MoshSurfaceRebuild {
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
         -Pattern 'Acceptance renderer rebuild requested=true' -TimeoutSeconds 15 | Out-Null
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-        -Pattern 'Web terminal ready' -TimeoutSeconds 20 | Out-Null
+        -Pattern 'Terminal ready, terminal output recovered' -TimeoutSeconds 20 | Out-Null
 }
 
 function Invoke-MoshPageRebuild {
@@ -2737,7 +2595,7 @@ function Write-Evidence {
             'controlled-mosh-prediction-modes-visible-and-isolated'
         }
         'surface-rebuild' {
-            'active-mosh-page-survived-arkweb-surface-rebuild-and-restored-the-original-page'
+            'active-mosh-page-survived-native-surface-rebuild-and-restored-the-original-page'
         }
         'page-rebuild' {
             'active-mosh-session-survived-current-page-destruction-and-replacement-in-the-same-process'
@@ -2978,15 +2836,15 @@ function Write-Evidence {
             predictionRttBaselineMs = $predictionRttBaselineMs
             predictionConfirmationThresholdMs = $predictionConfirmationThresholdMs
             controlledOneWayDelayMs = $predictionRelayDelayMs
-            predictionVisibleLatencyMs = $predictionVisibleLatencyMs
-            predictionRenderLatencyMs = $predictionRenderLatencyMs
-            outageVisibleLatencyMs = $predictionOutageVisibleLatencyMs
-            outageRenderLatencyMs = $predictionOutageRenderLatencyMs
+            predictionOutputLatencyMs = $predictionOutputLatencyMs
+            predictionConsumptionLatencyMs = $predictionConsumptionLatencyMs
+            outageOutputLatencyMs = $predictionOutageOutputLatencyMs
+            outageConsumptionLatencyMs = $predictionOutageConsumptionLatencyMs
             predictionWarmupSamples = $predictionWarmupSamples
             measurementContract = 'printable-ascii-only-no-enter-control-resize-repaint'
             confirmationBoundary = 'actual-vt-output-below-measured-rtt'
             outageBoundary = 'one-printable-ascii-visible-before-udp-recovery'
-            primaryOracle = 'public-vt-output-and-xterm-write-ack-on-device-hilog-timeline'
+            primaryOracle = 'public-vt-output-and-native-worker-consumption-on-device-hilog-timeline'
         }
         paneOwnership = [ordered]@{
             exercised = ($Scenario -eq 'pane-close')
@@ -3013,7 +2871,7 @@ function Write-Evidence {
             rendererRebuildRequested = $surfaceRebuildRequested
             moshPageRetainedAfterRebuild = $surfaceRebuildPageRetained
             commandPassedAfterRebuild = $surfaceRebuildCommandPassed
-            primaryOracle = 'acceptance-renderer-termination-log-terminal-search-and-controlled-pty-command'
+            primaryOracle = 'acceptance-native-surface-replacement-terminal-search-and-controlled-pty-command'
         }
         pageLifecycle = [ordered]@{
             exercised = ($Scenario -eq 'page-rebuild')
@@ -3033,7 +2891,7 @@ function Write-Evidence {
             moshErrorObserved = $abnormalExitObserved
             originalPageRestored = $originalPageRestoredAfterSession
             moshPageDiscarded = $moshPageDiscardedAfterSession
-            primaryOracle = 'acceptance-only-viewmodel-error-log-acknowledged-pre-local-output-xterm-fingerprint-and-search-addon-negative-event'
+            primaryOracle = 'acceptance-only-error-native-retained-vt-fingerprint-before-local-output-and-native-search'
         }
         processRecovery = [ordered]@{
             exercised = ($Scenario -in @('process-recovery', 'runtime-reclaim') -or
@@ -3097,12 +2955,12 @@ function Write-Evidence {
             secretPatternAbsent = $secretAuditPassed
         }
         terminalPageFingerprints = [ordered]@{
+            source = 'native-worker-styled-vt-and-state-before-local-output'
             contentPersisted = $false
             exactFingerprintRestored = $originalPageExactFingerprintRestoredAfterSession
             original = $originalPageFingerprint
             mosh = $moshPageFingerprint
             restoredBeforeLocalOutput = $restoredPageFingerprint
-            postExit = $postExitPageFingerprint
         }
         compatibility = [ordered]@{
             shell = 'GNU Bash 5.3'
@@ -3252,7 +3110,6 @@ try {
     Submit-LocalCommand -Command "host add $alias mosh@${fixtureSshAddress}:$FixturePort" `
         -Stage 'mosh-host-setup'
     Submit-LocalCommand -Command $originalPageMarker -Stage 'mosh-original-page-marker'
-    $originalPageFingerprint = Get-MoshTerminalFingerprint -Name 'mosh-original-page-fingerprint'
     if ($Scenario -eq 'pane-close') {
         Write-LiveStatus -Stage 'pane-close-split'
         Split-MoshPane
@@ -3277,7 +3134,7 @@ try {
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
         -Pattern 'Mosh Session connected' -TimeoutSeconds 30 | Out-Null
     Wait-LeanTTYAppLog -Hdc $hdc -Target $targetId -ProcessId $appPid `
-        -Pattern 'MOSH_PAGE stage=ready' -TimeoutSeconds 15 | Out-Null
+        -Pattern 'ACCEPTANCE_NATIVE_PAGE .*action=active ' -TimeoutSeconds 15 | Out-Null
     $session = Read-MoshSession
     $activeMoshControlDirectory = $session.controlDirectory
     $activeMoshTerminalReady = Join-Path $activeMoshControlDirectory 'mosh-terminal-ready'
@@ -3331,6 +3188,10 @@ try {
 
     $bootstrapTerminalAbsent = Test-MoshTerminalSearch `
         -Query 'MOSH CONNECT' -ExpectMatch $false -Name 'mosh-bootstrap-negative-search'
+    # Page identity and search-history isolation are separate contracts.
+    $originalPageHiddenDuringSession = (Test-MoshTerminalSearch `
+        -Query $originalPageMarker -ExpectMatch $false -Name 'mosh-original-page-negative-search') -and
+        $sessionPageBaseline.originalHidden
     $remoteShellAliveBefore = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
     if (-not $remoteShellAliveBefore) {
         throw '[product] Controlled remote Mosh terminal exited after the baseline command'
@@ -3919,14 +3780,12 @@ try {
             -Pattern 'MOSH_PAGE stage=ownership-released' -TimeoutSeconds 15 | Out-Null
         $abnormalExitObserved = $true
         $restoredPageFingerprint = Get-MoshPageReplacementFingerprint `
-            -Name 'mosh-abnormal-original-page-restored-before-local-output-fingerprint'
+            -Name 'mosh-abnormal-original-page-restored-before-local-output-fingerprint' -Original $originalPageFingerprint
         $originalPageExactFingerprintRestoredAfterSession = Test-MoshPageFingerprintRestored `
             -Original $originalPageFingerprint -Restored $restoredPageFingerprint
         $originalPageRestoredAfterSession = $originalPageExactFingerprintRestoredAfterSession
         Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $targetId -ProcessId $appPid
         $localPromptReady = $true
-        $postExitPageFingerprint = Get-MoshTerminalFingerprint `
-            -Name 'mosh-abnormal-post-exit-fingerprint'
         $moshPageDiscardedAfterSession = Test-MoshTerminalSearch `
             -Query $shellCommand -ExpectMatch $false `
             -Name 'mosh-abnormal-session-page-discarded-search'
@@ -4055,7 +3914,7 @@ try {
         $observedErrorCategory = 'none'
         $lastProvenBoundary = 'pane-close-surviving-session-command-passed'
 
-        # Capture only after isolation checks consume the lifecycle logs it clears.
+        # Bind the survivor only after its independent lifecycle checks pass.
         $sessionPageBaseline = Get-MoshSessionPageBaseline -Name 'mosh-pane-close-survivor'
         $originalPageFingerprint = $sessionPageBaseline.original
         $moshPageFingerprint = $sessionPageBaseline.mosh
@@ -4683,7 +4542,7 @@ try {
         }
         $disconnectLogs = Get-LeanTTYAppLogs -Hdc $hdc -Target $targetId -ProcessId $appPid
         $restoredPageFingerprint = Get-MoshPageReplacementFingerprint `
-            -Name 'mosh-original-page-restored-before-local-output-fingerprint' `
+            -Name 'mosh-original-page-restored-before-local-output-fingerprint' -Original $originalPageFingerprint `
             -Logs $disconnectLogs
         $originalPageExactFingerprintRestoredAfterSession = Test-MoshPageFingerprintRestored `
             -Original $originalPageFingerprint -Restored $restoredPageFingerprint
@@ -4709,8 +4568,6 @@ try {
             throw '[product] Mosh closed but the local prompt did not become input-ready'
         }
         $localPromptReady = $true
-        $postExitPageFingerprint = Get-MoshTerminalFingerprint `
-            -Name 'mosh-post-exit-fingerprint'
         if ($Scenario -ne 'prediction') {
             $moshPageDiscardedAfterSession = Test-MoshTerminalSearch `
                 -Query $shellCommand -ExpectMatch $false -Name 'mosh-session-page-discarded-search'
