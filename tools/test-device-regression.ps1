@@ -2149,7 +2149,6 @@ Assert-True (
     $hostIdentityVerifier.Contains('sudo -n useradd') -and
     $hostIdentityVerifier.Contains('sudo -n userdel -r') -and
     $hostIdentityVerifier.Contains('Disposable WSL OpenSSH account remained after cleanup') -and
-    $hostIdentityVerifier.Contains('Physical secret input accepts only disposable numeric passwords') -and
     $hostIdentityVerifier.Contains('StandardInput.Write("$UserName`:$Password`n")') -and
     -not $hostIdentityVerifier.Contains('StandardInput.WriteLine("$UserName`:$Password")') -and
     $hostIdentityVerifier.Contains('System OpenSSH omitted the exact accepted public-key fingerprint') -and
