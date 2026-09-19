@@ -234,17 +234,7 @@ function Submit-HostIdentitySecret {
         [Parameter(Mandatory = $true)][string]$Name
     )
     $inputNode = Focus-HostIdentityInput -Name $Name
-    if ($OpenSshCompatibility) {
-        foreach ($digit in $Secret.ToCharArray()) {
-            if ($digit -lt '0' -or $digit -gt '9') {
-                throw '[harness] Physical secret input accepts only disposable numeric passwords'
-            }
-            Invoke-LeanTTYDevicePhysicalKey `
-                -Hdc $hdc -Target $Target -KeyCode (2000 + [int]$digit - [int][char]'0')
-        }
-    } else {
-        Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Secret -InputNode $inputNode
-    }
+    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Secret -InputNode $inputNode
     $hiddenLayout = Get-LeanTTYDeviceLayout `
         -Hdc $hdc -Target $Target `
         -LocalPath (Join-Path $EvidenceDirectory "$Name-hidden.json")

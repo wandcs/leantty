@@ -19,6 +19,46 @@ $export = @($ast.FindAll({ param($node)
 Assert-Downloads ($export.Count -eq 1) 'Missing export owner'
 . ([scriptblock]::Create($export[0].Extent.Text))
 
+# Run the actual secret owner: malformed uinput Unicode must not replace the
+# submitted text, and a failed hidden-layout audit must prevent Enter.
+$secretOwner = @($ast.FindAll({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -eq 'Submit-HostIdentitySecret'
+}, $true))
+Assert-Downloads ($secretOwner.Count -eq 1) 'Missing secret input owner'
+. ([scriptblock]::Create($secretOwner[0].Extent.Text))
+foreach ($serverKind in @('fixture', 'openssh')) {
+    foreach ($auditFailure in @($false, $true)) {
+        Test-Downloads "secret-$serverKind-audit-failure-$auditFailure" {
+            $OpenSshCompatibility = $serverKind -eq 'openssh'
+            $hdc='unused'; $Target='unused'; $EvidenceDirectory='fixture'
+            $script:secretSteps=[Collections.Generic.List[string]]::new()
+            function Focus-HostIdentityInput { $script:secretSteps.Add('focus'); return 'focused-node' }
+            function Invoke-LeanTTYDevicePhysicalKey { throw 'uinput carries shifted Unicode for numeric keys' }
+            function Invoke-LeanTTYDeviceText { param($Text,$InputNode)
+                Assert-Downloads ($Text -ceq '01234567' -and $InputNode -ceq 'focused-node') 'Secret or focus changed'
+                $script:secretSteps.Add('text')
+            }
+            function Get-LeanTTYDeviceLayout { $script:secretSteps.Add('layout'); return 'hidden-layout' }
+            function Assert-LeanTTYLayoutExcludesValues { param($Layout,$Values)
+                Assert-Downloads ($Layout -ceq 'hidden-layout' -and $Values[0] -ceq '01234567') 'Hidden audit lost secret'
+                $script:secretSteps.Add('audit')
+                if ($auditFailure) { throw 'layout audit rejected' }
+            }
+            function Invoke-LeanTTYDeviceKey { param($KeyCode)
+                Assert-Downloads ($KeyCode -eq 2054) 'Expected one Enter'
+                $script:secretSteps.Add('enter')
+            }
+            $errorText=''
+            try { Submit-HostIdentitySecret -Secret '01234567' -Name 'unit-secret' }
+            catch { $errorText=$_.Exception.Message }
+            $expected=if ($auditFailure) {'focus,text,layout,audit'} else {'focus,text,layout,audit,enter'}
+            Assert-Downloads (($script:secretSteps -join ',') -ceq $expected) 'Secret path bypassed text, audit or single submit'
+            Assert-Downloads ($(if ($auditFailure) {$errorText -ceq 'layout audit rejected'} else {-not $errorText})) 'Unexpected secret result'
+        }
+    }
+}
+
 # The actual export/delete function runs; only external device and file boundaries
 # are replaced. A submit ACK never satisfies the export completion condition.
 foreach ($outcome in @('success', 'denied', 'pending', 'unknown')) {
