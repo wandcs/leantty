@@ -94,7 +94,7 @@ function Invoke-KeyCleanupEvidenceCase {
     $harnessCommit = 'd' * 40; $harnessTree = 'e' * 40
     $deviceModel = 'host-fixture'; $deviceAbi = 'not-a-device'; $deviceTransport = 'none'
     $startedAt = [DateTimeOffset]::UtcNow
-    $commandObservations = @(); $checks = @()
+    $commandObservations = @($Case.observations | Where-Object { $null -ne $_ }); $checks = @()
     $evidencePath = Join-Path $testRoot 'key-producer.json'
     $cleanupResult = $(if ($Case.ContainsKey('detail')) { $Case.detail } else { 'not-required' })
     $cleanupFailure = ''; $awakeLeaseFailure = ''; $awakeLeaseResult = 'acquired'
@@ -128,6 +128,26 @@ function Invoke-KeyCleanupEvidenceCase {
 }
 
 try {
+    Test-Case 'key report preserves nested command submission observations' {
+        $submission = @{ kind=1; inputLength=26; sequence=37 }
+        $observation = @{ result='passed'; inputAttempts=1; inputMismatches=0; enterCount=1;
+            logObservations=@(@{ phase='submission'; records=@{submissions=@($submission)} }) }
+        $actual = Invoke-KeyCleanupEvidenceCase @{ mode='normal'; presence=@($false); observations=@($observation) }
+        $savedSubmission = $actual.metadata.evidence.automation.commands[0].logObservations[0].records.submissions[0]
+        Assert-True ($savedSubmission -isnot [string] -and $savedSubmission.sequence -eq 37 -and
+            $savedSubmission.inputLength -eq 26) 'Key submission observation was truncated'
+    }
+    Test-Case 'key report rejects excess depth without replacing previous evidence' {
+        $path = Join-Path $testRoot 'key-producer.json'
+        $previous = [IO.File]::ReadAllBytes($path)
+        $nested = @{ leaf='public-observation' }
+        for ($depth=0; $depth -lt 20; $depth++) { $nested=@{child=$nested} }
+        $observation = @{ result='passed'; inputAttempts=1; inputMismatches=0; enterCount=1; logObservations=@($nested) }
+        Assert-Rejected { Invoke-KeyCleanupEvidenceCase @{mode='normal';presence=@($false);observations=@($observation)} } 'depth|warning'
+        Assert-True ([Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) -ceq
+            [Convert]::ToBase64String($previous)) 'Lossy report replaced the previous evidence'
+        Assert-NoTemporaryFiles
+    }
     Test-Case 'key normal deletion writes a passing cleanup verdict and keeps absence detail' {
         $actual = Invoke-KeyCleanupEvidenceCase @{mode='normal';presence=@($false)}
         $saved = Get-LeanTTYReleaseEvidenceSummary (Join-Path $testRoot 'key-producer.json') key-passphrase

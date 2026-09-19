@@ -21,6 +21,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
+. (Join-Path $PSScriptRoot 'release-tooling.ps1')
 
 $harnessStatus = @(git -C $repoRoot status --porcelain --untracked-files=all 2>&1)
 if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect device behavior harness source state' }
@@ -305,11 +306,7 @@ function Write-BehaviorEvidence {
         }
         failure = $failure
     }
-    [IO.File]::WriteAllText(
-        $evidencePath,
-        (ConvertTo-Json -InputObject $evidence -Depth 7),
-        [Text.UTF8Encoding]::new($false)
-    )
+    Write-LeanTTYAtomicJson -Path $evidencePath -Value $evidence -Depth 12
 }
 
 $caughtError = $null
