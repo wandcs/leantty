@@ -8,6 +8,32 @@ function Assert-InputThrows([scriptblock]$Action, [string]$Message) {
     throw $Message
 }
 try {
+    # Execute the real release version check without Git, signing or compilation.
+    $buildSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'build-all.ps1'))
+    $getter = [regex]::Match($buildSource, '(?s)function Get-CargoPackageVersion \{.*?(?=\r?\nfunction Assert-ReleasePreflight)').Value
+    $versionCheck = [regex]::Match($buildSource, '(?s)    \$appConfigPath = .*?(?=\r?\n    if \(-not \(Test-Path -LiteralPath \$localSigningConfigPath)').Value
+    Assert-Input ($getter.Length -gt 0 -and $versionCheck.Length -gt 0) 'Release version check boundary missing'
+    $repoRoot = Join-Path $root 'version-fixture'
+    $ReleaseId = '1.7.0'
+    foreach ($path in @('AppScope/app.json5', 'entry/oh-package.json5', 'oh-package.json5',
+        'entry/src/main/cpp/types/libleantty_ssh/oh-package.json5',
+        'entry/src/main/cpp/types/libleantty_terminal/oh-package.json5',
+        'leantty_ssh/Cargo.toml', 'leantty_ssh/leantty-ssh-core/Cargo.toml')) {
+        $full = Join-Path $repoRoot $path
+        New-Item -ItemType Directory -Force -Path (Split-Path $full -Parent) | Out-Null
+        $content = if ($path.EndsWith('.toml')) { "[package]`nversion = `"1.7.0`"" }
+            elseif ($path -eq 'AppScope/app.json5') { '{"app":{"versionName":"1.7.0"}}' }
+            else { '{"version":"1.7.0"}' }
+        [IO.File]::WriteAllText($full, $content)
+    }
+    $check = [scriptblock]::Create($getter + "`n" + $versionCheck)
+    & $check
+    $terminalVersionPath = Join-Path $repoRoot 'entry/src/main/cpp/types/libleantty_terminal/oh-package.json5'
+    [IO.File]::WriteAllText($terminalVersionPath, '{"version":"1.6.0"}')
+    $versionError = ''
+    try { & $check } catch { $versionError = $_.Exception.Message }
+    Assert-Input ($versionError.Contains('libleantty_terminal/oh-package.json5=1.6.0')) 'Release preflight accepted a stale native terminal package version'
+    Write-Host 'PASS release version gate: aligned packages accepted; stale terminal package rejected'
     New-Item -ItemType Directory -Force -Path "$root/build/native-terminal/dist" | Out-Null
     $zipPath = "$root/build/native-terminal/dist/source.zip"
     $zip = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)

@@ -6,10 +6,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="9">
+  <meta name="leantty-guide-revision" content="10">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>LeanTTY 1.6.0 使用指南 / User Guide</title>
+  <title>LeanTTY 1.7.0 使用指南 / User Guide</title>
   <style>
     :root {
       color-scheme: dark;
@@ -926,7 +926,7 @@
       <span class="brand-name">LeanTTY</span>
     </a>
     <div class="masthead-meta">
-      <span class="edition">使用指南 · 1.6.0</span>
+      <span class="edition">使用指南 · 1.7.0</span>
       <div class="language-switch" role="group" aria-label="指南语言">
         <a href="#guide-zh" aria-current="page">中文</a>
         <a href="#guide-en" lang="en">English</a>
@@ -941,6 +941,7 @@
       <p class="hero-copy">
         这份离线指南从第一次连接讲起，只保留日常最常用的操作。建议先熟悉复制、打开链接
         和搜索，再按需要查看本地命令、安全注意事项和故障处理。
+        1.7 需要支持 API 24 或更新版本的鸿蒙电脑，并使用实体键盘和鼠标。
       </p>
       <ul class="scope-line" aria-label="首先掌握的操作">
         <li>选中后右键复制</li>
@@ -1301,6 +1302,9 @@ ssh-copy-id -i id_work user@example.com</code></pre>
           下一个结果，按 <kbd>Shift</kbd>+<kbd>Enter</kbd> 返回上一个结果，按 <kbd>Esc</kbd>
           关闭。关闭后会恢复终端焦点，不会把搜索内容发送给远端。
         </p>
+        <p>单次查询最多 1 MiB（UTF-8）。超限或暂时忙碌时会显示提示，连接不受影响；
+          缩短查询或稍后重试。可见匹配会高亮，右侧滚动条旁标出匹配位置。
+          普通终端保留约一万行历史，较早内容会分批淘汰；Mosh 临时页面不保留额外历史。</p>
 
         <h3>外观服从内容</h3>
         <p>
@@ -1341,6 +1345,7 @@ ssh-copy-id -i id_work user@example.com</code></pre>
           <kbd>Shift</kbd> 拖动可强制本地选择；使用 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+鼠标左键
           打开链接。
         </p>
+        <p>按住 <kbd>Alt</kbd> 拖动可作矩形选择。复制成功后选区清除，随后右键即可粘贴。</p>
       </section>
 
       <section id="zh-transfer" class="doc-section">
@@ -1469,8 +1474,8 @@ get work:/reports/latest.csv reports/</code></pre>
           <summary>连接或认证看起来卡住了</summary>
           <div class="details-body">
             <p>
-              按 <kbd>Ctrl</kbd>+<kbd>C</kbd>。连接和认证提示具有明确的取消路径，会返回
-              <code>ltty&gt;</code>，且不会保留未完成的秘密输入。
+              按 <kbd>Ctrl</kbd>+<kbd>C</kbd> 取消连接或认证，返回
+              <code>ltty&gt;</code>。尚未提交的密码和认证回答会清除。
             </p>
           </div>
         </details>
@@ -1489,8 +1494,8 @@ get work:/reports/latest.csv reports/</code></pre>
           <summary>服务器反复要求密码</summary>
           <div class="details-body">
             <p>
-              确认所选 Host 能解析出 <code>User</code>，并且 <code>IdentityFile</code> 指向
-              <code>key list</code> 中的密钥。使用 <code>ssh -G &lt;host-name&gt;</code> 查看最终值。
+              先用 <code>ssh -G &lt;host-name&gt;</code> 查看连接配置，确认 <code>User</code>
+              是正确的用户名，<code>IdentityFile</code> 指向 <code>key list</code> 中的密钥。
             </p>
           </div>
         </details>
@@ -1523,6 +1528,14 @@ get work:/reports/latest.csv reports/</code></pre>
           </div>
         </details>
 
+        <details id="zh-recovery-display">
+          <summary>提示“终端暂时无法显示，输入已暂停”</summary>
+          <div class="details-body">
+            <p>出现“重试显示”按钮时可点击重试。仅重建显示不会清空本次进程中的历史或连接；
+              重启应用则会断开连接并清空终端内容。GPU 持续不可用时，应用无法继续使用。</p>
+          </div>
+        </details>
+
         <details id="zh-recovery-layout">
           <summary>应用被系统回收后，连接和正文不见了</summary>
           <div class="details-body">
@@ -1546,7 +1559,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.6.0</strong> · 离线使用指南 · 修订 9 · 文档更新 2026-09-07</div>
+    <div><strong>LeanTTY 1.7.0</strong> · 离线使用指南 · 修订 10 · 文档更新 2026-09-20</div>
     <div>先核对，再连接；先保留工作，再处理断线。</div>
   </footer>
   </div>
@@ -1583,7 +1596,7 @@ get work:/reports/latest.csv reports/</code></pre>
       <span class="brand-name">LeanTTY</span>
     </a>
     <div class="masthead-meta">
-      <span class="edition">USER GUIDE · 1.6.0</span>
+      <span class="edition">USER GUIDE · 1.7.0</span>
       <div class="language-switch" role="group" aria-label="Guide language">
         <a href="#guide-zh" lang="zh-CN">中文</a>
         <a href="#guide-en" aria-current="page">English</a>
@@ -1598,6 +1611,7 @@ get work:/reports/latest.csv reports/</code></pre>
       <p class="hero-copy">
         This offline guide gives you the shortest reliable path from a first connection to daily work.
         Learn copy, links and search first; use commands, security and recovery when you need them.
+        Version 1.7 requires a HarmonyOS PC supporting API 24 or later, with a physical keyboard and mouse.
       </p>
       <ul class="scope-line" aria-label="Practices to learn first">
         <li>Select, then secondary-click to copy</li>
@@ -1974,6 +1988,10 @@ ssh-copy-id -i id_work user@example.com</code></pre>
           result, <kbd>Shift</kbd>+<kbd>Enter</kbd> for the previous result and <kbd>Esc</kbd> to close.
           Closing search restores terminal focus without sending the query to the remote session.
         </p>
+        <p>Queries are limited to 1 MiB in UTF-8. Oversized or temporarily busy queries show a message
+          without interrupting the connection; shorten the query or retry later. Visible matches are
+          highlighted and marked beside the scrollbar. Regular terminals retain about 10,000 history
+          lines, evicting older content in batches. Mosh temporary pages keep no extra history.</p>
 
         <h3>Appearance stays secondary to content</h3>
         <p>
@@ -2016,6 +2034,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
           the mouse, hold <kbd>Shift</kbd> while dragging to force local selection, or use
           <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+Left click to open a link.
         </p>
+        <p>Hold <kbd>Alt</kbd> while dragging for rectangular selection. Successful copy clears the
+          selection, so the next secondary-click pastes.</p>
       </section>
 
       <section id="en-transfer" class="doc-section">
@@ -2208,6 +2228,15 @@ get work:/reports/latest.csv reports/</code></pre>
           </div>
         </details>
 
+        <details id="en-recovery-display">
+          <summary>“Terminal display unavailable. Input is paused.”</summary>
+          <div class="details-body">
+            <p>Use “Retry display” when the button appears. Rebuilding only the display preserves
+              history and connections in the running process. Restarting the app disconnects sessions
+              and clears terminal content. The app cannot operate while the GPU remains unavailable.</p>
+          </div>
+        </details>
+
         <details id="en-recovery-layout">
           <summary>The system reclaimed the app; connections and content are gone</summary>
           <div class="details-body">
@@ -2233,7 +2262,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.6.0</strong> · Offline user guide · Revision 9 · Updated 2026-09-07</div>
+    <div><strong>LeanTTY 1.7.0</strong> · Offline user guide · Revision 10 · Updated 2026-09-20</div>
     <div>Verify first. Keep work durable. Recover deliberately.</div>
   </footer>
   </div>

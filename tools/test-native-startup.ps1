@@ -13,6 +13,8 @@ foreach ($startupTestMode in @('cold', 'warm')) {
         & $startupTestTools.node (Join-Path $PSScriptRoot 'test-native-terminal-controller.cjs') $startupTestTs $startupTestMode
         if ($LASTEXITCODE -ne 0) { throw "Native startup $startupTestMode contracts failed" }
         Invoke-WithLeanTTYAcceptanceSource -RepoRoot $startupTestRoot -Enabled $true -Action {
+            & $startupTestTools.node (Join-Path $PSScriptRoot 'test-native-terminal-controller.cjs') $startupTestTs $startupTestMode
+            if ($LASTEXITCODE -ne 0) { throw "Nested startup/acceptance $startupTestMode contracts failed" }
             $startupTestSource = [IO.File]::ReadAllText($startupTestController)
             $startupTestImports = [regex]::Matches($startupTestSource, '(?m)^import\s')
             $startupTestDeclaration = [regex]::Match($startupTestSource, '(?m)^const\s')

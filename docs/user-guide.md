@@ -2,14 +2,14 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-09-16
+> Last updated: 2026-09-20
 >
-> Applies to: [GitHub Release 1.6.0](https://github.com/wandcs/leantty/releases/tag/v1.6.0),
-> published on September 16, 2026. Its AppGallery submission report is pending;
-> confirmed store availability remains at 1.5.1. Check the installed version
-> before relying on 1.6.0 behavior. The packaged offline guide is unchanged.
+> Applies to the 1.7.0 release-preparation source; formal acceptance is pending.
+> The maintainer confirmed 1.6.0 is available in AppGallery on September 20.
+> Check the installed version before relying on the 1.7 behavior described here.
 
-LeanTTY is a keyboard-first SSH/Mosh terminal for a physical ARM64 HarmonyOS PC. It
+LeanTTY 1.7 is a keyboard-first SSH/Mosh terminal for a physical ARM64 HarmonyOS PC
+supporting API 24 or later. It
 provides the TTY entry point; the shell, tmux, editor and Agent TUI continue to
 run in the selected execution environment.
 
@@ -416,8 +416,9 @@ cancellation path. Forced termination may leave an identifiable `.part` file;
 LeanTTY never claims or removes partial files from an earlier process.
 
 Passwords, key passphrases and non-echoing keyboard-interactive responses are
-masked and removed from the WebView input helper after the key event is
-consumed. They are not command options and are not written to command history.
+masked, held only for the active authentication exchange and cleared on submission,
+cancellation or termination. They do not enter the native terminal history,
+command options or command history.
 
 ## Host-key maintenance
 
@@ -505,12 +506,18 @@ After a floating main-window resize, LeanTTY aligns the final content size to
 whole terminal cells. A small final adjustment is expected; dragging the left
 or top edge keeps the opposite edge fixed.
 
-Search belongs only to the current pane and its in-memory terminal surface. It
+Search belongs only to the current pane and its in-memory terminal state. It
 does not search another pane, tab, remote file, command history or a destroyed
-session. Closing search restores terminal focus without sending the query to
+pane. Closing search restores terminal focus without sending the query to
 the remote session. An empty query and an unsuccessful query are both shown
 compactly as `0/0`, while accessibility distinguishes “Type to search” from
 “No results”.
+
+Queries are limited to 1 MiB in UTF-8. An oversized or temporarily busy query
+shows a local message without interrupting the session; shorten it or retry
+later. All visible matches are highlighted, with positions beside the scrollbar.
+Regular terminals retain approximately 10,000 physical history lines using
+page-based eviction. Temporary Mosh pages have no extra scrollback.
 
 The terminal content and top Chrome use coordinated, restrained translucent
 surfaces with one fixed HarmonyOS Regular background material at the window
@@ -563,8 +570,11 @@ After an unclean exit, a bounded app-private record restores only Tab/Pane
 layout, active positions and split ratio. Every restored Pane starts offline
 at `ltty>` with a new identity. Passwords, passphrases, authentication answers,
 commands, titles, Sessions and terminal screen/scrollback are never restored.
-A terminal snapshot used to rebuild an ArkWeb surface exists only in the
-running process. Transparency uses local Preferences, not the Asset Store.
+Rebuilding a native display retains terminal state only within the running
+process. If display becomes unavailable, input pauses; use **Retry display** when
+offered. Restarting the app ends Sessions and clears terminal content. The app
+cannot operate while the GPU remains unavailable. Transparency uses local
+Preferences, not the Asset Store.
 
 HarmonyOS owns window size and position through system auto-save. An abnormal
 exit may still cause a default window rectangle on the next launch; LeanTTY

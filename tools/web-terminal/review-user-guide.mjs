@@ -141,12 +141,13 @@ try {
       }
       await check(`${prefix}-recovery-disclosures`, async () => {
         const details = page.locator(`#${lang}-recovery details`);
-        assert.equal(await details.count(), 8);
+        assert.equal(await details.count(), 9);
         for (const item of await details.all()) {
           if (!(await item.evaluate(node => node.open))) await item.locator('summary').click();
           assert.ok(await item.locator('.details-body').isVisible());
         }
         await sectionScreenshot(page, `#${lang}-recovery-layout`, `${prefix}-recovery-layout`);
+        await sectionScreenshot(page, `#${lang}-recovery-display`, `${prefix}-recovery-display`);
         if (viewport.width === 1280) {
           await toc.locator(`a[href="#${lang}-recovery"]`).click();
           await anchorVisible(page, `#${lang}-recovery`, lang);
@@ -164,6 +165,8 @@ try {
           start: ['ssh user@example.com', 'host add work user@example.com:2222'],
           trust: ['ssh-keygen -F example.com', 'ssh-copy-id -i id_work user@example.com'],
           agent: ['tmux new -As agent'],
+          workspace: ['1 MiB'],
+          shortcuts: ['Alt'],
           transfer: ['put report.pdf user@example.com:/incoming/', 'get work:/reports/latest.csv reports/'],
           data: [],
           recovery: ['ssh-keygen -R', 'ssh -G <host-name>']
@@ -179,6 +182,9 @@ try {
             await sectionScreenshot(page, `#${lang}-mosh`, `${prefix}-mosh`);
           }
           if (section === 'data') await sectionScreenshot(page, `#${lang}-data`, `${prefix}-data`);
+          if (section === 'workspace' || section === 'shortcuts') {
+            await sectionScreenshot(page, `#${lang}-${section}`, `${prefix}-${section}`);
+          }
         }
       });
       await check(`${prefix}-language-switch-and-history`, async () => {

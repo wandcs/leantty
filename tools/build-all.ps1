@@ -112,6 +112,11 @@ function Assert-ReleasePreflight {
             ) -Raw |
                 ConvertFrom-Json
         ).version
+        'entry/src/main/cpp/types/libleantty_terminal/oh-package.json5' = [string](
+            Get-Content -LiteralPath (
+                Join-Path $repoRoot 'entry\src\main\cpp\types\libleantty_terminal\oh-package.json5'
+            ) -Raw | ConvertFrom-Json
+        ).version
         'oh-package.json5' = [string](
             Get-Content -LiteralPath (Join-Path $repoRoot 'oh-package.json5') -Raw |
                 ConvertFrom-Json
