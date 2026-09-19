@@ -41,7 +41,8 @@ jobs:
         run: ./tools/test-build-workflows.ps1
 
   offline-guide:
-    name: Offline user guide
+    # Stable required-check identity; the Web terminal is removed, leaving its guide.
+    name: Web terminal policy
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
