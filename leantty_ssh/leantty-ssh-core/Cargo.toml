@@ -10,7 +10,7 @@ authors     = ["LeanTTY Contributors"]
 [dependencies]
 data-encoding = "2.11"
 hmac = "0.13"
-russh = { version = "0.62", default-features = false, features = ["ring", "rsa"] }
+russh = { version = "0.63", default-features = false, features = ["ring", "rsa"] }
 rand = { version = "0.10", features = ["sys_rng"] }
 sha1 = "0.11"
 zeroize = "1"
