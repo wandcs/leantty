@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-### In development
+## [1.7.0] - 2026-09-20
+
+### Changed
 
 - Place local output after the last content row when a native SSH session ends,
   preserving history instead of leaving a large blank gap above the prompt.

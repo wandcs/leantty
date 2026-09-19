@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "leantty-ssh-core"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "data-encoding",
  "hmac",
@@ -902,7 +902,7 @@ dependencies = [
 
 [[package]]
 name = "leantty_ssh"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "leantty-ssh-core",
  "mosh-client",
