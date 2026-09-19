@@ -14,8 +14,8 @@ const nativeOutputLogger: NativeOutputLogger = new NativeOutputLogger('NativeOut
     $nativeOutputText = Set-LeanTTYAcceptanceSourceText $nativeOutputText 'class NativeCommand {' ($nativeOutputTemplate + "`nclass NativeCommand {")
     $nativeOutputText = Set-LeanTTYAcceptanceSourceText $nativeOutputText '  private handle: TerminalHandle' `
         "  private outputProbe: NativeOutputProbe = new NativeOutputProbe()`n  private handle: TerminalHandle"
-    $nativeOutputText = Set-LeanTTYAcceptanceSourceText $nativeOutputText 'this.acknowledgeAttention(); this.onInput(text)' `
-        'this.acknowledgeAttention(); if (NATIVE_OUTPUT_TESTS) { this.outputProbe.input(text) }; this.onInput(text)'
+    $nativeOutputText = Set-LeanTTYAcceptanceSourceText $nativeOutputText 'this.onInput(text)' `
+        'if (NATIVE_OUTPUT_TESTS) { this.outputProbe.input(text) }; this.onInput(text)'
     $nativeOutputText = Set-LeanTTYAcceptanceSourceText $nativeOutputText '  invalidateInput(): void {' `
         "  invalidateInput(): void {`n    if (NATIVE_OUTPUT_TESTS) { this.outputProbe.cancelInput() }"
     $nativeOutputText = Set-LeanTTYAcceptanceSourceText $nativeOutputText '        this.inflight.set(sequence, command)' @'
