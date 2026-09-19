@@ -27,7 +27,7 @@ export class CommandBarViewModel {
 
   loadSshConfig(context: common.Context): void {
     this.context = context
-    this.sshConfig.load(context)
+    this.sshConfig = SshConfig.getShared(context)
   }
 
   getSshConfig(): SshConfig { return this.sshConfig }

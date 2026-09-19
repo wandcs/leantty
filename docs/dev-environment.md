@@ -19,13 +19,14 @@
 
 ## Key Dependencies
 
-| Crate | Version | Purpose |
+| Dependency | Version | Purpose |
 |---|---|---|
 | russh | 0.62.5 | SSH client/server (ring backend) |
-| mosh-client | 0.0.0 / `94f1322` | Pinned Git Mosh client dependency |
+| mosh-client | 0.1.1 / `dfc188975ed0a8bd734bbf14bd6cfdeb3838e629` | Pinned Git Mosh client dependency |
 | tokio | 1.52 | Async runtime |
 | napi-ohos | 1.2.0 | N-API bindings |
-| xterm.js | 6.0.0 | Terminal emulator |
+| Ghostty VT | `82938b633ba646db38591d969c3c526332bd7e65` | Native terminal state and input encoding |
+| Zig | 0.16.0 | Pinned native VT build tool |
 | hypium | 1.0.25 | Test framework |
 
 ## Environment Variables
@@ -47,6 +48,11 @@ All Rust formatting, tests and compilation run in WSL. `build-native.ps1`
 translates repository and SDK paths, invokes WSL Cargo, and calls the Windows
 OHOS Clang/LLVM archive executables only through the checked-in WSL wrappers.
 Hvigor, signing and HDC remain Windows-side operations.
+
+`build-terminal-native.ps1` builds the pinned Ghostty VT and API 24 C++ adapter
+for ARM64. Archive and package hashes live in
+`tools/native-terminal/dependencies.json`; its separate Windows host-test target
+is a contract harness, not a supported product or emulator target.
 
 All repository build, verification, deployment and release-package entry
 points share one lock across worktrees belonging to the same Git repository.

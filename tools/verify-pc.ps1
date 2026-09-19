@@ -66,6 +66,9 @@ try {
 
 foreach ($scriptName in @(
         'build-native.ps1',
+        'build-terminal-native.ps1',
+        'native-terminal-inputs.ps1',
+        'test-native-build-inputs.ps1',
         'build-lock.ps1',
         'acceptance-source.ps1',
         'package-policy.ps1',

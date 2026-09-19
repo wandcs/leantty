@@ -70,8 +70,8 @@ not inspect terminal content to guess whether a task has finished.
 - Controlled single-file `put` / `get` in the current foreground pane
 - Native Chinese and English UI; commands, technical output and remote content
   remain unchanged
-- ArkTS / ArkUI application shell, Rust / russh SSH transport and ArkWeb /
-  xterm.js terminal rendering
+- ArkTS / ArkUI application shell and Rust / russh SSH transport; the current
+  1.7 development source uses Ghostty VT and native GLES terminal rendering
 
 ## Get started
 

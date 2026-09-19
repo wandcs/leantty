@@ -23,11 +23,3 @@ updates:
     labels:
       - dependencies
     open-pull-requests-limit: 5
-
-  - package-ecosystem: npm
-    directory: /tools/web-terminal
-    schedule:
-      interval: monthly
-    labels:
-      - dependencies
-    open-pull-requests-limit: 5

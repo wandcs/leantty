@@ -2,6 +2,79 @@
 
 ## [Unreleased]
 
+### In development
+
+- Place local output after the last content row when a native SSH session ends,
+  preserving history instead of leaving a large blank gap above the prompt.
+- Restore the native terminal's default blinking bar cursor, density-scaled
+  one-vp strokes and the previous blink interval, while honoring remote cursor
+  styles and keeping the unfocused outline.
+- Report native terminal dimensions to the Session only on the initial grid or
+  actual row/column changes, while preserving pixel geometry updates during drag.
+- Release native terminal resources and callback references even when preparing
+  or queuing an asynchronous Pane close fails.
+- Restore the native terminal's eight-vp visual inset and center the complete
+  cell grid after resize, sharing the offset with selection, mouse reporting,
+  links and IME cursor positioning. Floating-window drag snapping now uses the
+  measured native cell size and inset, preserving the opposite window edge.
+- Correct reversed IME deletion callbacks in the native terminal, so Backspace
+  deletes to the left of the cursor and Delete deletes to the right.
+- Integrate a pinned Ghostty VT, native text/GLES display and system IME in the
+  ARM64 API 24 debug and release builds, with Pane-owned state, bounded output admission and
+  consumed-output barriers. Remove the Web renderer, Bridge, snapshot replay,
+  xterm resources and dependencies; retain the offline user guide.
+- Add native selection, clipboard, scrollback search, mode-aware keyboard and
+  mouse input, IME preview positioning, text styles and bounded terminal system
+  effects to the development path. Existing session and security ownership
+  remains in place; development replacement checks are complete, with formal
+  candidate acceptance still pending.
+- Render the native history position and add scrollbar dragging and track paging
+  directly against the VT viewport, without a second history buffer.
+- Place the native scrollbar at the inner edge of its existing gutter and move
+  the split handle's mouse target into the right Pane's existing inset, avoiding
+  overlap with window resizing and the left Pane's scrollbar without reducing
+  terminal space.
+- Keep approximately 10,000 physical lines of native history using Ghostty's
+  page eviction policy, avoiding early truncation of wide or heavily styled
+  output by the former eight-MiB budget. Temporary Mosh pages retain no history.
+- Highlight all visible native search matches and distinguish the current match
+  with the existing search colors and accent border. Show matching lines across
+  the retained history in the existing scrollbar gutter.
+- Restore the compact native search bar, grouped navigation, separate close
+  control, keyboard tips and focus styling. Keep it within narrow Panes and
+  handle focused button activation before the IME.
+- Close native search on primary/alternate screen changes even with an empty
+  or cleared query. Replace the 256-character input cap with a one-MiB UTF-8
+  query limit; oversized or temporarily unaccepted searches show a local
+  message while the terminal remains usable.
+- Show native URL and OSC 8 link underlines, the pointing cursor and target
+  preview while the link modifier is held; clear stale hints on terminal changes
+  and focus transitions.
+- Preserve local history when the first native Mosh frame arrives before the
+  connection notification. Rebuild an unavailable native display through the
+  existing Pane lifecycle while retaining terminal state and the live Session,
+  with bounded retries and stale-surface callback rejection.
+- Deliver ordinary native terminal keys returned unconsumed by the system IME,
+  fixing dropped digits while preserving candidate selection and the platform
+  keyboard layout.
+- Let the system IME consume Escape to cancel Chinese candidates before sending
+  unconsumed Escape to the native terminal.
+- Keep the native VT and connected Session alive when the platform rejects a
+  window attachment, and route that display failure through the existing bounded
+  Surface rebuild.
+- Allow an explicit display retry after native automatic recovery is exhausted,
+  retaining terminal contents and the Session without a background retry loop.
+- Pause native rendering while a Tab or window is hidden, retain terminal output
+  and protocol replies, and restore input only after a fresh visible frame.
+- Use the system allocator for the native VT, preventing retained anonymous
+  memory from accumulating as output-heavy terminal workers are opened and closed.
+- Build the native Unicode runtime with the terminal's release optimization,
+  preserve pinned downloads across clean builds, restore cached source inputs,
+  and share one SDK and build lock across native build entry points.
+- Share committed Host configuration across open Panes so completion, connection
+  resolution and later edits see current changes. Roll back in-memory Host edits
+  when persistence fails, preserving other Panes' configuration.
+
 ## [1.6.0] - 2026-09-08
 
 ### Added

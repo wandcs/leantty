@@ -324,40 +324,25 @@ function Get-LeanTTYDeviceLayout {
     throw '[environment] HarmonyOS UI layout remained empty after two captures'
 }
 
-function Get-LeanTTYTerminalInputText {
-    param([Parameter(Mandatory = $true)]$Layout)
 
-    $inputNode = @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        [string]$_.attributes.hint -eq 'Terminal input'
-    } | Select-Object -First 1)
-    if ($inputNode.Count -ne 1) {
-        throw 'LeanTTY terminal input accessibility node was not found'
+
+function Get-LeanTTYVisibleLayoutNodes {
+    param([Parameter(Mandatory = $true)]$Node)
+    if ([string]$Node.attributes.visible -eq 'false' -or
+        [string]$Node.attributes.opacity -match '^0(?:\.0+)?$' -or
+        [string]$Node.attributes.hitTestBehavior -eq 'HitTestMode.None') { return }
+    $Node
+    foreach ($child in @($Node.children)) {
+        if ($null -ne $child) { Get-LeanTTYVisibleLayoutNodes -Node $child }
     }
-    $originalText = [string]$inputNode[0].attributes.originalText
-    if (-not [string]::IsNullOrEmpty($originalText)) { return $originalText }
-    return [string]$inputNode[0].attributes.text
 }
 
 function Get-LeanTTYTerminalInputNodes {
     param([Parameter(Mandatory = $true)]$Layout)
-
-    # Index mounts each Tab's Panes in model order. Preserve their current
-    # layout traversal order: xterm moves the hidden textarea with the cursor.
-    # Geometry is not identity, and overlapping Panes require diagnosis.
-    $inputs = [Collections.Generic.List[object]]::new()
-    $visit = {
-        param($Node)
-        if ($null -eq $Node) { return }
-        # UiTest still exposes descendants of retained, hidden Tab wrappers.
-        # Do not filter the textarea's own opacity: xterm intentionally hides it.
-        if ([string]$Node.attributes.type -eq '__Common__' -and (
-                [string]$Node.attributes.opacity -eq '0.000000' -or
-                [string]$Node.attributes.hitTestBehavior -eq 'HitTestMode.None')) { return }
-        if ([string]$Node.attributes.hint -eq 'Terminal input') { $inputs.Add($Node) }
-        foreach ($child in @($Node.children)) { & $visit $child }
-    }
-    & $visit $Layout
-    return @($inputs)
+    return @(Get-LeanTTYVisibleLayoutNodes -Node $Layout | Where-Object {
+        [string]$_.attributes.type -eq 'XComponent' -and
+        [string]$_.attributes.id -match '^native-terminal-pane-[0-9]+-[0-9]+$'
+    })
 }
 
 function Set-LeanTTYTerminalInputFocus {
@@ -382,7 +367,7 @@ function Set-LeanTTYTerminalInputFocus {
             -Target $Target `
             -LocalPath $LocalPath
         $focusedTarget = @(Get-LeanTTYTerminalInputNodes -Layout $layout | Where-Object {
-            [string]$_.attributes.bounds -eq $inputBounds -and
+            (Test-LeanTTYSameTextInputTarget -ExpectedNode $InputNode -CurrentNode $_ -CurrentLayout $layout) -and
             [string]$_.attributes.focused -eq 'true'
         })
         if ($focusedTarget.Count -eq 1) {
@@ -431,9 +416,7 @@ function Wait-LeanTTYTerminalInputLayout {
             -Hdc $Hdc `
             -Target $Target `
             -LocalPath $LocalPath
-        $inputNodes = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
-            [string]$_.attributes.hint -eq 'Terminal input'
-        } | Select-Object -First 1)
+        $inputNodes = @(Get-LeanTTYTerminalInputNodes -Layout $layout | Select-Object -First 1)
         if ($inputNodes.Count -eq 1) { return $layout }
         if ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
             Start-Sleep -Milliseconds 200
@@ -444,35 +427,15 @@ function Wait-LeanTTYTerminalInputLayout {
 
 function Get-LeanTTYFocusedTextInputNodes {
     param([Parameter(Mandatory = $true)]$Layout)
-
-    return @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        [string]$_.attributes.type -eq 'textField' -and
-        [string]$_.attributes.focused -eq 'true'
+    return @(Get-LeanTTYVisibleLayoutNodes -Node $Layout | Where-Object {
+        [string]$_.attributes.focused -eq 'true' -and (
+            [string]$_.attributes.type -eq 'TextInput' -or (
+                [string]$_.attributes.type -eq 'XComponent' -and
+                [string]$_.attributes.id -match '^native-terminal-pane-[0-9]+-[0-9]+$'))
     })
 }
 
-function Get-LeanTTYTerminalInputWebOwner {
-    param($Layout, $InputNode)
 
-    if ($null -eq $Layout -or $null -eq $InputNode) { return $null }
-    $owners = [Collections.Generic.List[object]]::new()
-    $visit = {
-        param($Node, $WebOwner)
-        if ($null -eq $Node) { return }
-        if ([string]$Node.attributes.type -eq '__Common__' -and (
-                [string]$Node.attributes.opacity -eq '0.000000' -or
-                [string]$Node.attributes.hitTestBehavior -eq 'HitTestMode.None')) { return }
-        if ([string]$Node.attributes.type -eq 'Web') { $WebOwner = $Node }
-        if ([object]::ReferenceEquals($Node, $InputNode)) {
-            if ($null -ne $WebOwner) { $owners.Add($WebOwner) }
-            return
-        }
-        foreach ($child in @($Node.children)) { & $visit $child $WebOwner }
-    }
-    & $visit $Layout $null
-    if ($owners.Count -ne 1) { return $null }
-    return $owners[0]
-}
 
 function Test-LeanTTYSameTextInputTarget {
     param(
@@ -481,77 +444,24 @@ function Test-LeanTTYSameTextInputTarget {
         $ExpectedLayout = $null,
         $CurrentLayout = $null
     )
-
-    $expectedAttributes = $ExpectedNode.attributes
-    $currentAttributes = $CurrentNode.attributes
-    foreach ($attributeName in @('type', 'id', 'hint')) {
-        $expectedValue = [string]$expectedAttributes.$attributeName
-        if (-not [string]::IsNullOrEmpty($expectedValue) -and
-            [string]$currentAttributes.$attributeName -cne $expectedValue) {
-            return $false
-        }
+    # Native component identity is scoped to this operation. Layout paths and
+    # bounds can change; a recreated component or another Pane must be rejected.
+    foreach ($name in @('type', 'id', 'hostWindowId', 'accessibilityId')) {
+        $expected = [string]$ExpectedNode.attributes.$name
+        if ($name -ne 'id' -and [string]::IsNullOrWhiteSpace($expected)) { return $false }
+        if ([string]$CurrentNode.attributes.$name -cne $expected) { return $false }
     }
-
-    if ($null -ne $ExpectedLayout -and $null -ne $CurrentLayout -and
-        [string]$expectedAttributes.hint -eq 'Terminal input') {
-        $expectedWeb = Get-LeanTTYTerminalInputWebOwner -Layout $ExpectedLayout -InputNode $ExpectedNode
-        $currentWeb = Get-LeanTTYTerminalInputWebOwner -Layout $CurrentLayout -InputNode $CurrentNode
-        if ($null -ne $expectedWeb -or $null -ne $currentWeb) {
-            if ($null -eq $expectedWeb -or $null -eq $currentWeb) { return $false }
-            $expectedInputs = @(Get-LeanTTYTerminalInputNodes -Layout $expectedWeb)
-            $currentInputs = @(Get-LeanTTYTerminalInputNodes -Layout $currentWeb)
-            if ($expectedInputs.Count -ne 1 -or $currentInputs.Count -ne 1) { return $false }
-            # UiTest reidentifies native nodes by window + accessibility ID.
-            # Hierarchy is a child-index path: ancestor reindexing is not a new
-            # Web. Keep this identity within these two operation-local layouts;
-            # never accept a different Pane at coincident bounds or a duplicate ID.
-            foreach ($name in @('hostWindowId', 'accessibilityId')) {
-                $expectedValue = [string]$expectedWeb.attributes.$name
-                if ([string]::IsNullOrWhiteSpace($expectedValue) -or
-                    [string]$currentWeb.attributes.$name -cne $expectedValue) { return $false }
-            }
-            foreach ($ownerLayout in @($ExpectedLayout, $CurrentLayout)) {
-                $matchingWebs = @(Get-LeanTTYLayoutNodes -Node $ownerLayout | Where-Object {
-                    [string]$_.attributes.type -eq 'Web' -and
-                    [string]$_.attributes.hostWindowId -ceq [string]$expectedWeb.attributes.hostWindowId -and
-                    [string]$_.attributes.accessibilityId -ceq [string]$expectedWeb.attributes.accessibilityId
-                })
-                if ($matchingWebs.Count -ne 1) { return $false }
-            }
-            if ([string]$expectedAttributes.hostWindowId -cne [string]$expectedWeb.attributes.hostWindowId -or
-                [string]$currentAttributes.hostWindowId -cne [string]$currentWeb.attributes.hostWindowId) { return $false }
-            return $true
-        }
+    foreach ($layout in @($ExpectedLayout, $CurrentLayout)) {
+        if ($null -eq $layout) { continue }
+        $matches = @(Get-LeanTTYLayoutNodes -Node $layout | Where-Object {
+            [string]$_.attributes.hostWindowId -ceq [string]$ExpectedNode.attributes.hostWindowId -and
+            ([string]$_.attributes.accessibilityId -ceq [string]$ExpectedNode.attributes.accessibilityId -or
+                (-not [string]::IsNullOrWhiteSpace([string]$ExpectedNode.attributes.id) -and
+                    [string]$_.attributes.id -ceq [string]$ExpectedNode.attributes.id))
+        })
+        if ($matches.Count -ne 1) { return $false }
     }
-
-    # This comparison is scoped to one input operation, not a cached locator
-    # across navigation/rebuilds. Geometry can coincide across separate Panes;
-    # the current window/tree target must win over bounds or regenerated IDs.
-    foreach ($attributeName in @('hostWindowId', 'hierarchy')) {
-        $expectedValue = [string]$expectedAttributes.$attributeName
-        $currentValue = [string]$currentAttributes.$attributeName
-        if ($expectedValue.Length -gt 0 -and $currentValue -cne $expectedValue) {
-            return $false
-        }
-    }
-    if (-not [string]::IsNullOrEmpty([string]$expectedAttributes.hierarchy)) {
-        return $true
-    }
-
-    $expectedAccessibilityId = [string]$expectedAttributes.accessibilityId
-    $currentAccessibilityId = [string]$currentAttributes.accessibilityId
-    $sameOpaqueId = -not [string]::IsNullOrEmpty($expectedAccessibilityId) -and
-        -not [string]::IsNullOrEmpty($currentAccessibilityId) -and
-        $expectedAccessibilityId -ceq $currentAccessibilityId
-    $expectedBounds = [string]$expectedAttributes.bounds
-    $currentBounds = [string]$currentAttributes.bounds
-    $sameGeometry = -not [string]::IsNullOrEmpty($expectedBounds) -and
-        $expectedBounds -ceq $currentBounds
-
-    # UiTest 6.0.2.3 regenerates accessibilityId between adjacent dumpLayout
-    # snapshots. Legacy nodes without a tree path require a matching ID or
-    # exact geometry; real current layouts also prove the tree target above.
-    return $sameOpaqueId -or $sameGeometry
+    return $true
 }
 
 function New-LeanTTYTextInputFailure {
@@ -608,24 +518,6 @@ function New-LeanTTYTextInputFailure {
         focusedCount = $CurrentNodes.Count
         targetsTruncated = $CurrentNodes.Count -gt 4
         targets = $targets
-    }
-    if ($null -ne $ExpectedLayout -and $null -ne $CurrentLayout) {
-        $expectedWeb = Get-LeanTTYTerminalInputWebOwner -Layout $ExpectedLayout -InputNode $ExpectedNode
-        $currentWebs = @($CurrentNodes | Select-Object -First 4 | ForEach-Object {
-            Get-LeanTTYTerminalInputWebOwner -Layout $CurrentLayout -InputNode $_
-        } | Where-Object { $null -ne $_ })
-        # Reuse the same whitelist for the actual identity boundary. No layouts
-        # are passed recursively, so this adds exactly one comparison level.
-        $webFailure = New-LeanTTYTextInputFailure -Message $Message -Phase $Phase `
-            -ExpectedNode $expectedWeb -CurrentNodes $currentWebs
-        $webDetails = $webFailure.Data['LeanTTYTextInputFailure']
-        $webDetails.expectedTerminalCount = $(if ($null -ne $expectedWeb) {
-            @(Get-LeanTTYTerminalInputNodes -Layout $expectedWeb).Count
-        } else { 0 })
-        $webDetails.currentTerminalCounts = @($currentWebs | ForEach-Object {
-            @(Get-LeanTTYTerminalInputNodes -Layout $_).Count
-        })
-        $failure.Data['LeanTTYTextInputFailure'].webOwners = $webDetails
     }
     return $failure
 }
@@ -701,7 +593,8 @@ function Invoke-LeanTTYDeviceText {
                     -BundleName 'com.leantty.app' `
                     -Operation 'HarmonyOS pre-input focus layout capture'
                 $focusedInputs = @(Get-LeanTTYFocusedTextInputNodes -Layout $layout)
-                if ($focusedInputs.Count -ne 1) {
+                if ($focusedInputs.Count -ne 1 -or -not (Test-LeanTTYSameTextInputTarget `
+                        -ExpectedNode $focusedInputs[0] -CurrentNode $focusedInputs[0] -CurrentLayout $layout)) {
                     throw (New-LeanTTYTextInputFailure -Phase before -ExpectedNode $InputNode `
                         -CurrentNodes $focusedInputs `
                         -Message '[harness] HarmonyOS text input requires one current focused text field')
@@ -1282,15 +1175,15 @@ function Get-LeanTTYAppLogs {
             (
                 "hilog -z 500 -t app -P $ProcessId " +
                 '-T SessionViewModel,KeyCommandService,SshClient,FileTransferClient,EntryAbility,IndexPage,' +
-                'TerminalSurfaceController,TerminalBridge,AppViewModel,BackgroundBellNotification'
+                'TerminalSurfaceController,AppViewModel,BackgroundBellNotification'
             )
         ) `
         -Operation 'HarmonyOS application log query'
     $mosh = Invoke-HdcChecked `
         -Hdc $Hdc `
         -Target $Target `
-        -Arguments @('shell', "hilog -z 500 -t app -P $ProcessId -T MoshClient") `
-        -Operation 'HarmonyOS Mosh application log query'
+        -Arguments @('shell', "hilog -z 500 -t app -P $ProcessId -T MoshClient,NativeTerminalController,NativeOutputPerformance") `
+        -Operation 'HarmonyOS Mosh and native terminal application log query'
     return $primary + "`n" + $mosh
 }
 

@@ -25,17 +25,14 @@ $evidenceDirectory = Split-Path $EvidencePath -Parent
 New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
 $tools = Resolve-LeanTTYDevEcoBuildTools
 $env:NODE_OPTIONS = ''
-$env:DEVECO_SDK_HOME = $tools.sdkHome
+$env:DEVECO_SDK_HOME = (Resolve-LeanTTYHarmonySdk -DevEcoHome $tools.root).sdkHome
 $env:JAVA_HOME = $tools.javaHome
 $env:PATH = (Join-Path $tools.javaHome 'bin') + ';' + $env:PATH
 
 $trackedInputPaths = @(
-    'tools/web-terminal/package-lock.json',
-    'tools/web-terminal/assets-manifest.json',
     'oh-package-lock.json5',
     'entry/oh-package-lock.json5'
-) + @(git -C $repoRoot ls-files -- 'entry/src/main/resources/rawfile')
-if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate formal Web build inputs' }
+) + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'entry/src/main/resources/rawfile') -File | ForEach-Object { 'entry/src/main/resources/rawfile/' + $_.Name })
 $beforeHashes = @{}
 $beforeBytes = @{}
 foreach ($relativePath in $trackedInputPaths) {
@@ -72,20 +69,6 @@ try {
     $versions.ohpm = (& $tools.ohpm --version 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Unable to read the OHPM version' }
 
-    $webRoot = Join-Path $repoRoot 'tools\web-terminal'
-    $npmCi = Invoke-LeanTTYCapturedProcess `
-        -FilePath $tools.node -Arguments @($tools.npmCli, 'ci', '--ignore-scripts') `
-        -WorkingDirectory $webRoot `
-        -StandardOutputPath (Join-Path $evidenceDirectory 'npm-ci.stdout.log') `
-        -StandardErrorPath (Join-Path $evidenceDirectory 'npm-ci.stderr.log')
-    if ($npmCi.exitCode -ne 0) { throw 'Locked Web dependency preparation failed' }
-    $npmBuild = Invoke-LeanTTYCapturedProcess `
-        -FilePath $tools.node -Arguments @($tools.npmCli, 'run', 'build') `
-        -WorkingDirectory $webRoot `
-        -StandardOutputPath (Join-Path $evidenceDirectory 'npm-build.stdout.log') `
-        -StandardErrorPath (Join-Path $evidenceDirectory 'npm-build.stderr.log')
-    if ($npmBuild.exitCode -ne 0) { throw 'Packaged Web asset rebuild failed' }
-
     Push-Location $repoRoot
     try {
         & $tools.ohpm install --all --lockfile_stable_order
@@ -97,6 +80,8 @@ try {
         'fetch', '--locked', '--manifest-path', './leantty_ssh/Cargo.toml',
         '--target', 'aarch64-unknown-linux-ohos'
     )
+    & (Join-Path $PSScriptRoot 'build-terminal-native.ps1') -PrepareOnly
+    if ($LASTEXITCODE -ne 0) { throw 'Pinned native terminal input preparation failed' }
 
     foreach ($relativePath in $trackedInputPaths) {
         $afterHash = (Get-FileHash -LiteralPath (Join-Path $repoRoot $relativePath) -Algorithm SHA256).Hash

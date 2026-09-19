@@ -8,7 +8,6 @@ import { ChromeColors } from '../view/theme/ThemeConstants'
 import { Logger } from '../common/logger/Logger'
 import { ChromeBar } from '../view/components/ChromeBar'
 import { TerminalPane } from '../view/components/TerminalPane'
-import webview from '@ohos.web.webview'
 import { common } from '@kit.AbilityKit'
 import { InteractionPolicy, WorkspaceNavigationAction } from '../model/ui/InteractionPolicy'
 import { UserPreferences } from '../model/settings/UserPreferences'
@@ -136,6 +135,13 @@ struct Index {
         Stack() {
           ForEach(this.mountedPaneRuntimes(), (runtime: PaneRuntime) => {
             TerminalPane({
+              surface: runtime.surface,
+              onNativeControllerReady: () => {
+                runtime.surface.setNativeVisible(this.mainWindowVisible && this.isPaneInActiveTab(runtime.id))
+                runtime.surface.setFontSize(this.fontSize)
+                if (this.isPaneFocused(runtime.id)) { runtime.viewModel.requestFocus() }
+                else { runtime.viewModel.requestBlur() }
+              },
               focusVeilColor: this.chromeColors.paneFocusVeil,
               focusVeilOpacity: this.chromeColors.paneFocusVeilOpacity,
               sessionMode: this.paneMode(runtime.id),
@@ -146,17 +152,6 @@ struct Index {
               closeButtonText: this.chromeColors.paneControlText,
               focusRing: this.chromeColors.focusRing,
               showCloseButton: this.isPaneInActiveTab(runtime.id) && this.activeTabIsSplit(),
-              onWebControllerReady: (ctrl: webview.WebviewController) => {
-                if (this.isPaneFocused(runtime.id)) {
-                  runtime.viewModel.requestFocus()
-                } else {
-                  runtime.viewModel.requestBlur()
-                }
-                runtime.attachSurface(ctrl)
-                runtime.viewModel.applyTerminalTheme(this.getTerminalThemeJson())
-                runtime.surface.setFontSize(this.fontSize)
-                runtime.surface.setLocalization(JSON.stringify(UiText.terminalSearch(this.uiContext())))
-              },
               onPaneDisappear: () => {
                 runtime.detachSurface()
               },
@@ -172,7 +167,7 @@ struct Index {
               },
               onClosePane: () => { this.requestCloseActivePane() },
               onRendererExited: () => {
-                logger.warn('ArkWeb renderer exited for pane=' + runtime.id + ', rebuilding WebView')
+                logger.warn('Terminal display unavailable for pane=' + runtime.id + ', rebuilding Surface')
                 this.recyclePaneWebView(runtime.id)
               }
             })
@@ -225,6 +220,9 @@ struct Index {
               .zIndex(2)
               .position({ x: this.splitRatio * 100 + '%', y: 0 })
               .translate({ x: -7, y: 0 })
+              // The left gutter belongs to its scrollbar. Use only the right
+              // Pane's existing 4 vp separator padding plus 8 vp text inset.
+              .mouseResponseRegion({ x: 7, y: 0, width: 12, height: '100%' })
               .accessibilityText(this.text('a11y_resize_split'))
               .focusable(true)
               .onHover((hovered: boolean) => { this.splitHandleHovered = hovered })
@@ -235,11 +233,9 @@ struct Index {
                 if (event.keyCode === 2014 || event.keyCode === 2015) {
                   let direction: number = event.keyCode === 2014 ? -0.05 : 0.05
                   this.splitRatio = InteractionPolicy.clampSplitRatio(this.splitRatio + direction)
-                  this.requestActiveTabFit()
                   this.checkpointWorkspace()
                 } else if (event.keyCode === 2054) {
                   this.splitRatio = 0.5
-                  this.requestActiveTabFit()
                   this.checkpointWorkspace()
                 }
                 return true
@@ -258,7 +254,6 @@ struct Index {
                   })
                   .onActionEnd(() => {
                     this.splitDragging = false
-                    this.requestActiveTabFit()
                     this.checkpointWorkspace()
                     this.restoreActivePaneFocus()
                   })
@@ -275,7 +270,6 @@ struct Index {
         .backgroundColor(this.contentBg)
         .onAreaChange((oldArea: Area, newArea: Area) => {
           this.workspaceWidth = Number(newArea.width)
-          this.requestActiveTabFit()
         })
 
       }
@@ -342,6 +336,7 @@ struct Index {
     if (this.mainWindowVisible) {
       let bindingRestored: boolean = this.restoreApplicationWorkspaceBinding()
       let runtimeRecovered: boolean = this.recoverReclaimedRuntimeSessions()
+      this.syncNativeVisibility()
       logger.info('Main window visibility applied: visible=true,workspaceBinding=' +
         (bindingRestored ? 'restored' : 'retained') + ',runtimeRecovery=' +
         (runtimeRecovered ? 'workspace-only' : 'not-required'))
@@ -350,13 +345,13 @@ struct Index {
       return
     }
     logger.info('Main window visibility applied: visible=false,workspaceBinding=retained')
+    this.syncNativeVisibility()
     let mounted: PaneRuntime[] = this.mountedPaneRuntimes()
     for (let i = 0; i < mounted.length; i++) {
       mounted[i].viewModel.requestBlur()
     }
-    this.captureMountedTerminalSnapshots()
     if (this.warmTabId.length > 0) {
-      this.checkpointAndDestroyTabBridge(this.warmTabId)
+      this.drainAndDetachTabDisplay(this.warmTabId)
     }
     this.clearWarmTabEvictionTimer()
     this.warmTabId = ''
@@ -511,12 +506,6 @@ struct Index {
     this.applyTheme()
   }
 
-  private captureMountedTerminalSnapshots(): void {
-    let mounted: PaneRuntime[] = this.mountedPaneRuntimes()
-    for (let i = 0; i < mounted.length; i++) {
-      mounted[i].surface.captureSnapshot()
-    }
-  }
 
   private isPaneInActiveTab(paneId: string): boolean {
     let tab: TabInfo | null = this.activeTab()
@@ -571,16 +560,9 @@ struct Index {
       theme.transparencyMode !== TransparencyMode.OFF ?
       BlurStyle.BACKGROUND_REGULAR : BlurStyle.NONE
     this.transparencyLabel = this.transparencyModeLabel(theme.transparencyMode)
-    let themeJson: string = theme.terminal.toJsInitObject()
-    let runtimes: PaneRuntime[] = this.appVm.getPaneRuntimes()
-    for (let i = 0; i < runtimes.length; i++) {
-      runtimes[i].viewModel.applyTerminalTheme(themeJson)
-    }
+
   }
 
-  private getTerminalThemeJson(): string {
-    return ThemeManager.getInstance().getTheme().terminal.toJsInitObject()
-  }
 
   private newTab(): void {
     if (this.appVm.getTabs().length > 0) {
@@ -688,7 +670,7 @@ struct Index {
     }
     let evictedTabId: string = InteractionPolicy.evictedWarmTab(tab.id, targetTabId, this.warmTabId)
     if (evictedTabId.length > 0) {
-      this.checkpointAndDestroyTabBridge(evictedTabId)
+      this.drainAndDetachTabDisplay(evictedTabId)
     }
     this.clearWarmTabEvictionTimer()
     this.warmTabId = InteractionPolicy.warmTabAfterSwitch(tab.id)
@@ -701,7 +683,7 @@ struct Index {
     this.scheduleWarmTabEviction(this.warmTabId)
   }
 
-  private checkpointAndDestroyTabBridge(tabId: string): void {
+  private drainAndDetachTabDisplay(tabId: string): void {
     let tab: TabInfo | null = this.findTabById(tabId)
     if (tab === null) {
       return
@@ -713,23 +695,23 @@ struct Index {
       return
     }
     this.checkpointingTabIds = this.checkpointingTabIds.concat([tabId])
-    let pendingCaptures: number = tab.panes.length
-    if (pendingCaptures === 0) {
+    let pendingDrains: number = tab.panes.length
+    if (pendingDrains === 0) {
       this.finishTabCheckpoint(tabId)
       return
     }
     for (let i = 0; i < tab.panes.length; i++) {
       let runtime: PaneRuntime | null = this.findPaneRuntime(tab.panes[i].id)
       if (runtime !== null) {
-        runtime.surface.captureSnapshot(() => {
-          pendingCaptures--
-          if (pendingCaptures === 0) {
+        runtime.surface.barrier(() => {
+          pendingDrains--
+          if (pendingDrains === 0) {
             this.finishTabCheckpoint(tabId)
           }
         })
       } else {
-        pendingCaptures--
-        if (pendingCaptures === 0) {
+        pendingDrains--
+        if (pendingDrains === 0) {
           this.finishTabCheckpoint(tabId)
         }
       }
@@ -773,7 +755,7 @@ struct Index {
         this.warmTabId = ''
         return
       }
-      this.checkpointAndDestroyTabBridge(tabId)
+      this.drainAndDetachTabDisplay(tabId)
       this.warmTabId = ''
     }, WARM_TAB_RETENTION_MS)
   }
@@ -904,6 +886,7 @@ struct Index {
     if (InteractionPolicy.isTerminalTabKey(event.keyCode, ctrlKey, altKey, shiftKey)) {
       let runtime: PaneRuntime | null = activeRuntime
       if (runtime !== null) {
+        if (runtime.surface.sendNativeKey(event.keyCode, shiftKey ? 1 : 0, '')) { return true }
         runtime.viewModel.handleTerminalInput(KeyCodeMap.toAnsi(
           event.keyCode, ctrlKey, altKey, shiftKey), runtime.surface)
         return true
@@ -913,6 +896,8 @@ struct Index {
     if (InteractionPolicy.isTerminalControlCaretKey(event.keyCode, ctrlKey, altKey, shiftKey)) {
       let runtime: PaneRuntime | null = activeRuntime
       if (runtime !== null) {
+        if (runtime.surface.sendNativeKey(event.keyCode, (shiftKey ? 1 : 0) | 2,
+          KeyCodeMap.toPrintable(event.keyCode, shiftKey))) { return true }
         runtime.viewModel.handleTerminalInput(KeyCodeMap.toAnsi(
           event.keyCode, ctrlKey, altKey, shiftKey), runtime.surface)
         return true
@@ -1010,7 +995,7 @@ struct Index {
       tab.id === this.warmTabId,
       this.tabHasActiveSession(tab),
       this.mainWindowVisible)) {
-      this.checkpointAndDestroyTabBridge(tab.id)
+      this.drainAndDetachTabDisplay(tab.id)
     }
     this.syncWorkspace()
   }
@@ -1150,6 +1135,19 @@ struct Index {
     AppStorage.setOrCreate('hasActiveSshSession', this.workspaceHasActiveSession())
     AppStorage.setOrCreate('activeRemotePaneIds', this.activeRemotePaneIds(false))
     AppStorage.setOrCreate('activeMoshPaneIds', this.activeRemotePaneIds(true))
+    this.syncNativeVisibility()
+  }
+
+  private syncNativeVisibility(): void {
+    // Window hiding can defer component updates until foreground. Notify the
+    // retained runtime directly, independently of the next ArkUI render pass.
+    for (let tabIndex = 0; tabIndex < this.tabs.length; tabIndex++) {
+      let visible: boolean = this.mainWindowVisible && tabIndex === this.activeTabIndex
+      let panes: PaneInfo[] = this.tabs[tabIndex].panes
+      for (let paneIndex = 0; paneIndex < panes.length; paneIndex++) {
+        this.findPaneRuntime(panes[paneIndex].id)?.surface.setNativeVisible(visible)
+      }
+    }
   }
 
   private activeRemotePaneIds(moshOnly: boolean): string {
@@ -1273,18 +1271,6 @@ struct Index {
     return this.appVm.hasActiveSession()
   }
 
-  private requestActiveTabFit(): void {
-    let tab: TabInfo | null = this.activeTab()
-    if (tab === null) {
-      return
-    }
-    for (let i = 0; i < tab.panes.length; i++) {
-      let runtime: PaneRuntime | null = this.findPaneRuntime(tab.panes[i].id)
-      if (runtime !== null) {
-        runtime.viewModel.requestTerminalFit()
-      }
-    }
-  }
 
   private restoreActivePaneFocus(): void {
     let tab: TabInfo | null = this.activeTab()
@@ -1311,7 +1297,6 @@ struct Index {
           return
         }
         runtime.viewModel.requestFocus()
-        runtime.viewModel.requestTerminalFit()
       }, 0)
     }
   }

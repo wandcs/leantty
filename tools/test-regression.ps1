@@ -3,7 +3,7 @@
   Run focused LeanTTY software checks or the complete formal-release gate.
 .DESCRIPTION
   With -Group, runs only the explicitly selected checks for routine work. With
-  no group, runs the complete source policy, script workflow, Web terminal,
+  no group, runs the complete source policy, script workflow, native terminal,
   trusted ArkTS and WSL Rust formal-release gate. Focused evidence is marked as
   non-release evidence. This script does not build, sign, install or claim
   physical-device behavior.
@@ -28,6 +28,7 @@ $validRegressionGroups = @(
     'ssh-flow',
     'web',
     'arkts',
+    'terminal-native',
     'rust-core',
     'rust-native',
     'ssh-fixture'
@@ -191,7 +192,7 @@ $script:devecoPath = ''
 $script:nodePath = ''
 $script:hvigorPath = ''
 $script:ohpmPath = ''
-Invoke-RegressionCheck -Name 'deveco-environment' -Groups @('web', 'arkts') -Action {
+Invoke-RegressionCheck -Name 'deveco-environment' -Groups @('web', 'arkts', 'terminal-native') -Action {
     $resolvedDeveco = $env:DEVECO_HOME
     if (-not $resolvedDeveco) {
         foreach ($candidate in @(
@@ -215,7 +216,7 @@ Invoke-RegressionCheck -Name 'deveco-environment' -Groups @('web', 'arkts') -Act
     $script:hvigorPath = $resolvedHvigor
     $script:ohpmPath = $resolvedOhpm
 }
-$needsDevEco = Test-RegressionGroupSelected -Groups @('web', 'arkts')
+$needsDevEco = Test-RegressionGroupSelected -Groups @('web', 'arkts', 'terminal-native')
 if ($needsDevEco) {
     $deveco = $script:devecoPath
     $nodeExe = $script:nodePath
@@ -247,19 +248,35 @@ if ((Test-RegressionGroupSelected -Groups @('arkts')) -and
     }
 }
 
-Invoke-RegressionCheck -Name 'xterm-webgl-default-background-patch' -Groups @('web') -Action {
-    & $nodeExe (Join-Path $repoRoot 'tools\web-terminal\test-xterm-webgl-patch.mjs')
-    if ($LASTEXITCODE -ne 0) { throw 'xterm WebGL default-background patch tests failed' }
-}
-
-Invoke-RegressionCheck -Name 'web-terminal-policy' -Groups @('web') -Action {
-    & $nodeExe (Join-Path $repoRoot 'tools\web-terminal\test-terminal-policy.mjs')
-    if ($LASTEXITCODE -ne 0) { throw 'Web terminal policy tests failed' }
-}
-
 Invoke-RegressionCheck -Name 'offline-user-guide' -Groups @('web') -Action {
     & $nodeExe (Join-Path $repoRoot 'tools\web-terminal\test-user-guide.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'Offline user guide tests failed' }
+}
+
+Invoke-RegressionCheck -Name 'terminal-session-events' -Groups @('arkts') -Action {
+    $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
+    & $nodeExe (Join-Path $repoRoot 'tools\test-terminal-session-events.cjs') $typescript
+    if ($LASTEXITCODE -ne 0) { throw 'Terminal Session event contract tests failed' }
+}
+
+Invoke-RegressionCheck -Name 'native-terminal-controller' -Groups @('arkts', 'terminal-native') -Action {
+    $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
+    & $nodeExe (Join-Path $repoRoot 'tools\test-native-terminal-controller.cjs') $typescript
+    if ($LASTEXITCODE -ne 0) { throw 'Native terminal controller tests failed' }
+}
+
+Invoke-RegressionCheck -Name 'native-startup-probes' -Groups @('arkts') -Action {
+    & (Join-Path $PSScriptRoot 'test-native-startup.ps1')
+}
+
+Invoke-RegressionCheck -Name 'native-output-probe' -Groups @('arkts') -Action {
+    & (Join-Path $PSScriptRoot 'test-native-output.ps1')
+}
+
+Invoke-RegressionCheck -Name 'native-terminal-runtime' -Groups @('terminal-native') -Action {
+    & (Join-Path $repoRoot 'tools\build-terminal-native.ps1') -HostTests -Offline
+    if ($LASTEXITCODE -ne 0) { throw 'Native terminal runtime tests failed' }
+    & (Join-Path $PSScriptRoot 'test-native-page-probe.ps1')
 }
 
 Invoke-RegressionCheck -Name 'mosh-owner-contracts' -Groups @('arkts') -Action {
@@ -278,6 +295,12 @@ Invoke-RegressionCheck -Name 'durable-trust-contracts' -Groups @('arkts') -Actio
     $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
     & $nodeExe (Join-Path $repoRoot 'tools\test-durable-trust.cjs') $typescript
     if ($LASTEXITCODE -ne 0) { throw 'Durable trust contract tests failed' }
+}
+
+Invoke-RegressionCheck -Name 'shared-ssh-config' -Groups @('arkts') -Action {
+    $typescript = Join-Path $deveco 'sdk\default\openharmony\ets\build-tools\ets-loader\node_modules\typescript\lib\typescript.js'
+    & $nodeExe (Join-Path $repoRoot 'tools\test-shared-ssh-config.cjs') $typescript
+    if ($LASTEXITCODE -ne 0) { throw 'Shared SSH config contracts failed' }
 }
 
 Invoke-RegressionCheck -Name 'command-completion-isolation' -Groups @('arkts') -Action {
@@ -369,11 +392,6 @@ Invoke-RegressionCheck -Name 'offline-user-guide-preview' -Groups @('web', 'tool
     } else { $nodeExe }
     & $previewNode (Join-Path $repoRoot 'tools\web-terminal\test-user-guide-preview.mjs')
     if ($LASTEXITCODE -ne 0) { throw 'Offline user guide preview tests failed' }
-}
-
-Invoke-RegressionCheck -Name 'xterm-input-order-patch' -Groups @('web') -Action {
-    & $nodeExe (Join-Path $repoRoot 'tools\web-terminal\test-xterm-input-order-patch.mjs')
-    if ($LASTEXITCODE -ne 0) { throw 'xterm input ordering patch tests failed' }
 }
 
 $formalRustEnvironment = @{}

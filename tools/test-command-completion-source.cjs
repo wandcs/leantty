@@ -135,6 +135,7 @@ function fixture(enabled = true, behaviour = 'success', pane = 'pane-a') {
         const pane = Object.create(paneExports.PaneRuntime.prototype);
         Object.assign(pane, {
           disposed: false,
+          surface: { async dispose() {} },
           viewModel: f.owner,
           detachSurface() { this.detached = true; },
         });

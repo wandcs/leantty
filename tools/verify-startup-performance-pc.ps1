@@ -5,13 +5,15 @@
   Builds and installs a test-signed diagnostic HAP unless -SkipBuild is used,
   opens the system App Center, force-stops LeanTTY before every sample, clicks
   the real LeanTTY icon, and injects one ASCII 'a' through uinput immediately
-  after T4. The diagnostic Web marker reports T5 only after that same byte has
-  returned through the production local-input path and xterm has rendered it.
+  after T4. The diagnostic marker reports T5 only after that same byte returns
+  through local input and the native worker swaps its frame.
+  -Renderer labels and checks the installed path; it does not change build flags.
 #>
 param(
     [string]$Target = '',
     [ValidateRange(3, 100)][int]$SampleCount = 20,
     [switch]$SkipBuild,
+    [ValidateSet('native')][string]$Renderer = 'native',
     [string]$EvidenceDirectory = ''
 )
 
@@ -229,7 +231,7 @@ try {
             -Id 'AppCenterAppGrid_AppBubble_com.leantty.app'
 
         Clear-LeanTTYAppLogs -Hdc $script:hdc -Target $script:target
-        $deviceCommand = 'sh -c ''(i=0; while ! hilog -x -t app -T TerminalBridge | ' +
+        $deviceCommand = 'sh -c ''(i=0; while ! hilog -x -t app -T NativeStartupPerformance | ' +
             'grep -q "STARTUP_PERF phase=T4"; do i=$((i+1)); ' +
             'if [ $i -ge 500 ]; then printf WATCH_TIMEOUT=1; exit 1; fi; sleep 0.02; done; ' +
             'printf TIN=; date +%s%3N; uinput -K -d 2017 -u 2017; sleep 0.3) & ' +
@@ -252,7 +254,7 @@ try {
         if ($processId -notmatch '^\d+$') { throw "Invalid LeanTTY PID: $processId" }
         $logs = @(& $script:hdc -t $script:target shell (
             "hilog -z 500 -t app -P $processId " +
-            '-T EntryAbility,StartupPerformance,TerminalBridge -v epoch -v msec'
+            '-T EntryAbility,StartupPerformance,NativeStartupPerformance -v epoch -v msec'
         ) 2>&1) -join "`n"
         if ($LASTEXITCODE -ne 0) { throw "Unable to read startup logs for sample $sampleIndex" }
         $startupLogLines = @($logs -split "`r?`n" | Where-Object {
@@ -263,6 +265,10 @@ try {
             $startupLogLines + "`n"
         )
         $markerTimes = Get-StartupMarkerTimes -Logs $startupLogLines
+        $expectedTag = 'NativeStartupPerformance'
+        if ($startupLogLines -notmatch ($expectedTag + '.*STARTUP_PERF phase=T4')) {
+            throw "Startup marker does not match the selected renderer: $Renderer"
+        }
         $segments = Get-StartupSegments -Logs $startupLogLines
         $durableSegments = Get-DurableStartupSegments -Logs $startupLogLines
         $injectionLag = $inputAt - [long]$markerTimes.T4
@@ -278,14 +284,14 @@ try {
             t0ClickEpochMs = $t0
             t1AbilityEpochMs = [long]$markerTimes.T1
             t2ContentEpochMs = [long]$markerTimes.T2
-            t3WebPageEndEpochMs = [long]$markerTimes.T3
+            t3DisplayBoundaryEpochMs = [long]$markerTimes.T3
             t4PromptPaintEpochMs = [long]$markerTimes.T4
             inputInjectedEpochMs = $inputAt
             t5FirstLetterPaintEpochMs = [long]$markerTimes.T5
             clickToAbilityMs = [long]$markerTimes.T1 - $t0
             abilityToContentMs = [long]$markerTimes.T2 - [long]$markerTimes.T1
-            contentToWebPageEndMs = [long]$markerTimes.T3 - [long]$markerTimes.T2
-            webPageEndToPromptPaintMs = [long]$markerTimes.T4 - [long]$markerTimes.T3
+            contentToDisplayBoundaryMs = [long]$markerTimes.T3 - [long]$markerTimes.T2
+            displayBoundaryToPromptPaintMs = [long]$markerTimes.T4 - [long]$markerTimes.T3
             t4ToInputInjectionMs = $injectionLag
             inputRoundTripPaintMs = [long]$markerTimes.T5 - $inputAt
             clickToFirstLetterPaintMs = [long]$markerTimes.T5 - $t0
@@ -296,7 +302,7 @@ try {
         Write-Host (
             "Cold sample $sampleIndex/${SampleCount}: T0-T5=$($sample.clickToFirstLetterPaintMs) ms, " +
             "T0-T1=$($sample.clickToAbilityMs) ms, T1-T2=$($sample.abilityToContentMs) ms, " +
-            "T2-T3=$($sample.contentToWebPageEndMs) ms, T3-T4=$($sample.webPageEndToPromptPaintMs) ms, " +
+            "T2-T3=$($sample.contentToDisplayBoundaryMs) ms, T3-T4=$($sample.displayBoundaryToPromptPaintMs) ms, " +
             "input=$($sample.inputRoundTripPaintMs) ms"
         ) -ForegroundColor Cyan
 
@@ -308,7 +314,9 @@ try {
     }
 
     $summary = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
+        renderer = $Renderer
+        t3Meaning = 'first-active-surface-attach-request'
         capturedAt = (Get-Date).ToString('o')
         scenario = 'daily-cold-start-from-system-app-center'
         input = 'device-side-uinput-ascii-a-after-t4'
@@ -338,11 +346,11 @@ try {
             abilityToContent = Get-StartupStatistics -Values @(
                 $samples | ForEach-Object { [long]$_.abilityToContentMs }
             )
-            contentToWebPageEnd = Get-StartupStatistics -Values @(
-                $samples | ForEach-Object { [long]$_.contentToWebPageEndMs }
+            contentToDisplayBoundary = Get-StartupStatistics -Values @(
+                $samples | ForEach-Object { [long]$_.contentToDisplayBoundaryMs }
             )
-            webPageEndToPromptPaint = Get-StartupStatistics -Values @(
-                $samples | ForEach-Object { [long]$_.webPageEndToPromptPaintMs }
+            displayBoundaryToPromptPaint = Get-StartupStatistics -Values @(
+                $samples | ForEach-Object { [long]$_.displayBoundaryToPromptPaintMs }
             )
             inputRoundTripPaint = Get-StartupStatistics -Values @(
                 $samples | ForEach-Object { [long]$_.inputRoundTripPaintMs }

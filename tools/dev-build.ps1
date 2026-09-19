@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'build-lock.ps1')
 . (Join-Path $PSScriptRoot 'acceptance-source.ps1')
+. (Join-Path $PSScriptRoot 'formal-build-environment.ps1')
 
 Invoke-WithLeanTTYBuildLock -RepoRoot $repoRoot -Operation 'dev-build' -Action {
 $deveco = $env:DEVECO_HOME
@@ -31,7 +32,7 @@ $hvigorJs = Join-Path $deveco 'tools\hvigor\bin\hvigorw.js'
 $jbrBin   = Join-Path $deveco 'jbr\bin'
 
 $env:NODE_OPTIONS = ''
-$env:DEVECO_SDK_HOME = Join-Path $deveco 'sdk'
+$env:DEVECO_SDK_HOME = (Resolve-LeanTTYHarmonySdk -DevEcoHome $deveco).sdkHome
 $env:JAVA_HOME = Join-Path $deveco 'jbr'
 $env:PATH = "$jbrBin;$env:PATH"
 

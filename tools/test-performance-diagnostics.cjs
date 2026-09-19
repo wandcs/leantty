@@ -41,7 +41,7 @@ const { SessionViewModel } = compile('entry/src/main/ets/viewmodel/SessionViewMo
   '@ohos.util': { default: { TextDecoder: { create: observationDecoder } } },
 });
 // Public data through the real output owners; count only the observation decoder,
-// not xterm's required renderer decoding. No device performance claim is made.
+// not the terminal's required VT decoding. No device performance claim is made.
 function outputFixture() {
   const owner = Object.create(SessionViewModel.prototype), delivered = [];
   Object.assign(owner, { acceptingSessionOutput: true, pendingKeypush: false,
@@ -160,70 +160,4 @@ if (enabled) {
   assert.equal(SessionViewModel.prototype.observePerfInput, undefined);
   assert.equal(SessionViewModel.prototype.observePerfOutput, undefined);
 }
-const html = fs.readFileSync(path.join(root, 'entry/src/main/resources/rawfile/terminal.html'), 'utf8');
-const protocol = fs.readFileSync(path.join(root, 'entry/src/main/ets/model/bridge/BridgeProtocol.ets'), 'utf8');
-const bridge = fs.readFileSync(path.join(root, 'entry/src/main/ets/model/bridge/TerminalBridge.ets'), 'utf8');
-for (const marker of ['LTTY_PERF_BEGIN__:', 'LTTY_PERF_END__:', 'reportPerfResult', 'perfActive']) {
-  assert.equal(html.includes(marker), enabled, `Web probe isolation: ${marker}`);
-}
-assert.equal(protocol.includes('KIND_PERF_RENDER'), enabled);
-assert.equal(bridge.includes("'PERF render '"), enabled);
-assert.ok(bridge.includes("'PERF renderer '"), 'structured production renderer diagnostics remain');
-if (enabled) {
-  const webProbe = fs.readFileSync(path.join(root, 'tools/web-terminal/acceptance-performance.js'), 'utf8');
-  assert.ok(html.includes(webProbe), 'execute the same Web observer embedded in debug HAPs');
-  const metrics = [];
-  const probe = {
-    nativePort: {}, performance: { now: () => 100 }, TextDecoder, TextEncoder,
-    requestAnimationFrame: callback => callback(), setTimeout() {},
-    sendBridgeControl: (kind, payload) => metrics.push(JSON.parse(payload)),
-    actualRenderer: 'webgl', rendererContextLossCount: 0,
-    term: { rows: 24, refresh() {}, buffer: { active: { viewportY: 0, length: 1,
-      getLine() { return { isWrapped: false, translateToString() { return probe.perfExpectedLine(1); } }; },
-    } } },
-  };
-  vm.createContext(probe);
-  vm.runInContext(webProbe, probe);
-  const start = '\x1b]0;LTTY_PERF_BEGIN__:case_01:2:80\x07';
-  const row = i => ('LTTY_PERF_case_01_' + String(i).padStart(5, '0') + ' ').padEnd(80, 'X') + '\r\n';
-  const end = '\x1b]0;LTTY_PERF_END__:case_01\x07';
-  function feed(text, chunk = 7) {
-    for (let i = 0; i < text.length; i += chunk) {
-      const packet = probe.observePerfPacket(Buffer.from(text.slice(i, i + chunk)));
-      probe.perfPacketParsed(packet);
-      probe.reportPerfAfterPaint();
-    }
-    return metrics.at(-1);
-  }
-  assert.equal(feed(start + row(0) + row(1) + end).contentOrdered, true, 'split frames and full ordered payload');
-  assert.equal(metrics.at(-1).actualBytes, 164);
-  assert.equal(metrics.at(-1).visibleTailConfirmed, true);
-  const completePacket = probe.observePerfPacket(Buffer.from(start + row(0) + row(1) + end));
-  probe.observePerfPacket(Buffer.from('\r\nfixture> '));
-  probe.perfPacketParsed(completePacket);
-  probe.reportPerfAfterPaint();
-  assert.equal(metrics.at(-1).contentOrdered, true, 'outside-frame prompt must not contaminate a pending paint');
-  assert.equal(feed(start + row(1) + row(0) + end).contentOrdered, false, 'same bytes/count but reordered rows');
-  assert.equal(feed(start + row(0).replace('case_01', 'case_02') + row(1) + end).contentOrdered, false, 'same X count but wrong prefix');
-  assert.equal(feed(start + row(0).replace('X', '') + row(1) + end).contentOrdered, false, 'lost byte');
-  assert.equal(feed(start + row(0) + row(0) + row(1) + end).contentOrdered, false, 'duplicate row');
-  feed(start);
-  probe.perfInputPending = { sequence: 1, startedAt: 90, parsed: false };
-  const result = feed('?' + row(0) + row(1) + end);
-  assert.equal(result.contentOrdered, true);
-  assert.equal(result.inputEchoBytes, 1);
-  assert.equal(result.inputSamples.length, 1);
-  feed('\x1b]0;LTTY_PERF_BEGIN__:case PUBLIC_CANARY:2:80\x07');
-  assert.equal(probe.perfActive, false, 'invalid remote label cannot arm diagnostics');
-  let scheduled = 0;
-  probe.setTimeout = () => scheduled++;
-  assert.equal(probe.perfActiveActionsEnabled, false, 'ordinary debug builds must never auto-type or destroy a context');
-  probe.beginPerfSample(['', 'input01', '2', '80']);
-  probe.beginPerfSample(['', 'contextloss01', '2', '80']);
-  assert.equal(scheduled, 0);
-  probe.perfActiveActionsEnabled = true;
-  probe.beginPerfSample(['', 'input01', '2', '80']);
-  probe.beginPerfSample(['', 'contextloss01', '2', '80']);
-  assert.equal(scheduled, 2, 'active triggers require a dedicated diagnostic build');
-}
-console.log(`Performance diagnostic owner isolation: ${enabled ? 'enabled' : 'production'} PASS`);
+console.log('Performance Session observer contracts passed');

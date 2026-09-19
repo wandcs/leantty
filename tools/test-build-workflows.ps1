@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'test-native-build-inputs.ps1')
 & (Join-Path $PSScriptRoot 'test-release-materials.ps1')
 & (Join-Path $PSScriptRoot 'test-device-package.ps1')
 & (Join-Path $PSScriptRoot 'test-review-smoke.ps1')
@@ -545,17 +546,12 @@ try {
         -not $entryModuleProductionText.Contains('enable.remove.starting.window') -and
         -not $unexpectedRecoveryRecordText.Contains('emergencyWindow')
     ) 'System window auto-save is not the sole owner of restart window geometry'
-    $bridgeProtocolText = Get-Content -LiteralPath (
-        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
+    $nativeControllerText = Get-Content -LiteralPath (
+        Join-Path $repoRoot 'entry/src/main/ets/model/terminal/NativeTerminalController.ets'
     ) -Raw
-    $terminalHtmlText = Get-Content -LiteralPath (
-        Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
-    ) -Raw
-    Assert-True (
-        $bridgeProtocolText.Contains("KIND_INTERACTIVE_READY: string = 'interactiveReady'") -and
-        $terminalHtmlText.Contains("sendBridgeControl('interactiveReady', '')") -and
-        $terminalHtmlText.Contains('reportInteractiveReadyAfterPaint();')
-    ) 'Post-paint SSH preparation trigger is missing from the terminal bridge'
+    Assert-True ($nativeControllerText.Contains('this.onReady(!this.firstReady)')) (
+        'Native display readiness must notify its Session owner'
+    )
     $lfTarget = "first`nsecond`n"
     $lfResult = Set-LeanTTYAcceptanceSourceText `
         -Text $lfTarget `
@@ -574,26 +570,21 @@ try {
     )
     $acceptanceArkTsPaths = @(
         Join-Path $repoRoot 'entry\src\main\ets\pages\Index.ets'
-        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
-        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\terminal\TerminalSurfaceController.ets'
+        Join-Path $repoRoot 'entry\src\main\ets\model\terminal\NativeTerminalController.ets'
         Join-Path $repoRoot 'entry\src\main\ets\viewmodel\SessionViewModel.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\mosh\MoshClient.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\transfer\TransferFileManager.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\transfer\FileTransferClient.ets'
-        Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
     )
     $acceptanceSourceHashes = @{}
     foreach ($path in $acceptanceArkTsPaths) {
         $acceptanceSourceHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
     }
     $startupPerformancePaths = @(
+        Join-Path $repoRoot 'entry/src/main/ets/model/terminal/NativeTerminalController.ets'
         Join-Path $repoRoot 'entry\src\main\ets\entryability\EntryAbility.ets'
         Join-Path $repoRoot 'entry\src\main\ets\model\persistence\DurableStateManager.ets'
-        Join-Path $repoRoot 'entry\src\main\ets\view\components\TerminalPane.ets'
-        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\BridgeProtocol.ets'
-        Join-Path $repoRoot 'entry\src\main\ets\model\bridge\TerminalBridge.ets'
-        Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
     )
     $startupPerformanceHashes = @{}
     foreach ($path in $startupPerformancePaths) {
@@ -625,17 +616,12 @@ try {
                 'STARTUP_PERF durable=restore-projection elapsedMs='
             ))) 'Startup performance injection incorrectly treats SSH projection as startup work'
         Assert-True (($startupPerformanceText -join "`n").Contains('STARTUP_PERF phase=T3')) (
-            'Startup performance injection omitted the ArkWeb page-end marker'
+            'Startup performance injection omitted native display attach'
         )
-        Assert-True (($startupPerformanceText -join "`n").Contains("sendBridgeControl('startupPerf', phase)")) (
-            'Startup performance injection omitted the painted T4/T5 marker'
+        Assert-True (($startupPerformanceText -join "`n").Contains('STARTUP_PERF phase=T4') -and
+            ($startupPerformanceText -join "`n").Contains('STARTUP_PERF phase=T5')) (
+            'Startup performance injection omitted native presentation markers'
         )
-        Assert-True (($startupPerformanceText -join "`n").Contains('startupExpectedInputCode = 97')) (
-            'Startup performance injection did not gate T5 on the injected ASCII letter echo'
-        )
-        Assert-True (($startupPerformanceText -join "`n").Contains(
-                "KIND_STARTUP_PERF: string = 'startupPerf'"
-            )) 'Startup performance injection omitted the compile-time bridge kind'
     }
     foreach ($path in $startupPerformancePaths) {
         Assert-True (
@@ -660,21 +646,18 @@ try {
         $startupPerformanceVerifierText.Contains('t5RequiresMatchingAsciiEchoAndPaint = $true') -and
         $startupPerformanceVerifierText.Contains('maxT4ToInputInjectionMs = 250')
     ) 'Startup performance PC verifier no longer measures cold App Center click through painted input'
-    $startupWarmPath = Join-Path $repoRoot 'entry\src\main\resources\rawfile\terminal.html'
+    $startupWarmPath = Join-Path $repoRoot 'entry/src/main/ets/model/terminal/NativeTerminalController.ets'
     $startupWarmHash = (Get-FileHash -LiteralPath $startupWarmPath -Algorithm SHA256).Hash
     Invoke-WithLeanTTYStartupWarmSource -RepoRoot $repoRoot -Action {
         $startupWarmText = Get-Content -LiteralPath $startupWarmPath -Raw
-        Assert-True (
-            $startupWarmText.Contains("sendBridgeControl('perfRender', 'STARTUP_WARM phase=' + phase)") -and
-            $startupWarmText.Contains("data === 'a'") -and
-            $startupWarmText.Contains('terminalBytes.indexOf(97) >= 0') -and
-            $startupWarmText.Contains("scheduleStartupWarmPaint('T4')") -and
-            $startupWarmText.Contains("scheduleStartupWarmPaint('T5')")
-        ) 'Warm startup injection no longer gates T4/T5 on foreground paint and echoed input'
+        Assert-True ($startupWarmText.Contains('STARTUP_WARM phase=T4') -and
+            $startupWarmText.Contains('STARTUP_WARM phase=T5')) (
+            'Warm startup injection omitted native presentation markers'
+        )
     }
-    Assert-True (
-        (Get-FileHash -LiteralPath $startupWarmPath -Algorithm SHA256).Hash -eq $startupWarmHash
-    ) 'Warm startup injection did not restore terminal.html byte-for-byte'
+    Assert-True ((Get-FileHash -LiteralPath $startupWarmPath -Algorithm SHA256).Hash -eq $startupWarmHash) (
+        'Warm startup injection did not restore the native controller byte-for-byte'
+    )
     $startupWarmVerifier = Join-Path $PSScriptRoot 'verify-startup-warm-pc.ps1'
     Assert-True (Test-Path -LiteralPath $startupWarmVerifier -PathType Leaf) (
         "Warm startup PC verifier is missing: $startupWarmVerifier"
@@ -705,6 +688,16 @@ try {
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_SUBMIT')) (
             'Debug acceptance source injection omitted input telemetry'
         )
+        Assert-True (($injectedText -join "`n").Contains('return this.native.rejectSurfaceForAcceptance()') -and
+            ($injectedText -join "`n").Contains("this.attach('18446744073709551615', this.width, this.height, this.context)") -and
+            ($injectedText -join "`n").Contains('if (!ACCEPTANCE_TESTS || !this.attached')) (
+            'Native recovery probe must reach the real platform rejection behind its compile-time gate'
+        )
+        Assert-True (($injectedText -join "`n").Contains('runtime.surface.loseNativeContextForAcceptance()') -and
+            ($injectedText -join "`n").Contains("terminal.attach(this.handle, '18446744073709551614'") -and
+            ($injectedText -join "`n").Contains('ACCEPTANCE_NATIVE_GPU ')) (
+            'Native EGL fault must preserve Surface identity and expose only acceptance-scoped evidence'
+        )
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_RUNTIME_RECOVERY workspaceSame=') -and
             ($injectedText -join "`n").Contains('this.observeRuntimeRecoveryForAcceptance()') -and
             ($injectedText -join "`n").Contains('return this.commandLine.getText().length') -and
@@ -712,15 +705,8 @@ try {
             'Runtime reclaim must observe the owning workspace and input buffer before later command reset'
         )
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_NATIVE receivedUnits=') -and
-            ($injectedText -join "`n").Contains('ACCEPTANCE_INPUT_WEB ') -and
-            ($injectedText -join "`n").Contains("cmd === '__acceptance_input_probe'") -and
-            ($injectedText -join "`n").Contains('installAcceptanceInputMetrics();')) (
-            'Debug input probe must observe the real masked chain without a connection'
-        )
-        Assert-True (($injectedText -join "`n").Contains('installAcceptanceInputOrder();') -and
-            ($injectedText -join "`n").Contains('KIND_ACCEPTANCE_INPUT_ORDER') -and
-            ($injectedText -join "`n").Contains('this.terminalSurface.stopInputOrderForAcceptance()')) (
-            'Bounded input order collector or mode-boundary disarm missing from debug transform'
+            ($injectedText -join "`n").Contains("cmd === '__acceptance_input_probe'")) (
+            'Debug input probe must observe the masked Session input chain'
         )
         Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_BACKGROUND_BELL')) (
             'Debug acceptance source injection omitted the delayed background BEL trigger'
@@ -800,16 +786,70 @@ try {
         Assert-True (-not ($injectedText -join "`n").Contains('ACCEPTANCE_MOSH_INPUT_REJECTION')) (
             'Routine acceptance build must not include the dedicated native Mosh fault trigger'
         )
-        Assert-True (($injectedText -join "`n").Contains('ACCEPTANCE_TERMINAL_FINGERPRINT') -and
-            ($injectedText -join "`n").Contains("KIND_ACCEPTANCE_SEARCH_RESULT: string = 'acceptanceSearchResult'") -and
-            ($injectedText -join "`n").Contains("sendBridgeControl('acceptanceSearchResult'")) (
-            'Debug acceptance source injection omitted direct terminal-page or SearchAddon evidence'
-        )
     }
     foreach ($path in $acceptanceArkTsPaths) {
         Assert-True (
             (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $acceptanceSourceHashes[$path]
         ) "Acceptance source injection did not restore $path byte-for-byte"
+    }
+    $displayAcceptancePaths = @(
+        Join-Path $repoRoot 'entry/src/main/cpp/terminal/TerminalRenderer.h'
+        Join-Path $repoRoot 'entry/src/main/cpp/terminal/TerminalRenderer.cpp'
+        Join-Path $repoRoot 'entry/src/main/cpp/terminal/terminal_napi.cpp'
+        Join-Path $repoRoot 'entry/src/main/cpp/terminal/TerminalRuntime.h'
+        Join-Path $repoRoot 'entry/src/main/cpp/terminal/TerminalRuntime.cpp'
+    )
+    $displayAcceptanceHashes = @{}
+    foreach ($path in $displayAcceptancePaths) {
+        $displayAcceptanceHashes[$path] = (Get-FileHash -LiteralPath $path).Hash
+    }
+    Invoke-WithLeanTTYNativeDisplayAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
+        $cpp = [IO.File]::ReadAllText($displayAcceptancePaths[1])
+        $binding = [IO.File]::ReadAllText($displayAcceptancePaths[2])
+        Assert-True ($binding.Contains('if (state == "presented") ++b->acceptanceFrames') -and
+            $binding.Contains('if (e.kind == "consumed") b->acceptanceConsumed = e.sequence') -and
+            $binding.Contains('state == "presented" ? b->acceptanceConsumed : 0') -and
+            $binding.Contains('b->runtime->visibility(visible,[b,generation,visible]') -and
+            $binding.Contains('"acceptance-visibility",0,generation')) (
+            'Visibility evidence must count successful swaps and commit on the same worker'
+        )
+        Assert-True ($cpp.Contains('id == UINT64_MAX - 1') -and
+            $cpp.Contains('injected ? EGL_CONTEXT_LOST : eglGetError()') -and
+            $cpp.Contains('acceptanceGpuBlocked_ ? EGL_NOT_INITIALIZED') -and
+            $cpp.Contains('releaseGpu(error == EGL_CONTEXT_LOST)') -and
+            $cpp.Contains('if (acceptanceRecovering) status_("acceptance-gpu", "swap-ok")')) (
+            'Native EGL probe must drive the real release/recreate/swap path'
+        )
+        Assert-True ($cpp.Contains('id == UINT64_MAX - 2') -and
+            $cpp.Contains('acceptanceGpuBlocked_ = !acceptanceGpuBlocked_') -and
+            $cpp.Contains('throw std::runtime_error("acceptance_gpu_initialize_failed")')) (
+            'Persistent fault must gate GPU initialization until explicitly released'
+        )
+    }
+    $displayFailureObserved = $false
+    try {
+        Invoke-WithLeanTTYNativeDisplayAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
+            throw 'controlled terminal compile failure'
+        }
+    } catch { $displayFailureObserved = $_.Exception.Message -eq 'controlled terminal compile failure' }
+    Assert-True $displayFailureObserved 'Native display injection swallowed the build failure'
+    foreach ($path in $displayAcceptancePaths) {
+        Assert-True ((Get-FileHash -LiteralPath $path).Hash -eq $displayAcceptanceHashes[$path]) (
+            "Native display acceptance injection did not restore $path byte-for-byte"
+        )
+    }
+    Invoke-WithLeanTTYNativeDisplayAcceptanceSource -RepoRoot $repoRoot -Enabled $false -Action {
+        Assert-True (-not [IO.File]::ReadAllText($displayAcceptancePaths[0]).Contains('acceptanceContextLoss_')) (
+            'Disabled native display injection modified production source'
+        )
+    }
+    & {
+        $source = 'pinned-ghostty-source'
+        Invoke-WithLeanTTYNativeDisplayAcceptanceSource -RepoRoot $repoRoot -Enabled $true -Action {
+            Assert-True ($source -eq 'pinned-ghostty-source') (
+                'Native display source wrapper shadows the caller compiler include directory'
+            )
+        }
     }
     $nativeAcceptancePaths = @(
         Join-Path $repoRoot 'leantty_ssh\src\lib.rs'
@@ -947,7 +987,7 @@ try {
             'tools/test-agent-attention-gate.ps1'
         )
         foreach ($rejectedPath in @('entry/src/main/ets/pages/Index.ets',
-                'entry/src/main/resources/rawfile/terminal.html', 'AppScope/app.json5',
+                'entry/src/main/resources/rawfile/LeanTTY-User-Guide.html', 'AppScope/app.json5',
                 'leantty_ssh/Cargo.lock', 'leantty_ssh/leantty_core/src/lib.rs',
                 'build-profile.json5', 'tools/unreviewed-tool.ps1')) {
             Assert-Throws -Action {
@@ -962,7 +1002,15 @@ try {
         @{ path = $safeHap; content = 'ordinary release bytecode' },
         @{ path = $unsafeHap; content = 'ACCEPTANCE_INPUT_SUBMIT must not ship' }
     ) + @(foreach ($marker in @('CHECKPOINT_DIAG', 'LTTY_PERF_PING_', 'LTTY_PERF_BEGIN__:', 'LTTY_PERF_END__:',
-            'observePerfInput', 'observePerfOutput', 'reportPerfResult', 'perfRender')) {
+            'observePerfInput', 'observePerfOutput', 'reportPerfResult', 'perfRender', 'rejectSurfaceForAcceptance',
+            'loseContextForAcceptance', 'loseNativeContextForAcceptance', 'acceptanceContextLoss_',
+            'acceptance_gpu_context_loss', 'ACCEPTANCE_NATIVE_GPU', 'blockGpuForAcceptance',
+            'ACCEPTANCE_NATIVE_VISIBILITY', 'acceptance-visibility',
+            'NativeStartupPerformance', 'acceptanceConsumed',
+            'NATIVE_OUTPUT_PROBE', 'NATIVE_INPUT_PROBE', 'NativeOutputProbe',
+            'ACCEPTANCE_NATIVE_PAGE', 'ACCEPTANCE_NATIVE_WRITE_CONSUMED', 'ACCEPTANCE_NATIVE_SEARCH_',
+            'acceptancePageFingerprint', 'acceptancePageSequence_', 'acceptancePaneId',
+            'blockNativeGpuForAcceptance', 'acceptanceGpuBlocked_', 'acceptance_gpu_initialize_failed')) {
         @{ path = $unsafeHap; content = $marker }
     })) {
         $archiveStream = [IO.File]::Open($archiveCase.path, [IO.FileMode]::Create)
@@ -1286,8 +1334,7 @@ try {
         Join-Path $PSScriptRoot 'arkts-warning-baseline.json'
     ) -Raw | ConvertFrom-Json
     Assert-True (
-        $formalPreparationText.Contains("'ci', '--ignore-scripts'") -and
-        $formalPreparationText.Contains("'run', 'build'") -and
+        $formalPreparationText.Contains("'build-terminal-native.ps1'") -and
         $formalPreparationText.Contains("install --all --lockfile_stable_order") -and
         $formalPreparationText.Contains("'fetch', '--locked'") -and
         $formalPreparationText.Contains('sourceInputsUnchanged') -and

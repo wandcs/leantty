@@ -98,32 +98,4 @@ function Add-LeanTTYPerformanceDiagnosticSource {
     $Text.session = Set-LeanTTYAcceptanceSourceText $Text.session '      this.sshEscapeParser.reset()' `
         ("      this.sshEscapeParser.reset()`n      this.resetPerfObservation()")
 
-    $Text.protocol = Set-LeanTTYAcceptanceSourceText $Text.protocol `
-        "  static readonly KIND_RENDERER_STATE: string = 'rendererState'" `
-        ("  static readonly KIND_PERF_RENDER: string = 'perfRender'`n" +
-            "  static readonly KIND_RENDERER_STATE: string = 'rendererState'")
-    $Text.protocol = Set-LeanTTYAcceptanceSourceText $Text.protocol `
-        '      kind === BridgeProtocol.KIND_RENDERER_STATE ||' `
-        ("      kind === BridgeProtocol.KIND_PERF_RENDER ||`n" +
-            '      kind === BridgeProtocol.KIND_RENDERER_STATE ||')
-    $bridgeProbe = @'
-    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_PERF_RENDER) {
-      this.logger.info('PERF render ' + msg.payload)
-      this.logMetrics('render')
-      return
-    }
-'@
-    $bridgeAnchor = '    if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.kind === BridgeProtocol.KIND_RENDERER_STATE) {'
-    $Text.bridge = Set-LeanTTYAcceptanceSourceText $Text.bridge $bridgeAnchor ($bridgeProbe + "`n" + $bridgeAnchor)
-
-    $webProbe = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'web-terminal/acceptance-performance.js'))
-    $Text.terminal = Set-LeanTTYAcceptanceSourceText $Text.terminal '    var defaultTheme = {' `
-        ($webProbe + "`n" + '    var defaultTheme = {')
-    $Text.terminal = Set-LeanTTYAcceptanceSourceText $Text.terminal '      term.onRender(function() {' `
-        ("      term.onRender(function() {`n        reportPerfAfterPaint();")
-    $Text.terminal = Set-LeanTTYAcceptanceSourceText $Text.terminal '      var terminalBytes = terminalPacket.bytes;' `
-        ("      var terminalBytes = terminalPacket.bytes;`n      var perfPacket = observePerfPacket(terminalBytes);")
-    $Text.terminal = Set-LeanTTYAcceptanceSourceText $Text.terminal `
-        "        onComplete();`n        reportInteractiveReadyAfterPaint();" `
-        ("        onComplete();`n        reportInteractiveReadyAfterPaint();`n        perfPacketParsed(perfPacket);")
 }

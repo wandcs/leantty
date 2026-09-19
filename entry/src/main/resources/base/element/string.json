@@ -233,8 +233,24 @@
       "value": "Type to find"
     },
     {
+      "name": "terminal_display_unavailable",
+      "value": "Terminal display unavailable. Input is paused."
+    },
+    {
+      "name": "terminal_display_retry",
+      "value": "Retry display"
+    },
+    {
       "name": "search_no_results",
       "value": "No results"
+    },
+    {
+      "name": "search_query_too_large",
+      "value": "Search text exceeds 1 MiB (UTF-8). Shorten the query."
+    },
+    {
+      "name": "search_busy",
+      "value": "Terminal is busy. Press Enter to retry the search."
     }
   ]
 }

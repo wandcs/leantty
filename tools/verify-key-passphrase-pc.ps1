@@ -351,7 +351,7 @@ try {
         -Target $Target `
         -LocalPath $preflightLayoutPath `
         -TimeoutSeconds 20
-    Get-LeanTTYTerminalInputText -Layout $preflightLayout | Out-Null
+    Get-LeanTTYTerminalInputNodes -Layout $preflightLayout | Out-Null
     Clear-LeanTTYDeviceInput `
         -Hdc $hdc `
         -Target $Target

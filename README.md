@@ -53,7 +53,7 @@ tmux 兼容基线。当远端程序发出受支持的终端提醒信号时，Lea
 - 多标签、每个标签最多双分屏、终端搜索、链接打开与系统剪贴板
 - 当前前台分屏中的受控单文件 `put` / `get`
 - 中英文原生界面；命令、技术输出和远端终端内容保持原样
-- ArkTS / ArkUI 应用外壳、Rust / russh SSH 传输与 ArkWeb / xterm.js 终端渲染
+- ArkTS / ArkUI 应用外壳、Rust / russh SSH 传输；当前 1.7 开发源码使用 Ghostty VT 与原生 GLES 终端渲染
 
 ## 开始使用
 

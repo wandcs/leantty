@@ -128,8 +128,8 @@ function Add-LeanTTYMoshInputRejectionArkTsSource {
 
   private onMoshData(data: Uint8Array): void {
 '@
-    $Text.session = Set-LeanTTYAcceptanceSourceText $Text.session '      this.terminalSurface.writeMoshBytes(data)' @'
-      this.terminalSurface.writeMoshBytes(data)
+    $Text.session = Set-LeanTTYAcceptanceSourceText $Text.session '      this.terminalSurface.writeMoshBytes(data, this.terminalBoundaryGeneration)' @'
+      this.terminalSurface.writeMoshBytes(data, this.terminalBoundaryGeneration)
       if (ACCEPTANCE_TESTS && this.acceptanceRejectMoshInput && this.moshClient !== null && data.length > 0) {
         this.acceptanceRejectMoshInput = false
         this.logger.info('ACCEPTANCE_MOSH_INPUT_REJECTION receivedBytes=' + data.length.toString())

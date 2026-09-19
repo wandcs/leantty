@@ -15,29 +15,13 @@
   -Scenario masked-input compares a public 32-character test vector at the idle
   prompt and in a disconnected acceptance-only password fixture. Only the
   fixture-start command is submitted; the test vector never is. This records
-  lengths/equality and DOM/xterm counters, not credentials or event contents.
+  native buffer lengths/equality, not credentials or event contents.
   This scenario runs one plain/masked pair; repeated fixture entry is not part
   of the input-delivery diagnostic.
 
   -Scenario ime-input checks physical English keys, system pinyin composition
   and repeated ASCII after composition in a disposable local Tab. No network,
   Agent, clipboard or Enter is used. It requires an English input-mode baseline.
-
-  -Scenario input-order arms one content-free 20-second DOM/xterm trace in a
-  disposable idle Tab. One public 31-character vector is injected, never
-  submitted. Only the arming command uses Enter. No retry or network action.
-
-  -Scenario input-attribution also observes xterm's original deferred callback.
-  AttributionMode: 0=UiTest/plain textarea, 1=UiTest/xterm,
-  2=real keyboard/plain textarea, 3=real keyboard/xterm,
-  4=UiTest/xterm/Bridge/native chain (180 public characters). One vector only.
-  5=post-window native summary, detailed IDLE logs on, Web trace off;
-  6=same with detailed IDLE logs off; 7=same as 6 with Web chain trace on.
-  Profiles 5-7 share one 23-second final oracle, never read logs during injection,
-  and leave production/ACK logs enabled. They are not zero-overhead controls.
-  Manual modes wait 60 seconds and never inject the vector on the operator's behalf.
-  8=controlled synthetic DOM ordering, ten fixed sets of five single-character
-  cases in the real ArkWeb/idle xterm; no UiTest vector or private-handler patch.
 
   This is diagnostic evidence, not product or release acceptance.
 #>
@@ -47,8 +31,7 @@ param(
     [string]$HapPath = '',
     [string]$UnlockPasswordPath = '',
     [string]$EvidenceDirectory = '',
-    [ValidateSet('ordinary-text', 'pane-ownership', 'masked-input', 'ime-input', 'input-order', 'input-attribution')][string]$Scenario = 'ordinary-text',
-    [ValidateRange(0, 8)][int]$AttributionMode = 1,
+    [ValidateSet('ordinary-text', 'pane-ownership', 'masked-input', 'ime-input')][string]$Scenario = 'ordinary-text',
     [ValidateRange(1, 30)][int]$Iterations = 10,
     [switch]$SelfTest
 )
@@ -57,7 +40,6 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'hdc-common.ps1')
 . (Join-Path $PSScriptRoot 'device-regression.ps1')
-. (Join-Path $PSScriptRoot 'input-order-evidence.ps1')
 
 function Get-TextInputMismatchIndex {
     param(
@@ -179,6 +161,10 @@ ACCEPTANCE_IDLE_RESULT kind=0,input=second value,completionActive=false,menuActi
             $injectedCommands.Add([string]$Arguments[1])
         }
         function Clear-LeanTTYAppLogs { param($Hdc, $Target) }
+        function Invoke-LeanTTYDeviceKey {
+            param($Hdc, $Target, $KeyCode)
+            $injectedCommands.Add('uitest-key ' + $KeyCode)
+        }
         function Reset-LeanTTYDeviceCommandInput { param($Hdc, $Target, $ProcessId) }
         function Start-Sleep { param($Milliseconds) }
         function Wait-LeanTTYAcceptanceIdleInputState {
@@ -203,7 +189,7 @@ ACCEPTANCE_IDLE_RESULT kind=0,input=second value,completionActive=false,menuActi
     return
 }
 
-if ($Scenario -in @('masked-input', 'ime-input', 'input-order', 'input-attribution')) {
+if ($Scenario -in @('masked-input', 'ime-input')) {
     if ($PSBoundParameters.ContainsKey('Iterations') -and $Iterations -ne 1) {
         throw 'This bounded input diagnostic runs once; omit -Iterations or use 1'
     }
@@ -248,7 +234,6 @@ $device = [ordered]@{}
 $paneOwnership = $null
 $maskedInput = $null
 $imeInput = $null
-$inputOrder = $null
 $candidate = [ordered]@{
     hapPath = $HapPath
     sha256 = (Get-FileHash -LiteralPath $HapPath -Algorithm SHA256).Hash.ToUpperInvariant()
@@ -439,171 +424,7 @@ function Get-TextInputDiagnosticClassification {
     return 'path-specific-unresolved'
 }
 
-function Invoke-InputOrderDiagnostic {
-    $synthetic = $Scenario -eq 'input-attribution' -and $AttributionMode -eq 8
-    $observer = $Scenario -eq 'input-attribution' -and $AttributionMode -ge 5
-    $chain = $Scenario -eq 'input-attribution' -and $AttributionMode -in 4, 7, 8
-    $sample = if ($synthetic) { 'a' * 40 } elseif ($chain -or $observer) { 'ssh-keygen -R [127.0.0.1]:2223' * 6 } else { '0123456789abcdefghijklmnopqrstu' }
-    $token = (Get-Random -Minimum 1000000 -Maximum 10000000).ToString()
-    $result = [ordered]@{ result = 'running'; token = $token; expectedUnits = $sample.Length;
-        vectorSubmitted = $false; vectorAttempts = 0; networkChanged = $false; credentialUsed = $false;
-        cleanup = 'not-started'; trace = $null }
-    $ownedTabId = ''
-    $targetLost = $false
-    $armingObservations = [Collections.Generic.List[object]]::new()
-    $attribution = $Scenario -eq 'input-attribution'
-    $manual = $attribution -and $AttributionMode -in 2, 3
-    $plain = $attribution -and $AttributionMode -in 0, 2
-    $result['attributionMode'] = $(if ($attribution) { $AttributionMode } else { -1 })
-    function Get-OrderInputNode {
-        $layout = Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $resolvedTarget `
-            -LocalPath (Join-Path $EvidenceDirectory 'input-order-focus.json')
-        return Get-SingleFocusedDiagnosticInputNode -InputNodes @(Get-LeanTTYTerminalInputNodes -Layout $layout)
-    }
-    try {
-        Get-OrderInputNode | Out-Null
-        Clear-LeanTTYAppLogs -Hdc $hdc -Target $resolvedTarget
-        Invoke-HdcChecked -Hdc $hdc -Target $resolvedTarget `
-            -Arguments @('shell', 'uinput -K -d 2072 -d 2047 -d 2036 -u 2036 -u 2047 -u 2072') `
-            -Operation 'Create disposable input order Tab' | Out-Null
-        $createdLogs = Wait-LeanTTYAppLog -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
-            -Pattern 'Tab added: ' -TimeoutSeconds 5
-        $ownedTabId = [regex]::Match($createdLogs, 'Tab added: (\S+) title=').Groups[1].Value
-        $result['ownedTabId'] = $ownedTabId
-        $result['processId'] = $appProcessId
-        if ($ownedTabId.Length -eq 0) { throw '[harness] Input order Tab identity missing' }
-        $armCommand = if ($attribution) { '__acceptance_input_attribution_' + $AttributionMode + '_' + $token }
-            else { '__acceptance_input_trace_' + $token }
-        Submit-LeanTTYDeviceCommand -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
-            -Command $armCommand -Stage 'input-order-arm' `
-            -MaxInputAttempts 1 -ObservationSink $armingObservations -InputNodeProvider { Get-OrderInputNode } | Out-Null
-        $readyPattern = if ($observer) { 'ACCEPTANCE_OBSERVER_READY ' + $token + ';' + $AttributionMode }
-            else { 'ACCEPTANCE_INPUT_ORDER ' + $token + ';0;0;0;' }
-        Wait-LeanTTYAppLog -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
-            -Pattern $readyPattern -TimeoutSeconds 5 | Out-Null
-        if ($observer -and $chain) {
-            Wait-LeanTTYAppLog -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
-                -Pattern ('ACCEPTANCE_INPUT_ORDER ' + $token + ';0;0;0;') -TimeoutSeconds 5 | Out-Null
-        }
-        # Synthetic cases start in ArkWeb after arming; clearing now could erase
-        # their completed reports. Do not inject a second vector or poll per case.
-        if (-not $synthetic) { Clear-LeanTTYAppLogs -Hdc $hdc -Target $resolvedTarget }
-        if ($synthetic) {
-            $result['synthetic'] = [ordered]@{ kind = 'controlled-dom-order-in-production-xterm';
-                fixedRepeats = 10; casesPerRepeat = 5; trusted = $false; deviceCauseProven = $false;
-                stateReset = 'public-textarea-value-between-cases'; privateHandlersPatched = $false }
-        } elseif ($manual) {
-            Write-Host ('MANUAL INPUT READY: ' + $(if ($plain) { 'plain textarea' } else { 'xterm' }) +
-                ', type ' + $sample + ' once, no Enter, paste or corrections; capture closes in 60 seconds.')
-            & (Join-Path $PSScriptRoot 'play-operator-alert.ps1')
-            $result['manualInputRequested'] = $true
-        } else {
-            $inputNode = if ($plain) {
-                $plainLayout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $resolvedTarget `
-                    -LocalPath (Join-Path $EvidenceDirectory 'input-order-focus.json')
-                $plainNodes = @(Get-LeanTTYFocusedTextInputNodes -Layout $plainLayout)
-                if ($plainNodes.Count -ne 1 -or
-                    [string]$plainNodes[0].attributes.hint -cne 'LeanTTY input attribution') {
-                    throw '[harness] Plain attribution textarea is not uniquely focused'
-                }
-                $plainNodes[0]
-            } else { Get-OrderInputNode }
-            $result.vectorAttempts = 1
-            $injectionClock = [Diagnostics.Stopwatch]::StartNew()
-            Invoke-LeanTTYDeviceText -Hdc $hdc -Target $resolvedTarget -InputNode $inputNode -Text $sample
-            $result['injectionWithFocusChecksMs'] = [int]$injectionClock.ElapsedMilliseconds
-        }
-        # Wait for the bounded collector's stop report, never use a sleep as a pass oracle.
-        $maxChunks = if ($chain) { 256 } else { 16 }
-        $lastChunkPattern = (@(1..$maxChunks | ForEach-Object { "$(($_ - 1));$_" }) -join '|')
-        $finalPattern = if ($observer) { 'ACCEPTANCE_OBSERVER_FINAL ' + $token + ';' }
-            else { 'ACCEPTANCE_INPUT_ORDER ' + $token + ';[1-4];(?:' + $lastChunkPattern + ');' }
-        $logs = Wait-LeanTTYAppLog -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
-            -Pattern $finalPattern `
-            -TimeoutSeconds $(if ($manual) { 60 } else { 25 })
-        $result.trace = if ($observer -and -not $chain) { $null } elseif ($attribution) {
-            ConvertFrom-LeanTTYInputAttributionEvidence -Logs $logs -Token $token -Mode $(if ($synthetic) { 8 } elseif ($observer) { 4 } else { $AttributionMode })
-        } else { ConvertFrom-LeanTTYInputOrderEvidence -Logs $logs -Token $token }
-        if ($chain) {
-            $receipts = @([regex]::Matches($logs, '(?m)ACCEPTANCE_INPUT_CHAIN_NATIVE ' + $token + ';([0-9]+);([0-9]+)\s*$'))
-            if ($receipts.Count -ne 1) { throw '[harness] Input chain Surface receipt missing or duplicated' }
-            $result['bridgeReceived'] = [ordered]@{ packets = [int]$receipts[0].Groups[1].Value;
-                units = [int]$receipts[0].Groups[2].Value }
-            $result['nativeSteps'] = @([regex]::Matches($logs, '(?m)^.*ACCEPTANCE_IDLE_RESULT[^\r\n]*') | ForEach-Object {
-                $state = Get-LastAcceptanceInputState -Logs $_.Value
-                if ($null -ne $state) {
-                    [ordered]@{ units = $state.Length; exactPrefix = $sample.StartsWith($state, [StringComparison]::Ordinal);
-                        firstMismatchIndex = Get-TextInputMismatchIndex -Expected $sample -Actual $state }
-                }
-            })
-        }
-        $native = Get-LastAcceptanceInputState -Logs $logs
-        if ($observer) {
-            $result['native'] = ConvertFrom-LeanTTYObserverEvidence -Logs $logs -Token $token -Profile $AttributionMode
-            $result['observationProfile'] = [ordered]@{ webTrace = $chain -and -not $synthetic;
-                webCaseSummaries = $synthetic; detailedIdleLogs = $AttributionMode -eq 5;
-                productionAndAckLogs = $true; logsPolledDuringInjection = $synthetic; zeroOverhead = $false }
-        } elseif ($plain) {
-            $result['native'] = [ordered]@{ observed = $null -ne $native; expectedInput = $false }
-        } else {
-            if ($null -eq $native) { throw '[harness] Input order native buffer observation missing' }
-            $result['native'] = [ordered]@{ units = $native.Length; exact = $native -ceq $sample;
-                firstMismatchIndex = Get-TextInputMismatchIndex -Expected $sample -Actual $native }
-        }
-        if (($null -ne $result.trace -and -not $result.trace.complete) -or ($null -eq $result.trace -and -not $observer)) {
-            throw '[harness] Input order window ended early or was empty'
-        }
-        if ($synthetic) {
-            $badCases = @($result.trace.syntheticCases | Where-Object { $_.name -eq 'xterm-delayed-input' })
-            $controls = @($result.trace.syntheticCases | Where-Object { $_.name -ne 'xterm-delayed-input' })
-            $result.synthetic['missingCases'] = @($badCases | Where-Object { $_.domExact -and $_.outputUnits -eq 0 -and $_.keyDownSeenBeforeInput }).Count
-            $result.synthetic['exactControls'] = @($controls | Where-Object { $_.domExact -and $_.outputExact }).Count
-            $result.synthetic['downstreamAgrees'] = $result.native.units -eq $result.trace.summary.actualUnits -and
-                $result.bridgeReceived.units -eq $result.trace.summary.actualUnits -and
-                $result.native.firstMismatchIndex -eq $(if ($result.native.exact) { -1 } else { $result.native.units })
-            $result.synthetic['mechanismReproduced'] = $result.synthetic.missingCases -eq 10 -and
-                $result.synthetic.exactControls -eq 40 -and $result.synthetic.downstreamAgrees
-        }
-        $result.result = 'completed'
-    } catch {
-        $result.result = 'failed'
-        $result['failure'] = $_.Exception.Message
-        $result['textTargetFailure'] = $_.Exception.Data['LeanTTYTextInputFailure']
-        $targetLost = $null -ne $result.textTargetFailure
-        if ($attribution -and -not $observer -and $result.vectorAttempts -gt 0 -and $null -eq $result.trace) {
-            try {
-                $failedLogs = Wait-LeanTTYAppLog -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
-                    -Pattern ('ACCEPTANCE_INPUT_ORDER ' + $token + ';[1-4];') -TimeoutSeconds 25
-                $result.trace = ConvertFrom-LeanTTYInputAttributionEvidence -Logs $failedLogs -Token $token -Mode $AttributionMode
-            } catch { $result['traceFailure'] = $_.Exception.Message }
-        }
-    } finally {
-        $result['armingObservations'] = @($armingObservations)
-        try {
-            if ($ownedTabId.Length -eq 0 -or $targetLost) {
-                throw '[harness] Input order ownership uncertain; no further keys sent'
-            }
-            Get-OrderInputNode | Out-Null
-            Reset-LeanTTYDeviceCommandInput -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId
-            Clear-LeanTTYAppLogs -Hdc $hdc -Target $resolvedTarget
-            Invoke-HdcChecked -Hdc $hdc -Target $resolvedTarget `
-                -Arguments @('shell', 'uinput -K -d 2072 -d 2047 -d 2039 -u 2039 -u 2047 -u 2072') `
-                -Operation 'Close disposable input order Tab' | Out-Null
-            Wait-LeanTTYAppLog -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
-                -Pattern ('Tab removed: ' + [regex]::Escape($ownedTabId)) -TimeoutSeconds 5 | Out-Null
-            $result.cleanup = 'passed'
-        } catch {
-            $result.cleanup = 'failed'
-            $result.result = 'failed'
-            $result['cleanupFailure'] = $_.Exception.Message
-        }
-        $traceLayoutPath = Join-Path $EvidenceDirectory 'input-order-focus.json'
-        if (Test-Path -LiteralPath $traceLayoutPath -PathType Leaf) {
-            Remove-Item -LiteralPath $traceLayoutPath -Force
-        }
-    }
-    return $result
-}
+
 
 function Invoke-ImeInputProbe {
     param(
@@ -639,15 +460,28 @@ function Invoke-ImeInputProbe {
                 'post-composition-ascii' { '中文aa11' }
             }
             Clear-LeanTTYAppLogs -Hdc $hdc -Target $resolvedTarget
-            Invoke-HdcChecked -Hdc $hdc -Target $resolvedTarget `
-                -Arguments @('shell', (ConvertTo-LeanTTYRawTextKeyCommand -Text $keys)) `
-                -Operation "System keyboard IME probe: $phase" | Out-Null
+            if ($phase -eq 'post-composition-ascii') {
+                # uinput KeyCodeToUnicode returns the shifted mapping even with
+                # Shift up (1 -> !). UiTest supplies neutral Unicode on this PC.
+                foreach ($keyCode in @(2017, 2017, 2001, 2001)) {
+                    Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $resolvedTarget -KeyCode $keyCode
+                }
+            } else {
+                Invoke-HdcChecked -Hdc $hdc -Target $resolvedTarget `
+                    -Arguments @('shell', (ConvertTo-LeanTTYRawTextKeyCommand -Text $keys)) `
+                    -Operation "System keyboard IME probe: $phase" | Out-Null
+            }
             & $InputNodeProvider | Out-Null
             $state = Wait-LeanTTYAcceptanceIdleInputState -Hdc $hdc -Target $resolvedTarget `
                 -ProcessId $appProcessId -Expected $expected -TimeoutSeconds 5
             $Summary.attempts += [ordered]@{
                 phase = $phase; expectedUnits = $expected.Length; actualUnits = $state.input.Length
-                exact = $state.exact; inputMethod = 'system-key-events'; enterCount = 0
+                exact = $state.exact
+                inputMethod = $(if ($phase -eq 'post-composition-ascii') { 'uitest-key-events' } else { 'uinput-key-events' })
+                enterCount = 0
+                # Only this fixed public IME vector; never used for credentials.
+                mismatchIndex = Get-TextInputMismatchIndex -Expected $expected -Actual $state.input
+                actualCodepoints = @($state.input.ToCharArray() | ForEach-Object { [int]$_ })
             }
             if (-not $state.exact) {
                 throw "[harness] IME probe $phase mismatch; inspect input-mode/candidate precondition before attribution"
@@ -709,8 +543,6 @@ function Invoke-LocalInputCompatibilityDiagnostic {
             -MaxInputAttempts 1 -InputNodeProvider { Get-ProbeInputNode } | Out-Null
         Wait-LeanTTYAppLog -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
             -Pattern 'ACCEPTANCE_INPUT_PROBE state=ready' -TimeoutSeconds 5 | Out-Null
-        Wait-LeanTTYAppLog -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId `
-            -Pattern 'ACCEPTANCE_INPUT_WEB 0,0,0,0,0,0,0,0,0,0,0,0' -TimeoutSeconds 5 | Out-Null
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $resolvedTarget
         $result['lastStage'] = 'whole-32-input'
         Invoke-LeanTTYDeviceText -Hdc $hdc -Target $resolvedTarget `
@@ -722,26 +554,18 @@ function Invoke-LocalInputCompatibilityDiagnostic {
             $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $resolvedTarget -ProcessId $appProcessId
             $nativeEvents = [regex]::Matches($logs,
                 'ACCEPTANCE_INPUT_NATIVE receivedUnits=\d+,bufferUnits=(\d+),exact=(true|false)')
-            $webEvents = [regex]::Matches($logs, 'ACCEPTANCE_INPUT_WEB (\d+(?:,\d+){11})')
-            if ($nativeEvents.Count -gt 0 -and $webEvents.Count -gt 0) {
+            if ($nativeEvents.Count -gt 0) {
                 $nativeState = $nativeEvents[$nativeEvents.Count - 1]
-                $webState = $webEvents[$webEvents.Count - 1].Groups[1].Value
-                $signature = $nativeState.Value + $webState
+                $signature = $nativeState.Value
                 if ($signature -ceq $previous) { $settled = $true; break }
                 $previous = $signature
             }
             Start-Sleep -Milliseconds 400
         } while ($timer.Elapsed.TotalSeconds -lt 5)
         if (-not $settled) { throw '[harness] Masked input boundary counters did not settle' }
-        $counts = @($webState.Split(',') | ForEach-Object { [int]$_ })
         $result.attempts += [ordered]@{ mode = 'masked'; method = $method; iteration = $iteration;
             bufferUnits = [int]$nativeState.Groups[1].Value;
-            exact = $nativeState.Groups[2].Value -ceq 'true';
-            web = [ordered]@{ printableKeydowns = $counts[0]; imeKeydowns = $counts[1];
-                keypresses = $counts[2]; inputEvents = $counts[3]; inputUnits = $counts[4];
-                compositionEvents = $counts[5]; dataPrintableUnits = $counts[6];
-                dataDeletes = $counts[7]; dataOtherUnits = $counts[8]; clearCalls = $counts[9];
-                nonemptyClears = $counts[10]; textareaUnits = $counts[11] } }
+            exact = $nativeState.Groups[2].Value -ceq 'true' }
         Write-Host "[masked-input] iteration=$iteration method=$method bufferUnits=$($nativeState.Groups[1].Value) exact=$($nativeState.Groups[2].Value)"
         $result.result = 'completed'
         }
@@ -807,15 +631,10 @@ function Invoke-PaneOwnershipDiagnostic {
     function Record-PaneDiagnosticStage([string]$Name, [int]$Count) {
         $current = Read-PaneDiagnosticLayout $Name $Count
         $inputs = @(Get-LeanTTYTerminalInputNodes -Layout $current)
-        $webs = @(Get-LeanTTYLayoutNodes -Node $current | Where-Object { $_.attributes.type -eq 'Web' })
-        $owners = @(foreach ($diagnosticInput in $inputs) {
-            $webOwners = @($webs | Where-Object {
-                ([string]$diagnosticInput.attributes.hierarchy).StartsWith(([string]$_.attributes.hierarchy) + ',')
-            })
-            if ($webOwners.Count -ne 1) { throw '[harness] Pane diagnostic Web owner is ambiguous' }
-            [ordered]@{ bounds = [string]$webOwners[0].attributes.bounds;
-                inputBounds = [string]$diagnosticInput.attributes.bounds;
-                focused = [string]$diagnosticInput.attributes.focused; hierarchy = [string]$diagnosticInput.attributes.hierarchy }
+        $owners = @($inputs | ForEach-Object {
+            [ordered]@{ bounds = [string]$_.attributes.bounds;
+                inputBounds = [string]$_.attributes.bounds;
+                focused = [string]$_.attributes.focused; hierarchy = [string]$_.attributes.hierarchy }
         })
         $result.stages += [ordered]@{ name=$Name; owners=$owners }
         Save-LeanTTYDeviceScreenshot -Hdc $hdc -Target $resolvedTarget `
@@ -930,12 +749,7 @@ try {
     $appStarted = $true
     $device['unlock'] = [string]$start.unlock
 
-    if ($Scenario -in @('input-order', 'input-attribution')) {
-        $inputOrder = Invoke-InputOrderDiagnostic
-        if ($inputOrder.result -ne 'completed') {
-            throw $(if ($inputOrder.failure) { $inputOrder.failure } else { '[harness] Input order cleanup failed' })
-        }
-    } elseif ($Scenario -eq 'ime-input') {
+    if ($Scenario -eq 'ime-input') {
         $imeInput = Invoke-LocalInputCompatibilityDiagnostic
         if ($imeInput.result -ne 'completed') {
             throw $(if ($imeInput.failure) { $imeInput.failure } else { '[harness] IME probe cleanup failed' })
@@ -1026,9 +840,6 @@ try {
         $cleanup = 'not-required'
     }
 
-    if ($null -ne $inputOrder -and $inputOrder.cleanup -ne 'passed') {
-        $cleanup = 'failed'
-    }
     if ($null -ne $imeInput -and $imeInput.cleanup -ne 'passed') { $cleanup = 'failed' }
     $methodSummaries = @($attempts | Group-Object method | ForEach-Object {
             $methodAttempts = @($_.Group)
@@ -1044,15 +855,6 @@ try {
     $classification = if ($null -ne $imeInput) {
         if ($imeInput.result -eq 'completed') { 'system-ime-input-exact' }
         else { 'incomplete-system-ime-probe' }
-    } elseif ($null -ne $inputOrder) {
-        if ($inputOrder.result -ne 'completed') { 'incomplete-input-order-probe' }
-        elseif ($AttributionMode -eq 8 -and $Scenario -eq 'input-attribution') {
-            if ($inputOrder.synthetic.mechanismReproduced) { 'synthetic-order-mechanism-reproduced' }
-            else { 'different-controlled-synthetic-result' }
-        }
-        elseif (($Scenario -eq 'input-attribution' -and $null -ne $inputOrder.trace -and -not $inputOrder.trace.summary.exact) -or
-            ($inputOrder.native.Contains('exact') -and -not $inputOrder.native.exact)) { 'input-mismatch-observed-see-event-order' }
-        else { 'not-reproduced-in-single-input-order-probe' }
     } elseif ($null -ne $maskedInput) {
         if ($maskedInput.result -ne 'completed') {
             'incomplete-boundary-probe'
@@ -1073,9 +875,7 @@ try {
         result = $runResult
         acceptanceEligible = $false
         productBehaviorClaimed = $false
-        enterInjected = $(if ($null -ne $inputOrder) {
-                @($inputOrder.armingObservations | Where-Object { $_.enterCount -gt 0 }).Count -gt 0
-            } else { $Scenario -eq 'masked-input' })
+        enterInjected = $Scenario -eq 'masked-input'
         startedAt = $startedAt.ToString('o')
         completedAt = [DateTimeOffset]::UtcNow.ToString('o')
         durationMs = [int]([DateTimeOffset]::UtcNow - $startedAt).TotalMilliseconds
@@ -1088,9 +888,7 @@ try {
         paneOwnership = $paneOwnership
         maskedInput = $maskedInput
         imeInput = $imeInput
-        inputOrder = $inputOrder
-        probeCleanup = $(if ($null -ne $inputOrder) { $inputOrder.cleanup }
-            elseif ($null -ne $imeInput) { $imeInput.cleanup } else { 'not-applicable' })
+        probeCleanup = $(if ($null -ne $imeInput) { $imeInput.cleanup } else { 'not-applicable' })
         cleanup = $cleanup
         failureDomain = $failureDomain
         failure = $failure

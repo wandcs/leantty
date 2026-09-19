@@ -118,7 +118,6 @@ export default function terminalFormattingTest() {
       expect(high.chrome.tabActiveBackground).assertEqual('#DB404255')
       expect(high.background(false)).assertEqual('#FF1E1E2E')
       expect(high.chromeBackground(false)).assertEqual('#FF1E1E2E')
-      expect(high.terminal.toJsInitObject().includes('"background":"rgba(30, 30, 46, 0)"')).assertEqual(true)
       expect(low.background()).assertEqual('#D11E1E2E')
       expect(low.chromeBackground()).assertEqual('#F01E1E2E')
       expect(low.chrome.tabBackground).assertEqual('#F02D2E40')
@@ -142,7 +141,6 @@ export default function terminalFormattingTest() {
       expect(off.chrome.tabBackground).assertEqual('#FF282839')
       expect(off.chrome.tabHoverBackground).assertEqual('#FF2C2D3F')
       expect(off.chrome.tabActiveBackground).assertEqual('#FF313244')
-      expect(off.terminal.toJsInitObject().indexOf('cellBackgroundOpacity') < 0).assertEqual(true)
     })
 
   })

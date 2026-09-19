@@ -1,7 +1,6 @@
 import { describe, it, expect } from '@ohos/hypium'
 import { CommandParser } from '../main/ets/model/command/CommandParser'
 import { SshEnvironmentReadiness } from '../main/ets/model/ssh/SshEnvironmentReadiness'
-import { BridgeProtocol } from '../main/ets/model/bridge/BridgeProtocol'
 
 export default function sshEnvironmentPreparationTest() {
   describe('SshEnvironmentPreparation', () => {
@@ -16,12 +15,6 @@ export default function sshEnvironmentPreparationTest() {
       for (let command of ['', 'help', 'help ssh', 'ssh --help', 'scp file host:/tmp', 'exit']) {
         expect(CommandParser.requiresSshEnvironment(command)).assertEqual(false)
       }
-    })
-
-    it('acceptsOnlyAnEmptyInteractiveReadyControlMessage', 0, () => {
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|interactiveReady|') !== null).assertEqual(true)
-      expect(BridgeProtocol.parse('H2|W2N|CONTROL|interactiveReady|unexpected')).assertEqual(null)
-      expect(BridgeProtocol.parse('H2|N2W|CONTROL|interactiveReady|')).assertEqual(null)
     })
 
     it('sharesOnePreparationAcrossConcurrentCallers', 0, async () => {

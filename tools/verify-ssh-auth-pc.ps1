@@ -568,13 +568,9 @@ function Assert-AuthControlChannels {
 
 function Assert-NoSecretExposure {
     param(
-        [Parameter(Mandatory = $true)][string]$LayoutName,
-        [Collections.IDictionary]$InputObservation = $null
+        [Parameter(Mandatory = $true)][string]$LayoutName
     )
     $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
-    if ($null -ne $InputObservation) {
-        $InputObservation.web = Get-AuthInputWebEvidence -Logs $logs
-    }
     foreach ($secret in $secrets) {
         if (-not [string]::IsNullOrEmpty($secret) -and $logs.Contains($secret)) {
             throw 'HarmonyOS application logs exposed a temporary SSH fixture secret'
@@ -717,25 +713,7 @@ function Invoke-TemporaryFixtureAuthText {
     Invoke-AuthUiText -Text $Value -InputNode $InputNode
 }
 
-function Get-AuthInputWebEvidence {
-    param([AllowEmptyString()][string]$Logs)
-    $reports = [regex]::Matches($Logs,
-        '(?m)\bACCEPTANCE_INPUT_WEB ([0-9]{1,9}(?:,[0-9]{1,9}){11})\r?$')
-    $latest = $null
-    if ($reports.Count -gt 0) {
-        $counts = $reports[$reports.Count - 1].Groups[1].Value.Split(',')
-        $names = @('printableKeydowns', 'imeKeydowns', 'keypresses', 'inputEvents', 'inputUnits',
-            'compositionEvents', 'dataPrintableUnits', 'dataDeletes', 'dataOtherUnits',
-            'clearCalls', 'nonemptyClears', 'textareaUnits')
-        $latest = [ordered]@{}
-        for ($index = 0; $index -lt $names.Count; $index++) { $latest[$names[$index]] = [int]$counts[$index] }
-    }
-    return [ordered]@{
-        status = $(if ($reports.Count -gt 0) { 'observed' } else { 'missing' })
-        reportCount = $reports.Count
-        latest = $latest
-    }
-}
+
 
 function Get-AuthFixturePasswordEvidence {
     param([AllowEmptyString()][string]$Logs)
@@ -789,16 +767,15 @@ function Submit-AuthValue {
         enterAttempted = $false
         submitAckObserved = $false
         textTargetFailure = $null
-        web = [ordered]@{ status = 'not-captured'; reportCount = 0; latest = $null }
+        secretAuditPassed = $false
     }
-    $logsScoped = $false
     try {
         $inputNode = Focus-ActiveCommandInput -LayoutName ($LayoutName + '.focus.json')
         Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-        $logsScoped = $true
         Invoke-TemporaryFixtureAuthText -Value $Value -InputNode $inputNode
         # Reuse the existing pre-Enter audit read. No new wait, flush or input gate.
-        Assert-NoSecretExposure -LayoutName $LayoutName -InputObservation $observation
+        Assert-NoSecretExposure -LayoutName $LayoutName
+        $observation.secretAuditPassed = $true
         $observation.enterAttempted = $true
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
         Wait-AuthLog -Pattern 'ACCEPTANCE_INPUT_SUBMIT' -TimeoutSeconds 10
@@ -807,14 +784,6 @@ function Submit-AuthValue {
     } catch {
         $observation.result = 'failed'
         $observation.textTargetFailure = $_.Exception.Data['LeanTTYTextInputFailure']
-        if ($logsScoped -and -not $observation.enterAttempted -and $observation.web.status -eq 'not-captured') {
-            try {
-                $observation.web = Get-AuthInputWebEvidence -Logs (
-                    Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid)
-            } catch {
-                $observation.web.status = 'unavailable'
-            }
-        }
         throw
     } finally {
         $authInputObservations.Add([pscustomobject]$observation) | Out-Null
@@ -1373,16 +1342,36 @@ function Get-AuthHitchSample {
     }
 }
 
-function Get-AuthPerfRenderRecord {
+function Get-AuthPerfNativeRecord {
     param([Parameter(Mandatory = $true)][string]$CaseId)
     $logs = Get-LeanTTYAppLogs -Hdc $hdc -Target $Target -ProcessId $appPid
-    foreach ($match in [regex]::Matches($logs, 'PERF render (?<json>\{[^\r\n]+\})')) {
-        try {
-            $record = $match.Groups['json'].Value | ConvertFrom-Json
-            if ([string]$record.caseId -eq $CaseId) { return $record }
-        } catch {}
+    $records = @([regex]::Matches($logs,
+        'NATIVE_OUTPUT_PROBE case=' + [regex]::Escape($CaseId) + '(?=\s|$)[^\r\n]*'))
+    if ($records.Count -ne 1) {
+        throw "[harness] Native output record is missing or ambiguous for $CaseId"
     }
-    throw "[harness] PERF render record was not found for $CaseId"
+    $pattern = '^NATIVE_OUTPUT_PROBE case=(?<caseId>[a-z0-9_]{1,24})' +
+        ' expectedBytes=(?<expectedBytes>[0-9]+) actualBytes=(?<actualBytes>[0-9]+)' +
+        ' expectedLines=(?<expectedLines>[0-9]+) actualLines=(?<actualLines>[0-9]+)' +
+        ' mismatches=(?<mismatches>[0-9]+) contentOrdered=(?<contentOrdered>true|false)' +
+        ' parseMs=(?<parseMs>[0-9]+) paintMs=(?<paintMs>[0-9]+) observerMs=(?<observerMs>[0-9]+)' +
+        ' inputSamples=(?<inputSamples>[0-9]+) inputEchoBytes=(?<inputEchoBytes>[0-9]+)' +
+        ' inputValid=(?<inputValid>true|false)\s*$'
+    $match = [regex]::Match($records[0].Value, $pattern)
+    if (-not $match.Success) { throw "[harness] Malformed native output record for $CaseId" }
+    $record = [ordered]@{
+        schemaVersion = 3
+        renderer = 'native'
+        caseId = $CaseId
+        completionBoundary = 'ordered-command-bytes-consumed-and-current-surface-presented'
+    }
+    foreach ($field in @('expectedBytes', 'actualBytes', 'expectedLines', 'actualLines',
+        'mismatches', 'parseMs', 'paintMs', 'observerMs', 'inputSamples', 'inputEchoBytes')) {
+        $record[$field] = [int64]$match.Groups[$field].Value
+    }
+    $record.contentOrdered = $match.Groups['contentOrdered'].Value -ceq 'true'
+    $record.inputValid = $match.Groups['inputValid'].Value -ceq 'true'
+    return [pscustomobject]$record
 }
 
 function Invoke-AuthPerfSample {
@@ -1413,12 +1402,15 @@ function Invoke-AuthPerfSample {
         throw "[harness] PERF run outcome is unknown for $CaseId; the scenario must be restarted"
     }
     Wait-AuthLog `
-        -Pattern ('PERF render .*"caseId":"' + $CaseId + '".*"completenessPercent":100') `
+        -Pattern ('NATIVE_OUTPUT_PROBE case=' + [regex]::Escape($CaseId) + ' ') `
         -TimeoutSeconds 30
-    $record = Get-AuthPerfRenderRecord -CaseId $CaseId
-    if ($record.schemaVersion -ne 2 -or -not $record.contentOrdered -or
-        -not $record.visibleTailConfirmed -or $record.mismatches -ne 0) {
-        throw "[product] Ordered output or parsed visible tail did not match the fixture for $CaseId"
+    $record = Get-AuthPerfNativeRecord -CaseId $CaseId
+    if (-not $record.contentOrdered -or $record.mismatches -ne 0 -or
+        $record.expectedLines -ne 12000 -or $record.actualLines -ne 12000 -or
+        $record.expectedBytes -ne 984000 -or $record.actualBytes -ne 984000 -or
+        $record.paintMs -lt $record.parseMs -or -not $record.inputValid -or
+        $record.inputSamples -ne 0 -or $record.inputEchoBytes -ne 0) {
+        throw "[product] Native output completeness, order or presentation did not match the fixture for $CaseId"
     }
     $record | Add-Member -NotePropertyName commandAttempts -NotePropertyValue 1
     return $record
@@ -1831,9 +1823,9 @@ function Write-AuthEvidence {
         groupManifest = $selectedGroupManifest
         checks = @($checks)
         inputBoundary = [ordered]@{
-            # These counters are process-log snapshots, not correlated per-Pane
-            # receipts. Do not pair fixture events with submissions by array index.
-            webScope = 'process-log-since-clear-before-enter-unsettled'
+            # Fixture events are not correlated per-Pane receipts. Do not pair
+            # them with submissions by array index.
+            targetScope = 'operation-local-native-component-identity'
             fixtureScope = 'run-ordered-password-events-no-submission-correlation'
             submissions = @($authInputObservations)
             fixturePassword = $fixturePasswordEvidence
@@ -2484,8 +2476,12 @@ try {
                 processes = @(Get-AuthProcessMemorySample)
             })
         }
+        $nativeTailScreenshot = "native-output-$modeSlug.png"
+        Save-LeanTTYDeviceScreenshot -Hdc $hdc -Target $Target `
+            -LocalPath (Join-Path $EvidenceDirectory $nativeTailScreenshot)
         $performanceEvidence.modes += [pscustomobject][ordered]@{
             mode = $modeName
+            tailScreenshot = $nativeTailScreenshot
             renderSamples = @($renderSamples)
             memorySamples = @($memorySamples)
             hitchBefore = $hitchBefore

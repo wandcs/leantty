@@ -13,7 +13,6 @@ import { SshSession, SshSessionState } from '../model/ssh/SshSession'
 import { SshKeyManager } from '../model/ssh/SshKeyManager'
 import { SshEnvironment } from '../model/ssh/SshEnvironment'
 import { KeyPairInfo } from '../common/types/SshKeyTypes'
-import { BridgeProtocol, BridgeMessage } from '../model/bridge/BridgeProtocol'
 import { CommandBarViewModel, CommandParseResult, KeyCommandResult } from './CommandBarViewModel'
 import {
   CommandParser,
@@ -128,7 +127,6 @@ export class SessionViewModel {
   private commandBarVm: CommandBarViewModel = new CommandBarViewModel()
   private completionEngine: LocalCompletionEngine = new LocalCompletionEngine()
   private completionRenderer: LocalCompletionRenderer = new LocalCompletionRenderer()
-  private heartbeatTimerId: number = -1
   private pendingKeyPath: string = ''
   private pendingKeyPassphrase: string = ''
   private keyPassphraseChangeStage: KeyPassphraseChangeStage = KeyPassphraseChangeStage.NONE
@@ -180,6 +178,7 @@ export class SessionViewModel {
   private sshEnvironmentReady: boolean = false
   private sshEnvironmentCommandPending: boolean = false
   private acceptingSessionOutput: boolean = false
+  private terminalFailed: boolean = false
   private terminalResetPending: boolean = false
   private terminalBoundaryGeneration: number = 0
   private terminalResetWaiters: (() => void)[] = []
@@ -268,11 +267,37 @@ export class SessionViewModel {
   bindTerminalSurface(surface: TerminalSurfaceController): void {
     this.terminalSurface = surface
     surface.setInputMasked(SessionViewModel.isSecretInputMode(this.mode))
-    surface.setOnMessage((msg: BridgeMessage) => {
-      this.handleBridgeMessage(msg, surface)
+    surface.setOnInput((data: string) => {
+      this.logger.info('D: ' + data.length.toString() + ' chars, mode=' + this.mode.toString())
+      this.handleTerminalInput(data, surface)
+    })
+    surface.setOnReply((data: string, owner: number) => {
+      if (surface !== this.terminalSurface || owner !== this.terminalBoundaryGeneration ||
+        !this.acceptingSessionOutput || this.mode !== TerminalMode.CONNECTED) { return }
+      if (this.moshClient !== null) { this.moshClient.write(data) }
+      else { this.sshClient.write(data) }
+    })
+    surface.setRemoteEffectOwner((owner: number) => surface === this.terminalSurface &&
+      owner === this.terminalBoundaryGeneration && this.acceptingSessionOutput && this.mode === TerminalMode.CONNECTED)
+    surface.setOnFailure(() => {
+      // Consumption failure cannot be treated as a completed session reset.
+      // Stop the source and keep the Pane's visible failure until it is closed.
+      this.acceptingSessionOutput = false
+      this.terminalFailed = true
+      this.terminalBoundaryGeneration++
+      this.terminalResetPending = true
+      this.completeTerminalResetWaiters()
+      this.sshClient.disconnect()
+      if (this.moshClient !== null) { this.moshClient.disconnect() }
+    })
+    surface.setOnResize((cols: number, rows: number) => {
+      this.handleTerminalResize(cols, rows)
+    })
+    surface.setOnInteractiveReady(() => {
+      this.beginSshEnvironmentPreparation()
     })
     surface.setOnReady((recoveredOutput: boolean) => {
-      this.onBridgeReady(recoveredOutput)
+      this.onTerminalReady(recoveredOutput)
     })
     surface.setOnOutputPauseChange((paused: boolean) => {
       this.applyOutputPause(paused)
@@ -280,14 +305,13 @@ export class SessionViewModel {
   }
 
   onTerminalSurfaceDetached(): void {
-    this.stopHeartbeat()
     if (this.completionEngine.isActive()) {
       this.commandLine.setText(this.completionEngine.editingText())
     }
     this.completionRenderer.reset()
   }
 
-  private onBridgeReady(recoveredOutput: boolean): void {
+  private onTerminalReady(recoveredOutput: boolean): void {
     if (this.mode === TerminalMode.IDLE && !recoveredOutput) {
       if (this.initialRecoveryNoticePending) {
         this.initialRecoveryNoticePending = false
@@ -299,14 +323,9 @@ export class SessionViewModel {
         this.writePrompt()
       }
     }
-    this.requestTerminalFit()
     this.applyTerminalFocus()
-    this.startHeartbeat()
-    if (this.terminalSurface !== null) {
-      this.terminalSurface.captureSnapshot()
-    }
     this.logger.info(recoveredOutput ?
-      'Bridge ready, terminal output recovered' : 'Bridge ready without recovered output')
+      'Terminal ready, terminal output recovered' : 'Terminal ready without recovered output')
   }
 
   writePrompt(): void {
@@ -502,7 +521,6 @@ export class SessionViewModel {
       this.logger.info('KEY_COMMENT_CHANGE result=disconnected')
     }
     this.setMode(TerminalMode.IDLE)
-    this.releaseDisconnectedFlowControl()
     this.notifyStateChange()
   }
 
@@ -566,11 +584,6 @@ export class SessionViewModel {
     this.notifyStateChange()
   }
 
-  requestTerminalFit(): void {
-    if (this.terminalSurface !== null) {
-      this.terminalSurface.requestFit()
-    }
-  }
 
   requestFocus(): void {
     this.terminalFocused = true
@@ -593,11 +606,6 @@ export class SessionViewModel {
     }
   }
 
-  applyTerminalTheme(themeJson: string): void {
-    if (this.terminalSurface !== null) {
-      this.terminalSurface.sendTheme(themeJson)
-    }
-  }
 
   private setMode(newMode: TerminalMode): void {
     if (this.mode !== newMode) {
@@ -617,6 +625,7 @@ export class SessionViewModel {
     this.mode = newMode
     if (this.terminalSurface !== null) {
       this.terminalSurface.setInputMasked(SessionViewModel.isSecretInputMode(newMode))
+      this.terminalSurface.invalidateNativeInput()
     }
     if (this.onModeChange !== null) {
       this.onModeChange(newMode)
@@ -864,19 +873,13 @@ export class SessionViewModel {
 
   private writeTerminalBytes(data: Uint8Array): void {
     if (this.terminalSurface !== null) {
-      this.terminalSurface.writeBytes(data)
+      this.terminalSurface.writeBytes(data, this.terminalBoundaryGeneration)
     }
   }
 
-  private releaseDisconnectedFlowControl(): void {
-    if (this.terminalSurface !== null) {
-      this.terminalSurface.releaseDisconnectedFlowControl()
-    }
-  }
 
   private finishSessionTerminalOwnership(onReset: () => void): void {
     this.acceptingSessionOutput = false
-    this.releaseDisconnectedFlowControl()
     this.terminalBoundaryGeneration++
     let boundaryGeneration: number = this.terminalBoundaryGeneration
     this.terminalResetPending = true
@@ -906,7 +909,6 @@ export class SessionViewModel {
 
   private finishMoshTerminalOwnership(onReset: () => void): void {
     this.acceptingSessionOutput = false
-    this.releaseDisconnectedFlowControl()
     this.terminalBoundaryGeneration++
     let boundaryGeneration: number = this.terminalBoundaryGeneration
     this.terminalResetPending = true
@@ -931,7 +933,7 @@ export class SessionViewModel {
   }
 
   private waitForTerminalReset(): Promise<void> {
-    if (!this.terminalResetPending) {
+    if (!this.terminalResetPending || this.terminalFailed) {
       return Promise.resolve()
     }
     return new Promise<void>((resolve: () => void) => {
@@ -968,7 +970,7 @@ export class SessionViewModel {
       return
     }
     if (this.terminalSurface !== null) {
-      this.terminalSurface.writeMoshBytes(data)
+      this.terminalSurface.writeMoshBytes(data, this.terminalBoundaryGeneration)
     }
   }
 
@@ -999,9 +1001,6 @@ export class SessionViewModel {
     this.finishSessionTerminalOwnership(() => {
       this.writeTerminal('\r\n' + ConnectionControl.describeClose(exitCode))
       this.writePrompt()
-      if (this.terminalSurface !== null) {
-        this.terminalSurface.captureSnapshot()
-      }
     })
     this.logger.info('SSH closed, exitCode=' + exitCode.toString())
   }
@@ -1016,7 +1015,6 @@ export class SessionViewModel {
       this.writeTerminal('\r\n' + LocalCommandOutput.status('Mosh',
         exitCode === 0 ? 'Session closed.' : 'Session ended unexpectedly.'))
       this.writePrompt()
-      if (this.terminalSurface !== null) { this.terminalSurface.captureSnapshot() }
     })
     this.logger.info('Mosh Session closed')
   }
@@ -1038,7 +1036,6 @@ export class SessionViewModel {
         this.writeError('The Mosh connection failed.',
           'Check the Host, network, credentials and mosh-server, then try again.')
       }
-      if (this.terminalSurface !== null) { this.terminalSurface.captureSnapshot() }
     })
   }
 
@@ -1068,9 +1065,6 @@ export class SessionViewModel {
     this.finishSessionTerminalOwnership(() => {
       this.writeError(SessionViewModel.sshFailureTitle(error.layer),
         'Check the Host, network and credentials, then try again.')
-      if (this.terminalSurface !== null) {
-        this.terminalSurface.captureSnapshot()
-      }
     })
   }
 
@@ -1185,42 +1179,18 @@ export class SessionViewModel {
     }
   }
 
-  private handleBridgeMessage(msg: BridgeMessage, sourceSurface: TerminalSurfaceController): void {
-    switch (msg.kind) {
-      case BridgeProtocol.KIND_TERMINAL:
-        if (msg.channel !== BridgeProtocol.CHANNEL_DATA) {
-          break
-        }
-        this.logger.info('D: ' + msg.payload.length.toString() + ' chars, mode=' + this.mode.toString())
-        this.handleTerminalInput(msg.payload, sourceSurface)
-        break
-      case BridgeProtocol.KIND_RESIZE:
-        if (msg.channel !== BridgeProtocol.CHANNEL_CONTROL) {
-          break
-        }
-        let dims: number[] = BridgeProtocol.parseResizePayload(msg.payload)
-        if (dims.length === 2) {
-          this.lastCols = dims[0]
-          this.lastRows = dims[1]
-          if (this.mode === TerminalMode.IDLE && this.completionEngine.isActive()) {
-            this.redrawLocalCommandLine()
-          }
-          if (this.moshClient !== null && this.moshClient.isConnected()) {
-            this.moshClient.resize(dims[0], dims[1])
-            this.logger.info('Mosh terminal resized: ' + dims[0].toString() + 'x' + dims[1].toString())
-          } else if (this.sshClient.isConnected()) {
-            this.sshClient.resize(dims[0], dims[1])
-            this.logger.info('Terminal resized: ' + dims[0].toString() + 'x' + dims[1].toString())
-          }
-        }
-        break
-      case BridgeProtocol.KIND_INTERACTIVE_READY:
-        if (msg.channel === BridgeProtocol.CHANNEL_CONTROL && msg.payload.length === 0) {
-          this.beginSshEnvironmentPreparation()
-        }
-        break
-      default:
-        break
+  private handleTerminalResize(cols: number, rows: number): void {
+    this.lastCols = cols
+    this.lastRows = rows
+    if (this.mode === TerminalMode.IDLE && this.completionEngine.isActive()) {
+      this.redrawLocalCommandLine()
+    }
+    if (this.moshClient !== null && this.moshClient.isConnected()) {
+      this.moshClient.resize(cols, rows)
+      this.logger.info('Mosh terminal resized: ' + cols.toString() + 'x' + rows.toString())
+    } else if (this.sshClient.isConnected()) {
+      this.sshClient.resize(cols, rows)
+      this.logger.info('Terminal resized: ' + cols.toString() + 'x' + rows.toString())
     }
   }
 
@@ -2420,22 +2390,6 @@ export class SessionViewModel {
     }
   }
 
-  private startHeartbeat(): void {
-    if (this.heartbeatTimerId >= 0) {
-      return
-    }
-    this.heartbeatTimerId = setInterval(() => {
-      if (this.terminalSurface !== null) {
-        this.terminalSurface.ping()
-      }
-    }, 30000)
-  }
-  private stopHeartbeat(): void {
-    if (this.heartbeatTimerId >= 0) {
-      clearInterval(this.heartbeatTimerId)
-      this.heartbeatTimerId = -1
-    }
-  }
 
   private async executeKeyCommand(result: KeyCommandResult): Promise<void> {
     if (this.context === null) {

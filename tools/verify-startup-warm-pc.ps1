@@ -6,7 +6,8 @@
   data during installation, preconditions one background/foreground cycle, and
   then measures real App Center icon clicks while requiring the process identity
   to remain stable. T5 is emitted only after the injected ASCII byte completes
-  the production local-input round trip and xterm paint.
+  the local-input round trip and the native worker's frame swap.
+  -Renderer labels and checks the installed path; it does not change build flags.
 #>
 param(
     [string]$Target = '',
@@ -14,6 +15,7 @@ param(
     [string]$SourceRoot = '',
     [string]$EvidenceDirectory = '',
     [string]$VersionLabel = 'candidate',
+    [ValidateSet('native')][string]$Renderer = 'native',
     [switch]$SkipBuild
 )
 
@@ -167,7 +169,7 @@ try {
         $leanTtyIcon = Get-WarmNodeCenter -Layout $appCenterLayout -Id 'AppCenterAppGrid_AppBubble_com.leantty.app'
 
         Clear-LeanTTYAppLogs -Hdc $script:hdc -Target $script:target
-        $deviceCommand = 'sh -c ''(i=0; while ! hilog -x -t app -T TerminalBridge | ' +
+        $deviceCommand = 'sh -c ''(i=0; while ! hilog -x -t app -T NativeStartupPerformance | ' +
             'grep -q "PERF render STARTUP_WARM phase=T4"; do i=$((i+1)); ' +
             'if [ $i -ge 500 ]; then printf WATCH_TIMEOUT=1; exit 1; fi; sleep 0.02; done; ' +
             'printf TIN=; date +%s%3N; uinput -K -d 2017 -u 2017; sleep 0.3) & ' +
@@ -189,7 +191,7 @@ try {
         $afterPid = (Invoke-WarmHdcShell -Command 'pidof com.leantty.app').Trim()
         if ($afterPid -ne $processId) { throw 'LeanTTY process changed during a warm sample' }
         $logs = @(& $script:hdc -t $script:target shell (
-            "hilog -z 200 -t app -P $processId -T TerminalBridge -v epoch -v msec"
+            "hilog -z 200 -t app -P $processId -T NativeStartupPerformance -v epoch -v msec"
         ) 2>&1) -join "`n"
         if ($LASTEXITCODE -ne 0) { throw 'Unable to read warm startup logs' }
         $markerLines = @($logs -split "`r?`n" | Where-Object { $_ -match 'STARTUP_WARM' }) -join "`n"
@@ -198,6 +200,10 @@ try {
             $markerLines + "`n"
         )
         $markers = Get-WarmMarkerTimes -Logs $markerLines
+        $expectedTag = 'NativeStartupPerformance'
+        if ($markerLines -notmatch ($expectedTag + '.*STARTUP_WARM phase=T4')) {
+            throw "Warm marker does not match the selected renderer: $Renderer"
+        }
         $injectionLag = $inputAt - [long]$markers.T4
         if ($injectionLag -lt 0 -or $injectionLag -gt 250) {
             throw "T4-to-input lag is outside 0-250 ms: $injectionLag"
@@ -226,7 +232,8 @@ try {
     }
 
     $summary = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
+        renderer = $Renderer
         capturedAt = (Get-Date).ToString('o')
         scenario = 'warm-foreground-from-system-app-center'
         versionLabel = $VersionLabel

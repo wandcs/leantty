@@ -22,7 +22,7 @@ it exists.
 | --- | --- | --- | --- |
 | **L0 — documentation and static policy** | Every change; documentation-only changes may stop here | Authority/status/link consistency, public-source and prohibited-artifact policy when affected, plus `git diff --check` | Does not prove compiled or runtime behavior |
 | **L1 — unit and helper** | Pure Rust, ArkTS, Web, parser, state-machine or PowerShell helper logic changes | Direct owner tests, newly exposed negative/recovery cases and the smallest related helper suite | Does not prove cross-language, package or device integration |
-| **L2 — subsystem integration** | A change crosses Bridge/native/fixture/storage/build/package boundaries | Affected fixture/integration/workflow tests and, when the compiled boundary changes, the smallest applicable ARM64 build | Does not prove focus, keyboard, window or other physical behavior |
+| **L2 — subsystem integration** | A change crosses native/fixture/storage/build/package boundaries | Affected fixture/integration/workflow tests and, when the compiled boundary changes, the smallest applicable ARM64 build | Does not prove focus, keyboard, window or other physical behavior |
 | **L3 — named physical scenario** | The changed result is visible only on a HarmonyOS PC or depends on real keyboard, clipboard, window, ArkWeb, lifecycle, filesystem service or SSH interoperability | Only the named physical scenario(s) that exercise the changed chain, plus their required setup/cleanup and a small main-path smoke | Is diagnostic/change-scoped evidence unless run against a formal retained candidate in acceptance mode |
 | **L4 — formal release gate** | Only while preparing a new formal version for release | Full software gate, exact clean ARM64 candidate, complete applicable physical matrix, production/review identity, signing and release checks | The only level that may claim complete release acceptance |
 
@@ -287,7 +287,7 @@ Before implementation, identify this event chain:
 user or external input
 → parser/UI entry
 → owning state model
-→ Bridge/native/platform/server boundary
+→ native/platform/server boundary
 → observable result
 → failure, cancellation, recovery and cleanup
 ```
@@ -351,7 +351,7 @@ An earlier development full run, a set of diagnostics or an administrative
 bypass never waives this release gate.
 
 Before step 2, `prepare-formal-build-inputs.ps1` MUST prepare each networked
-toolchain once: clean npm install and Web build, stable OHPM lock resolution,
+toolchain once: pinned Ghostty/Zig inputs, stable OHPM lock resolution,
 and locked ARM64 Cargo fetch. It MUST hash tracked locks and generated inputs
 before and after preparation, restore their exact bytes on failure or drift,
 and retain the tool versions and input hashes. The full gate and candidate build
@@ -387,10 +387,10 @@ these permanent areas.
 | --- | --- | --- |
 | Documentation/source policy | Public tree, references and prohibited artifact rules are consistent | Runtime correctness |
 | Rust pure-core tests | Key/file rules, known-host semantics, UTF-8 and other host-testable protocol policy | HarmonyOS/N-API integration |
-| ArkTS unit tests | Ownership, parser, Bridge policy, interaction state, persistence format and pure UI policy | Real ArkUI/ArkWeb/device behavior |
-| Web terminal policy tests | OSC 9/52/99/777, link, input, wheel, attention gate, snapshot and xterm policy against packaged resources | HarmonyOS WebView lifecycle |
+| ArkTS unit tests | Ownership, parser, interaction state, persistence format and pure UI policy | Real ArkUI/native display/device behavior |
+| Native terminal tests | Actual VT commands, OSC effects, search, page/viewport, input generations and bounded output; controller tests substitute only platform services | Physical IME, GPU presentation and system effects |
 | Build-workflow tests | Locking, candidate retention and script control-flow policy | Product interaction |
-| Public CI | Secret scan, public-source checks, Rust fmt/clippy/tests and Web policy on clean hosted runners | DevEco build, signing or physical-PC behavior |
+| Public CI | Secret scan, public-source checks, Rust fmt/clippy/tests and offline guide checks on clean hosted runners | DevEco build, signing or physical-PC behavior |
 | Clean ARM64 HAP build | ArkTS, N-API, Rust and packaged resources integrate for the only supported ABI | Focus, clipboard, lifecycle or SSH interoperability |
 | Signed install and launch | The selected test candidate can be installed and started on the target PC (`device-deployed`) | The changed behavior works |
 | Physical-PC scenario | Device-visible event chain and real lifecycle behavior | Uncovered servers, networks or long-term use |
@@ -412,7 +412,7 @@ Routine change-scoped examples (select only those mapped to the change):
 ```
 
 The focused software groups are `policy`, `tooling`, `ssh-flow`, `web`,
-`arkts`, `rust-core`, `rust-native` and `ssh-fixture`. Select them from the
+`arkts`, `terminal-native`, `rust-core`, `rust-native` and `ssh-fixture`. Select them from the
 changed event chain rather than running every group. Focused JSON evidence is
 marked `software-focused`, `mode=focused` and `releaseEligible=false`.
 
@@ -421,8 +421,9 @@ marked `software-focused`, `mode=focused` and `releaseEligible=false`.
 | `policy` | Public-source policy, edited text and diff integrity; normally include before commit |
 | `tooling` | Build/release scripts, candidate handling, HDC helpers or physical harness logic; includes automatic-variable and production/review artifact-role guards |
 | `ssh-flow` | ArkTS/native SSH ordering or asynchronous key-generation control flow |
-| `web` | Packaged terminal HTML/xterm policy or the offline user guide |
+| `web` | Offline user guide resource parity and loopback preview; the historical group name is retained |
 | `arkts` | Application state, parser, ownership, persistence, interaction or platform policy |
+| `terminal-native` | Pinned Ghostty VT worker ordering, copied output admission, consumption barriers, display geometry, input/reply ownership and isolated temporary pages; builds/runs the real C++ owner against the pinned VT on the host |
 | `rust-core` | Host-testable SSH, known-host, key/file or protocol semantics |
 | `rust-native` | N-API/OHOS native boundary and production feature isolation |
 | `ssh-fixture` | Controlled authentication server behavior and fixture E2E |
@@ -448,8 +449,10 @@ can observe the result. Each failure must name the damaged responsibility.
 | `test-durable-trust.cjs` | `arkts` | Actual async trust owners with a controlled Asset Store: serialized read/modify/write, integrity, failures, exact-generation cleanup, background GC and stale decisions; host-only, not platform latency or visible UI evidence |
 | `check-ssh-transport-flow.ps1` | `ssh-flow` | One generated N-API transport/control event schema across Rust typings and ArkTS, including removal of the retired split callbacks |
 | `check-keygen-async-flow.ps1` | `ssh-flow` | Cross-language asynchronous key-generation contract: blocking Rust work is isolated and the generated ArkTS API remains a Promise that callers await |
-| `test-terminal-policy.mjs` | `web` | Locked/generated Web assets, terminal policy behavior and necessary Web/ArkTS platform or security boundaries; product-private ArkTS control flow belongs in ArkTS or physical behavior tests |
-| `test-xterm-input-order-patch.mjs` | `web` | Version/hash-locked upstream transformation, generated-owner input/diff behavior and isolated callbacks; browser and PC tests prove event dispatch and IME integration |
+| `test-terminal-session-events.cjs` | `arkts` | Actual Surface/Session callbacks, input routing, resize ownership and ordered page/reset completion |
+| `test-native-terminal-controller.cjs` and native Runtime checks | `terminal-native` | Controller lifecycle/generation and actual pinned VT behavior; no substitution for physical IME or GPU evidence |
+| `test-native-page-probe.ps1` | `terminal-native` | Acceptance-only observation on the actual VT worker and controller: styled history/state, ordered page restoration, consumed output and completed search generation; source restoration is mandatory |
+| `test-native-mosh-evidence.ps1` | `tooling`, through device helpers | Actual Mosh evidence readers and survivor reconnect branch; reject wrong Pane/page/order, ambiguous observations, stale queries and changed geometry |
 | `test-build-workflows.ps1` | `tooling` | Build/release locking, candidate identity, acceptance-source restoration, workflow failure and evidence contracts; product-private control flow is outside this check |
 | `test-release-evidence.ps1` (included by build-workflow tests) | `tooling` | Serialization overflow and failed replacement preserve the old checkpoint; unknown cleanup cannot pass the stage summary; original failures and actual versus planned model counts survive reporting |
 | `test-device-regression.ps1` | `tooling` | Physical-harness input, evidence, cleanup and secret-safety contracts, plus unavoidable public ArkUI/lifecycle registration and filesystem security flags |
@@ -552,7 +555,7 @@ The lower-level commands called by the current registry are:
 ```
 
 `test-regression.ps1` without `-Group` runs public-source policy,
-workflow/helper tests, Web terminal policy, trusted ArkTS tests, WSL Rust
+workflow/helper tests, native terminal and offline guide checks, trusted ArkTS tests, WSL Rust
 fmt/clippy/core tests and diff checks. It writes full release-eligible local JSON
 under `build/verification/` even when a check fails. A grouped invocation uses
 the same check registry but is routine focused evidence only.
@@ -701,7 +704,7 @@ PTY capture. It leaves the shared WSL fixture and Mosh interaction path unchange
 after the actual `windowVisibilityChange(false)` observation. Only complete
 attention frames starting at or after the latter checkpoint prove post-hide outer
 observation. Earlier frames and frames spanning the hide interval cannot qualify.
-An outer capture proves neither SSH receipt nor ArkWeb delivery. Missing outer or
+An outer capture proves neither SSH receipt nor VT consumption. Missing outer or
 window evidence is a harness gap; inner-only attention or outer attention without
 confirmed publication remains unknown, never pass or assumed product failure.
 The generic notification card and accurate return remain required. No native
@@ -1204,11 +1207,10 @@ Every automated physical scenario MUST:
 - locate UI controls from current layout semantics and native bounds, not stale
   screenshots or Windows-scaled coordinates;
 - preserve LeanTTY's current Pane subtree order when enumerating terminal
-  inputs. `Index` mounts each Tab's Panes in model order; xterm textarea bounds
-  follow each cursor and MUST NOT define left/right identity. A two-Pane focus
+  inputs. `Index` mounts each Tab's Panes in model order; XComponent bounds
+  MUST NOT define left/right identity. A two-Pane focus
   check requires exactly two inputs and exclusive focus on the requested Pane.
-  Exclude descendants of hidden/non-interactive retained Tab wrappers, but not
-  xterm's intentionally transparent textarea. Equal Pane bounds require a
+  Exclude descendants of hidden/non-interactive retained Tab wrappers. Equal Pane bounds require a
   geometry diagnostic; do not assume they are merely an accessibility artifact.
   Re-read the layout for each observation and do not persist hierarchy paths
   or accessibility IDs across a rebuild;
@@ -1219,13 +1221,11 @@ Every automated physical scenario MUST:
   caller's intended target, derive coordinates from that current node, and then
   inject the complete payload, then capture another layout under the same mutex
   and verify that the same target retains exclusive focus. Scope terminal
-  post-input identity to the unchanged native Web instance: nonblank window ID
-  and accessibility ID must match, and that Web identity must occur exactly once
-  in each operation-local layout, with exactly one terminal input in its subtree.
-  Native hierarchy is a child-index path, not instance identity; ancestor indices,
-  virtual DOM hierarchy and cursor-following textarea bounds may change. Another Web,
-  window, replaced native instance or ambiguous terminal remains a failure.
-  Other text controls keep their operation-scoped field identity checks. Scope
+  post-input identity to the native XComponent or TextInput: component type,
+  stable control ID, nonblank window ID and accessibility ID must match. The
+  component identity and any nonblank control ID must be unique in each
+  operation-local layout. Hierarchy and bounds may move; another Pane, window,
+  recreated component or duplicate identity remains a failure. Scope
   this identity to the current operation; never cache it across navigation or
   rebuilds. Owner loss stops the operation before any retry, Ctrl+C or Enter;
   only an inexact buffer with its original owner intact may be retried.
@@ -1238,92 +1238,25 @@ Every automated physical scenario MUST:
   not concurrent;
 - use `diagnose-text-input-pc.ps1 -Scenario pane-ownership -HapPath <signed HAP>`
   for the no-network/no-Enter split/close-left/resplit input boundary. It checks
-  retained native input, full-width restoration, non-overlapping Web geometry
+  retained native input, full-width restoration, non-overlapping native Pane geometry
   and isolation from the new Pane, then closes only its disposable Tab/Panes.
   This is focused diagnostic evidence, not a release scenario;
 - use `diagnose-text-input-pc.ps1 -Scenario ime-input -HapPath <signed debug HAP>`
   for the system-IME boundary without SSH or an Agent. One disposable local Tab
   checks English keys, pinyin commit and repeated ASCII after composition against
   the native input buffer. It uses system key events, not direct CJK text injection;
+  post-composition ASCII uses UiTest keys because the tested uinput supplies
+  shifted Unicode for unshifted digits. This is a harness limitation, not a
+  reason to override platform Unicode in the product;
   an English-mode baseline and the expected Chinese candidate are preconditions.
   No Enter, network, model request or retry is allowed. A mismatch stops the probe
   before attribution; restore input mode, remove the owned Tab and return the
   screen-timeout policy. This is L3 system-IME evidence, not a human-keyboard
   reliability sample or a replacement for formal remote TUI acceptance;
-- `diagnose-text-input-pc.ps1 -Scenario input-order -HapPath <signed debug HAP>`
-  is a one-shot public-vector diagnostic, not a reliability sampling loop. Its
-  per-Pane collector records numeric event metadata only, stops at 256 rows or
-  20 seconds, and reports after capture. Never submit the vector or infer loss
-  from input-event counts alone: ordinary keys can produce onData without an
-  input event. Missing/truncated chunks invalidate the trace; no bad sample
-  means insufficient causal evidence and no automatic retry;
-- `diagnose-text-input-pc.ps1 -Scenario input-attribution -AttributionMode <0-3>`
-  compares a test-only plain textarea and unchanged xterm handlers in the same
-  ArkWeb. Modes 0/1 use one UiTest vector; 2/3 require a real keyboard and MUST
-  announce READY only after arming. Each document accepts one arm, at most 256
-  numeric rows and 20 seconds (automatic) or 60 seconds (manual). Observe the
-  original deferred-diff callback without changing its delay or invocation count;
-  compare public-vector equality in memory and retain no contents. The plain
-  fixture owns test-only Bridge focus, not the normal terminal input path.
-  Stop on mismatch or owner loss. A passing cell is not reliability sampling or
-  causal proof; an operator key during setup invalidates that attempt. Arming
-  submission and probe/timeout cleanup have separate evidence. No authentication,
-  network change or vector submission belongs in this diagnostic;
-- `input-attribution -AttributionMode 4` extends that diagnostic with one
-  180-character UiTest call in a disposable idle xterm Tab. It observes the
-  original diff scheduling/execution, onData, WebMessagePort post attempts and
-  completion, owner-Surface receipt counts and native buffer equality. It keeps
-  only numeric metadata, stops at 20 seconds or 4096 rows, and never submits the
-  vector. Preserve the first mismatch trace; a clean trace does not authorize
-  further sampling. This test-only observer may affect timing, so neither a
-  clean result nor the synthetic browser reproduction proves a device cause;
-  the 2026-09-06 mode-4 run exhausted this cap at character 156. Before another
-  full-chain run, validate the vector/event budget in software and avoid relying
-  on the 500-line hilog tail for a full native timeline. The later 4096-row cap
-  has a 2365-row normal-vector regression; it does not validate the earlier run;
-- attribution profiles 5/6/7 isolate observer effects, not product fixes.
-  Profile 5 leaves detailed IDLE action/result logging on and the Web trace off;
-  6 disables only those two test logs; 7 adds the mode-4 Web trace to 6. Each uses
-  the same public 180-character call and one owner-buffer summary after a
-  23-second window. Read logs only after injection; do not insert per-character
-  queries or change injection pacing. Production/ACK logs, inactive observer
-  checks and the final timer remain present, so controls are not zero overhead.
-  Cancellation or Surface detach clears the temporary owner-local log gate;
-  non-idle final state is invalid and its buffer is never read. A fixed contrast
-  with no fault cannot rule out timing effects or justify repeated sampling;
-- `tools/web-terminal/input-order-repro.html` and `verify-input-order-repro.mjs`
-  isolate one synthetic input-order mechanism against the unchanged pinned npm
-  xterm in a desktop browser. The fixed ten-page check is not HDC/IME input,
-  physical acceptance, a frequency estimate or proof of LeanTTY's device fault.
-  Keep it outside the normal pass gate: its expected missing output characterizes
-  a candidate defect, not correct product behavior. See `input-order-repro.md`
-  beside the page for dependencies, controls, scope and upstream references;
-- `verify-xterm-input-order.mjs` is the separate correctness corpus for the
-  build-time input repair. Run `upstream` and `packaged` against the same cases:
-  pristine upstream must retain the known failures, and the repaired asset must
-  pass. It uses actual DOM/timers without runtime method replacement. The `web`
-  group also runs generated-owner unit cases and rejects patch/version/hash
-  drift. Physical validation reuses profile 8, the plain/masked pair, Pane
-  ownership and one zero-model physical IME TUI probe. Profile 8's old headline
-  classifies the defect signature, not repair success: correction requires all
-  50 DOM/output cases exact, 40 xterm/owner-Surface/native units, complete trace
-  and successful cleanup. A corrected synthetic run does not attribute historical
-  natural losses; `verify-input-synthetic-repro.mjs ... packaged` validates the
-  existing trigger and cancellation boundaries against the corrected asset;
-- attribution profile 8 is a controlled synthetic-order diagnostic on the
-  physical PC, not natural-input sampling. Ten fixed sets run normal, delayed,
-  early-keyup, input-only and plain-textarea controls. Use the actual disposable
-  idle Pane's xterm for terminal cases; reset only public textarea.value between
-  cases. Keep original xterm handlers and timers, no UiTest vector or vector
-  Enter. Observe per-case DOM/onData and owner-Surface/native totals; the expected
-  defect signature is ten missing outputs and forty successful controls, not
-  correct product behavior. Stop on owner/security/replay/interference change,
-  or the ten-second budget. A complete 51-row numeric report and the 23-second
-  native summary are both required. Completion polling may overlap synthetic
-  dispatch; do not claim zero observer overhead or equivalence to trusted input.
-  `verify-input-synthetic-repro.mjs` checks the same trigger in Chrome before
-  deployment and remains outside the normal correctness gate. A controlled
-  device reproduction does not establish the cause of earlier natural losses;
+- xterm DOM ordering/attribution collectors and their browser repro entry points
+  were retired with the Web terminal. Native input diagnostics use the actual
+  Session buffer, native component identity and controlled-server outcomes;
+  do not recreate the Web protocol to preserve obsolete assertions;
 - a disposable numeric password for an explicitly selected system-OpenSSH
   compatibility diagnostic may be entered as individual physical digit keys
   when the masked password buffer intentionally cannot be observed. Generate it
@@ -1395,8 +1328,8 @@ Every automated physical scenario MUST:
   monotonic sequence and non-secret kind, but the stage verdict MUST still use
   the resulting product state or server outcome;
 - cancel input through the application's real `Ctrl+C` state-machine path;
-  ArkWeb's hidden textarea accessibility value MUST NOT be treated as the
-  native local-command or secret-input buffer;
+  accessibility text or a search field MUST NOT be treated as the authoritative
+  local-command or secret-input buffer;
 - cover the positive path plus applicable rejection, cancellation, retry,
   recovery and cleanup paths;
 - report stage start/pass progress and duration so a stalled boundary is visible;
@@ -1468,33 +1401,39 @@ survival. Test page restoration, discarded-session isolation, search-history
 isolation and transport recovery as separate postconditions, then aggregate
 their verdicts without letting one feature stand in for another.
 
-For Mosh page restoration, the baseline fingerprint MUST be captured in the
-same xterm write callback that produces the saved snapshot, after queued output
-has been parsed. The result fingerprint MUST be captured after replay and the
-saved viewport have both completed, but before the page-replacement ACK or any
-local recovery output. Compare buffer kind, dimensions, viewport and visible
-cell content. A marker captured before the `mosh` command and a later Search
-match are not page-restoration oracles.
+For Mosh page restoration, the baseline fingerprint MUST be captured on the
+native VT worker at `BeginTemporary`, after prior queued output has been parsed.
+Capture the result at `EndTemporary`, after restoring and resizing the retained
+regular VT but before command consumption or local recovery output. The
+acceptance-only probe hashes upstream styled VT formatting, including history,
+cursor and terminal modes, and records screen kind, dimensions and viewport.
+Terminal content must not leave the worker. A marker captured before the `mosh`
+command and a later Search match are not page-restoration oracles.
 
 Bind the baseline and Mosh-page fingerprint to the exact connection being
 closed. A composite scenario that connects again in a surviving Pane must read
-that connection's saved snapshot, even when both connections have equal
-dimensions. Consume independent lifecycle evidence before fingerprint helpers
-clear its logs; a correct page comparison must not weaken Pane-isolation checks.
+that connection's worker baseline, even when both connections have equal
+dimensions. Match Pane ID, begin-page sequence and ordered end sequence; reject
+missing or ambiguous observations. Preserve independent lifecycle evidence; a
+correct page comparison must not weaken Pane-isolation checks.
 
-Exact visible-page equality requires the same terminal dimensions. Different
+Exact page equality requires the same terminal dimensions. Different
 dimensions invalidate that comparison; they do not establish lost content.
-Resize coverage must separately compare replay with a live xterm resize,
-including framebuffer, wrapping, cursor, viewport, subsequent writes and search
+Resize coverage must separately exercise the retained native VT through resize,
+including rendered content, wrapping, cursor, viewport, subsequent writes and search
 isolation. A composite network scenario may close its completed idle comparison
 Pane before the exact page check, but that does not replace resize coverage.
+
+Native search checks bind the exact query and Pane to the admitted query
+generation and its completed result before reading the matching result control.
+An unchanged `0/0` label is not evidence that a new negative query completed.
 
 Physical keyboard injection MAY be used only for a scenario whose contract is
 the physical shortcut or special-key path, after the script verifies the focused
 application and the resulting operation. Ordinary text uses the single UiTest
-`inputText` path. ArkWeb's accessibility textarea is useful for focus preflight and
-disclosure scans, but is not exact input evidence: on the target PC it can omit
-rendered digits and diverge from the native buffer.
+`inputText` path. Native accessibility identity proves the intended input target;
+it does not prove submitted terminal bytes. Use the local command buffer or
+controlled remote endpoint for exact input evidence.
 
 ## Result classification
 
@@ -1540,12 +1479,12 @@ selected scenario did not use that path.
 | Parser/help/config semantics | L0–L1 | Parser tests, help/reference update, supported/unsupported cases and no side effect before validation |
 | SSH host-key/auth/session lifecycle | L0–L3 | Controlled server, positive and negative protocol cases, cancellation/stale event cases, affected ARM64 boundary and named physical keyboard/session scenario |
 | Mosh bootstrap/UDP/session page | L0–L3 | Parser/library-owner tests, bounded input/output and close/cancel checks, plus only the affected named physical Mosh scenario below; complete lifecycle/network matrix is reserved for the exact formal candidate |
-| Terminal bytes/xterm/Bridge | L0–L3 | Raw-byte and malformed-message tests, flow-control/snapshot regression, large TUI output and affected physical renderer interaction |
+| Terminal bytes/native VT/renderer | L0–L3 | Raw-byte and malformed-command tests, bounded admission/consumption and retained-VT regression, large TUI output and affected physical renderer interaction |
 | Tab/Pane/focus/shortcuts | L0–L3 | Ownership tests plus named physical keyboard, system/IME conflict, selection or cross-Tab scenario affected by the change |
 | Clipboard or URL effects | L0–L3 | Policy tests for allowed/denied payloads plus affected physical system-service behavior and privacy/security review |
 | Persistent assets/migration | L0–L3 | Format and failure-injection tests, atomic commit/delete/recovery and only the affected uninstall/reinstall, lock/reboot or different-signature physical scenario |
 | Window/theme/font/lifecycle | L0–L3 | ArkTS policy tests, affected build boundary and named physical minimize/background/restore/restart behavior |
-| Dependency upgrade | L0–L2, plus L3 when device behavior is owned | Lockfile/license/source checks plus all behavior owned by that dependency; xterm/russh updates require their affected terminal/SSH areas |
+| Dependency upgrade | L0–L2, plus L3 when device behavior is owned | Lockfile/license/source checks plus all behavior owned by that dependency; Ghostty/russh updates require their affected terminal/SSH areas |
 | Release or signing workflow | L0–L2 during development; L4 only for a release | Script regression, clean detached-checkout preflight, version alignment and the affected manifest/hash/candidate-continuity rules |
 | Documentation-only | L0 | Link/reference, status/authority, TODO uniqueness, wording consistency and `git diff --check`; no build unless the document changes generated/package behavior |
 
@@ -1564,15 +1503,202 @@ The automated suite should keep stable ownership over:
 - supported command parsing and explicit rejection of unsafe/unknown syntax;
 - `Tab → Pane → Session` creation, focus, close and isolation;
 - cancellation and clean/unexpected close classification;
-- Bridge direction/channel/kind validation, bounded payloads and ACK ordering;
+- native command/event validation, bounded payloads and owner/sequence ordering;
 - raw UTF-8 split boundaries and high-density TUI output;
-- OSC 52, URL, selection, input, wheel, bell and snapshot policy;
+- OSC 52, URL, selection, input, wheel, bell and retained-VT lifecycle policy;
 - persistent record encoding, chunking, manifest integrity and generation
   failure; and
 - build locks, candidate retention and release preflight behavior.
 
 A test name should state the contract. Tests must avoid real credentials,
 production hosts, device identifiers and unredacted logs.
+
+The `terminal-session-events` check in the `arkts` group executes the current
+Surface and Session owners through their callback boundary. It covers input
+ownership, SSH/Mosh resize routing, distinct readiness events, malformed wire
+envelopes, detached-display rejection and Pane isolation. Run it directly with
+`node tools/test-terminal-session-events.cjs <DevEco-TypeScript-module-path>`
+for a focused check; platform services are substituted, so this does not prove
+physical input, native rendering or complete 1.7 integration.
+
+The `shared-ssh-config` check in the `arkts` group runs the real config, command,
+completion and commit-policy owners with controlled platform I/O. It covers
+alternating writes from existing Panes, current SSH/Mosh/transfer resolution,
+failed-save rollback, and import/export across an asynchronous authorization
+boundary. Run `node tools/test-shared-ssh-config.cjs <DevEco-TypeScript-module-path>`
+for the focused contract. A change to this state chain also needs a signed-PC
+check of existing-Tab edits/completion and restart persistence, with temporary
+Hosts removed and the original configuration hash restored.
+
+Native host contracts also execute the production IME deletion registrations:
+backward deletion dispatches Backspace and forward deletion dispatches Delete,
+preserving the editor and count. Platform callback names are not a substitute
+for a real-PC byte check through the system IME when changing this mapping.
+The [platform C API contract](https://developer.huawei.com/consumer/en/doc/harmonyos-references-V13/inputmethod__text__editor__proxy__capi_8h-V13)
+defines these as deletion to the left and right of the cursor, respectively.
+
+Native geometry checks exercise the production `TerminalGrid` over several cell
+sizes, densities and remainder widths: minimum eight-vp inset, maximum fitting
+cells, opposite edges within one physical pixel and tiny-Surface clipping.
+The actual VT pointer path must exclude that origin for mouse reports, links
+and selection; renderer attachment must recompute the grid after resize.
+Physical checks still need visible inset/resize, input and IME positioning.
+Window drag snapping reads the active Pane's measured native cells and inset.
+Controller checks reject stale font, density and Surface metrics; the actual
+EntryAbility snap method is exercised for physical-pixel rounding, fixed
+opposite edges and one-axis drags. The real-PC check must still prove a native
+drag event, resulting window geometry and SSH/Mosh PTY resize. Split panes keep
+their existing ratio and center their own remainder; window snapping does not
+promise zero remainder in both panes at arbitrary split ratios.
+
+The `native-terminal-controller` ArkTS check substitutes only N-API and exercises
+the real admission/pressure, consumed-barrier, stale-input/display generation,
+reply-owner and callback-loss failure paths. The `terminal-native` group builds
+`tools/native-terminal/runtime-test.cpp` against the exact pinned Ghostty static
+library and real C++ worker. It covers split input equivalence, bounded admission,
+copied buffers, reply ownership, ordered geometry, temporary-page isolation and
+close draining without a GPU. Interaction contracts cover real double-click and
+drag selection, held-drag history scrolling, mode-aware paste/mouse/wheel input,
+search navigation and screen lifetime, OSC 8 metadata, and bounded OSC effects.
+The same group compiles the real native Binding and close operation with N-API
+admission failures: Promise/reference/work setup, enqueue, completion and
+cancellation must release owned resources and break the callback reference cycle.
+These deterministic host failures do not claim physical resource exhaustion.
+Link hover contracts cover plain URL and OSC 8 target/range projection, stationary
+modifier changes, mouse-tracking override, and output/scroll/search/focus cleanup.
+The controller rejects queued hover callbacks after leaving or changing input
+owners. Device pixels and semantic preview text must establish the visible result;
+a compile-time acceptance trigger can supply the modifier at the production
+boundary but cannot prove physical modifier delivery or system link activation.
+Search highlighting projects fresh VT matches onto the visible grid for each
+paint. Host contracts cover all/current matches, Unicode wrapping, viewport
+clipping, reflow, query replacement and output refresh; the named device check
+still needs visible colors, navigation and removal when search closes.
+Search overview rows are derived by the same search owner after result updates,
+cleared on invalidation, and painted in the existing gutter. Host checks cover
+offscreen matches, row deduplication, viewport-independent positions, endpoint
+mapping and finite geometry on unscrollable pages; device checks cover visible
+markers, query changes and close cleanup.
+Scrollbar contracts share renderer/hit geometry and cover endpoint dragging,
+track paging, growing history, PTY mouse isolation, alternate-screen hiding and
+drag cancellation on focus, visibility and Surface changes. Physical evidence
+must separately prove floating-window and split-pane edge hit ownership;
+maximized single-pane success cannot replace either boundary.
+The ArkTS owner check covers asynchronous clipboard ownership and search cleanup
+on pointer, focus, session and temporary-page transitions. Neither substitutes for physical input, pixels,
+SSH completion or GPU recovery. Native adapter changes also require the ARM64
+API 24 build and the affected named physical chain, not the full release gate.
+
+The native Pane key check executes its real handler in both IME phases. It
+asserts pre-IME candidate priority, post-IME digit delivery, platform layout text
+and no duplicate key-up or application-owned shortcut input. Physical input
+evidence must use the controlled server's exact bytes. Its ASCII command buffer
+is not a Unicode oracle; use Navigation's raw-byte observation for IME emoji.
+
+Native visibility is independent of focus: every visible split Pane may draw,
+but hidden Tabs and hidden windows pause paint, cursor blinking and drag scroll
+on the VT worker. Output consumption, barriers and protocol replies remain live.
+The runtime contract checks these boundaries and hidden close; the controller
+contract rejects stale presentation/input and defers hidden display recovery.
+Routine physical scenarios are live-SSH Tab return, minimize/restore and bounded
+system suspend/wakeup/unlock. Use delayed public fixture output, the same app
+process and Session, retained contents via native search, and exact returned
+input. A successful launch alone does not prove recovery.
+
+For this gate, the acceptance build counts successful swaps on the renderer
+worker and emits `acceptance-visibility` at that worker's visibility commit.
+`ACCEPTANCE_NATIVE_VISIBILITY` logs only Surface/generation/state/frame metadata.
+Equal counters at hide and subsequent show prove zero hidden swaps; require
+separate post-return pixels and input evidence. Do not infer process CPU or
+memory improvements from this counter. The probe must be restored byte-for-byte
+after compilation and rejected from production packages by package policy.
+
+The cold/warm startup diagnostic wrappers also support the native path. Their
+acceptance-only N-API callback stamps each successful `presented` event with the
+last worker-consumed command sequence. Cold T4 requires a local prompt write
+ending in `LocalCommandOutput.prompt()`, consumption and a matching-generation
+successful swap; the initial blank Surface is insufficient. Warm T4 requires
+a new visible generation after a hidden interval and a focused successful swap.
+T5 requires admitted current-owner ASCII `a` input, its local-owner echo write,
+consumption and the corresponding successful swap. These are paint submission
+observations, not hardware scanout timestamps. Source restoration, nested
+acceptance imports, negative events and release-package marker exclusion are
+checked by `test-native-startup.ps1` and the build workflow checks.
+
+Pass `-Renderer native` or `-Renderer web` to the existing cold/warm verifiers;
+the option labels and checks the observed logger, it does not select the product
+renderer. Use same-source diagnostic packages with only the debug build flag
+changed for comparisons, restoring its bytes afterward. Schema 2 uses generic
+display-boundary fields: native T3 is the first active Surface attach request,
+whereas Web T3 is page-end. Compare end-to-end T0–T5 and matching input round
+trips; do not compare the different T3 subphases as equivalent initialization.
+Retain signed package hashes, per-sample device-clock logs and first-letter
+pixels. Startup and idle resource results alone do not close sustained output,
+resource reclamation, complete interaction or the native replacement gate.
+
+The same owner checks cover first-frame-before-connected Mosh page ordering,
+bounded display rebuilds and stale destroyed callbacks; the real VT tests also
+exercise independent Pane runtimes across display replacement and close. The
+existing acceptance-only renderer rebuild action invokes the native production
+attachment path with a nonexistent Surface when that path is active. The real
+NativeWindow API rejects it, and the production unavailable-display event must
+reach recovery. The helper is injected into the native controller only while
+building an acceptance package; restoration and package-marker rejection are
+covered by the build workflow checks. A physical pass requires an actual
+XComponent identity change, retained terminal contents, surviving Session and
+new exact remote input. Merely switching Tabs with live Sessions keeps surfaces
+mounted and is not rebuild evidence. This trigger does not simulate a natural
+EGL context loss or persistent driver initialization failure.
+
+The acceptance-only `Ctrl+Alt+Shift+L` action arms one native swap-boundary
+`EGL_CONTEXT_LOST` result while preserving the current Surface identity. The
+next draw runs the production GPU release, context/resource recreation and real
+buffer swap. `ACCEPTANCE_NATIVE_GPU` must show `armed`, `context-lost`, `released`,
+`created`, then `swap-ok`; retained pixels/search and exact post-recovery remote
+input are still required. This follows the context/state recreation required by
+the [EGL specification](https://registry.khronos.org/EGL/specs/eglspec.1.4.pdf).
+The driver error itself is injected, so this is controlled recovery evidence,
+not an observation of a natural driver reset. The C++ probe is added only for
+the debug acceptance build and restored even if compilation fails. Release
+package policy rejects its native and ArkTS markers. Do not reuse a failed or
+unobserved trigger as a passing checkpoint.
+
+`display-recovery-test.cpp` executes production draw and GPU release methods
+with the platform calls and paint boundary substituted. It checks context loss,
+bad Surface, uninitialized display, persistent failure, bounded retries, final
+resource cleanup and resumption after a new attachment. It cannot prove actual
+GPU pixels or that a persistently failing driver becomes usable.
+
+For sustained failure and explicit retry, the acceptance-only
+`Ctrl+Alt+Shift+K` toggles a GPU initialization refusal across Surface rebuilds.
+The native log records `blocked`, each `initialize-rejected`, and `unblocked`.
+This substitutes initialization failure only; VT retention, output consumption,
+bounded automatic recovery and Retry display use their production owners.
+Existing checks cover no remount loop or remote input while unavailable,
+retained output, and keyboard activation of Retry display after unblocking.
+A recovery claim requires a real replacement Surface, restored contents, exact
+input to the same SSH session and normal logout. Releasing a fault alone is not
+recovery. All trigger and marker additions follow the same source-restoration
+and release-package isolation rules as the one-shot context-loss probe.
+
+Per the maintainer's 2026-09-19 decision in product principles §4.8, persistent
+GPU unavailability may make the whole app unusable. There is no CPU renderer or
+requirement to remain usable in that state. Reuse applicable existing recovery
+evidence; do not expand the failure matrix to establish unsupported fallback
+behavior. Normal Surface lifecycle and recoverable context loss remain in scope.
+
+Retry display handles Enter/Space in the focused button's pre-IME callback,
+consumes the key release to avoid duplicate activation, and leaves plain
+Tab/Shift+Tab to native focus navigation. This follows the documented
+[ArkUI keyboard dispatch order](https://github.com/openharmony/docs/blob/master/zh-cn/application-dev/ui/arkts-interaction-development-guide-keyboard.md);
+the physical check must still prove activation, because default Button click
+activation did not occur in the first native recovery run.
+
+The host `display-attach-test.cpp` executes the current C++ renderer attach
+method with substituted platform resources. It covers resource rejection without
+worker termination, replacement geometry, same-window resize and invalid input;
+the real-PC scenario supplies the Session, window lifecycle and retained-output
+evidence that this host check cannot provide.
 
 ## Acceptance-only product hooks
 
@@ -1600,18 +1726,25 @@ hooks MUST add a unique marker to that package policy, an injection/restoration
 test and a negative package test. Remove a hook when its associated gate
 disappears or normal system control becomes reliable.
 
-`performance-diagnostic-source.ps1` owns the debug ping/output probes. The
+`performance-diagnostic-source.ps1` owns the debug ping probe;
+`native-output-source.ps1` injects the existing bounded `NativeOutputProbe` into
+the same debug acceptance build. The shared application log query includes its
+`NativeOutputPerformance` tag. The
 `performance-diagnostic-isolation` ArkTS check executes the real input/output
 owners with public canaries, verifies debug metrics and production silence,
 preserves Keypush and SSH input, and checks source restoration. Tooling tests
 reject every registered performance marker in package entries. A hook-free
 development build or synthetic ZIP is not formal release-package acceptance.
-The bounded full-output oracle also rejects wrong content/order and ignores
-out-of-frame prompt bytes. Automatic public-vector input and WebGL context-loss
-triggers are disabled in ordinary debug packages. Enable them only for a dedicated
-fixture run during build, restore the source afterward, and verify the retained
-ordinary package disables them before returning the device to normal use. Remote
-terminal output is not authority to inject input in an ordinary development session.
+The native output oracle validates every public fixture byte in accepted commands,
+then requires the end command's worker consumption and a successful current-surface
+frame. Schema 3 records expose these boundaries, parse/paint duration and observer
+cost; they do not claim the retired xterm visible-tail snapshot. Performance runs
+also retain one tail screenshot per transparency mode for visual inspection.
+`test-native-output.ps1` checks corruption/order, incomplete output, stale/hidden
+frames and source restoration; `test-native-performance-evidence.ps1` checks the
+actual shared log query, record reader and single-attempt submission failures.
+These observers never generate input. Remote terminal output is not authority to
+inject input in an ordinary development session.
 
 Acceptance configuration MUST NOT shorten or bypass the production timeout,
 retry, authentication or cleanup policy being claimed. A shorter diagnostic
@@ -1691,7 +1824,7 @@ remote history; LeanTTY must not claim transparent SSH-style scrollback. Before 
 scenario writes one unique marker to the local page. During Mosh, that marker must be absent from
 search while Mosh and controlled DEC 1049 content remain confined to the Session page. After
 physical `Ctrl-^ .`, the original marker must return and all Mosh-only markers must be absent.
-The close verdict waits for page-restoration acknowledgement, then verifies the Preferences
+The close verdict waits for the worker's page-restoration observation, then verifies the Preferences
 digest, bootstrap-negative search and paired device/fixture cleanup.
 It never mutates the persistent network. A routine invocation remains
 `acceptanceEligible=false`; formal release coverage uses
@@ -1732,6 +1865,8 @@ probe sends printable ASCII only—no Enter, control input, resize or repaint. O
 may the relay block both directions and test one more ASCII, `Never`, authority convergence,
 Session isolation, authenticated close and cleanup. Failure to establish the pre-impairment
 prediction stops the scenario and must not be bypassed by an ArkTS timer or renderer overlay.
+The report distinguishes public VT output latency from native worker consumption
+latency. Neither measurement proves a displayed frame or pixel latency.
 Post-recovery convergence and the final real-shell smoke use fresh, shell-safe absolute marker
 paths under the run-owned fixture directory. They submit ordinary `touch -- <path>` commands to
 the same interactive shell and wait for the exact file; fixture-private commands cannot stand in
@@ -1855,7 +1990,7 @@ and temporary-directory cleanup. Different layout nodes, PIDs, logs or key compa
 a pass; the primary oracle is the paired per-Pane remote command and terminal result before and
 after opposite-side close. This routine remains `acceptanceEligible=false`.
 
-`-Scenario surface-rebuild` terminates the active Pane's ArkWeb renderer through the
+`-Scenario surface-rebuild` replaces the active Pane's native display component through the
 acceptance-only source transformation. The same Mosh page marker must remain searchable after
 the replacement Surface reports ready, a new exact controlled PTY command must succeed, and the
 original local page must still be restored after authenticated close. `-Scenario page-rebuild`
@@ -1865,10 +2000,10 @@ that it reused the process workspace, the Mosh page must remain searchable, and 
 command plus authenticated close must succeed. This deterministically covers the page lifecycle
 boundary when physical lid behavior selects the process-replacement branch. `-Scenario abnormal-exit`
 injects one acceptance-only `MoshError` into the active `SessionViewModel`; it must traverse the
-ordinary error handler, wait for page-replacement acknowledgement, restore the original marker,
+ordinary error handler, wait for ordered temporary-page completion, restore the original marker,
 discard the Mosh command from search and regain the local input boundary. The transformation must
 restore production source in `finally`; neither trigger may exist in a production HAP. Both
-page/renderer triggers and the abnormal-exit scenario retain the standard Preferences, secret,
+page/Surface triggers and the abnormal-exit scenario retain the standard Preferences, secret,
 process, fixture and temporary-directory audits.
 
 `-Scenario input-rejection` requires a dedicated test HAP built inside
@@ -1902,7 +2037,7 @@ latency, sustained output, renderer ACK/backpressure, memory or sleep/recovery.
 Keep correctness and loss detection as hard constraints.
 
 A measured default is not a permanent optimum. Re-run the same workload after
-changes to xterm, ArkWeb, Bridge flow control, Rust/russh, buffering or lifecycle
+changes to Ghostty VT, native rendering/flow control, Rust/russh, buffering or lifecycle
 retention. A build-only comparison is not a user-experience result.
 
 When the test system itself is being optimized, compare at least three runs of

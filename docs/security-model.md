@@ -2,7 +2,7 @@
 
 > Status: current security architecture baseline
 >
-> Last updated: 2026-09-07
+> Last updated: 2026-09-19
 >
 > Public reporting policy: [`../SECURITY.md`](../SECURITY.md)
 >
@@ -21,7 +21,7 @@ LeanTTY must preserve, in order:
 2. authentic SSH server identity and confidential/integrity-protected transport;
 3. isolation between Tab/Pane/Session owners;
 4. non-persistence and non-disclosure of authentication secrets;
-5. bounded handling of remote-controlled terminal and Bridge input; and
+5. bounded handling of remote-controlled terminal input and native commands; and
 6. reproducible, signed release identity.
 
 Convenience must not bypass host verification, broaden data export, turn a
@@ -62,7 +62,8 @@ tunnel UDP through ProxyJump or configure a server firewall.
 ### HarmonyOS and application identity
 
 LeanTTY relies on HarmonyOS for application isolation, encrypted Asset Store
-records, pasteboard access, Downloads permissions, window lifecycle, ArkWeb and
+records, pasteboard access, Downloads permissions, window lifecycle, native
+text/GPU services, the local guide's ArkWeb view and
 package signature enforcement. A compromised OS, unlocked account with local
 access or incorrectly isolated platform asset service is outside what the
 application can fully defend against.
@@ -73,18 +74,21 @@ owning application identity. Different-signature isolation and the full
 uninstall/reinstall matrix remain physical-device release evidence, not a fact
 that can be proven by source inspection alone.
 
-### ArkWeb terminal
+### Native terminal
 
-ArkWeb/xterm.js runs packaged application resources but processes
-remote-controlled terminal content. File access, online images, DOM storage,
-mixed content and zoom are disabled. The CSP restricts resources to the package
-and fonts/data needed by the terminal, but the current bundle still requires
-`unsafe-inline` and `unsafe-eval`; this is a known residual risk.
+Each Pane owns a serial native worker and pinned Ghostty VT state. Remote bytes
+remain untrusted; native entry points validate command kinds, sizes and owners,
+and copy admitted data into bounded queues. Consumption acknowledgements release
+backpressure independently of GPU presentation. Session and input generations
+reject stale replies, input and system effects across owner changes.
 
-The H2 Bridge accepts only known direction/channel/kind combinations. Binary
-terminal packets and control messages use separate paths. URL and snapshot
-payloads are bounded, snapshot request IDs are validated, and output flow uses
-acknowledgements and backpressure.
+The native parser and renderer process terminal content without a Web/JavaScript
+terminal bridge. This removes that bridge's attack surface, but does not imply
+memory safety in native code or its dependencies. Clipboard, notifications and
+user-activated links still pass the restricted system-effect policies below.
+Retained VT state supports in-process surface reconstruction; it is neither a
+serialized framebuffer replay nor durable terminal recovery. ArkWeb remains for
+the packaged local guide and does not receive the remote terminal byte stream.
 
 ### Source, build and release
 
@@ -107,7 +111,7 @@ Secrets must not enter:
 
 - the local command history or terminal PTY byte stream;
 - Preferences or persistent Asset Store metadata;
-- terminal snapshots or renderer replay;
+- retained terminal state or renderer/diagnostic snapshots;
 - logs, error snapshots, screenshots or shared test fixtures; or
 - another Session's event or answer channel.
 
@@ -177,8 +181,8 @@ must not be hidden behind ordinary uninstall wording.
 | Paste | Reads the clipboard for a user paste action and submits through normal terminal input |
 | OSC 52 | Accepts only empty/default or `c` target, rejects reads, invalid Base64/UTF-8 and content over 1 MiB |
 | URL open | Requires user activation; only normalized credential-free HTTP(S) is handed to the system browser |
-| Bell/OSC attention | BEL plus bounded OSC 9, well-formed `OSC 777;notify;title;body`, and complete receive-only OSC 99 title/body frames become the same empty-payload UI attention. OSC 99 notification frames permit only `i/p/e/d` metadata and do not retain IDs or chunks. A bounded `i=<id>:p=?;` query receives only `p=title,body` with the same validated ID through normal TTY input; the ID is not logged or persisted. Activation, close, alive and other capability operations are never answered. OSC content is rejected or discarded inside the Web boundary; only a hidden whole window can attempt one generic system notification per background episode, containing a fixed source marker and internal Pane ID, never remote title, command, output, host data or Agent response. All other notification operations and protocols have no local system effect |
-| Terminal checkpoint | Serializes framebuffer state but excludes title, clipboard and bell side effects |
+| Bell/OSC attention | BEL plus bounded OSC 9, well-formed `OSC 777;notify;title;body`, and complete receive-only OSC 99 title/body frames become the same empty-payload UI attention. OSC 99 notification frames permit only `i/p/e/d` metadata and do not retain IDs or chunks. A bounded `i=<id>:p=?;` query receives only `p=title,body` with the same validated ID through normal TTY input; the ID is not logged or persisted. Activation, close, alive and other capability operations are never answered. OSC content is rejected or discarded inside the native VT worker; only a hidden whole window can attempt one generic system notification per background episode, containing a fixed source marker and internal Pane ID, never remote title, command, output, host data or Agent response. All other notification operations and protocols have no local system effect |
+| Surface reconstruction | Retains process-local VT state; recreating display resources does not replay title, clipboard or bell effects and does not persist terminal content |
 
 ## Unexpected-exit recovery record
 
@@ -244,8 +248,9 @@ in `hilog`, or if its development probe escapes the controlled scope above.
 
 ## Dependency and protocol risk
 
-LeanTTY inherits risk from HarmonyOS, ArkWeb, xterm.js, russh, mosh-client, cryptographic
-libraries and build dependencies. Lockfiles, Dependabot, pinned GitHub Actions,
+LeanTTY inherits risk from HarmonyOS text/GPU services, Ghostty VT, russh,
+mosh-client, cryptographic libraries, the local guide's ArkWeb view and build
+dependencies. Lockfiles, Dependabot, pinned GitHub Actions,
 license inventory and public CI reduce but do not eliminate that risk.
 
 Dependency updates are classified by their effect on LeanTTY. Security fixes
@@ -270,7 +275,8 @@ evidence belong only in [`next-work.md`](next-work.md).
 
 ## Known limitations
 
-- The current ArkWeb CSP requires `unsafe-inline` and `unsafe-eval`.
+- Native terminal parsing and rendering share the application process; a native
+  memory-safety defect can compromise that process.
 - Mosh currently requires a directly reachable IPv4 UDP endpoint and does not
   preserve a Session after process termination. It is not a background service.
 - Diagnostic logs can contain sensitive operational metadata even though they

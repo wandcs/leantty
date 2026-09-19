@@ -75,11 +75,8 @@ function Wait-LeanTTYProcessAbsent {
 function Get-TerminalContentTop {
     param([Parameter(Mandatory = $true)]$Layout)
 
-    $tops = @(Get-LeanTTYLayoutNodes -Node $Layout | ForEach-Object {
-        if ([string]$_.attributes.type -eq 'Web' -and
-            [string]$_.attributes.visible -eq 'true' -and
-            [string]$_.attributes.originalText -match 'terminal\.html$' -and
-            [string]$_.attributes.bounds -match '^\[\d+,(?<top>\d+)\]\[\d+,\d+\]$') {
+    $tops = @(Get-LeanTTYTerminalInputNodes -Layout $Layout | ForEach-Object {
+        if ([string]$_.attributes.bounds -match '^\[\d+,(?<top>\d+)\]\[\d+,\d+\]$') {
             [int]$Matches.top
         }
     })
@@ -103,21 +100,7 @@ function Get-WorkspaceState {
         }
         [int]$Matches.top -lt $contentTop -and [int]$Matches.bottom -le $contentTop
     })
-    $activeSurfaces = @(Get-LeanTTYLayoutNodes -Node $Layout | Where-Object {
-        if ([string]$_.attributes.type -ne '__Common__' -or
-            [string]$_.attributes.opacity -ne '1.000000' -or
-            [string]$_.attributes.zIndex -ne '1' -or
-            [string]$_.attributes.bounds -notmatch
-                '^\[\d+,(?<top>\d+)\]\[\d+,(?<bottom>\d+)\]$' -or
-            [int]$Matches.top -lt $contentTop -or [int]$Matches.bottom -le ($contentTop + 20)) {
-            return $false
-        }
-        @(Get-LeanTTYLayoutNodes -Node $_ | Where-Object {
-            [string]$_.attributes.type -eq 'Web' -and
-            [string]$_.attributes.visible -eq 'true' -and
-            [string]$_.attributes.originalText -match 'terminal\.html$'
-        }).Count -eq 1
-    })
+    $activeSurfaces = @(Get-LeanTTYTerminalInputNodes -Layout $Layout)
     return [pscustomobject]@{
         tabCount = $tabs.Count
         paneCount = $activeSurfaces.Count

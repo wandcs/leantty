@@ -40,23 +40,17 @@ jobs:
         shell: pwsh
         run: ./tools/test-build-workflows.ps1
 
-  web-terminal:
+  offline-guide:
+    # Stable required-check identity; the Web terminal is removed, leaving its guide.
     name: Web terminal policy
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install locked web dependencies
-        working-directory: tools/web-terminal
-        run: npm ci --ignore-scripts
-      - name: Rebuild packaged web assets
-        working-directory: tools/web-terminal
-        run: npm run build
-      - name: Check lockfile and packaged assets are stable
-        run: git diff --exit-code -- tools/web-terminal/package-lock.json tools/web-terminal/assets-manifest.json entry/src/main/resources/rawfile
-      - name: Run policy tests
-        working-directory: tools/web-terminal
-        run: npm test
+      - name: Check packaged guide and preview
+        run: |
+          node tools/web-terminal/test-user-guide.mjs
+          node tools/web-terminal/test-user-guide-preview.mjs
 
   rust-core:
     name: Rust formatting, lint and core tests

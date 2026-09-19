@@ -611,8 +611,8 @@ foreach ($caller in @('verify-agent-compatibility-pc.ps1', 'verify-mosh-pc.ps1',
         }
     }
 }
-foreach ($case in @('same-web-reindex', 'replaced-web', 'other-window', 'missing-web',
-        'missing-id', 'duplicate-web', 'duplicate-terminal', 'post-input-owner-loss')) {
+foreach ($case in @('same-native-reindex', 'recreated-native', 'other-window', 'nonterminal',
+        'missing-id', 'duplicate-platform-id', 'duplicate-pane-id', 'post-input-owner-loss')) {
     Test-Gate "host-key-caller-context-$case" {
         # Keep the actual Focus -> Connect -> shared text guard. Only layout
         # observations and device effects are synthetic; no actual input occurs.
@@ -622,32 +622,34 @@ foreach ($case in @('same-web-reindex', 'replaced-web', 'other-window', 'missing
         }
         function New-ContextLayout([bool]$Changed) {
             $leaf = [pscustomobject]@{ attributes = [pscustomobject]@{
-                type='textField'; hint='Terminal input'; focused='true'; hostWindowId='1'
+                type='XComponent'; id='native-terminal-pane-1-1'; focused='true'; hostWindowId='1'; visible='true'
                 hierarchy=$(if ($Changed) { 'ROOT1,1,2' } else { 'ROOT1,0,0,2' })
-                accessibilityId=$(if ($Changed) { 'virtual-new' } else { 'virtual-old' })
+                accessibilityId='native-input'
                 bounds='[10,10][30,30]'
             }; children=@() }
-            $web = [pscustomobject]@{ attributes = [pscustomobject]@{
-                type='Web'; hostWindowId='1'; accessibilityId='native-web'
+            $container = [pscustomobject]@{ attributes = [pscustomobject]@{
+                type='Stack'; hostWindowId='1'; accessibilityId='container'
                 hierarchy=$(if ($Changed) { 'ROOT1,1' } else { 'ROOT1,0' })
             }; children=@($leaf) }
             if ($Changed) {
                 switch ($case) {
-                    'replaced-web' { $web.attributes.accessibilityId = 'replacement' }
-                    'other-window' { $web.attributes.hostWindowId = '2'; $leaf.attributes.hostWindowId = '2' }
-                    'missing-web' { $web.attributes.type = 'Column' }
-                    'missing-id' { $web.attributes.accessibilityId = '' }
-                    'duplicate-terminal' {
-                        $web.children += [pscustomobject]@{attributes=@{
-                            type='textField'; hint='Terminal input'; focused='false'
+                    'recreated-native' { $leaf.attributes.accessibilityId = 'replacement' }
+                    'other-window' { $leaf.attributes.hostWindowId = '2' }
+                    'nonterminal' { $leaf.attributes.type = 'Column' }
+                    'missing-id' { $leaf.attributes.accessibilityId = '' }
+                    'duplicate-pane-id' {
+                        $container.children += [pscustomobject]@{attributes=@{
+                            type='XComponent'; id='native-terminal-pane-1-1'; focused='false'
+                            hostWindowId='1'; accessibilityId='another-input'; visible='true'
                         }; children=@()}
                     }
                 }
             }
-            $layout = [pscustomobject]@{attributes=@{}; children=@($web)}
-            if ($Changed -and $case -eq 'duplicate-web') {
+            $layout = [pscustomobject]@{attributes=@{}; children=@($container)}
+            if ($Changed -and $case -eq 'duplicate-platform-id') {
                 $layout.children += [pscustomobject]@{attributes=@{
-                    type='Web'; hostWindowId='1'; accessibilityId='native-web'
+                    type='XComponent'; id='native-terminal-pane-1-2'; hostWindowId='1'
+                    accessibilityId='native-input'; focused='false'; visible='true'
                 }; children=@()}
             }
             return $layout
@@ -662,19 +664,22 @@ foreach ($case in @('same-web-reindex', 'replaced-web', 'other-window', 'missing
             $script:layoutReads++
             $layout = New-ContextLayout $true
             if ($case -eq 'post-input-owner-loss' -and $script:layoutReads -eq 2) {
-                $layout.children[0].attributes.accessibilityId = 'replacement'
+                $layout.children[0].children[0].attributes.accessibilityId = 'replacement'
             }
             return $layout
         }
         function Invoke-HdcChecked { $script:trace.Add('text-dispatch') }
         function Invoke-LeanTTYDeviceKey { $script:trace.Add('enter') }
-        if ($case -eq 'same-web-reindex') {
+        if ($case -eq 'same-native-reindex') {
             Connect-AgentServer -Stage 'context'
             Assert-Gate ($script:agentSshBoundary -eq 'shell-ready' -and
                 @($script:trace | Where-Object { $_ -eq 'text-dispatch' }).Count -eq 1 -and
                 @($script:trace | Where-Object { $_ -eq 'enter' }).Count -eq 1) 'Same native owner must confirm exactly once'
         } else {
-            Expect-GateError { Connect-AgentServer -Stage 'context' } 'text target|intended target'
+            $expectedFailure = if ($case -in @('nonterminal', 'missing-id', 'duplicate-platform-id', 'duplicate-pane-id')) {
+                'requires one current focused text field'
+            } else { 'text target|intended target' }
+            Expect-GateError { Connect-AgentServer -Stage 'context' } $expectedFailure
             $expectedDispatches = if ($case -eq 'post-input-owner-loss') { 1 } else { 0 }
             Assert-Gate (@($script:trace | Where-Object { $_ -eq 'text-dispatch' }).Count -eq $expectedDispatches -and
                 -not ($script:trace -contains 'enter') -and -not ($script:trace -contains 'ctrl-c') -and
@@ -727,23 +732,23 @@ Test-Gate 'every-agent-terminal-text-call-supplies-layout' {
         Assert-Gate (@($parameters | Where-Object ParameterName -eq 'InputLayout').Count -eq 1) "Terminal caller omitted layout: $($owner.Name)"
     }
 }
-foreach ($focusCase in @('already-focused', 'gain-focus', 'still-unfocused', 'replaced-web',
+foreach ($focusCase in @('already-focused', 'gain-focus', 'still-unfocused', 'recreated-native',
         'other-window', 'two-after', 'two-before', 'missing-before')) {
     Test-Gate "agent-focus-preparation-$focusCase" {
         . (Join-Path $PSScriptRoot 'device-regression.ps1')
         . ([scriptblock]::Create($functionSources['Focus-TerminalInput']))
         function New-FocusLayout([bool]$AfterClick) {
-            $leaf = @{attributes=@{type='textField';hint='Terminal input';focused=$(if ($AfterClick -or $focusCase -eq 'already-focused') {'true'} else {'false'});hostWindowId='1';bounds='[10,10][30,30]'};children=@()}
-            $web = @{attributes=@{type='Web';hostWindowId='1';accessibilityId='native-web'};children=@($leaf)}
+            $leaf = @{attributes=@{type='XComponent';id='native-terminal-pane-1-1';accessibilityId='native-input';visible='true';focused=$(if ($AfterClick -or $focusCase -eq 'already-focused') {'true'} else {'false'});hostWindowId='1';bounds='[10,10][30,30]'};children=@()}
+            $container = @{attributes=@{type='Stack';hostWindowId='1';accessibilityId='container'};children=@($leaf)}
             if ($AfterClick -and $focusCase -eq 'still-unfocused') { $leaf.attributes.focused='false' }
-            if ($AfterClick -and $focusCase -eq 'replaced-web') { $web.attributes.accessibilityId='replacement' }
-            if ($AfterClick -and $focusCase -eq 'other-window') { $web.attributes.hostWindowId='2';$leaf.attributes.hostWindowId='2' }
+            if ($AfterClick -and $focusCase -eq 'recreated-native') { $leaf.attributes.accessibilityId='replacement' }
+            if ($AfterClick -and $focusCase -eq 'other-window') { $leaf.attributes.hostWindowId='2' }
             if (($AfterClick -and $focusCase -eq 'two-after') -or $focusCase -eq 'two-before') {
                 $leaf.attributes.focused='true'
-                $web.children += @{attributes=@{type='textField';hint='Terminal input';focused='true';hostWindowId='1'};children=@()}
+                $container.children += @{attributes=@{type='XComponent';id='native-terminal-pane-1-2';accessibilityId='another-input';visible='true';focused='true';hostWindowId='1'};children=@()}
             }
-            if ($focusCase -eq 'missing-before') { $web.children=@() }
-            return @{attributes=@{};children=@($web)}
+            if ($focusCase -eq 'missing-before') { $container.children=@() }
+            return @{attributes=@{};children=@($container)}
         }
         $before = New-FocusLayout $false
         $after = New-FocusLayout $true

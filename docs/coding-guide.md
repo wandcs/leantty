@@ -28,7 +28,7 @@ App Shell
 - Each pane owns one session through a stable identifier.
 - A session owns connection lifecycle and terminal interaction.
 - Mutable state has one authoritative owner.
-- Array adjacency, selected indices, WebView instances and UI labels must not
+- Array adjacency, selected indices, display instances and UI labels must not
   stand in for ownership.
 
 The older `Page → ViewModel → Model → Common` direction is a useful dependency
@@ -42,10 +42,13 @@ hint, not a reason to obscure state ownership.
 - **SSH Transport** owns russh, PTY and byte streams; it does not decide UI text.
 - **Mosh** owns SSH bootstrap and library-backed UDP state sync; it does not
   emulate SSH scrollback or add a generic Transport interface.
-- **Terminal Surface** owns xterm display, input, selection and resize; it does
-  not own business state.
+- **Terminal Surface** connects the Pane-owned native terminal to Session input,
+  output and lifecycle barriers; it does not own business state. The native
+  worker owns the regular and temporary VT state, selection and resize. Display
+  detach preserves that state; closing the Pane releases it.
 - **System Services** wrap HarmonyOS clipboard, preferences and window APIs.
-- **Bridge** carries validated structured messages and no business rules.
+- **Native binding** carries bounded commands and owner/sequence-tagged events;
+  it does not duplicate VT state or decide Session lifecycle.
 - **UI** renders state and sends user intent without coordinating several lower
   layers directly.
 
@@ -64,7 +67,7 @@ verification method without guessing.
 
 - Every mutable state has one authoritative owner. A cache or derived view must
   make its source, synchronization rule and invalidation condition explicit.
-- Every business behavior has one implementation entry. Platform, UI, WebView
+- Every business behavior has one implementation entry. Platform, UI, terminal
   and transport layers must not contain independent versions of the same rule.
 - Make the complete event chain traceable: input, parsing or UI intent, state
   transition, boundary message, side effect, observable result, failure,
@@ -190,30 +193,32 @@ the ambiguity.
 |---|---|
 | `AppScope/` | Application-level HarmonyOS resources and configuration |
 | `entry/src/main/ets/` | ArkUI application, state and platform integration |
-| `entry/src/main/resources/` | HarmonyOS resources and ArkWeb terminal assets |
+| `entry/src/main/resources/` | HarmonyOS resources, terminal fonts and the packaged local guide |
+| `entry/src/main/cpp/terminal/` | Pane-owned VT worker, native input, interaction and GPU rendering |
 | `entry/src/test/` | Trusted ArkTS logic tests |
 | `leantty_ssh/` | napi-ohos bindings, SSH transport and Mosh integration |
 | `leantty_ssh/leantty-ssh-core/` | Host-testable pure Rust policies |
-| `tools/web-terminal/` | xterm source assembly and policy tests |
+| `tools/web-terminal/` | Local guide generation and preview tests |
 | `tools/` | ARM64 build, deployment and verification scripts |
 | `docs/` | Product governance, user contract, architecture, quality, current work and stable manuals |
 
 Generated native libraries, HAP/APP packages, caches and signing material are
 not source and must remain untracked.
 
-## ArkTS and ArkWeb
+## ArkTS and native terminal
 
 - Follow the repository linter; do not bypass type restrictions with `any`,
   `unknown` or broad casts.
 - Use structured events and explicit state instead of inferring state from UI
   text, output fragments or timing.
 - Keep one implementation entry for each behavior; do not patch the same rule
-  independently in ArkUI, WebView and Rust.
-- Validate every bridge message's version, direction, channel, kind and payload
-  before dispatch.
+  independently in ArkUI, the native terminal and Rust.
+- Validate native command kinds, bounded payloads and ownership before dispatch;
+  bind asynchronous input, replies and display callbacks to their actual owner.
 - Treat terminal output and remote-controlled titles as untrusted data.
-- Preserve runtime-measured xterm dimensions; fitting must account for actual
-  container padding and WebView size.
+- Use the native worker's measured grid for drawing, pointer/IME coordinates
+  and PTY resize. Include the actual content area, cell metrics and padding;
+  do not create a second geometry authority in ArkTS.
 
 ## Rust transport
 

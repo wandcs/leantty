@@ -1,11 +1,13 @@
-import webview from '@ohos.web.webview'
 import { TerminalMode } from '../../common/types/TerminalTypes'
 import { common } from '@kit.AbilityKit'
 import { UiText } from '../../model/ui/UiText'
+import { NativeTerminalPane } from './NativeTerminalPane'
+import { TerminalSurfaceController } from '../../model/terminal/TerminalSurfaceController'
 
 @Component
 export struct TerminalPane {
-  private webCtrl: webview.WebviewController = new webview.WebviewController()
+  surface: TerminalSurfaceController = new TerminalSurfaceController()
+  onNativeControllerReady: () => void = () => {}
   @Prop focusVeilColor: string = '#11111B'
   @Prop focusVeilOpacity: number = 0.20
   @Prop sessionMode: TerminalMode = TerminalMode.IDLE
@@ -18,7 +20,6 @@ export struct TerminalPane {
   @Prop focusRing: string = '#89B4FA'
   @State closeButtonHovered: boolean = false
   @State closeButtonFocused: boolean = false
-  onWebControllerReady: (ctrl: webview.WebviewController) => void = () => {}
   onPaneDisappear: () => void = () => {}
   onPaneKeyEvent: (event: KeyEvent) => boolean = () => false
   onPaneFocus: (userInitiated: boolean) => void = () => {}
@@ -36,43 +37,9 @@ export struct TerminalPane {
 
   build() {
     Stack() {
-      Web({
-        src: $rawfile('terminal.html'),
-        controller: this.webCtrl,
-        renderMode: RenderMode.ASYNC_RENDER,
-        sharedRenderProcessToken: 'leantty-terminal'
-      })
-        .width('100%')
-        .height('100%')
-        .javaScriptAccess(true)
-        .domStorageAccess(false)
-        .fileAccess(false)
-        .onlineImageAccess(false)
-        .mixedMode(MixedMode.None)
-        .darkMode(WebDarkMode.Off)
-        .zoomAccess(false)
-        .zoomControlAccess(false)
-        .overviewModeAccess(false)
-        .backgroundColor('#00000000')
-        .onControllerAttached(() => {
-        })
-        .onPageEnd(() => {
-          this.onWebControllerReady(this.webCtrl)
-        })
-        .onRenderExited(() => {
-          this.onRendererExited()
-        })
-        .onContextMenuShow((event: OnContextMenuShowEvent) => {
-          this.onPaneFocus(true)
-          event.result.closeContextMenu()
-          return true
-        })
-        .onKeyPreIme((event: KeyEvent) => {
-          return this.onPaneKeyEvent(event)
-        })
-        .onInterceptKeyEvent((event: KeyEvent) => {
-          return this.onPaneKeyEvent(event)
-        })
+      NativeTerminalPane({ surface: this.surface, paneId: this.paneId, isFocused: this.isFocused,
+        onKey: this.onPaneKeyEvent, onReady: this.onNativeControllerReady,
+        onRebuildDisplay: this.onRendererExited })
 
       if (!this.isFocused) {
         Column()
