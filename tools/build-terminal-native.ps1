@@ -102,6 +102,15 @@ if ($HostTests) {
     if ($LASTEXITCODE -ne 0) { throw 'IME deletion test build failed' }
     & $deleteExe
     if ($LASTEXITCODE -ne 0) { throw 'IME deletion direction contracts failed' }
+    $cursorMethod = [regex]::Match($inputSource, '(?s)void TerminalInput::cursor\(.*?(?=void TerminalInput::detach\()')
+    if (-not $cursorMethod.Success) { throw 'IME cursor test boundary changed' }
+    [IO.File]::WriteAllText((Join-Path $prefix 'input-cursor-under-test.inc'), $cursorMethod.Value)
+    $cursorExe = Join-Path $prefix 'terminal-input-cursor-tests.exe'
+    & $zig c++ -std=c++17 -O1 -Wall -Wextra -Werror "-I$prefix" `
+        (Join-Path $PSScriptRoot 'native-terminal/input-cursor-test.cpp') -o $cursorExe
+    if ($LASTEXITCODE -ne 0) { throw 'IME cursor test build failed' }
+    & $cursorExe
+    if ($LASTEXITCODE -ne 0) { throw 'IME cursor lifecycle contracts failed' }
     $exe = Join-Path $prefix 'terminal-runtime-tests.exe'
     & $zig c++ -std=c++17 -DGHOSTTY_STATIC -O1 -Wall -Wextra -Werror "-I$source/include" "-I$cpp" `
         (Join-Path $cpp 'TerminalRuntime.cpp') (Join-Path $cpp 'TerminalInteraction.cpp') (Join-Path $cpp 'TerminalEffects.cpp') (Join-Path $PSScriptRoot 'native-terminal/runtime-test.cpp') `
