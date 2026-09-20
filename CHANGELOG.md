@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Preserve the native terminal and connection when an IME cursor notification
+  reports a detached or non-editable input client; normal focus restores IME.
 - Place local output after the last content row when a native SSH session ends,
   preserving history instead of leaving a large blank gap above the prompt.
 - Restore the native terminal's default blinking bar cursor, density-scaled

@@ -104,7 +104,11 @@ void TerminalInput::cursor(uint32_t owner,double x,double y,double height) {
     if (!info) throw std::runtime_error("terminal_ime_cursor_create_failed");
     const auto result = OH_InputMethodProxy_NotifyCursorUpdate(proxy_,info);
     OH_CursorInfo_Destroy(info);
-    if (result != 0) throw std::runtime_error("terminal_ime_cursor_update_failed");
+    // The runtime also returns IME_ERR_EDITABLE (12800016), absent from API 24's
+    // C enum. Inactive editors cannot accept geometry; normal focus reattaches IME.
+    constexpr int32_t clientNotEditable = 12800016;
+    if (result != IME_ERR_OK && result != IME_ERR_DETACHED && result != clientNotEditable)
+        throw std::runtime_error("terminal_ime_cursor_update_failed");
 }
 void TerminalInput::detach() {
     // Invalidate dispatch before detaching the platform object. An in-flight
