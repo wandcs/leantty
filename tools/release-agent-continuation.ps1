@@ -45,12 +45,12 @@ function Get-LeanTTYClipboardIndependentSource {
     if ($errors.Count -ne 0) { throw 'SSH clipboard source did not parse' }
     $owners = @($ast.FindAll({ param($node)
         ($node -is [Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -in @('Submit-ConnectedInputUntilAuthEvent', 'Wait-AuthPasteReady', 'Invoke-LeanTTYPasteShortcut')) -or
+            $node.Name -in @('Submit-ConnectedInputUntilAuthEvent', 'Wait-AuthPasteReady', 'Wait-AuthOutputMarker', 'Invoke-LeanTTYPasteShortcut')) -or
         ($node -is [Management.Automation.Language.IfStatementAst] -and $node.Clauses.Count -eq 1 -and
             $node.Clauses[0].Item1.Extent.Text -in @("Test-AuthStageSelected -Name 'terminal-key-input'",
-                "Test-AuthStageSelected -Name 'transport-main-path'"))
+                "Test-AuthStageSelected -Name 'transport-main-path'", "Test-AuthStageSelected -Name 'ssh-escape'"))
     }, $true))
-    if ($owners.Count -ne 4) { throw 'SSH clipboard repair owners are ambiguous' }
+    if ($owners.Count -ne 5) { throw 'SSH native terminal repair owners are ambiguous' }
     foreach ($owner in @($owners | Sort-Object { $_.Extent.StartOffset } -Descending)) {
         $role = if ($owner -is [Management.Automation.Language.IfStatementAst]) { $owner.Clauses[0].Item1.Extent.Text }
             elseif ($owner.Name -eq 'Invoke-LeanTTYPasteShortcut') { 'paste-shortcut' } else { 'clipboard-readiness' }
@@ -126,7 +126,7 @@ function Get-LeanTTYReleaseContinuation {
             if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect original SSH verifier' }
             $after = (Get-Content -LiteralPath (Join-Path $RepoRoot 'tools/verify-ssh-auth-pc.ps1')) -join "`n"
             if ((Get-LeanTTYClipboardIndependentSource $before) -cne (Get-LeanTTYClipboardIndependentSource $after)) {
-                throw 'SSH verifier changed outside clipboard owners; prefix reuse is not qualified'
+                throw 'SSH verifier changed outside native terminal owners; prefix reuse is not qualified'
             }
         }
     } else { Assert-LeanTTYAgentContinuationPaths -Paths $paths }

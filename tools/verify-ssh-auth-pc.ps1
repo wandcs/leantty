@@ -997,17 +997,16 @@ function Submit-ConnectedInputUntilFixtureEvent {
     }
 }
 
-function Wait-AuthPasteReady {
+function Wait-AuthOutputMarker {
     param(
         [Parameter(Mandatory = $true)][string]$Marker,
         [ValidateRange(1, 30)][int]$TimeoutSeconds = 15
     )
-    # Observe the public marker after OSC 52 in the native terminal. This only
-    # establishes output readiness; the server's exact paste comparison is the
-    # clipboard oracle. Do not wait for retired Web renderer success logs.
+    # Observe one exact public marker in the owning native Pane. Callers still
+    # prove their operation through server bytes; a search match proves output.
     & $hdc -t $Target shell 'uitest uiInput keyEvent 2072 2045 2022' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to open terminal search for paste readiness' }
-    $path = Join-Path $EvidenceDirectory 'layout-paste-ready.json'
+    if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to open terminal search for output readiness' }
+    $path = Join-Path $EvidenceDirectory 'layout-output-ready.json'
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $querySent = $false
     $matched = $false
@@ -1024,7 +1023,7 @@ function Wait-AuthPasteReady {
             if ($inputs.Count -eq 1) {
                 $searchInput = $inputs[0]
                 if (-not $querySent) {
-                    if ([string]$searchInput.attributes.text -ne '') { throw '[harness] Paste readiness search was not empty' }
+                    if ([string]$searchInput.attributes.text -ne '') { throw '[harness] Output readiness search was not empty' }
                     $queryId = [string]$searchInput.attributes.id
                     Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Marker -InputNode $searchInput -InputLayout $layout
                     $querySent = $true
@@ -1041,9 +1040,9 @@ function Wait-AuthPasteReady {
     } finally {
         Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2070
     }
-    if (-not $matched) { throw '[harness] Paste preparation output was not observed; no paste was dispatched' }
+    if (-not $matched) { throw '[harness] Expected terminal output marker was not observed' }
     Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $Target `
-        -LocalPath (Join-Path $EvidenceDirectory 'layout-paste-ready-closed.json') -TimeoutSeconds 10 | Out-Null
+        -LocalPath (Join-Path $EvidenceDirectory 'layout-output-ready-closed.json') -TimeoutSeconds 10 | Out-Null
 }
 
 function Invoke-SshEscapeInputText {
@@ -2245,7 +2244,7 @@ try {
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'
-    Wait-AuthPasteReady -Marker 'LTTY_PASTE_READY:russhmain:1048576'
+    Wait-AuthOutputMarker -Marker 'LTTY_PASTE_READY:russhmain:1048576'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-LeanTTYPasteShortcut
     Wait-AuthLog -Pattern 'D: 1048576 chars' -TimeoutSeconds 30
@@ -2318,19 +2317,14 @@ try {
     Submit-ConnectedInputUntilFixtureEvent `
         -Text 'ltty-terminal-dirty escapealt' `
         -Pattern 'terminal dirty case=escapealt result=enabled'
-    # Focus reporting can send ESC[I after the command's newline. Like OpenSSH,
-    # escape recognition resumes only after the user sends another newline.
-    $alternateFocusReportPattern = 'fixture command bytes=5b 49 result=unrecognized'
-    $alternateFocusReportCount = Get-FixtureLogMatchCount `
-        -Pattern ([regex]::Escape($alternateFocusReportPattern))
+    Wait-AuthOutputMarker -Marker 'LTTY_DIRTY:escapealt'
+    # Search may generate focus reports. Establish a fresh remote line boundary
+    # without requiring an incidental FocusIn when the mode is enabled.
+    Remove-Item -LiteralPath $fixtureConnectedInputSnapshot -Force -ErrorAction SilentlyContinue
     Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2054
-    try {
-        Wait-FixtureLogMatchCount `
-            -Pattern ([regex]::Escape($alternateFocusReportPattern)) `
-            -GreaterThan $alternateFocusReportCount `
-            -TimeoutSeconds 10 | Out-Null
-    } catch {
-        throw '[harness] Alternate-screen focus report submission was not observed'
+    $alternateLine = Wait-FixtureConnectedInputSnapshot -Expected ''
+    if (-not $alternateLine.observed -or [string]$alternateLine.value -cne '') {
+        throw '[harness] Alternate-screen remote line boundary was not observed'
     }
     Assert-SshEscapeLocalOnly `
         -TypedText '~?' `

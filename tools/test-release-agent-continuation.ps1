@@ -34,6 +34,18 @@ function git {
     }
 }
 try {
+    $sshSource = Get-Content (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1') -Raw
+    $independent = Get-LeanTTYClipboardIndependentSource $sshSource
+    $escapeChange = $sshSource.Replace("Start-AuthStage -Name 'ssh-escape'", "Start-AuthStage -Name 'ssh-escape' # scoped repair")
+    if ((Get-LeanTTYClipboardIndependentSource $escapeChange) -cne $independent) { throw 'Scoped SSH escape repair lost prefix reuse' }
+    $passed++
+    $authChange = $sshSource.Replace("Start-AuthStage -Name 'password-success'", "Start-AuthStage -Name 'password-success' # independent change")
+    if ($authChange -ceq $sshSource -or (Get-LeanTTYClipboardIndependentSource $authChange) -ceq $independent) { throw 'Independent authentication change was ignored' }
+    $passed++
+    Assert-Rejected 'duplicate SSH escape owner' {
+        Get-LeanTTYClipboardIndependentSource ($sshSource + "`nif (Test-AuthStageSelected -Name 'ssh-escape') {}")
+    }
+    Assert-Rejected 'invalid SSH source syntax' { Get-LeanTTYClipboardIndependentSource ($sshSource + "`nif (") }
     $candidate = [pscustomobject]@{gitCommit=('c'*40);gitTree=('d'*40);sha256=('e'*64);gitDirty=$false}
     $invocation = [pscustomobject]@{target='fixture';candidateBasePath='';fixturePort=22000;longTaskPort=23000;agentPort=0;moshAlternateWifiSsidIdentity=('f'*64);distribution='test-wsl'}
     $harness = @{gitCommit=('a'*40);gitTree=('b'*40);gitDirty=$false}

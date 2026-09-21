@@ -974,7 +974,12 @@ manifest pins the original report and failed group; a fresh state audit pins
 the failed matrix, candidate, repaired SSH script and restored environment.
 Only the SSH verifier, its tests, continuation entry/policy/tests and governing
 notes may differ. AST comparison allows changes only in the two clipboard stage
-blocks and their readiness/paste helpers; all other SSH source must be identical.
+blocks, the `ssh-escape` block and their output-readiness/paste helpers; all other
+SSH source must be identical. The escape repair replaces an incidental immediate
+FocusIn assumption with observed native output and a fresh remote line boundary.
+This stage was never part of the inherited prefix. A later failed R2 remains
+immutable; a new round anchors to the same original pre-SSH report, records the
+intermediate failure separately, and reruns the full SSH matrix after fresh QH.
 Shared device helpers, Agent, notifications, Mosh and product
 changes are rejected. A new report revalidates the prefix hashes, runs fresh QH,
 the complete SSH matrix and remaining stages, and adds zero model workloads.
