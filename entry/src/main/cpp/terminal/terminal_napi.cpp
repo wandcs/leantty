@@ -177,8 +177,8 @@ GhosttyKey keyCode(uint32_t code) {
     }
 }
 napi_value key(napi_env env,napi_callback_info info) {
-    Arguments args(env,info,5); auto& b = args.binding();
-    return number(env,b.runtime->key(keyCode(args.owner(1)),numeric(env,args.values[2],0,15),textArgument(env,args.values[4],16384),args.owner(3)));
+    Arguments args(env,info,6); auto& b = args.binding();
+    return number(env,b.runtime->key(keyCode(args.owner(1)),numeric(env,args.values[2],0,15),textArgument(env,args.values[4],16384),args.owner(3),numeric(env,args.values[5],0,0x10ffff)));
 }
 napi_value paste(napi_env env,napi_callback_info info) {
     Arguments args(env,info,3); return number(env,args.binding().runtime->paste(textArgument(env,args.values[1],TerminalRuntime::QueueLimit),args.owner(2)));

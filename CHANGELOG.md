@@ -6,6 +6,10 @@
 
 ### Changed
 
+- Preserve Ctrl/Alt and shifted-key encoding when remote applications enable
+  the native terminal's enhanced keyboard protocol.
+- Clear both screens' enhanced keyboard state when a session ends, preserving
+  terminal history while preventing the next session from inheriting key modes.
 - Preserve the native terminal and connection when an IME cursor notification
   reports a detached or non-editable input client; normal focus restores IME.
 - Place local output after the last content row when a native SSH session ends,

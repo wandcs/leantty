@@ -7,6 +7,7 @@
 #include <atomic>
 #include <stdexcept>
 using namespace leantty;
+#include "session-reset-sequence.inc"
 static void require(bool condition, const char* label) { if (!condition) throw std::runtime_error(label); }
 struct Log {
     std::mutex mutex; std::condition_variable changed; std::vector<TerminalEvent> events;
@@ -614,6 +615,43 @@ int main() {
         require(whole == fragmented(fixture, 7), "UTF8/control seven-byte splits");
         require(whole.first.find("TAIL") != std::string::npos && !whole.second.empty(), "content and query response");
         std::cout << "PASS split output and original-owner replies\n";
+        for (bool endOnAlternate : {false, true}) {
+            Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
+            write(r,"SESSION_HISTORY\r\n\x1b[>1u\x1b[>3u\x1b[?47h\x1b[>1u\x1b[>9u");
+            if (!endOnAlternate) write(r,"\x1b[?47l");
+            write(r,sessionResetSequence);
+            const auto primary = write(r,"\x1b[?u");
+            require(log.wait("reply",primary).text == "\x1b[?0u", "session reset clears primary keyboard stack");
+            const auto alternate = write(r,"\x1b[?47h\x1b[?u");
+            require(log.wait("reply",alternate).text == "\x1b[?0u", "session reset clears alternate keyboard stack");
+            write(r,"\x1b[?47l");
+            const auto snapshot = r.snapshot();
+            require(log.wait("snapshot",snapshot).text.find("SESSION_HISTORY") != std::string::npos, "session keyboard reset preserves history");
+            r.close(); r.join(); require(!r.failed(),"session keyboard reset runtime");
+        }
+        std::cout << "PASS actual session reset clears both keyboard stacks and preserves history\n";
+        {
+            Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
+            auto key = [&](GhosttyKey code, GhosttyMods mods, const std::string& text, uint32_t base) {
+                const auto seq = r.key(code,mods,text,41,base);
+                return log.wait("input",seq).text;
+            };
+            require(key(GHOSTTY_KEY_B,GHOSTTY_MODS_CTRL,"b",'b') == "\x02", "legacy Ctrl-B");
+            require(key(GHOSTTY_KEY_B,GHOSTTY_MODS_ALT,"b",'b') == "\x1b" "b", "legacy Alt-B");
+            write(r,"\x1b[>1u");
+            require(key(GHOSTTY_KEY_B,GHOSTTY_MODS_CTRL,"b",'b') == "\x1b[98;5u", "enhanced Ctrl-B retains modifier");
+            require(key(GHOSTTY_KEY_B,GHOSTTY_MODS_ALT,"b",'b') == "\x1b[98;3u", "enhanced Alt-B retains modifier");
+            require(key(GHOSTTY_KEY_B,GHOSTTY_MODS_SHIFT,"B",'b') == "B", "enhanced shifted text remains printable");
+            require(key(GHOSTTY_KEY_DIGIT_1,GHOSTTY_MODS_SHIFT,"!",'1') == "!", "enhanced shifted punctuation remains printable");
+            require(key(GHOSTTY_KEY_SPACE,GHOSTTY_MODS_SHIFT," ",' ') == "\x1b[32;2u", "Shift-Space is not consumed by unchanged text");
+            require(key(GHOSTTY_KEY_B,GHOSTTY_MODS_CTRL | GHOSTTY_MODS_SHIFT,"B",'b') == "\x1b[98;6u", "enhanced Ctrl-Shift-B uses unshifted codepoint");
+            require(key(GHOSTTY_KEY_DIGIT_1,GHOSTTY_MODS_CTRL | GHOSTTY_MODS_SHIFT,"!",'1') == "\x1b[49;6u", "shifted punctuation retains base key");
+            require(key(GHOSTTY_KEY_UNIDENTIFIED,0,u8"中😀",0) == u8"中😀", "enhanced IME text is not a physical key");
+            write(r,"\x1b[<1u");
+            require(key(GHOSTTY_KEY_B,GHOSTTY_MODS_CTRL,"b",'b') == "\x02", "protocol pop restores legacy Ctrl-B");
+            r.close(); r.join(); require(!r.failed(),"enhanced keyboard runtime");
+            std::cout << "PASS enhanced keyboard modifiers, shifted keys and IME commits\n";
+        }
         {
             Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
             const auto layout = r.updateDisplay([] { return TerminalRuntime::Geometry{100,30,9,18}; });

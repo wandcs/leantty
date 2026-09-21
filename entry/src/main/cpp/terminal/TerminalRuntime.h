@@ -45,7 +45,7 @@ public:
     uint64_t beginTemporary(uint32_t owner);
     uint64_t endTemporary(uint32_t owner);
     uint64_t snapshot();
-    uint64_t key(GhosttyKey key, GhosttyMods modifiers, std::string text, uint32_t owner);
+    uint64_t key(GhosttyKey key, GhosttyMods modifiers, std::string text, uint32_t owner, uint32_t unshiftedCodepoint = 0);
     uint64_t paste(std::string text, uint32_t owner);
     uint64_t pointer(int action, int button, int x, int y, GhosttyMods modifiers, uint32_t owner);
     // -1 leaves the Surface; otherwise refresh modifiers at the last pointer.
@@ -77,6 +77,7 @@ private:
         std::function<Geometry()> display;
         std::function<void()> applied;
         GhosttyKey key = GHOSTTY_KEY_UNIDENTIFIED;
+        uint32_t unshiftedCodepoint = 0;
         GhosttyMods modifiers = 0;
         std::string text;
         int action = 0, button = 0, x = 0, y = 0;

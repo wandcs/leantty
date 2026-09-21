@@ -14,6 +14,13 @@ void TerminalRuntime::encodeKey(const Command& c) {
         ghostty_key_encoder_setopt_from_terminal(encoder,active_);
         ghostty_key_event_set_action(event,GHOSTTY_KEY_ACTION_PRESS);
         ghostty_key_event_set_key(event,c.key); ghostty_key_event_set_mods(event,c.modifiers);
+        // Kitty encoding needs the layout's unshifted character separately from committed text.
+        ghostty_key_event_set_unshifted_codepoint(event,c.unshiftedCodepoint);
+        // Shift used to produce the mapped printable character is consumed for
+        // text dispatch; the encoder still retains all modifiers for shortcuts.
+        if ((c.modifiers & GHOSTTY_MODS_SHIFT) && c.unshiftedCodepoint &&
+            c.text.size() == 1 && static_cast<unsigned char>(c.text[0]) != c.unshiftedCodepoint)
+            ghostty_key_event_set_consumed_mods(event,GHOSTTY_MODS_SHIFT);
         ghostty_key_event_set_utf8(event,c.text.data(),c.text.size());
         std::vector<char> encoded(c.text.size()+128); size_t written = 0;
         checkVt(ghostty_key_encoder_encode(encoder,event,encoded.data(),encoded.size(),&written));
