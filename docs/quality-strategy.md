@@ -955,7 +955,7 @@ never manually promote an `-Only`/`runMode=diagnostic` result. SSH groups remain
 the supported acceptance-mode resume boundary; individual stages inside a group
 are not. A finer boundary requires explicit qualification before use.
 
-`verify-release-pc.ps1 -AgentContinuationPath` is the bounded cross-harness R2
+`verify-release-pc.ps1 -ContinuationPath` is the bounded cross-harness R2
 entry for an Agent-local exit repair: a new report pins the original failed
 report, independent recovery and fresh state audit. Only the complete prefix
 before Agent is reusable, and only under the explicit continuation path policy.
@@ -964,6 +964,21 @@ the full Agent stage and SSH remain mandatory. Inherited result paths/hashes are
 revalidated on resume and completion; original failures are never rewritten.
 This is not a general skip-stage switch or a waiver of cleanup or platform
 continuity. See [the repair contract](design/agent-exit-boundary-20260912.md#agent-local-formal-continuation).
+
+The same `-ContinuationPath` entry admits `ssh-native-clipboard-R2` only for the
+native migration's retired OSC 52 log oracle. The original automatic report must
+have a complete passing prefix through Agent, an unsuccessful first SSH group
+stopped at that exact clipboard wait before performance or preference mutation,
+successful owned cleanup, and an entirely unstarted Mosh/operator suffix. The
+manifest pins the original report and failed group; a fresh state audit pins
+the failed matrix, candidate, repaired SSH script and restored environment.
+Only the SSH verifier, its tests, continuation entry/policy/tests and governing
+notes may differ. AST comparison allows changes only in the two clipboard stage
+blocks and their readiness/paste helpers; all other SSH source must be identical.
+Shared device helpers, Agent, notifications, Mosh and product
+changes are rejected. A new report revalidates the prefix hashes, runs fresh QH,
+the complete SSH matrix and remaining stages, and adds zero model workloads.
+The old failure stays immutable; diagnostic results cannot replace any stage.
 
 The `agent-split-R2` manifest extends the same entry to `-Phase automatic`.
 It additionally requires passed Agent cleanup and an entirely unstarted

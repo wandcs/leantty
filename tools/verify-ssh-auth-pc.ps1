@@ -997,18 +997,53 @@ function Submit-ConnectedInputUntilFixtureEvent {
     }
 }
 
-function Submit-ConnectedInputUntilAuthEvent {
+function Wait-AuthPasteReady {
     param(
-        [Parameter(Mandatory = $true)][string]$Text,
-        [Parameter(Mandatory = $true)][string]$Pattern,
-        [ValidateRange(1, 60)][int]$TimeoutSeconds = 10
+        [Parameter(Mandatory = $true)][string]$Marker,
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 15
     )
-    Submit-ConnectedInput -Text $Text
+    # Observe the public marker after OSC 52 in the native terminal. This only
+    # establishes output readiness; the server's exact paste comparison is the
+    # clipboard oracle. Do not wait for retired Web renderer success logs.
+    & $hdc -t $Target shell 'uitest uiInput keyEvent 2072 2045 2022' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw '[environment] Unable to open terminal search for paste readiness' }
+    $path = Join-Path $EvidenceDirectory 'layout-paste-ready.json'
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $querySent = $false
+    $matched = $false
+    $queryId = ''
     try {
-        Wait-AuthLog -Pattern $Pattern -TimeoutSeconds $TimeoutSeconds
-    } catch {
-        throw '[harness] Connected input application outcome is unknown; the scenario must be restarted'
+        do {
+            $layout = Get-LeanTTYDeviceLayout -Hdc $hdc -Target $Target -LocalPath $path
+            $nodes = @(Get-LeanTTYVisibleLayoutNodes -Node $layout)
+            $inputs = @($nodes | Where-Object {
+                [string]$_.attributes.type -eq 'TextInput' -and
+                [string]$_.attributes.id -match '^native-search-pane-[0-9]+-[0-9]+$' -and
+                [string]$_.attributes.focused -eq 'true'
+            })
+            if ($inputs.Count -eq 1) {
+                $searchInput = $inputs[0]
+                if (-not $querySent) {
+                    if ([string]$searchInput.attributes.text -ne '') { throw '[harness] Paste readiness search was not empty' }
+                    $queryId = [string]$searchInput.attributes.id
+                    Invoke-LeanTTYDeviceText -Hdc $hdc -Target $Target -Text $Marker -InputNode $searchInput -InputLayout $layout
+                    $querySent = $true
+                } elseif ([string]$searchInput.attributes.id -ceq $queryId -and [string]$searchInput.attributes.text -ceq $Marker) {
+                    $labels = @($nodes | Where-Object {
+                        [string]$_.attributes.id -ceq $queryId.Replace('native-search-', 'native-search-result-') -and
+                        [string]$_.attributes.text -match '^[1-9][0-9]*/[1-9][0-9]*$'
+                    })
+                    if ($labels.Count -eq 1) { $matched = $true; break }
+                }
+            }
+            Start-Sleep -Milliseconds 200
+        } while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    } finally {
+        Invoke-LeanTTYDeviceKey -Hdc $hdc -Target $Target -KeyCode 2070
     }
+    if (-not $matched) { throw '[harness] Paste preparation output was not observed; no paste was dispatched' }
+    Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $Target `
+        -LocalPath (Join-Path $EvidenceDirectory 'layout-paste-ready-closed.json') -TimeoutSeconds 10 | Out-Null
 }
 
 function Invoke-SshEscapeInputText {
@@ -1097,16 +1132,8 @@ function Assert-SshEscapeLocalOnly {
 }
 
 function Invoke-LeanTTYPasteShortcut {
-    # HAD-W32 does not synthesize a trusted ArkWeb paste event for a two-key
-    # automation chord. Alt is ignored by the Web Ctrl+V route while allowing
-    # the system UI injector to deliver the complete browser key event.
-    & $hdc -t $Target shell 'uitest uiInput keyEvent 2072 2045 2038' | Out-Null
+    & $hdc -t $Target shell 'uinput -K -d 2072 -d 2038 -u 2038 -u 2072' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Unable to invoke LeanTTY paste shortcut' }
-    # The uitest chord can leave synthetic modifiers latched after ArkWeb has
-    # accepted the trusted paste event. Release every member explicitly so the
-    # next device-paced command is ordinary terminal input.
-    & $hdc -t $Target shell 'uinput -K -u 2038 -u 2045 -u 2072' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to release LeanTTY paste shortcut modifiers' }
 }
 
 function Save-SafeDiagnosticText {
@@ -2153,7 +2180,8 @@ try {
     Wait-AuthLog -Pattern 'native auth event kind=password'
     Submit-AuthValue -Value $credentials.password -LayoutName 'layout-terminal-key-input-password.json'
     Wait-AuthLog -Pattern 'SSH session connected'
-    Wait-AuthLog -Pattern 'OSC 52 clipboard write success=true,length=17'
+    # The native renderer does not emit the retired Web clipboard log. The
+    # fixture's exact Ctrl+V bytes below prove the complete OSC 52 round trip.
 
     Invoke-LeanTTYDevicePhysicalKey -Hdc $hdc -Target $Target -KeyCode 2014
     Start-Sleep -Milliseconds 300
@@ -2216,13 +2244,10 @@ try {
         -Pattern 'input case=russhmain result=matched'
 
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
-    Submit-ConnectedInputUntilAuthEvent `
-        -Text 'ltty-paste-prepare russhmain 1048576' `
-        -Pattern 'OSC 52 clipboard write success=true,length=1048576' `
-        -TimeoutSeconds 30
+    Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'
+    Wait-AuthPasteReady -Marker 'LTTY_PASTE_READY:russhmain:1048576'
     Clear-LeanTTYAppLogs -Hdc $hdc -Target $Target
     Invoke-LeanTTYPasteShortcut
-    Wait-AuthLog -Pattern 'Clipboard paste ok,1048576' -TimeoutSeconds 30
     Wait-AuthLog -Pattern 'D: 1048576 chars' -TimeoutSeconds 30
     Wait-FixtureLog `
         -Pattern 'paste case=russhmain bytes=1048576 result=matched' `
