@@ -5,6 +5,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require(process.argv[2]);
 const source = fs.readFileSync(path.join(__dirname, '../entry/src/main/ets/model/terminal/NativeTerminalController.ets'), 'utf8');
+const keyMapExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
+  '../entry/src/main/ets/common/constants/KeyCodeMap.ets'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText, { exports: keyMapExports });
 function fixture(acceptanceEnabled = true) {
   let callback, next = 1, capacity = 1024 * 1024, occupied = 0;
   const accepted = [], attachments = [], timers = new Map(), logs = [];
@@ -21,7 +26,8 @@ function fixture(acceptanceEnabled = true) {
     barrier() { const seq = next++; accepted.push({ seq, kind: 'barrier' }); return seq; },
     positionSessionOutput() { const seq = next++; accepted.push({ seq, kind: 'position' }); return seq; },
     page(_h, begin) { const seq = next++; accepted.push({ seq, kind: begin ? 'begin' : 'end' }); return seq; },
-    attach(_h,id,width,height,font,generation,inset,stroke) { const seq=next++; attachments.push({seq,id,width,height,font,generation,inset,stroke}); return seq; }, detach() { return next++; }, key() { return next++; },
+    attach(_h,id,width,height,font,generation,inset,stroke) { const seq=next++; attachments.push({seq,id,width,height,font,generation,inset,stroke}); return seq; }, detach() { return next++; },
+    key(_h,code,mods,owner,text,unshiftedCodepoint) { const seq=next++; accepted.push({seq,kind:'key',code,mods,owner,text,unshiftedCodepoint}); return seq; },
     blur() {}, ime() {}, async close() {},
     copy(_h,action,owner,revision) { const seq = next++; accepted.push({ seq, kind: 'copy', action, owner, revision }); return seq; },
     paste(_h,text,owner) { const seq = next++; accepted.push({ seq, kind: 'paste', text, owner }); return seq; },
@@ -40,6 +46,7 @@ function fixture(acceptanceEnabled = true) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }, fileName: 'NativeTerminalController.ts'
   });
   vm.runInNewContext(result.outputText, { exports, require: name => name.includes('ClipboardManager') ? { ClipboardManager: clipboard } :
+    name.includes('KeyCodeMap') ? keyMapExports :
     name.includes('/Logger') ? { Logger: class { info(text) { logs.push(text); } } } :
     name.includes('LocalCommandOutput') ? { LocalCommandOutput: { prompt: () => '\x1b[32mltty>\x1b[0m ' } } :
     name === 'BuildProfile' ? { ACCEPTANCE_TESTS: acceptanceEnabled } :
@@ -59,6 +66,13 @@ function fixture(acceptanceEnabled = true) {
 }
 let count = 0;
 function test(name, fn) { fn(); console.log('PASS ' + name); count++; }
+test('native keys preserve shifted text and pass the existing unshifted mapping', () => {
+  const f=fixture(), c=f.control;
+  c.focused=true; c.presented=true;
+  c.key(2018,3,'B'); c.key(2001,3,'!'); c.key(2012,0,'');
+  assert.deepEqual(f.accepted.filter(x=>x.kind==='key').map(x=>[x.text,x.unshiftedCodepoint]),
+    [['B',98],['!',49],['',0]]);
+});
 test('session anchor waits behind backpressured reset and completes before local output', () => {
   const f=fixture(), c=f.control, completed=[];
   c.write(new Uint8Array(1024*1024),7);

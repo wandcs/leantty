@@ -1,5 +1,6 @@
 import terminal, { TerminalHandle } from 'libleantty_terminal.so'
 import { ClipboardManager } from '../clipboard/ClipboardManager'
+import { KeyCodeMap } from '../../common/constants/KeyCodeMap'
 import util from '@ohos.util'
 
 export class NativeCellMetrics {
@@ -352,7 +353,9 @@ export class NativeTerminalController {
   key(code: number, modifiers: number, text: string = ''): boolean {
     if (this.failed || !this.focused || !this.presented) { return true }
     this.acknowledgeAttention()
-    try { if (terminal.key(this.handle, code, modifiers, this.inputOwner, text) === 0) { this.fail() } }
+    const unshifted = KeyCodeMap.toPrintable(code, false)
+    try { if (terminal.key(this.handle, code, modifiers, this.inputOwner, text,
+      unshifted.length > 0 ? unshifted.charCodeAt(0) : 0) === 0) { this.fail() } }
     catch (_) { this.fail() }
     return true
   }

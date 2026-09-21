@@ -53,9 +53,10 @@ uint64_t TerminalRuntime::resize(uint16_t cols, uint16_t rows, uint16_t cw, uint
 uint64_t TerminalRuntime::beginTemporary(uint32_t owner) { Command c{Kind::BeginTemporary}; c.owner = owner; return admit(std::move(c)); }
 uint64_t TerminalRuntime::endTemporary(uint32_t owner) { Command c{Kind::EndTemporary}; c.owner = owner; return admit(std::move(c)); }
 uint64_t TerminalRuntime::snapshot() { return admit(Command{Kind::Snapshot}); }
-uint64_t TerminalRuntime::key(GhosttyKey key, GhosttyMods modifiers, std::string text, uint32_t owner) {
+uint64_t TerminalRuntime::key(GhosttyKey key, GhosttyMods modifiers, std::string text, uint32_t owner, uint32_t unshiftedCodepoint) {
     if (text.size() > 16384) return 0;
     Command c{Kind::Key}; c.key = key; c.modifiers = modifiers; c.text = std::move(text); c.owner = owner;
+    c.unshiftedCodepoint = unshiftedCodepoint;
     return admit(std::move(c));
 }
 uint64_t TerminalRuntime::paste(std::string text, uint32_t owner) {

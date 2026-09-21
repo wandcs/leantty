@@ -112,7 +112,12 @@ if ($HostTests) {
     & $cursorExe
     if ($LASTEXITCODE -ne 0) { throw 'IME cursor lifecycle contracts failed' }
     $exe = Join-Path $prefix 'terminal-runtime-tests.exe'
-    & $zig c++ -std=c++17 -DGHOSTTY_STATIC -O1 -Wall -Wextra -Werror "-I$source/include" "-I$cpp" `
+    $surface = [IO.File]::ReadAllText((Join-Path $repoRoot 'entry/src/main/ets/model/terminal/TerminalSurfaceController.ets'))
+    $reset = [regex]::Match($surface, "SESSION_BOUNDARY_RESET_SEQUENCE: string = '([^']+)'")
+    if (-not $reset.Success) { throw 'Session reset sequence not found' }
+    $resetCpp = $reset.Groups[1].Value.Replace('\u001b', '\x1b""').Replace('\u0007', '\x07""')
+    [IO.File]::WriteAllText((Join-Path $prefix 'session-reset-sequence.inc'), ('static const char sessionResetSequence[] = "' + $resetCpp + '";'))
+    & $zig c++ -std=c++17 -DGHOSTTY_STATIC -O1 -Wall -Wextra -Werror "-I$source/include" "-I$cpp" "-I$prefix" `
         (Join-Path $cpp 'TerminalRuntime.cpp') (Join-Path $cpp 'TerminalInteraction.cpp') (Join-Path $cpp 'TerminalEffects.cpp') (Join-Path $PSScriptRoot 'native-terminal/runtime-test.cpp') `
         (Join-Path $prefix 'lib/libghostty-vt.a') -o $exe
     if ($LASTEXITCODE -ne 0) { throw 'Terminal host test build failed' }
