@@ -9,6 +9,8 @@ $entryText = if ($EntrySourceRevision) {
     (& git -C (Split-Path $PSScriptRoot -Parent) show "${EntrySourceRevision}:tools/verify-release-pc.ps1") -join "`n"
 } else { Get-Content (Join-Path $PSScriptRoot 'verify-release-pc.ps1') -Raw }
 $phaseFailAt = ''
+$phaseChangedPaths = @()
+$phaseChangeIndependentSsh = $false
 $phaseCalls = [Collections.Generic.List[string]]::new()
 $checks = 0
 function Assert-Phase([bool]$Condition, [string]$Message) {
@@ -75,7 +77,14 @@ $record.runtimeReclaim=@{contractVersion=1;trigger='acceptance-only-runtime-stat
     beforeProcess=@{processId='123';startTimeTicks='456'};afterProcess=@{processId='123';startTimeTicks='456'}}
 $record.processRecovery=@{exercised=$true;runtimeReclaimed=$true;workspaceWarningObserved=$true;
     remoteContentAbsent=$true;sessionNotRestored=$true}
+if ($leaf -eq 'verify-agent-compatibility-pc.ps1') { $record.runMode='acceptance' }
 Write-LeanTTYAtomicJson -Path (Join-Path $EvidenceDirectory $resultFile) -Value $record -Depth 12
+if ($false) {
+    function Wait-AuthPasteReady {}
+    function Invoke-LeanTTYPasteShortcut {}
+    if (Test-AuthStageSelected -Name 'terminal-key-input') {}
+    if (Test-AuthStageSelected -Name 'transport-main-path') {}
+}
 $global:LASTEXITCODE=0
 '@
     foreach ($name in @($definitions.script | Sort-Object -Unique)) {
@@ -86,7 +95,13 @@ $global:LASTEXITCODE=0
     function git {
         $global:LASTEXITCODE=0
         if ($args -contains 'status') { return }
-        if ($args -contains 'merge-base' -or $args -contains 'diff') { return }
+        if ($args -contains 'merge-base') { return }
+        if ($args -contains 'diff') { foreach ($changedPath in $phaseChangedPaths) { $changedPath }; return }
+        if ($args -contains 'show') {
+            Get-Content (Join-Path $fixtureTools 'verify-ssh-auth-pc.ps1')
+            if ($phaseChangeIndependentSsh) { '# changed an independent SSH owner' }
+            return
+        }
         if ($args -contains 'HEAD^{tree}') { return ('c'*40) }
         if ($args -contains 'HEAD') { return ('b'*40) }
         if ($args -contains (('b'*40)+'^{tree}')) { return ('c'*40) }
@@ -175,7 +190,7 @@ $global:LASTEXITCODE=0
         sourceReport=$oldRef;recovery=$recovery;admission=(Pin-PhaseJson 'r2-audit.json' $audit)}
     $arguments.EvidenceDirectory=Join-Path $testRoot 'r2-continued'
     $r2Start=$phaseCalls.Count
-    & $entry @arguments -Phase automatic -AgentContinuationPath $manifest.path
+    & $entry @arguments -Phase automatic -ContinuationPath $manifest.path
     $continuedPath=Join-Path $arguments.EvidenceDirectory 'release-report.json'
     $continued=Get-Content $continuedPath -Raw | ConvertFrom-Json -Depth 20
     Assert-Phase ($continued.result -eq 'awaiting-operator' -and
@@ -189,6 +204,98 @@ $global:LASTEXITCODE=0
     Assert-Phase ($phaseCalls.Count -eq ($r2Start+11)) 'R2 operator resume repeated an automatic stage'
     $continued=Get-Content $continuedPath -Raw | ConvertFrom-Json -Depth 20
     Assert-Phase ($continued.completeApplicablePhysicalMatrixClaimed) 'R2 could not complete its real validated operator suffix'
+
+    # SSH-local clipboard repair reuses the completed Agent stage as well. Run
+    # the real entry and policy, including operator resume, with no model calls.
+    $sshOld = $report | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $sshOld.result = 'failed'; $sshOld.completeApplicablePhysicalMatrixClaimed = $false
+    $sshIndex = [Array]::IndexOf(@($sshOld.stageOrder), 'ssh-physical-matrix')
+    $sshStage = $sshOld.stages[$sshIndex]
+    $clipboardFailure = 'Timed out waiting for LeanTTY device state: OSC 52 clipboard write success=true,length=17'
+    $sshCandidate = $sshOld.candidate | ConvertTo-Json | ConvertFrom-Json
+    $sshCandidate | Add-Member retained $true
+    $group = @{result='failed';runMode='acceptance';executionGroup='transport-performance';
+        candidate=$sshCandidate;harness=$sshOld.harness;attemptId=('2'*32);failure=$clipboardFailure;
+        checks=@(@{name='fixture-and-device-preflight';result='passed'},@{name='ssh-diagnostics';result='passed'});
+        performanceMatrix=@{selected=$false};preferences=@{allowedMutation='none'};
+        cleanup=@{result='passed';independentKeyAbsenceAudit=$true;independentEcdsaKeyAbsenceAudit=$true;
+            knownHostRemovalCommandCompleted=$true;reverseMappingAbsenceAudit=$true;fixtureProcessAbsenceAudit=$true}}
+    $groupRef = Pin-PhaseJson 'ssh-original/transport-performance/device-ssh-auth.json' $group
+    $matrix = @{schemaVersion=2;scenario='ssh-physical-matrix';result='failed';completedGroups=@();
+        fixedOrder=@('transport-performance','authentication-methods','lifecycle-recovery','pane-focus-attention');
+        candidate=$sshCandidate;harness=$sshOld.harness;failure=$clipboardFailure}
+    $matrixRef = Pin-PhaseJson 'ssh-original/ssh-matrix.json' $matrix
+    $sshStage.status='failed'; $sshStage.resultPath=$matrixRef.path; $sshStage.failure=$clipboardFailure
+    $sshStage.attemptId=''
+    for($index=$sshIndex+1;$index -lt $sshOld.stages.Count;$index++) {
+        $sshOld.stages[$index].status='pending'; $sshOld.stages[$index].attemptCount=0
+    }
+    $sshOldRef = Pin-PhaseJson 'ssh-source/release-report.json' $sshOld
+    $sshAudit = @{gate='ssh-continuation-state-audit';result='passed';sourceReportSha256=$sshOldRef.sha256;
+        failedGroupSha256=$groupRef.sha256;failedMatrixSha256=$matrixRef.sha256;
+        candidateSha256=$sshOld.candidate.sha256;target=$arguments.Target;observedAt=[DateTimeOffset]::UtcNow.ToString('o');
+        sshScriptSha256=(Get-FileHash (Join-Path $fixtureTools 'verify-ssh-auth-pc.ps1')).Hash.ToLowerInvariant()}
+    foreach($field in @('readOnly','knownHostsAbsent','fixtureProcessesAbsent','fixtureDirectoriesAbsent',
+        'listenersAbsent','hdcMappingsEmpty','workspaceRestored','notificationRestored','platformUnchanged','prefixIndependent')) {$sshAudit[$field]=$true}
+    $sshManifestValue = @{schemaVersion=1;scope='ssh-native-clipboard-R2';sourceReport=$sshOldRef;
+        failedGroup=$groupRef;admission=(Pin-PhaseJson 'ssh-audit.json' $sshAudit)}
+    $sshManifest = Pin-PhaseJson 'ssh-manifest.json' $sshManifestValue
+    $arguments.EvidenceDirectory=Join-Path $testRoot 'ssh-continued'
+    $sshStart=$phaseCalls.Count
+    & $entry @arguments -Phase automatic -ContinuationPath $sshManifest.path
+    $sshContinued=Get-Content (Join-Path $arguments.EvidenceDirectory 'release-report.json') -Raw | ConvertFrom-Json -Depth 30
+    $sshFreshCalls=@($phaseCalls | Select-Object -Skip $sshStart)
+    Assert-Phase ($sshContinued.result -eq 'awaiting-operator' -and
+        @($sshContinued.stages | Where-Object status -eq 'reused').Count -eq 17 -and
+        $sshContinued.continuation.newPlannedModelRequests -eq 0) 'SSH continuation lost its formal prefix or zero-model scope'
+    Assert-Phase ($sshFreshCalls.Count -eq 8 -and $sshFreshCalls[0] -eq 'qualify-acceptance-harness-pc.ps1' -and
+        $sshFreshCalls[1] -eq 'verify-ssh-matrix-pc.ps1' -and
+        @($sshFreshCalls | Where-Object {$_ -match 'agent|long-task|operator'}).Count -eq 0) 'SSH continuation repeated model work or skipped qualification/SSH'
+    & $entry @arguments -Phase operator -Resume
+    Assert-Phase ($phaseCalls.Count -eq ($sshStart+10)) 'SSH continuation repeated automatic work during operator resume'
+    Assert-Phase ((Get-FileHash $sshOldRef.path).Hash -ieq $sshOldRef.sha256) 'SSH continuation rewrote its original failure'
+    . (Join-Path $fixtureTools 'release-agent-continuation.ps1')
+    $sshPolicy = @{Manifest=$sshManifestValue;Candidate=$sshOld.candidate;Invocation=$sshOld.invocation;RepoRoot=$fixtureRoot}
+    foreach($field in @('independentKeyAbsenceAudit','independentEcdsaKeyAbsenceAudit','knownHostRemovalCommandCompleted',
+        'reverseMappingAbsenceAudit','fixtureProcessAbsenceAudit')) {
+        $group.cleanup[$field]=$false
+        $sshManifestValue.failedGroup=Pin-PhaseJson 'ssh-original/transport-performance/device-ssh-auth.json' $group
+        Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*SSH cleanup is unproved*'
+        $group.cleanup[$field]=$true
+    }
+    $group.failure='different product failure'
+    $sshManifestValue.failedGroup=Pin-PhaseJson 'ssh-original/transport-performance/device-ssh-auth.json' $group
+    Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*outside the qualified clipboard repair*'
+    $group.failure=$clipboardFailure
+    $sshManifestValue.failedGroup=Pin-PhaseJson 'ssh-original/transport-performance/device-ssh-auth.json' $group
+    $matrix.completedGroups=@(@{name='transport-performance';result='passed'})
+    $null=Pin-PhaseJson 'ssh-original/ssh-matrix.json' $matrix
+    Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*original first-group failure*'
+    $matrix.completedGroups=@(); $null=Pin-PhaseJson 'ssh-original/ssh-matrix.json' $matrix
+    foreach($path in @('tools/verify-ssh-auth-pc.ps1','tools/test-device-regression.ps1',
+        'tools/verify-release-pc.ps1','tools/release-agent-continuation.ps1','tools/test-release-agent-continuation.ps1',
+        'tools/test-release-phases.ps1','docs/next-work.md','docs/quality-strategy.md')) {
+        $phaseChangedPaths=@($path)
+        $qualified=Get-LeanTTYReleaseContinuation @sshPolicy
+        Assert-Phase ($qualified.newPlannedModelRequests -eq 0) 'Allowed SSH tool repair lost zero-model continuation'
+    }
+    foreach($path in @('tools/device-regression.ps1','tools/hdc-common.ps1','tools/verify-agent-compatibility-pc.ps1',
+        'tools/verify-long-task-notification-pc.ps1','tools/verify-mosh-pc.ps1','entry/src/main/ets/model/terminal/NativeTerminalController.ets')) {
+        $phaseChangedPaths=@($path)
+        Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*'
+    }
+    $phaseChangedPaths=@()
+    $phaseChangedPaths=@('tools/verify-ssh-auth-pc.ps1'); $phaseChangeIndependentSsh=$true
+    Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*outside clipboard owners*'
+    $phaseChangedPaths=@(); $phaseChangeIndependentSsh=$false
+    $group.runMode='diagnostic'
+    $sshManifestValue.failedGroup=Pin-PhaseJson 'ssh-original/transport-performance/device-ssh-auth.json' $group
+    Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*original first-group failure*'
+    $group.runMode='acceptance'; $group.performanceMatrix.selected=$true
+    $sshManifestValue.failedGroup=Pin-PhaseJson 'ssh-original/transport-performance/device-ssh-auth.json' $group
+    Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*pre-performance clipboard boundary*'
+    $group.performanceMatrix.selected=$false
+    $sshManifestValue.failedGroup=Pin-PhaseJson 'ssh-original/transport-performance/device-ssh-auth.json' $group
     $phaseFailAt='verify-key-passphrase-pc.ps1'
     $beforeFailure=$phaseCalls.Count
     $arguments.EvidenceDirectory=Join-Path $testRoot 'failure'

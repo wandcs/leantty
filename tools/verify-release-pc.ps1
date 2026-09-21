@@ -23,7 +23,7 @@ param(
     [string]$Distribution = $env:LEANTTY_WSL_DISTRO,
     [ValidateSet('full', 'automatic', 'operator')][string]$Phase = 'full',
     [switch]$Resume,
-    [string]$AgentContinuationPath = ''
+    [string]$ContinuationPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,9 +31,9 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 . (Join-Path $PSScriptRoot 'release-agent-continuation.ps1')
-if ($Resume -and $AgentContinuationPath) { throw 'Use a new report for Agent continuation, not -Resume' }
+if ($Resume -and $ContinuationPath) { throw 'Use a new report for cross-harness continuation, not -Resume' }
 if ($Phase -eq 'operator' -and -not $Resume) { throw 'Operator phase requires -Resume from completed automatic work' }
-if ($Phase -eq 'operator' -and $AgentContinuationPath) { throw 'Operator phase cannot create a continuation' }
+if ($Phase -eq 'operator' -and $ContinuationPath) { throw 'Operator phase cannot create a continuation' }
 
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 $repoFullPath = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
@@ -189,7 +189,7 @@ if ($Resume) {
         ConvertFrom-Json -Depth 20
     $candidate = Assert-ReleaseResumeIdentity -ExistingReport $report
     if ($null -ne $report.continuation) {
-        $validated = Get-LeanTTYAgentReleaseContinuation -Manifest $report.continuation.manifest `
+        $validated = Get-LeanTTYReleaseContinuation -Manifest $report.continuation.manifest `
             -Candidate $candidate -Invocation $report.invocation -RepoRoot $repoRoot -Recheck
         Assert-LeanTTYInheritedReleaseStages -Report $report -Validated $validated
     }
@@ -263,11 +263,11 @@ if ($Resume) {
         )
     }
     $candidate = $null
-    if ($AgentContinuationPath) {
-        if ([string]::IsNullOrWhiteSpace($HapPath)) { throw 'Agent continuation requires the exact -HapPath' }
-        $manifest = Get-Content -LiteralPath $AgentContinuationPath -Raw | ConvertFrom-Json -Depth 10
+    if ($ContinuationPath) {
+        if ([string]::IsNullOrWhiteSpace($HapPath)) { throw 'Continuation requires the exact -HapPath' }
+        $manifest = Get-Content -LiteralPath $ContinuationPath -Raw | ConvertFrom-Json -Depth 10
         if (($Phase -eq 'full' -and $manifest.scope -cne 'agent-exit-boundary-R2') -or
-            ($Phase -eq 'automatic' -and $manifest.scope -cne 'agent-split-R2')) {
+            ($Phase -eq 'automatic' -and $manifest.scope -cnotin @('agent-split-R2', 'ssh-native-clipboard-R2'))) {
             throw 'Continuation scope does not match the selected release phase'
         }
         $oldRoot = [IO.Path]::GetFullPath((Split-Path $manifest.sourceReport.path -Parent)).TrimEnd('\', '/')
@@ -277,11 +277,11 @@ if ($Resume) {
         }
         $candidate = Resolve-LeanTTYRetainedCandidate -RepoRoot $repoRoot -HapPath $HapPath `
             -CandidateBasePath $normalizedCandidateBasePath
-        $validated = Get-LeanTTYAgentReleaseContinuation -Manifest $manifest -Candidate $candidate `
+        $validated = Get-LeanTTYReleaseContinuation -Manifest $manifest -Candidate $candidate `
             -Invocation $report.invocation -RepoRoot $repoRoot
         $report | Add-Member -NotePropertyName continuation -NotePropertyValue ([pscustomobject]@{
             scope = 'R2'; manifest = $manifest; originalFailurePreserved = $true
-            newPlannedModelRequests = 8; automaticRetries = 0
+            newPlannedModelRequests = $validated.newPlannedModelRequests; automaticRetries = 0
         })
         foreach ($inherited in $validated.prefix) {
             $stage = $inherited.stage
@@ -289,7 +289,7 @@ if ($Resume) {
             $stage | Add-Member -NotePropertyName sourceEvidenceSha256 -NotePropertyValue $inherited.sha256
             $report.stages[$inherited.index] = $stage
         }
-        $report.stages[$validated.agentIndex].attemptId = $validated.failedAttemptId
+        $report.stages[$validated.failedIndex].attemptId = $validated.failedAttemptId
     }
     $null = Write-LeanTTYReleaseReportArtifacts `
         -EvidenceDirectory $EvidenceDirectory -Report $report
@@ -612,7 +612,7 @@ try {
         }
     }
     if ($null -ne $report.continuation) {
-        $validated = Get-LeanTTYAgentReleaseContinuation -Manifest $report.continuation.manifest `
+        $validated = Get-LeanTTYReleaseContinuation -Manifest $report.continuation.manifest `
             -Candidate $candidate -Invocation $report.invocation -RepoRoot $repoRoot -Recheck
         Assert-LeanTTYInheritedReleaseStages -Report $report -Validated $validated
     }

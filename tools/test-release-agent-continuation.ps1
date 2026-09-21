@@ -4,7 +4,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 $entry = if ($EntrySourceRevision) {
     (& git -C $repoRoot show ($EntrySourceRevision + ':tools/verify-release-pc.ps1')) -join "`n"
 } else { Get-Content -LiteralPath (Join-Path $PSScriptRoot 'verify-release-pc.ps1') -Raw }
-if ($entry -notmatch '\[string\]\$AgentContinuationPath') { throw 'Formal entry cannot represent Agent R2 continuation' }
+if ($entry -notmatch '\[string\]\$ContinuationPath') { throw 'Formal entry cannot represent Agent R2 continuation' }
 . (Join-Path $PSScriptRoot 'candidate-store.ps1')
 . (Join-Path $PSScriptRoot 'release-tooling.ps1')
 . (Join-Path $PSScriptRoot 'release-agent-continuation.ps1')
@@ -38,7 +38,7 @@ try {
     $invocation = [pscustomobject]@{target='fixture';candidateBasePath='';fixturePort=22000;longTaskPort=23000;agentPort=0;moshAlternateWifiSsidIdentity=('f'*64);distribution='test-wsl'}
     $harness = @{gitCommit=('a'*40);gitTree=('b'*40);gitDirty=$false}
     $defs = @(Get-LeanTTYReleaseVerificationStages -SplitOperator:$SplitOperator)
-    $agentIndex = [Array]::IndexOf(@($defs.name), 'agent-compatibility')
+    $failedIndex = [Array]::IndexOf(@($defs.name), 'agent-compatibility')
     $stages = @($defs | ForEach-Object {
         $evidence = @{result='passed';cleanup=@{result='passed'};candidate=$candidate;harness=$harness;reviewTestHap=@{sha256=$candidate.sha256};releaseEligible=$true;runMode='formal'}
         $reference = Pin-TestJson ($_.name + '.json') $evidence
@@ -47,8 +47,8 @@ try {
     $resources = @{knownHostEndpoint='[127.0.0.1]:32000';tabCleanup=@{ownedTabRemoved=$true;originalTabsRestored=$true;originalActiveTabRestored=$true};notificationPermission=@{restored=$true}}
     $agent = @{status='invalid/interrupted';runMode='acceptance';harness=$harness;candidate=$candidate;attemptId='original-attempt';resources=$resources;cleanup=@{result=$(if ($SplitOperator) {'passed'} else {'failed'})}}
     $agentRef = Pin-TestJson 'failed-agent.json' $agent
-    $stages[$agentIndex].status='failed'; $stages[$agentIndex].attemptId='original-attempt'; $stages[$agentIndex].resultPath=$agentRef.path
-    for ($index=$agentIndex+1;$index -lt $stages.Count;$index++) {
+    $stages[$failedIndex].status='failed'; $stages[$failedIndex].attemptId='original-attempt'; $stages[$failedIndex].resultPath=$agentRef.path
+    for ($index=$failedIndex+1;$index -lt $stages.Count;$index++) {
         $stages[$index].status='pending'; $stages[$index].attemptCount=0
     }
     $old = [pscustomobject]@{schemaVersion=1;gate='registered-release-verification';result='failed';stageOrder=@($defs.name);stages=$stages;candidate=$candidate;harness=$harness;invocation=$invocation}
@@ -60,8 +60,8 @@ try {
     foreach ($field in $stateFields) { $admission | Add-Member $field $true }
     $manifest = [pscustomobject]@{schemaVersion=1;scope=$(if ($SplitOperator) {'agent-split-R2'} else {'agent-exit-boundary-R2'});sourceReport=$oldRef;recovery=$recoveryRef;admission=(Pin-TestJson 'admission.json' $admission)}
     $argsForPolicy = @{Manifest=$manifest;Candidate=$candidate;Invocation=$invocation;RepoRoot=$repoRoot}
-    $result = Get-LeanTTYAgentReleaseContinuation @argsForPolicy
-    if ($result.prefix.Count -ne ($agentIndex-2) -or $result.agentIndex -ne $agentIndex -or $result.failedAttemptId -cne 'original-attempt' -or
+    $result = Get-LeanTTYReleaseContinuation @argsForPolicy
+    if ($result.prefix.Count -ne ($failedIndex-2) -or $result.failedIndex -ne $failedIndex -or $result.failedAttemptId -cne 'original-attempt' -or
         $result.prefix.stage.name -contains 'harness-qualification' -or
         (Read-LeanTTYPinnedReleaseJson $oldRef).result -cne 'failed') { throw 'Valid continuation lost its prefix, fresh QH or immutable failure' }
     $passed++
@@ -85,7 +85,7 @@ try {
         {param($x) $x.stages[0].status='pending'},
         {param($x) $x.stages[2].name='other'},
         {param($x) $x.stages[2].status='failed'},
-        {param($x) $x.stages[$agentIndex].status='passed'},
+        {param($x) $x.stages[$failedIndex].status='passed'},
         {param($x) $x.stages[-1].attemptCount=1},
         {param($x) $x.harness.gitDirty=$true},
         {param($x) $x.candidate.gitDirty=$true}
@@ -98,7 +98,7 @@ try {
         $manifest.recovery=Pin-TestJson 'recovery.json' $recovery
         $admission.sourceReportSha256=$manifest.sourceReport.sha256
         $manifest.admission=Pin-TestJson 'admission.json' $admission
-        Assert-Rejected 'malformed original checkpoint' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        Assert-Rejected 'malformed original checkpoint' { Get-LeanTTYReleaseContinuation @argsForPolicy }
     }
     $manifest.sourceReport=Pin-TestJson 'old.json' $old
     $recovery.originalReleaseReportSha256=$manifest.sourceReport.sha256
@@ -108,32 +108,32 @@ try {
     if ($SplitOperator) {
         $agent.cleanup.result='failed'
         $null=Pin-TestJson 'failed-agent.json' $agent
-        Assert-Rejected 'split cleanup cannot be waived by recovery' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        Assert-Rejected 'split cleanup cannot be waived by recovery' { Get-LeanTTYReleaseContinuation @argsForPolicy }
         $agent.cleanup.result='passed'
         $null=Pin-TestJson 'failed-agent.json' $agent
     }
     foreach ($field in $stateFields) {
         $admission.$field = $false; $manifest.admission = Pin-TestJson 'admission.json' $admission
-        Assert-Rejected $field { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        Assert-Rejected $field { Get-LeanTTYReleaseContinuation @argsForPolicy }
         $admission.$field = $true
     }
     $admission.observedAt = [DateTimeOffset]::UtcNow.AddMinutes(-11).ToString('o')
     $manifest.admission = Pin-TestJson 'admission.json' $admission
-    Assert-Rejected 'stale admission' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
-    Get-LeanTTYAgentReleaseContinuation @argsForPolicy -Recheck | Out-Null; $passed++
+    Assert-Rejected 'stale admission' { Get-LeanTTYReleaseContinuation @argsForPolicy }
+    Get-LeanTTYReleaseContinuation @argsForPolicy -Recheck | Out-Null; $passed++
     $admission.observedAt = [DateTimeOffset]::UtcNow.ToString('o')
     $admission.agentScriptSha256 = '0'*64; $manifest.admission=Pin-TestJson 'admission.json' $admission
-    Assert-Rejected 'repaired script drift' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+    Assert-Rejected 'repaired script drift' { Get-LeanTTYReleaseContinuation @argsForPolicy }
     $admission.agentScriptSha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'verify-agent-compatibility-pc.ps1') -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest.admission=Pin-TestJson 'admission.json' $admission
     foreach ($field in @('gitCommit','gitTree','sha256')) {
         $saved=$candidate.$field; $candidate.$field='0'*$saved.Length
-        Assert-Rejected "candidate $field" { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        Assert-Rejected "candidate $field" { Get-LeanTTYReleaseContinuation @argsForPolicy }
         $candidate.$field=$saved
     }
     foreach ($field in $invocation.PSObject.Properties.Name) {
         $saved=$invocation.$field; $invocation.$field='changed'
-        Assert-Rejected "invocation $field" { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        Assert-Rejected "invocation $field" { Get-LeanTTYReleaseContinuation @argsForPolicy }
         $invocation.$field=$saved
     }
     foreach ($path in @('tools/test-agent-attention-gate.ps1', 'tools/agent-compatibility-policy.ps1', 'AGENTS.md',
@@ -145,34 +145,34 @@ try {
             'tools/agent-compatibility/test_observe_attention.py',
             'tools/agent-compatibility/test_observe_attention_pty.py')) {
         $script:changedPaths=@($path)
-        Get-LeanTTYAgentReleaseContinuation @argsForPolicy | Out-Null
+        Get-LeanTTYReleaseContinuation @argsForPolicy | Out-Null
         $passed++
     }
     $script:changedPaths=@('docs/design/agent-notification-order-20260912.md')
-    Get-LeanTTYAgentReleaseContinuation @argsForPolicy | Out-Null
+    Get-LeanTTYReleaseContinuation @argsForPolicy | Out-Null
     $passed++
     foreach($owner in @('tools/verify-ssh-auth-pc.ps1','tools/verify-mosh-pc.ps1',
             'tools/verify-terminal-search-pc.ps1','tools/verify-long-task-notification-pc.ps1')) {
         $script:changedPaths=@($owner)
-        Get-LeanTTYAgentReleaseContinuation @argsForPolicy | Out-Null
+        Get-LeanTTYReleaseContinuation @argsForPolicy | Out-Null
         $passed++
         $script:changeIndependentBody=$true
-        Assert-Rejected 'independent owner changed outside admission array' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        Assert-Rejected 'independent owner changed outside admission array' { Get-LeanTTYReleaseContinuation @argsForPolicy }
         $script:changeIndependentBody=$false
     }
     foreach ($path in @('tools/device-regression.ps1','tools/hdc-common.ps1','tools/release-tooling.ps1','entry/src/main/ets/Test.ets','leantty_ssh/Cargo.lock','tools/notification-regression.ps1','tools/agent-compatibility-wsl.sh','tools/agent-compatibility/analyze_capture.py', 'docs/design/unreviewed.md', 'docs/design/agent-notification-order-20260912.md.ps1')) {
         $script:changedPaths=@($path)
-        Assert-Rejected "shared or product path $path" { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+        Assert-Rejected "shared or product path $path" { Get-LeanTTYReleaseContinuation @argsForPolicy }
     }
     $script:changedPaths=@()
     $originalHash=$manifest.sourceReport.sha256; $manifest.sourceReport.sha256='0'*64
-    Assert-Rejected 'old report hash' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+    Assert-Rejected 'old report hash' { Get-LeanTTYReleaseContinuation @argsForPolicy }
     $manifest.sourceReport.sha256=$originalHash
     $prefixPath=$stages[2].resultPath
     Write-LeanTTYAtomicJson -Path $prefixPath -Value @{result='failed';cleanup=@{result='passed'}}
-    Assert-Rejected 'failed prefix evidence' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+    Assert-Rejected 'failed prefix evidence' { Get-LeanTTYReleaseContinuation @argsForPolicy }
     Write-LeanTTYAtomicJson -Path $prefixPath -Value @{result='passed';cleanup=@{result='failed'}}
-    Assert-Rejected 'unproved prefix cleanup' { Get-LeanTTYAgentReleaseContinuation @argsForPolicy }
+    Assert-Rejected 'unproved prefix cleanup' { Get-LeanTTYReleaseContinuation @argsForPolicy }
     Write-Host "AGENT RELEASE CONTINUATION TESTS PASSED: $passed"
 } finally {
     $resolved = [IO.Path]::GetFullPath($testRoot)

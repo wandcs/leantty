@@ -1047,20 +1047,20 @@ foreach ($scriptName in @(
             $content.Contains("'ltty-input-check russhmain'") -and
             $content.Contains("'ltty-paste-prepare russhmain 1048576'") -and
             ([regex]::Matches($content, 'Submit-ConnectedInputUntilFixtureEvent').Count -ge 8) -and
-            ([regex]::Matches($content, 'Submit-ConnectedInputUntilAuthEvent').Count -ge 2) -and
+            $content.Contains("Wait-AuthPasteReady -Marker 'LTTY_PASTE_READY:russhmain:1048576'") -and
             $content.Contains("'connected-input-snapshot'") -and
             $content.Contains('function Wait-FixtureConnectedInputSnapshot') -and
             $content.Contains('for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++)') -and
             $content.Contains('connected input state=cleared') -and
             $content.Contains('Connected input could not be made exact before Enter') -and
             $content.Contains('Connected input outcome is unknown; the scenario must be restarted') -and
-            $content.Contains('Connected input application outcome is unknown; the scenario must be restarted') -and
-            -not $content.Contains("Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'") -and
-            $content.Contains("'Clipboard paste ok,1048576'") -and
+            $content.Contains('Paste preparation output was not observed; no paste was dispatched') -and
+            $content.Contains("Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'") -and
+            -not $content.Contains('OSC 52 clipboard write success=') -and
+            -not $content.Contains('Clipboard paste ok,') -and
             $content.Contains("'D: 1048576 chars'") -and
             $content.Contains("'paste case=russhmain bytes=1048576 result=matched'") -and
-            $content.Contains("'uitest uiInput keyEvent 2072 2045 2038'") -and
-            $content.Contains("'uinput -K -u 2038 -u 2045 -u 2072'") -and
+            $content.Contains("'uinput -K -d 2072 -d 2038 -u 2038 -u 2072'") -and
             $content.Contains("Invoke-AuthPerfSample -CaseId 'russhmain'") -and
             $content.Contains('NATIVE_OUTPUT_PROBE case=') -and
             $content.Contains("'resize cols=\d+ rows=\d+'") -and
@@ -2654,5 +2654,45 @@ Assert-True (
 ) 'Unexpected-recovery uninstall scenario lost its fresh-install or durable-asset boundary'
 
 & (Join-Path $PSScriptRoot 'test-native-performance-evidence.ps1')
+
+# Run the actual native paste readiness observer without a device. A result for
+# another Pane or another query must not authorize the one-shot paste action.
+& {
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1'), [ref]$null, [ref]$null)
+    foreach ($name in @('Wait-AuthPasteReady', 'Invoke-LeanTTYPasteShortcut')) {
+        $definition = $ast.FindAll({ param($n)
+            $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name
+        }, $true) | Select-Object -First 1
+        Invoke-Expression $definition.Extent.Text
+    }
+    $hdc = 'Invoke-ClipboardFakeHdc'; $Target = 'unused'; $EvidenceDirectory = 'unused'
+    function Invoke-ClipboardFakeHdc { $script:clipboardChord = $args[-1]; $global:LASTEXITCODE = 0 }
+    function Invoke-LeanTTYDeviceText { param($Text) $script:clipboardQuery = $Text; $script:clipboardQueryCount++ }
+    function Invoke-LeanTTYDeviceKey { param($KeyCode) Assert-True ($KeyCode -eq 2070) 'Readiness observer sent an unexpected key'; $script:clipboardEscapeCount++ }
+    function Wait-LeanTTYTerminalInputLayout { $script:clipboardFocusRestored = $true }
+    function Get-LeanTTYDeviceLayout {
+        $query = $script:clipboardQuery
+        $pane = if ($case -eq 'changed-pane' -and $query) { 'pane-2-1' } else { 'pane-1-1' }
+        $resultPane = if ($case -eq 'unrelated-result') { 'pane-1-2' } else { $pane }
+        $result = if ($case -eq 'missing-marker') { '0/0' } else { '1/1' }
+        if ($case -eq 'wrong-query' -and $query) { $query = 'unrelated' }
+        if ($case -eq 'stale-query') { $query = 'old-query' }
+        return @{ attributes = @{}; children = @(
+            @{attributes=@{type='TextInput';id="native-search-$pane";focused='true';visible='true';text=$query};children=@()},
+            @{attributes=@{type='Text';id="native-search-result-$resultPane";visible='true';text=$result};children=@()}) }
+    }
+    foreach ($case in @('matched', 'missing-marker', 'unrelated-result', 'wrong-query', 'changed-pane', 'stale-query')) {
+        $script:clipboardQuery = ''; $script:clipboardQueryCount = 0; $script:clipboardEscapeCount = 0
+        $script:clipboardFocusRestored = $false; $failure = $null
+        try { Wait-AuthPasteReady -Marker 'LTTY_PASTE_READY:public:1048576' -TimeoutSeconds 1 }
+        catch { $failure = $_.Exception }
+        Assert-True (($null -eq $failure) -eq ($case -eq 'matched')) "Clipboard readiness misclassified $case"
+        Assert-True ($script:clipboardQueryCount -le 1 -and $script:clipboardEscapeCount -eq 1) 'Readiness repeated input or failed to close search'
+        Assert-True ($script:clipboardFocusRestored -eq ($case -eq 'matched')) 'Readiness passed without its output boundary'
+    }
+    Invoke-LeanTTYPasteShortcut
+    Assert-True ($script:clipboardChord -ceq 'uinput -K -d 2072 -d 2038 -u 2038 -u 2072') 'Paste used the retired Web modifier workaround'
+}
 
 Write-Host 'Device regression helper tests passed.' -ForegroundColor Green
