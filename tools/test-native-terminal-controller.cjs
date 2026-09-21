@@ -502,6 +502,22 @@ test('search and remote effects reject stale ownership; attention requires ackno
   f.control.closeSearch(); f.emit('search',0,f.control.searchGeneration,'1,8');
   assert.equal(results,1);
 });
+test('focus transitions rearm BEL delivery without acknowledging a background Pane', () => {
+  const f=fixture(), c=f.control; let bells=0, acknowledgements=0;
+  c.focused=true; c.presented=true; c.acceptsRemoteEffect=owner=>owner===17;
+  c.onBell=()=>bells++; c.onAttentionAcknowledged=()=>acknowledgements++;
+  f.emit('bell',0,17);
+  c.blur();
+  assert.equal(acknowledgements,0,'leaving a Pane must preserve its attention');
+  f.emit('bell',0,17); f.emit('bell',0,17);
+  assert.equal(bells,2,'a foreground BEL must not suppress a new background BEL');
+  c.blur(); f.emit('bell',0,17);
+  assert.equal(bells,2,'duplicate blur must not rearm an unchanged background episode');
+  c.focusedBySurface();
+  assert.equal(acknowledgements,1,'returning focus acknowledges the delivered episode');
+  c.blur(); f.emit('bell',0,16); f.emit('bell',0,17); f.emit('bell',0,17);
+  assert.equal(bells,3,'the next focus interval delivers one current-owner BEL');
+});
 if (['cold','warm'].includes(process.argv[3])) {
   const mode = process.argv[3], marker = mode === 'cold' ? 'STARTUP_PERF' : 'STARTUP_WARM';
   test('startup probe rejects blank frames, stale generations, hidden frames and unconsumed output', () => {
