@@ -324,10 +324,11 @@ export class NativeTerminalController {
     if (this.focusConfirmed) { this.attachInput() }
   }
   focusedBySurface(): void {
-    this.focused = true; this.focusConfirmed = true; this.attachInput()
+    this.focused = true; this.focusConfirmed = true; this.acknowledgeAttention(); this.attachInput()
     try { this.admitted(terminal.focus(this.handle, true)) } catch (_) { this.fail() }
   }
   blur(): void {
+    if (this.focused) { this.attentionPending = false }
     this.focused = false; this.focusConfirmed = false; this.invalidateInput()
     if (!this.failed && !this.closing) {
       try { this.admitted(terminal.focus(this.handle, false)) } catch (_) { this.fail() }
