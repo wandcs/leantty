@@ -84,6 +84,7 @@ if ($false) {
     function Invoke-LeanTTYPasteShortcut {}
     if (Test-AuthStageSelected -Name 'terminal-key-input') {}
     if (Test-AuthStageSelected -Name 'transport-main-path') {}
+    if (Test-AuthStageSelected -Name 'ssh-escape') {}
 }
 $global:LASTEXITCODE=0
 '@
@@ -286,7 +287,7 @@ $global:LASTEXITCODE=0
     }
     $phaseChangedPaths=@()
     $phaseChangedPaths=@('tools/verify-ssh-auth-pc.ps1'); $phaseChangeIndependentSsh=$true
-    Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*outside clipboard owners*'
+    Assert-PhaseRejected { Get-LeanTTYReleaseContinuation @sshPolicy } '*outside native terminal owners*'
     $phaseChangedPaths=@(); $phaseChangeIndependentSsh=$false
     $group.runMode='diagnostic'
     $sshManifestValue.failedGroup=Pin-PhaseJson 'ssh-original/transport-performance/device-ssh-auth.json' $group

@@ -897,11 +897,11 @@ foreach ($scriptName in @(
             $content.Contains("ctrlVPaste = 'navigation input hex=6c 65 61 6e 74 74 79")
         ) 'SSH authentication scenario does not capture terminal key bytes at the server boundary'
         Assert-True (
-            $content.Contains("`$alternateFocusReportPattern = 'fixture command bytes=5b 49 result=unrecognized'") -and
-            $content.Contains('$alternateFocusReportCount = Get-FixtureLogMatchCount') -and
-            $content.Contains('-GreaterThan $alternateFocusReportCount') -and
-            $content.Contains('Alternate-screen focus report submission was not observed')
-        ) 'SSH alternate-screen escape coverage relies on a fixed line-boundary delay'
+            $content.Contains("Wait-AuthOutputMarker -Marker 'LTTY_DIRTY:escapealt'") -and
+            $content.Contains("`$alternateLine = Wait-FixtureConnectedInputSnapshot -Expected ''") -and
+            $content.Contains('Alternate-screen remote line boundary was not observed') -and
+            -not $content.Contains('alternateFocusReportPattern')
+        ) 'SSH alternate-screen escape coverage lacks its output and fresh remote line boundary'
         Assert-True (
             $content.Contains('[string[]]$Only') -and
             $content.Contains('[string]$Group') -and
@@ -1047,14 +1047,14 @@ foreach ($scriptName in @(
             $content.Contains("'ltty-input-check russhmain'") -and
             $content.Contains("'ltty-paste-prepare russhmain 1048576'") -and
             ([regex]::Matches($content, 'Submit-ConnectedInputUntilFixtureEvent').Count -ge 8) -and
-            $content.Contains("Wait-AuthPasteReady -Marker 'LTTY_PASTE_READY:russhmain:1048576'") -and
+            $content.Contains("Wait-AuthOutputMarker -Marker 'LTTY_PASTE_READY:russhmain:1048576'") -and
             $content.Contains("'connected-input-snapshot'") -and
             $content.Contains('function Wait-FixtureConnectedInputSnapshot') -and
             $content.Contains('for ($inputAttempt = 1; $inputAttempt -le 3; $inputAttempt++)') -and
             $content.Contains('connected input state=cleared') -and
             $content.Contains('Connected input could not be made exact before Enter') -and
             $content.Contains('Connected input outcome is unknown; the scenario must be restarted') -and
-            $content.Contains('Paste preparation output was not observed; no paste was dispatched') -and
+            $content.Contains('Expected terminal output marker was not observed') -and
             $content.Contains("Submit-ConnectedInput -Text 'ltty-paste-prepare russhmain 1048576'") -and
             -not $content.Contains('OSC 52 clipboard write success=') -and
             -not $content.Contains('Clipboard paste ok,') -and
@@ -2660,7 +2660,7 @@ Assert-True (
 & {
     $ast = [Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1'), [ref]$null, [ref]$null)
-    foreach ($name in @('Wait-AuthPasteReady', 'Invoke-LeanTTYPasteShortcut')) {
+    foreach ($name in @('Wait-AuthOutputMarker', 'Invoke-LeanTTYPasteShortcut')) {
         $definition = $ast.FindAll({ param($n)
             $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name
         }, $true) | Select-Object -First 1
@@ -2685,7 +2685,7 @@ Assert-True (
     foreach ($case in @('matched', 'missing-marker', 'unrelated-result', 'wrong-query', 'changed-pane', 'stale-query')) {
         $script:clipboardQuery = ''; $script:clipboardQueryCount = 0; $script:clipboardEscapeCount = 0
         $script:clipboardFocusRestored = $false; $failure = $null
-        try { Wait-AuthPasteReady -Marker 'LTTY_PASTE_READY:public:1048576' -TimeoutSeconds 1 }
+        try { Wait-AuthOutputMarker -Marker 'LTTY_PASTE_READY:public:1048576' -TimeoutSeconds 1 }
         catch { $failure = $_.Exception }
         Assert-True (($null -eq $failure) -eq ($case -eq 'matched')) "Clipboard readiness misclassified $case"
         Assert-True ($script:clipboardQueryCount -le 1 -and $script:clipboardEscapeCount -eq 1) 'Readiness repeated input or failed to close search'
@@ -2693,6 +2693,39 @@ Assert-True (
     }
     Invoke-LeanTTYPasteShortcut
     Assert-True ($script:clipboardChord -ceq 'uinput -K -d 2072 -d 2038 -u 2038 -u 2072') 'Paste used the retired Web modifier workaround'
+}
+
+# Exercise the actual alternate-screen preparation, including stale/missing
+# server snapshots. Only a newly observed empty line may reach the escape check.
+& {
+    $source = Get-Content (Join-Path $PSScriptRoot 'verify-ssh-auth-pc.ps1') -Raw
+    $start = $source.IndexOf("    Wait-AuthOutputMarker -Marker 'LTTY_DIRTY:escapealt'")
+    $end = $source.IndexOf('    Assert-SshEscapeLocalOnly', $start)
+    Assert-True ($start -gt 0 -and $end -gt $start) 'Alternate-screen preparation owner missing'
+    $prepare = [scriptblock]::Create($source.Substring($start, $end-$start))
+    $hdc='unused'; $Target='unused'; $fixtureConnectedInputSnapshot='unused'
+    function Wait-AuthOutputMarker { param($Marker)
+        Assert-True ($Marker -ceq 'LTTY_DIRTY:escapealt') 'Wrong alternate-screen marker'
+        if ($case -eq 'missing-output') { throw 'output not observed' }
+        $events.Add('output')
+    }
+    function Remove-Item { $events.Add('discard-stale') }
+    function Invoke-LeanTTYDeviceKey { param($KeyCode)
+        Assert-True ($KeyCode -eq 2054) 'Preparation sent a non-newline key'
+        $events.Add('newline')
+    }
+    function Wait-FixtureConnectedInputSnapshot { param($Expected)
+        Assert-True ($Expected -ceq '') 'Expected a nonempty remote line'
+        $events.Add('observe')
+        return @{observed=($case -ne 'missing-snapshot');value=$(if($case -eq 'nonempty'){'[I'}else{''})}
+    }
+    foreach ($case in @('empty','missing-snapshot','nonempty','missing-output')) {
+        $events=[Collections.Generic.List[string]]::new(); $failure=$null
+        try { & $prepare } catch { $failure=$_.Exception }
+        Assert-True (($null -eq $failure) -eq ($case -eq 'empty')) "Alternate line misclassified $case"
+        $expectedEvents=if($case -eq 'missing-output'){''}else{'output|discard-stale|newline|observe'}
+        Assert-True (($events -join '|') -ceq $expectedEvents) 'Alternate preparation reordered or repeated actions'
+    }
 }
 
 Write-Host 'Device regression helper tests passed.' -ForegroundColor Green
