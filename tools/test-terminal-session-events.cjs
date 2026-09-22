@@ -89,6 +89,46 @@ test('native session reset positions output before writing and completes after c
   consumed(); assert.deepEqual(calls.at(-1),['done']);
 });
 
+for (const ending of ['close', 'error']) {
+  test(`SSH ${ending} ends remote cursor ownership before local output and rejects late bytes`, () => {
+    const f = fixture(), writes = [];
+    let positioned, consumed;
+    Object.assign(f.owner, {
+      mode: TerminalMode.CONNECTED, acceptingSessionOutput: true,
+      terminalBoundaryGeneration: 10, terminalResetWaiters: [], pendingKeypush: false,
+      clearAuthChallenge() {}, setMode(mode) { this.mode = mode; },
+      writePrompt() { this.writeTerminal('local-prompt'); },
+      writeError() { this.writeTerminal('local-error'); },
+    });
+    f.surface.native = {
+      write(bytes, owner) { writes.push([new TextDecoder().decode(bytes), owner]); },
+      positionSessionOutput(done) { positioned = done; },
+      barrier(done) { consumed = done; },
+    };
+    const remote = new TextEncoder().encode('\x1b[2 q');
+    f.owner.onSessionData(remote);
+    assert.deepEqual(writes, [['\x1b[2 q', 10]]);
+    assert.equal(f.surface.acceptsRemoteEffect(10), true);
+    if (ending === 'close') f.owner.onSshClose(0);
+    else f.owner.onSshError({layer:'target', detail:'public fixture transport failure'});
+    assert.equal(f.owner.terminalBoundaryGeneration, 11);
+    assert.equal(f.owner.terminalResetPending, true);
+    assert.equal(f.surface.acceptsRemoteEffect(10), false);
+    assert.equal(writes.length, 2);
+    assert.ok(writes[1][0].includes('\x1b[5 q'));
+    assert.equal(writes[1][1], 0);
+    f.owner.onSessionData(remote);
+    assert.equal(writes.length, 2, 'late remote style cannot follow reset');
+    positioned();
+    assert.match(writes.at(-1)[0], /^local-/);
+    assert.equal(f.owner.terminalResetPending, true);
+    consumed();
+    assert.equal(f.owner.terminalResetPending, false);
+    f.owner.onSessionData(remote);
+    assert.match(writes.at(-1)[0], /^local-/, 'closed owner cannot repaint cursor');
+  });
+}
+
 test('terminal input keeps local, authentication and connected Session ownership', () => {
   const f = fixture();
   const cases = [

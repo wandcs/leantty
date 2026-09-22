@@ -506,6 +506,25 @@ int main() {
                 require(stateAfter("\x1b["+std::to_string(mode)+" q") ==
                     std::to_string(style)+",1,1,"+std::to_string(mode%2),"DECSCUSR style and blinking reach renderer");
             }
+            // Exercise the production Session reset against every remote shape
+            // on both screens; the next PTY must not inherit the old appearance.
+            Log peerLog; TerminalRuntime peer([&](TerminalEvent e) { return peerLog.receive(std::move(e)); });
+            write(peer,"\x1b[4 q");
+            for (const int screen : {0,47,1047,1049}) {
+                for (int mode = 1; mode <= 6; ++mode) {
+                    const auto enter = screen ? "\x1b[?"+std::to_string(screen)+"h" : "";
+                    stateAfter(enter+"\x1b["+std::to_string(mode)+" q\x1b[?25l");
+                    require(stateAfter(sessionResetSequence) == defaultCursor,"session end restores visible blinking bar");
+                    const auto query = write(r,"\x1bP$q q\x1b\\");
+                    require(log.wait("reply",query).text == "\x1bP1$r5 q\x1b\\","next PTY queries reset cursor state");
+                    require(stateAfter("\x1b[?1049h") == defaultCursor,"next PTY alternate screen starts clean");
+                    stateAfter("\x1b[?1049l");
+                }
+            }
+            const auto peerQuery = write(peer,"\x1bP$q q\x1b\\");
+            require(peerLog.wait("reply",peerQuery).text == "\x1bP1$r4 q\x1b\\","another Pane retains its remote cursor");
+            peer.close(); peer.join(); require(!peer.failed(),"independent cursor Pane");
+            stateAfter("\x1b[6 q");
             const auto bar = std::to_string(GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR);
             require(stateAfter("\x1b[?25l") == bar+",0,1,0","DECTCEM hides cursor");
             require(stateAfter("\x1b[?25h") == bar+",1,1,0","DECTCEM restores cursor");
