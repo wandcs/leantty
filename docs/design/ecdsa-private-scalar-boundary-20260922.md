@@ -68,7 +68,7 @@ tests, keeping the application's import path unchanged. There is no verified
 released upstream correction to adopt. A local patch would need pinned source,
 license/provenance, a removal condition when upstream fixes it, and targeted
 import/authentication/cleanup regression followed by a new R4 candidate. The
-current packaged crate contains 120 files and occupies about 920 KiB; copying
+published crate contains 119 files totaling about 560 KiB; copying
 it is a real maintenance cost even if the semantic patch is small.
 
 Alternatives were waiting for an upstream release, or an application-level

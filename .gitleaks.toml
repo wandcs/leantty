@@ -30,3 +30,10 @@ condition = "AND"
 regexTarget = "secret"
 paths = ['''^tools/test-device-regression\.ps1$''']
 regexes = ['''^verify-key-passphrase-pc\.ps1$''']
+
+[[rules.allowlists]]
+description = "Upstream file SHA-256 values in the byte-verified crate provenance"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third-party/ssh-key/provenance\.json$''']
+regexes = ['''^\s*"(?:src|tests)/[^"]+\.rs": "[0-9a-f]{64}",?\s*$''']
