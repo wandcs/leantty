@@ -356,7 +356,9 @@ The HarmonyOS Asset Store is the long-term authority for:
 - every verified private/public key pair;
 - terminal font size.
 
-`DurableAssetStore` writes encrypted persistent records in 768-byte chunks. A
+`DurableAssetStore` writes encrypted persistent records in up to 1024-byte chunks,
+the Asset Store secret limit. Readers use the manifest's actual chunk count and
+byte length, including existing generations with smaller chunks. A
 versioned manifest contains path, generation, chunk count, byte count and
 SHA-256. All chunks are written and validated before the pointer is switched;
 old/incomplete generations are then collected.

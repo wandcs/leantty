@@ -7,8 +7,8 @@ const vm = require('node:vm');
 const ts = require(process.argv[2]);
 const root = path.resolve(__dirname, '..');
 const src = 'entry/src/main/ets/';
-function compile(relative, imports) {
-  const result = ts.transpileModule(fs.readFileSync(path.join(root, src, relative), 'utf8'), {
+function compile(relative, imports, transform = value => value) {
+  const result = ts.transpileModule(transform(fs.readFileSync(path.join(root, src, relative), 'utf8')), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
     fileName: relative.replace(/\.ets$/, '.ts'), reportDiagnostics: true,
   });
@@ -33,7 +33,7 @@ function deferred() { let resolve, reject; const promise = new Promise((a, b) =>
 async function flush() { for (let i = 0; i < 80; i++) await Promise.resolve(); }
 const cases = [];
 function test(name, run) { cases.push({ name, run }); }
-function fixture() {
+function fixture(assetFormat = format) {
   const tags = ['ALIAS', 'SECRET', 'ACCESSIBILITY', 'IS_PERSISTENT', 'REQUIRE_ATTR_ENCRYPTED',
     'DATA_LABEL_CRITICAL_1', 'DATA_LABEL_CRITICAL_2', 'DATA_LABEL_CRITICAL_3', 'DATA_LABEL_CRITICAL_4',
     'RETURN_TYPE', 'RETURN_LIMIT', 'RETURN_OFFSET'];
@@ -63,7 +63,7 @@ function fixture() {
     asset[op + 'Sync'] = () => { throw new Error('synchronous Asset Store call on the UI path'); };
   }
   const storeModule = compile('model/persistence/DurableAssetStore.ets', {
-    '@kit.AssetStoreKit': { asset }, '@ohos.base': {}, './DurableAssetFormat': format,
+    '@kit.AssetStoreKit': { asset }, '@ohos.base': {}, './DurableAssetFormat': assetFormat,
     '../../common/logger/Logger': logger,
   });
   const projections = new Map(); let projectionFailure = false;
@@ -78,7 +78,7 @@ function fixture() {
   const state = stateModule.DurableStateManager, store = new storeModule.DurableAssetStore();
   state.store = store; state.context = {};
   const content = () => projections.get('/fixture/.ssh/known_hosts');
-  return { state, store, storeModule, T, text, records, calls, failures, pauses, content, projections,
+  return { state, store, storeModule, asset, T, text, records, calls, failures, pauses, content, projections,
     failProjection() { projectionFailure = true; }, restoreProjection() { projectionFailure = false; } };
 }
 const A = 'a.invalid ssh-ed25519 AAAA', B = 'b.invalid ssh-ed25519 BBBB';
@@ -163,11 +163,35 @@ test('invalid host lines fail before mutation', async () => {
   }
 });
 test('large multi-chunk authority is readable by a fresh store after restart', async () => {
-  const f = fixture(), content = (A + '\n').repeat(440);
+  const f = fixture(), content = (A + '\n').repeat(660);
   await f.state.updateKnownHosts({}, () => content);
   const restarted = new f.storeModule.DurableAssetStore();
   assert.equal(await restarted.readAsync('ssh/known-hosts'), content);
   assert.ok(f.calls.filter(c => c.op === 'add').length > 15);
+});
+test('writes use the supported 1024-byte capacity without extra Asset operations', async () => {
+  const f = fixture(), content = 'x'.repeat(4097);
+  await f.state.updateKnownHosts({}, () => content);
+  const chunks = [...f.records.values()].filter(r => f.text(r.get(f.T.DATA_LABEL_CRITICAL_2)) === 'chunk');
+  assert.equal(chunks.length, 5);
+  assert.deepEqual(chunks.map(r => r.get(f.T.SECRET).length), [1024, 1024, 1024, 1024, 1]);
+  assert.equal(await f.state.readKnownHosts(), content);
+});
+test('existing 768-byte generations and new 1024-byte generations use the same reader contract', async () => {
+  const oldFormat = compile('model/persistence/DurableAssetFormat.ets', {}, value =>
+    value.replace(/DURABLE_ASSET_CHUNK_BYTES: number = \d+/, 'DURABLE_ASSET_CHUNK_BYTES: number = 768'));
+  const f = fixture(oldFormat), before = (A + '\n').repeat(100), after = before + B + '\n';
+  f.store.generationSequence = 100;
+  await f.state.updateKnownHosts({}, () => before);
+  const currentModule = compile('model/persistence/DurableAssetStore.ets', {
+    '@kit.AssetStoreKit': { asset: f.asset }, '@ohos.base': {}, './DurableAssetFormat': format,
+    '../../common/logger/Logger': logger,
+  });
+  const current = new currentModule.DurableAssetStore();
+  assert.equal(await current.readAsync('ssh/known-hosts'), before);
+  await current.writeAsync('ssh/known-hosts', after);
+  assert.equal(await new f.storeModule.DurableAssetStore().readAsync('ssh/known-hosts'), after);
+  assert.equal(await new currentModule.DurableAssetStore().readAsync('ssh/known-hosts'), after);
 });
 test('real removal and query callers wait on serialized trust and preserve other endpoints', async () => {
   const f = fixture();

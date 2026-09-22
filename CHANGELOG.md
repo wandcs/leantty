@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Reduce durable Host Key update latency by using the supported Asset Store
+  chunk capacity, while retaining verified commits and existing stored data.
 - Accept valid short positive ECDSA private scalars from OpenSSH using an
   isolated, removable ssh-key dependency patch, without changing key import paths.
 - Rearm native terminal attention when focus changes so a foreground bell cannot
