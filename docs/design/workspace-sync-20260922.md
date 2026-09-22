@@ -67,4 +67,10 @@ fully pushed. Physical evidence is still required before adopting #227/#228.
 Follow-up on 2026-09-22: PR #227's fixed 31-byte ECDSA and encrypted-key physical
 diagnostics now pass, including restart, authentication, preservation and
 cleanup. See [the regression record](ecdsa-private-scalar-boundary-20260922.md).
-This closes that PR's device gap; PR #228 still requires its transfer check.
+PR #227 merged as `6d594c8`. PR #228 subsequently passed the actual HDC reverse
+mapping list/removal check and the 131,089-byte GET/PUT round trip with exact
+SHA-256. The existing verifier required a scoped Downloads-permission fixture
+and supplemental product removal of its test host trust; both original grant
+restoration and resource absence were independently audited. The initial setup
+failure is retained, and automatic cleanup is not overstated. See the
+[tool record](../test-release-efficiency.md#2026-09-22putget-定向验证的前提与收尾).
