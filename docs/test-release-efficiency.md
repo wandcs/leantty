@@ -3006,3 +3006,18 @@ wrapper 中准备权限并于 finally 恢复后，131,089 字节往返哈希一�
 证据：`build/verification/workspace-sync-20260922/` 下的 `mapping-device-audit.json`、
 `put-get-device/diagnosis.json`、`put-get-device-r2/` 和 `put-get-permission/`。
 活动入口仅在 next-work 的工具采用与发布交接项；零模型，未启动正式矩阵。
+
+### 2026-09-23：光标诊断输入拦截与失败清理
+
+零模型光标诊断复用 OpenSSH 入口时，断连命令提交前的 Readline 观察为预期 16、实际
+15 字符，首个差异在索引 11，Enter 为 0。未保留原始输入，不能归因于 IME 或产品。
+该轮在断连前停止；已取得的分屏像素单独保留，不将整轮标为通过。既有隔离 Tab
+关闭流程在远端仍活跃时跳过信任删除，关闭后只校验不存在，因此留下自有临时信任。
+在新建的本地清理 Tab 中只提交一次删除，等待现有完成观察并独立核对不存在；
+原 Tab 恢复、旧夹具消失、映射为空。原失败报告不改写。
+
+证据：`build/verification/remote-cursor-20260923/lifecycle/result.json` 与
+`lifecycle-supplemental-cleanup.json`。下一次实际采用此入口前，明确失败关闭后的
+信任清理责任；挂到现有 next-work 工具采用项，不在产品调查中扩展永久工具。
+本轮后续将断连动作预置在自有服务器的固定函数，用单个 ASCII 名称触发，仍校验
+输入再按 Enter；仅补未完成生命周期场景，不重复六种样式和 Vim 矩阵。
