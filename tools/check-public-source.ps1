@@ -5,6 +5,9 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $failures = [Collections.Generic.List[string]]::new()
 
+# Only the byte-verified upstream package may contain its public example keys.
+& (Join-Path $PSScriptRoot 'check-ssh-key-patch.ps1')
+
 Push-Location $repoRoot
 try {
     $tracked = @(git ls-files)
@@ -80,6 +83,10 @@ try {
         }
         $content = Get-Content -LiteralPath (Join-Path $repoRoot $path) -Raw
         foreach ($rule in $sensitiveContent) {
+            if ($rule.Reason -eq 'private key data' -and
+                $normalized.StartsWith('third-party/ssh-key/ssh-key-0.7.0-rc.11/')) {
+                continue
+            }
             if ($content -match $rule.Pattern) {
                 $failures.Add("Sensitive content ($($rule.Reason)): $normalized")
             }

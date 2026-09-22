@@ -827,17 +827,26 @@ try {
         }
         if ($keyCreated) {
             try {
-                Submit-HostIdentityCommand -Command "key rm $keyName" -Stage 'cleanup-key'
-                $dialogWatch = [Diagnostics.Stopwatch]::StartNew()
-                do {
-                    try {
-                        Invoke-LeanTTYDialogButton `
-                            -Hdc $hdc -Target $Target -ButtonText 'Delete key' `
-                            -LayoutPath (Join-Path $EvidenceDirectory 'cleanup-key-dialog.json')
-                        break
-                    } catch { Start-Sleep -Milliseconds 200 }
-                } while ($dialogWatch.Elapsed.TotalSeconds -lt 10)
-                Wait-HostIdentityLog -Pattern 'KEY_DELETE result=success' -TimeoutSeconds 15
+                # Ownership is recorded before import, which may create no file
+                # or only part of the pair. Inspect both before requesting deletion.
+                $keyPresent = if ($DefaultEcdsa) {
+                    Test-HostIdentityDefaultKeyFilesPresent -KeyName $keyName
+                } else {
+                    Test-LeanTTYDeviceKeyFilesPresent -Hdc $hdc -Target $Target -KeyName $keyName
+                }
+                if ($keyPresent) {
+                    Submit-HostIdentityCommand -Command "key rm $keyName" -Stage 'cleanup-key'
+                    $dialogWatch = [Diagnostics.Stopwatch]::StartNew()
+                    do {
+                        try {
+                            Invoke-LeanTTYDialogButton `
+                                -Hdc $hdc -Target $Target -ButtonText 'Delete key' `
+                                -LayoutPath (Join-Path $EvidenceDirectory 'cleanup-key-dialog.json')
+                            break
+                        } catch { Start-Sleep -Milliseconds 200 }
+                    } while ($dialogWatch.Elapsed.TotalSeconds -lt 10)
+                    Wait-HostIdentityLog -Pattern 'KEY_DELETE result=success' -TimeoutSeconds 15
+                }
                 $keyStillPresent = if ($DefaultEcdsa) {
                     Test-HostIdentityDefaultKeyFilesPresent -KeyName $keyName
                 } else {
