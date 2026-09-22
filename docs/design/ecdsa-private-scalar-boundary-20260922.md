@@ -99,3 +99,37 @@ alone would not correct this boundary.
 Independently, the verifier should distinguish an absent owned key from a
 failed deletion, while continuing to delete and audit any present partial
 import. That cleanup repair must not turn the import failure into a pass.
+
+## Physical regression after the patch
+
+On 2026-09-22 the connected ARM64 HarmonyOS PC passed the targeted diagnostic
+with HAP SHA-256 `1a89b119d76ea069fe959c70fa3cfc397f13aeac9319c4fb5864276077f13b39`.
+The host-identity verifier retained its actual import, OpenSSH server,
+authentication, restart and cleanup checks; an ignored diagnostic copy replaced
+only random key generation with the public P-256 scalar 2^246. Its serialized
+scalar length was independently asserted to be 31 bytes and OpenSSH read it.
+The original verifier, diagnostic copy and generator hashes are retained.
+
+All 11 checks passed: import, exact authorized key, explicit binding, default
+identity before/after restart, binding recovery and restoration of the existing
+Ed25519 identity. Private-key digest, public fingerprint and Host configuration
+matched after restoration. Temporary keys, import sources, account, trust and
+mapping were removed, and the original Downloads permission was restored.
+
+The existing `ecdsa-import-encrypted-and-restart` diagnostic also passed:
+incorrect passphrase rejected, correct authentication before/after restart,
+unchanged identity and Preferences, product deletion and independent absence
+audits. Both diagnostic runs report successful cleanup; no model requests ran.
+
+The first fixed-vector attempt stopped before import because Linux OpenSSH saw
+the Windows-mounted temporary file as mode 0777. Its cleanup passed and its
+failed report is preserved. The same fixture passed the offline OpenSSH check
+in a Linux temporary directory with mode 0600 before the second device attempt.
+This corrected only the disposable diagnostic generator, not product code or
+the frozen formal harness. Evidence lives under
+`build/verification/1.7-release-preparation/ecdsa-boundary/` in
+`fixed31-device`, `fixed31-device-r2` and `encrypted-device`.
+
+This closes the change-scoped regression, not formal release acceptance. The
+old failed candidate/report remain unchanged; a new formal candidate is still
+required under the existing release plan.
