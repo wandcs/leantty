@@ -2,7 +2,8 @@
 
 Status: the maintainer approved a local dependency patch on 2026-09-22, with
 minimal upgrade interference and low-cost removal after an upstream fix. No
-upstream issue/PR is authorized. Physical regression is pending device charging.
+upstream issue/PR is authorized. Targeted physical regression passed and PR #227
+merged; a new R4 candidate is required before formal release acceptance.
 
 ## Observed failure
 
