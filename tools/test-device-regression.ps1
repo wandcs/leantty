@@ -13,6 +13,7 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 & (Join-Path $PSScriptRoot 'test-mosh-lifecycle-observation.ps1')
 & (Join-Path $PSScriptRoot 'test-notification-regression.ps1')
 & (Join-Path $PSScriptRoot 'test-put-get-mapping-preflight.ps1')
+& (Join-Path $PSScriptRoot 'test-host-identity-cleanup.ps1')
 
 function Assert-True {
     param(

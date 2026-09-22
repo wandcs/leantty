@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'test-ssh-key-patch.ps1')
 . (Join-Path $PSScriptRoot 'native-terminal-inputs.ps1')
 . (Join-Path $PSScriptRoot 'formal-build-environment.ps1')
 $root = Join-Path ([IO.Path]::GetTempPath()) ('LeanTTY-native-inputs-' + [guid]::NewGuid().ToString('N'))

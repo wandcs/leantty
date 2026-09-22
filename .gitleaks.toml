@@ -4,8 +4,10 @@ title = "LeanTTY gitleaks configuration"
 useDefault = true
 
 [allowlist]
-description = "Vendored xterm assets are pinned and verified by assets-manifest.json"
+description = "Pinned third-party assets and byte-verified public upstream test vectors"
 paths = [
+  # Published public test vectors; check-public-source verifies every crate byte.
+  '''^third-party/ssh-key/ssh-key-0\.7\.0-rc\.11/(?:src/(?:lib|private)\.rs|tests/)''',
   '''^entry/src/main/resources/rawfile/(?:xterm\.js|xterm\.css|addon-fit\.js|addon-search\.js|addon-webgl\.js)$'''
 ]
 
@@ -28,3 +30,10 @@ condition = "AND"
 regexTarget = "secret"
 paths = ['''^tools/test-device-regression\.ps1$''']
 regexes = ['''^verify-key-passphrase-pc\.ps1$''']
+
+[[rules.allowlists]]
+description = "Upstream file SHA-256 values in the byte-verified crate provenance"
+condition = "AND"
+regexTarget = "line"
+paths = ['''^third-party/ssh-key/provenance\.json$''']
+regexes = ['''^\s*"(?:src|tests)/[^"]+\.rs": "[0-9a-f]{64}",?\s*$''']
