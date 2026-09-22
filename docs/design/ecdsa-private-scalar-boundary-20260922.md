@@ -1,8 +1,8 @@
 # ECDSA private scalar import boundary
 
-Status: diagnosis confirmed; dependency remediation awaits the maintainer's
-compatibility-maintenance decision. This record does not authorize a fork,
-vendored dependency, application conversion path, or release exemption.
+Status: the maintainer approved a local dependency patch on 2026-09-22, with
+minimal upgrade interference and low-cost removal after an upstream fix. No
+upstream issue/PR is authorized. Physical regression is pending device charging.
 
 ## Observed failure
 
@@ -68,16 +68,68 @@ tests, keeping the application's import path unchanged. There is no verified
 released upstream correction to adopt. A local patch would need pinned source,
 license/provenance, a removal condition when upstream fixes it, and targeted
 import/authentication/cleanup regression followed by a new R4 candidate. The
-current packaged crate contains 120 files and occupies about 920 KiB; copying
+published crate contains 119 files totaling about 560 KiB; copying
 it is a real maintenance cost even if the semantic patch is small.
 
-Alternatives are waiting for an upstream release, or an application-level
+Alternatives were waiting for an upstream release, or an application-level
 normalization path. Waiting delays the candidate; normalization duplicates
-private-key parsing and broadens the security-sensitive code. Neither a new
-dependency copy nor a normalization branch has been implemented. The maintainer
-has been asked to approve the narrow dependency remediation separately from
-the already authorized routine PR workflow.
+private-key parsing and broadens the security-sensitive code. The approved
+implementation uses Cargo's native single-crate override with the complete
+published package, one source-file diff, and provenance hashes. There is no
+application normalization branch or build-time patch application.
+
+Maintenance and exact removal steps are in
+[the patch directory](../../third-party/ssh-key/README.md). Product-owned
+encoding/lifecycle tests remain after removing the override. Source policy
+checks all package bytes and the resolved lock entry; native builds validate
+that provenance and include it in their incremental source identity.
+
+A separate bounded ordinary `ssh-keygen -t ecdsa -b 256` experiment found a
+31-byte scalar at generation 937 in 2.55 seconds. OpenSSH could read it while
+the original product parser rejected it. No private key was retained. This
+establishes a natural standard-generator case, not a frequency estimate and
+not inspection of the original failed formal key.
+
+Upstream PRs [351](https://github.com/RustCrypto/SSH/pull/351) and
+[356](https://github.com/RustCrypto/SSH/pull/356) addressed undersized P-521 keys
+and leading-zero placement, while retaining a 32-byte minimum. At investigation
+time both russh 0.62.5 and 0.63.3 pinned ssh-key 0.7.0-rc.11, so upgrading russh
+alone would not correct this boundary.
 
 Independently, the verifier should distinguish an absent owned key from a
 failed deletion, while continuing to delete and audit any present partial
 import. That cleanup repair must not turn the import failure into a pass.
+
+## Physical regression after the patch
+
+On 2026-09-22 the connected ARM64 HarmonyOS PC passed the targeted diagnostic
+with HAP SHA-256 `1a89b119d76ea069fe959c70fa3cfc397f13aeac9319c4fb5864276077f13b39`.
+The host-identity verifier retained its actual import, OpenSSH server,
+authentication, restart and cleanup checks; an ignored diagnostic copy replaced
+only random key generation with the public P-256 scalar 2^246. Its serialized
+scalar length was independently asserted to be 31 bytes and OpenSSH read it.
+The original verifier, diagnostic copy and generator hashes are retained.
+
+All 11 checks passed: import, exact authorized key, explicit binding, default
+identity before/after restart, binding recovery and restoration of the existing
+Ed25519 identity. Private-key digest, public fingerprint and Host configuration
+matched after restoration. Temporary keys, import sources, account, trust and
+mapping were removed, and the original Downloads permission was restored.
+
+The existing `ecdsa-import-encrypted-and-restart` diagnostic also passed:
+incorrect passphrase rejected, correct authentication before/after restart,
+unchanged identity and Preferences, product deletion and independent absence
+audits. Both diagnostic runs report successful cleanup; no model requests ran.
+
+The first fixed-vector attempt stopped before import because Linux OpenSSH saw
+the Windows-mounted temporary file as mode 0777. Its cleanup passed and its
+failed report is preserved. The same fixture passed the offline OpenSSH check
+in a Linux temporary directory with mode 0600 before the second device attempt.
+This corrected only the disposable diagnostic generator, not product code or
+the frozen formal harness. Evidence lives under
+`build/verification/1.7-release-preparation/ecdsa-boundary/` in
+`fixed31-device`, `fixed31-device-r2` and `encrypted-device`.
+
+This closes the change-scoped regression, not formal release acceptance. The
+old failed candidate/report remain unchanged; a new formal candidate is still
+required under the existing release plan.

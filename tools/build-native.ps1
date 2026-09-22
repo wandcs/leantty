@@ -82,6 +82,8 @@ $clangWslWrapper = Join-Path $PSScriptRoot 'ohos-aarch64-clang-wsl.sh'
 $arWslWrapper = Join-Path $PSScriptRoot 'ohos-aarch64-ar-wsl.sh'
 
 # ── Content hash check ──
+& (Join-Path $PSScriptRoot 'check-ssh-key-patch.ps1')
+$sshKeyProvenance = Join-Path $repoRoot 'third-party/ssh-key/provenance.json'
 $wslPrefix = Get-LeanTTYWslPrefix -Distribution $WslDistribution
 $rustVersion = (& wsl.exe @wslPrefix --cd (ConvertTo-LeanTTYWslPath $repoRoot) `
     -- env RUSTUP_TOOLCHAIN=stable rustc -vV | Out-String).Trim()
@@ -102,6 +104,7 @@ function Get-SourceHash {
     foreach ($inputFile in @(
         $cargoManifest,
         $cargoLock,
+        $sshKeyProvenance,
         $buildScript,
         $coreManifest,
         $toolchainToml,

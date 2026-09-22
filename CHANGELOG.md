@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Accept valid short positive ECDSA private scalars from OpenSSH using an
+  isolated, removable ssh-key dependency patch, without changing key import paths.
 - Rearm native terminal attention when focus changes so a foreground bell cannot
   suppress a later background alert; repeated background bells still coalesce.
 - Preserve Ctrl/Alt and shifted-key encoding when remote applications enable

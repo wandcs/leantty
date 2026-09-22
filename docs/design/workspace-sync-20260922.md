@@ -63,3 +63,8 @@ results are retained under ignored `build/verification/workspace-sync-20260922/`
 After this documentation PR merges, the primary checkout returns to main and
 verifies commit/tree equality with `origin/main`; pending draft branches remain
 fully pushed. Physical evidence is still required before adopting #227/#228.
+
+Follow-up on 2026-09-22: PR #227's fixed 31-byte ECDSA and encrypted-key physical
+diagnostics now pass, including restart, authentication, preservation and
+cleanup. See [the regression record](ecdsa-private-scalar-boundary-20260922.md).
+This closes that PR's device gap; PR #228 still requires its transfer check.

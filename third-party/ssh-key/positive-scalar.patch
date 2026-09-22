@@ -1,0 +1,45 @@
+--- a/src/private/ecdsa.rs
++++ b/src/private/ecdsa.rs
+@@ -1,4 +1,5 @@
+ //! Elliptic Curve Digital Signature Algorithm (ECDSA) private keys.
++// Locally modified by LeanTTY; see third-party/ssh-key/positive-scalar.patch.
+ 
+ use crate::{Algorithm, EcdsaCurve, Error, Result, public::EcdsaPublicKey};
+ use core::fmt;
+@@ -49,9 +50,11 @@
+         reader.read_prefixed(|reader| {
+             let mut len = reader.remaining_len();
+ 
++            let has_sign_byte = len == SIZE.checked_add(1).ok_or(encoding::Error::Length)?;
++
+             // Strip leading zero if necessary:
+             // `mpint` is signed and may need a leading zero for unsigned integers
+-            if len == SIZE.checked_add(1).ok_or(encoding::Error::Length)? {
++            if has_sign_byte {
+                 // TODO(tarcieri): make sure leading zero was necessary
+                 if u8::decode(reader)? != 0 {
+                     return Err(Error::FormatEncoding);
+@@ -60,9 +63,8 @@
+                 len = SIZE;
+             }
+ 
+-            // Minimum allowed key size: may be smaller than modulus size
+-            const MIN_SIZE: usize = 32;
+-            if len < MIN_SIZE || len > SIZE {
++            // A positive mpint can be shorter than the curve width.
++            if len == 0 || len > SIZE {
+                 return Err(encoding::Error::Length.into());
+             }
+ 
+@@ -72,6 +74,11 @@
+ 
+             let mut bytes = [0u8; SIZE];
+             reader.read(&mut bytes[leading_zeros..])?;
++            if (!has_sign_byte && bytes[leading_zeros] >= 0x80)
++                || bytes.iter().all(|byte| *byte == 0)
++            {
++                return Err(Error::FormatEncoding);
++            }
+             Ok(Self { bytes })
+         })
+     }

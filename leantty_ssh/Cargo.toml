@@ -39,3 +39,7 @@ napi-ohos = { version = "1.0", default-features = false, features = ["dyn-symbol
 
 [profile.release]
 lto = true
+
+# Temporary single-crate correction; upgrade/removal: ../third-party/ssh-key/README.md
+[patch.crates-io]
+ssh-key = { path = "../third-party/ssh-key/ssh-key-0.7.0-rc.11" }

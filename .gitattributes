@@ -30,3 +30,8 @@
 *.p7b binary
 *.ttf binary
 *.woff2 binary
+
+# Preserve the published crate byte-for-byte for provenance verification.
+third-party/ssh-key/** -text
+# Unified diff context lines intentionally contain a single space.
+third-party/ssh-key/positive-scalar.patch -whitespace
