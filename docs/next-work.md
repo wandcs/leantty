@@ -39,9 +39,10 @@ Hosts 并行；设备、共享夹具及签名构建仍须统筹明确交接，�
 统筹重述证据与替代方案；本轮按 K1/D1 软件证据、独立复核和正常开发包交付收口，
 真实现场由维护者后续使用确认。
 
-软件证据：本 worktree 的 `build/verification/secondary-click-diagnosis/` 保留固定归档
-身份、真实 VT 失败样本 `k1-before.log` / `d1-before.log`、修复后 `pointer-after.log`
-及 `software-focused.json`。K1 的 8 个 tracking/选区/Shift 组合、D1 的修饰键增加/
+软件证据：独立复核已读取固定归档身份、真实 VT 失败样本 `k1-before.log` /
+`d1-before.log`、修复后 `pointer-after.log` 及 `software-focused.json`，并记录判据。
+上述原始文件在随后首次 Hvigor 构建期间消失，当前保留外部工作树的独立复核记录，
+不能再把原路径当作可读取证据。K1 的 8 个 tracking/选区/Shift 组合、D1 的修饰键增加/
 移除、精确远端释放字节和后续 gutter 命中通过；其余真实 runtime 合同及
 `policy,terminal-native` 分组通过，未冒充手势验证。原始无 tracking 的右键 runtime
 就能发出 paste-request，因此“各处失效、Ctrl+V 正常”仍须设备前半链证据。
@@ -54,7 +55,9 @@ PR #234 开发包源码 `5ff299f`，树 `f53df9f15d91025371731ab2aab2abe7c85213c
 沿用标准 debug/test Profile，保留标准验收入口，排除前轮临时 Known Hosts 探针；
 不是正式候选。覆盖安装后保留两个 ltty Tab，已迁移信任文件大小/摘要与交接一致。
 普通公开输入精确到达本地命令缓冲后取消，未提交命令、注入右键或建立远端夹具。
-原始构建因日志目录未创建而在 Hvigor 前停止，补齐目录后通过；不是产品失败。
+原始构建在 Hvigor 子进程返回后因日志目录消失而写入失败；捕获器原本会预建目录，
+不是 Hvigor 启动前失败。重建目录后第二次构建通过，保留该工具问题及原始证据缺口，
+详见 [测试工具观察](test-release-efficiency.md#2026-09-23首次开发构建期间证据目录消失)。
 本目录后续交付记录只改文档，软件与包证据按内容一致性复用。
 
 ### Known Hosts 文件权威：开发验证完成
