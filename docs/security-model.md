@@ -137,13 +137,14 @@ answers and never infers authentication method or ownership from prompt text.
   comma-separated host fields.
 - No option may silently disable checking, auto-accept a changed key or replace
   the trust store with a second model.
-- Async trust saving must complete both durable commit and runtime projection
+- Async trust saving must complete the app-private file commit and filesystem sync
   before answering the native client. Cancellation or Pane destruction revokes
   the pending connection continuation, not a trust decision already committed
   after an explicit `yes`. A later storage result cannot answer another prompt.
 - Concurrent trust/removal operations serialize the full read/modify/write.
-  Background GC cannot run inside an incomplete commit; deferred cleanup names
-  an exact old generation and never deletes a later committed generation.
+  Before file ownership begins, legacy Asset trust is verified and migrated;
+  retirement failures block new mutations. Background Asset GC waits for this
+  migration. Ordinary trust updates never write Asset records.
 - Unknown, `Match` or unsupported directives that could alter the selected
   connection fail before connection or managed Host mutation; their values are
   preserved as source text but never treated as applied configuration.
@@ -157,10 +158,21 @@ refuse overwrite. A durable commit failure removes a newly generated or
 imported runtime pair instead of reporting success.
 
 The Asset Store contains integrity-checked generations. The application-private
-`.ssh` directory is materialized lazily from that authority before the first
-command that needs SSH assets. Host/config,
-known-host and key deletion update the durable record and runtime projection so
+SSH config/key files are materialized lazily from that authority before the first
+command that needs SSH assets. Host/config and key deletion update the durable record and runtime projection so
 an explicitly deleted asset does not reappear on a later reinstall.
+
+Known Hosts uses one application-private file protected by HarmonyOS isolation
+and owner/group permissions. Public host keys are not private credentials, but
+hostnames and addresses are private usage data. File isolation is not an
+application-level encryption guarantee. Writes check completeness, sync the file,
+replace it atomically within its directory and sync the directories before success.
+Errors propagate; a post-rename failure may leave an explicitly approved decision
+visible, and is never reported as success. Upgrade validates and copies legacy
+Asset trust before retiring its pointer and remaining chunks. Retirement must
+finish before new trust mutations, so removed entries cannot be resurrected from
+old assets. After this transition, uninstall removes trust and reconnecting
+requires checking server fingerprints again.
 
 `key rm` removes and confirms the private/public projection before deleting the
 durable key-pair authority. If projection or Asset Store deletion fails, LeanTTY
