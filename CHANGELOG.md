@@ -2,12 +2,17 @@
 
 ## [Unreleased]
 
-## [1.7.0] - 2026-09-20
+## [1.7.0] - In development
 
 ### Changed
 
-- Reduce durable Host Key update latency by using the supported Asset Store
-  chunk capacity, while retaining verified commits and existing stored data.
+- Store trusted host keys in one app-private `known_hosts` file, removing Asset
+  Store operations from normal trust updates. Upgrade migrates committed trust
+  before retiring its old Asset records. After that transition, uninstall clears
+  host trust; reconnecting requires checking fingerprints again. This retention
+  change is an explicit maintainer-approved exception for unreleased 1.7.0.
+- Use the supported 1024-byte Asset Store capacity for retained configuration,
+  verified key pairs and font size, without changing their retention behavior.
 - Accept valid short positive ECDSA private scalars from OpenSSH using an
   isolated, removable ssh-key dependency patch, without changing key import paths.
 - Rearm native terminal attention when focus changes so a foreground bell cannot

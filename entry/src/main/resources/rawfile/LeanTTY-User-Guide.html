@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="10">
+  <meta name="leantty-guide-revision" content="11">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LeanTTY 1.7.0 使用指南 / User Guide</title>
@@ -1447,9 +1447,14 @@ get work:/reports/latest.csv reports/</code></pre>
         </div>
 
         <p>
-          Host 配置、可信主机密钥、已验证密钥对和字号使用加密的 HarmonyOS Asset Store，
+          Host 配置、已验证密钥对和字号使用加密的 HarmonyOS Asset Store，
           并设计为在同一应用身份下跨普通卸载保留。透明度和异常退出恢复记录使用应用私有
           Preferences，不属于跨卸载保留的资产。
+        </p>
+        <p>
+          可信主机密钥使用应用私有的 known_hosts 文件，由系统应用隔离和文件权限保护。
+          升级会迁入已确认信任并清退旧 Asset；首次切换也可能迁入旧版本卸载留下的记录。
+          完成切换后，卸载会清除主机信任，重装后连接需要重新核对服务器指纹。
         </p>
         <p>
           窗口大小和位置交给系统自动保存，不写入 Asset Store。异常回收后系统仍可能使用默认
@@ -2141,10 +2146,16 @@ get work:/reports/latest.csv reports/</code></pre>
         </div>
 
         <p>
-          Host configuration, trusted host keys, verified key pairs and font size use
+          Host configuration, verified key pairs and font size use
           encrypted HarmonyOS Asset Store records designed to survive a normal uninstall for the same app
           identity. Transparency and the unexpected-exit recovery record use app-private Preferences,
           not uninstall-surviving assets.
+        </p>
+        <p>
+          Trusted host keys use one app-private known_hosts file protected by system app isolation
+          and file permissions. Upgrade preserves committed trust and retires its old Asset records;
+          the first transition can also migrate records left by an older uninstall. After that
+          transition, uninstall clears host trust. Check server fingerprints again after reinstall.
         </p>
         <p>
           HarmonyOS auto-saves window size and position, not the Asset Store. After an abnormal exit,

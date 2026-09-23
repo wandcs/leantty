@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit'
 import { FileUtils } from '../../common/utils/FileUtils'
 import { DurableAssetStore } from './DurableAssetStore'
+import { KnownHostsFile } from './KnownHostsFile'
 import { SshConfigCommitPolicy } from './SshConfigCommitPolicy'
 import { KeyPairDeletionPolicy } from './KeyPairDeletionPolicy'
 
@@ -16,6 +17,7 @@ export class DurableStateManager {
   private static legacyMigrationPending: boolean = false
   private static garbageCollectionCompleted: boolean = false
   private static knownHostsOperation: Promise<void> = Promise.resolve()
+  private static knownHostsPrepared: boolean = false
 
   static initialize(context: common.UIAbilityContext): void {
     DurableStateManager.context = context
@@ -28,8 +30,7 @@ export class DurableStateManager {
   }
 
   static collectGarbageOnce(): Promise<void> {
-    // Backgrounding can occur between async chunk writes and pointer publication.
-    // GC must not classify that in-flight generation as abandoned.
+    // Do not collect legacy trust chunks while the one-time migration reads them.
     return DurableStateManager.runKnownHostsOperation(async (): Promise<void> => {
       if (!DurableStateManager.garbageCollectionCompleted) {
         DurableStateManager.requireStore().garbageCollect()
@@ -47,7 +48,6 @@ export class DurableStateManager {
       return
     }
     DurableStateManager.captureLegacySshFile(context, 'config', SSH_CONFIG_PATH)
-    DurableStateManager.captureLegacySshFile(context, 'known_hosts', SSH_KNOWN_HOSTS_PATH)
     for (let i = 0; i < verifiedKeyNames.length; i++) {
       DurableStateManager.captureKeyPair(context, verifiedKeyNames[i])
     }
@@ -107,20 +107,39 @@ export class DurableStateManager {
 
   static readKnownHosts(): Promise<string> {
     return DurableStateManager.runKnownHostsOperation(async (): Promise<string> => {
-      return await DurableStateManager.requireStore().readAsync(SSH_KNOWN_HOSTS_PATH) ?? ''
+      DurableStateManager.requireStore()
+      let context: common.UIAbilityContext = DurableStateManager.context!
+      await DurableStateManager.prepareKnownHosts(context)
+      return await KnownHostsFile.read(FileUtils.getSshDir(context) + '/known_hosts')
     })
   }
 
   static updateKnownHosts(context: common.Context, update: (current: string) => string): Promise<void> {
     return DurableStateManager.runKnownHostsOperation(async (): Promise<void> => {
-      let store: DurableAssetStore = DurableStateManager.requireStore()
-      let current: string = await store.readAsync(SSH_KNOWN_HOSTS_PATH) ?? ''
+      await DurableStateManager.prepareKnownHosts(context)
+      let path: string = FileUtils.getSshDir(context) + '/known_hosts'
+      let current: string = await KnownHostsFile.read(path)
       let content: string = update(current)
       if (content !== current) {
-        await store.writeAsync(SSH_KNOWN_HOSTS_PATH, content)
-        FileUtils.writeTextFile(FileUtils.getSshDir(context) + '/known_hosts', content)
+        await KnownHostsFile.write(path, content)
       }
     })
+  }
+
+  private static async prepareKnownHosts(context: common.Context): Promise<void> {
+    if (DurableStateManager.knownHostsPrepared) {
+      return
+    }
+    let store: DurableAssetStore = DurableStateManager.requireStore()
+    let legacy: string | null = await store.readAsync(SSH_KNOWN_HOSTS_PATH)
+    if (legacy !== null) {
+      // Preserve the committed authority even if its old projection was missing.
+      // No trust mutations are admitted until retirement succeeds. A failed
+      // migration can safely repeat; it cannot overwrite a newer file decision.
+      await KnownHostsFile.write(FileUtils.getSshDir(context) + '/known_hosts', legacy)
+    }
+    await store.removeAsync(SSH_KNOWN_HOSTS_PATH)
+    DurableStateManager.knownHostsPrepared = true
   }
 
   private static runKnownHostsOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -164,21 +183,19 @@ export class DurableStateManager {
   }
 
   private static async restoreSshProjection(context: common.Context): Promise<void> {
+    await DurableStateManager.runKnownHostsOperation(async (): Promise<void> => {
+      await DurableStateManager.prepareKnownHosts(context)
+    })
     let paths: string[] = await DurableStateManager.requireStore().listPathsAsync()
     if (!DurableStateManager.legacyMigrationPending) {
       if (paths.indexOf(SSH_CONFIG_PATH) < 0) {
         FileUtils.removeFile(FileUtils.getSshDir(context) + '/config')
-      }
-      if (paths.indexOf(SSH_KNOWN_HOSTS_PATH) < 0) {
-        FileUtils.removeFile(FileUtils.getSshDir(context) + '/known_hosts')
       }
     }
     for (let i = 0; i < paths.length; i++) {
       let path: string = paths[i]
       if (path === SSH_CONFIG_PATH) {
         await DurableStateManager.materializeText(context, 'config', path)
-      } else if (path === SSH_KNOWN_HOSTS_PATH) {
-        await DurableStateManager.materializeText(context, 'known_hosts', path)
       } else if (path.startsWith(SSH_KEYPAIR_PREFIX)) {
         await DurableStateManager.materializeKeyPair(context, path.substring(SSH_KEYPAIR_PREFIX.length), path)
       }

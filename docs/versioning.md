@@ -130,6 +130,13 @@ compatibility after LeanTTY is published.
 
 ## Release Rules
 
+The maintainer explicitly approved one narrow exception on 2026-09-23:
+the unreleased 1.7.0 may stop retaining Known Hosts across uninstall, while
+preserving committed trust during upgrade and leaving other persistent assets
+unchanged. This does not relax the general MAJOR rule for published contracts.
+Existing 1.7.0 candidate artifacts keep their identity; changed source requires
+a new candidate and fresh applicable evidence.
+
 - A release package must be built from an exact commit already pushed to
   `wandcs/leantty`; local-only source is never a release input.
 - Any code, dependency, resource, version or packaging change requires a new

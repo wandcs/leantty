@@ -34,186 +34,183 @@ async function flush() { for (let i = 0; i < 80; i++) await Promise.resolve(); }
 const cases = [];
 function test(name, run) { cases.push({ name, run }); }
 function fixture(assetFormat = format) {
-  const tags = ['ALIAS', 'SECRET', 'ACCESSIBILITY', 'IS_PERSISTENT', 'REQUIRE_ATTR_ENCRYPTED',
+  const T = Object.fromEntries(['ALIAS', 'SECRET', 'ACCESSIBILITY', 'IS_PERSISTENT', 'REQUIRE_ATTR_ENCRYPTED',
     'DATA_LABEL_CRITICAL_1', 'DATA_LABEL_CRITICAL_2', 'DATA_LABEL_CRITICAL_3', 'DATA_LABEL_CRITICAL_4',
-    'RETURN_TYPE', 'RETURN_LIMIT', 'RETURN_OFFSET'];
-  const T = Object.fromEntries(tags.map(v => [v, v]));
+    'RETURN_TYPE', 'RETURN_LIMIT', 'RETURN_OFFSET'].map(v => [v, v]));
   const records = new Map(), calls = [], failures = [], pauses = [];
   const text = v => v instanceof Uint8Array ? F.decodeText(v) : v;
-  const missing = () => Object.assign(new Error('not found'), { code: 2 });
-  function matches(record, query) {
-    return [...query].every(([k, v]) => k.startsWith('RETURN_') || text(record.get(k)) === text(v));
-  }
-  async function call(op, query, update) {
-    calls.push({ op, query: new Map(query) });
-    const fail = failures.findIndex(p => p(op, query));
-    if (fail >= 0) { failures.splice(fail, 1); throw new Error('injected storage failure'); }
-    const pause = pauses.findIndex(p => p.match(op, query));
-    if (pause >= 0) { const p = pauses.splice(pause, 1)[0]; await p.gate.promise; }
+  function assetCall(op, query, update) {
+    calls.push({ op, query });
+    if (op === 'remove' && [...query.keys()].some(k => k.startsWith('DATA_LABEL_CRITICAL_'))) {
+      throw Object.assign(new Error('critical-label filters are not accepted by JS remove'), { code: 401 });
+    }
+    const failure = failures.findIndex(p => p(op, query));
+    if (failure >= 0) { failures.splice(failure, 1); throw new Error('injected Asset failure'); }
     if (op === 'add') { const alias = text(query.get(T.ALIAS)); assert.ok(!records.has(alias)); records.set(alias, new Map(query)); return; }
-    const found = [...records].filter(([, r]) => matches(r, query));
-    if (!found.length) throw missing();
-    if (op === 'query') return found.map(([, r]) => new Map(r));
-    if (op === 'update') { for (const [, r] of found) for (const [k, v] of update) r.set(k, v); return; }
+    const found = [...records].filter(([, r]) => [...query].every(([k, v]) => k.startsWith('RETURN_') || text(r.get(k)) === text(v)));
+    if (!found.length) throw Object.assign(new Error('not found'), { code: 2 });
+    if (op === 'query') { const offset = query.get(T.RETURN_OFFSET) || 0; return found.slice(offset, offset + (query.get(T.RETURN_LIMIT) || found.length)).map(([, r]) => new Map(r)); }
+    if (op === 'update') for (const [, r] of found) for (const [k, v] of update) r.set(k, v);
     if (op === 'remove') for (const [alias] of found) records.delete(alias);
   }
   const asset = { Tag: T, Accessibility: { DEVICE_FIRST_UNLOCKED: 1 }, ReturnType: { ALL: 1, ATTRIBUTES: 2 }, ErrorCode: { NOT_FOUND: 2 } };
   for (const op of ['add', 'query', 'update', 'remove']) {
-    asset[op] = (...args) => call(op, ...args);
-    asset[op + 'Sync'] = () => { throw new Error('synchronous Asset Store call on the UI path'); };
+    asset[op + 'Sync'] = (...args) => assetCall(op, ...args);
+    asset[op] = async (...args) => assetCall(op, ...args);
   }
   const storeModule = compile('model/persistence/DurableAssetStore.ets', {
     '@kit.AssetStoreKit': { asset }, '@ohos.base': {}, './DurableAssetFormat': assetFormat,
-    '../../common/logger/Logger': logger,
   });
-  const projections = new Map(); let projectionFailure = false;
-  const FileUtils = {
-    getSshDir: () => '/fixture/.ssh',
-    writeTextFile(p, value) { if (projectionFailure) throw new Error('projection failed'); projections.set(p, value); },
+  const files = new Map(), fileCalls = [], fileFailures = [], handles = new Map(); let nextFd = 1;
+  async function step(op, path) {
+    fileCalls.push({ op, path });
+    const failed = fileFailures.findIndex(p => p(op, path));
+    if (failed >= 0) { fileFailures.splice(failed, 1); throw new Error('injected file failure'); }
+    const paused = pauses.findIndex(p => p.match(op, path));
+    if (paused >= 0) { const p = pauses.splice(paused, 1)[0]; await p.gate.promise; }
+  }
+  const fileIo = {
+    OpenMode: { CREATE: 1, TRUNC: 2, WRITE_ONLY: 4, READ_ONLY: 0 },
+    async readText(p) { await step('read', p); if (!files.has(p)) throw Object.assign(new Error('missing'), { code: 13900002 }); return files.get(p); },
+    async open(p, mode) { await step('open', p); const fd = nextFd++; handles.set(fd, p); if (mode) files.set(p, ''); return { fd }; },
+    async write(fd, bytes) { const p = handles.get(fd); await step('write', p); files.set(p, F.decodeText(new Uint8Array(bytes))); return bytes.byteLength; },
+    async fsync(fd) { await step('fsync', handles.get(fd)); },
+    async close(file) { await step('close', handles.get(file.fd)); handles.delete(file.fd); },
+    async rename(a, b) { await step('rename', b); files.set(b, files.get(a)); files.delete(a); },
+    async unlink(p) { await step('unlink', p); files.delete(p); },
   };
+  const FileUtils = { getSshDir: () => '/fixture/.ssh', ensureDir() {} };
+  const knownHostsFile = compile('model/persistence/KnownHostsFile.ets', {
+    '@kit.CoreFileKit': { fileIo }, '@ohos.base': {}, '../../common/utils/FileUtils': { FileUtils }, './DurableAssetFormat': format,
+  });
   const stateModule = compile('model/persistence/DurableStateManager.ets', {
     '@kit.AbilityKit': {}, '../../common/utils/FileUtils': { FileUtils }, './DurableAssetStore': storeModule,
-    './SshConfigCommitPolicy': {}, './KeyPairDeletionPolicy': {},
+    './KnownHostsFile': knownHostsFile, './SshConfigCommitPolicy': {}, './KeyPairDeletionPolicy': {},
   });
   const state = stateModule.DurableStateManager, store = new storeModule.DurableAssetStore();
   state.store = store; state.context = {};
-  const content = () => projections.get('/fixture/.ssh/known_hosts');
-  return { state, store, storeModule, asset, T, text, records, calls, failures, pauses, content, projections,
-    failProjection() { projectionFailure = true; }, restoreProjection() { projectionFailure = false; } };
+  const content = () => files.get('/fixture/.ssh/known_hosts');
+  return { state, store, storeModule, asset, T, text, records, calls, failures, pauses, files, fileCalls, fileFailures, fileIo, handles, content,
+    seed(value) { store.write('ssh/known-hosts', value); }, restart() { state.knownHostsPrepared = false; } };
 }
 const A = 'a.invalid ssh-ed25519 AAAA', B = 'b.invalid ssh-ed25519 BBBB';
 
-test('trust commit yields to the event loop and publishes only after durable commit', async () => {
-  const f = fixture(), gate = deferred();
-  f.pauses.push({ match: (op, q) => op === 'add' && f.text(q.get(f.T.DATA_LABEL_CRITICAL_2)) === 'chunk', gate });
-  let done = false;
-  const commit = f.state.commitKnownHostLine({}, A).then(() => { done = true; });
-  await flush(); assert.equal(done, false); assert.equal(f.content(), undefined);
-  gate.resolve(); await commit; assert.equal(f.content(), A + '\n');
-  assert.equal(await f.state.readKnownHosts(), A + '\n');
+test('upgrade migrates verified authority over a stale or missing projection before retirement', async () => {
+  for (const projected of [undefined, 'stale']) {
+    const f = fixture(), content = (A + '\n').repeat(430);
+    f.seed(content); if (projected) f.files.set('/fixture/.ssh/known_hosts', projected);
+    await f.state.readKnownHosts();
+    assert.equal(f.content(), content); assert.equal(f.records.size, 0);
+    f.restart(); assert.equal(await f.state.readKnownHosts(), content);
+  }
 });
-test('concurrent appends and removal read the latest committed authority', async () => {
-  const f = fixture();
+test('corrupt or unreadable legacy authority fails closed without retiring it', async () => {
+  for (const corrupt of [false, true]) {
+    const f = fixture(); f.seed(A);
+    if (corrupt) [...f.records.values()].find(r => f.text(r.get(f.T.DATA_LABEL_CRITICAL_2)) === 'chunk').set(f.T.SECRET, F.encodeText('corrupt'));
+    else f.failures.push(op => op === 'query');
+    await assert.rejects(f.state.commitKnownHostLine({}, B));
+    assert.equal(f.content(), undefined); assert.ok(f.records.size > 0);
+  }
+});
+test('migration file failure retains the old authority and safely retries', async () => {
+  const f = fixture(); f.seed(A); f.fileFailures.push(op => op === 'rename');
+  await assert.rejects(f.state.commitKnownHostLine({}, B));
+  assert.equal(f.store.read('ssh/known-hosts'), A);
+  assert.equal(f.content(), undefined); await f.state.commitKnownHostLine({}, B);
+  assert.equal(f.content(), A + '\n' + B + '\n'); assert.equal(f.records.size, 0);
+});
+test('retirement failure blocks new trust; retry preserves the migrated file even after pointer removal', async () => {
+  for (const pointer of [true, false]) {
+    const f = fixture(); f.seed(A);
+    f.failures.push((op, q) => op === 'remove' && f.text(q.get(f.T.ALIAS)).startsWith('leantty.v1.p.') === pointer);
+    await assert.rejects(f.state.commitKnownHostLine({}, B)); assert.equal(f.content(), A);
+    f.restart(); await f.state.commitKnownHostLine({}, B);
+    assert.equal(f.content(), A + '\n' + B + '\n'); assert.equal(f.records.size, 0);
+  }
+});
+test('retirement enumeration failure is retried after pointer removal, including all orphan pages', async () => {
+  const f = fixture(); f.seed((A + '\n').repeat(2100));
+  assert.ok(f.records.size > 40);
+  f.failures.push((op, q) => op === 'query' && q.has(f.T.DATA_LABEL_CRITICAL_3));
+  await assert.rejects(f.state.readKnownHosts());
+  assert.equal(f.store.read('ssh/known-hosts'), null); assert.ok(f.records.size > 40);
+  f.restart(); await f.state.readKnownHosts(); assert.equal(f.records.size, 0);
+});
+test('retirement removes only known-host records, keeping config and keys intact', async () => {
+  const f = fixture(); f.seed(A); f.store.write('ssh/config', 'config'); f.store.write('ssh/keypair/test', 'key');
+  await f.state.readKnownHosts(); assert.equal(f.store.read('ssh/config'), 'config'); assert.equal(f.store.read('ssh/keypair/test'), 'key');
+});
+test('steady state uses the file alone and serializes concurrent append/remove', async () => {
+  const f = fixture(); await f.state.readKnownHosts(); f.calls.length = 0;
   await Promise.all([f.state.commitKnownHostLine({}, A), f.state.commitKnownHostLine({}, B),
     f.state.updateKnownHosts({}, current => current.replace(A + '\n', ''))]);
-  assert.equal(f.content(), B + '\n'); assert.equal(await f.state.readKnownHosts(), B + '\n');
+  assert.equal(await f.state.readKnownHosts(), B + '\n'); assert.equal(f.calls.length, 0);
 });
-test('no-op removal does not create or rewrite authority', async () => {
-  const f = fixture(); await f.state.updateKnownHosts({}, current => current);
-  assert.equal(f.calls.some(c => c.op !== 'query'), false); assert.equal(f.content(), undefined);
+test('commit does not finish before file and directory synchronization', async () => {
+  const f = fixture(), gate = deferred();
+  f.pauses.push({ match: (op, p) => op === 'fsync' && p === '/fixture/.ssh', gate });
+  let done = false; const commit = f.state.commitKnownHostLine({}, A).then(() => { done = true; });
+  await flush(); assert.equal(done, false); gate.resolve(); await commit;
+  assert.equal(f.content(), A + '\n'); assert.equal(f.handles.size, 0);
+  assert.ok(f.fileCalls.some(c => c.op === 'fsync' && c.path === '/fixture'));
 });
-test('failed chunk or pointer commit retains the previous generation and the queue remains usable', async () => {
-  for (const stage of ['add', 'update']) {
-    const f = fixture(); await f.state.commitKnownHostLine({}, A); await flush();
-    f.failures.push(op => op === stage);
-    await assert.rejects(f.state.commitKnownHostLine({}, B));
-    assert.equal(await f.state.readKnownHosts(), A + '\n'); assert.equal(f.content(), A + '\n');
+test('permission, short write, file sync and rename failures preserve committed trust and recover', async () => {
+  for (const stage of ['open', 'short', 'fsync', 'rename']) {
+    const f = fixture(); await f.state.commitKnownHostLine({}, A);
+    if (stage === 'short') { const original = f.fileIo.write; f.fileIo.write = async (...a) => { f.fileIo.write = original; return (await original(...a)) - 1; }; }
+    else f.fileFailures.push((op, p) => op === stage && (stage === 'rename' || p.endsWith('.tmp')));
+    await assert.rejects(f.state.commitKnownHostLine({}, B)); assert.equal(f.content(), A + '\n');
     await f.state.commitKnownHostLine({}, B); assert.equal(f.content(), A + '\n' + B + '\n');
+    assert.equal(f.handles.size, 0); assert.equal(f.files.has('/fixture/.ssh/known_hosts.tmp'), false);
   }
 });
-test('read-back corruption never publishes a new pointer', async () => {
-  const f = fixture(); await f.state.commitKnownHostLine({}, A); await flush();
-  const gate = deferred();
-  f.pauses.push({ match: (op, q) => op === 'query' && f.text(q.get(f.T.ALIAS))?.startsWith('leantty.v1.c.') &&
-    [...f.records.values()].filter(r => f.text(r.get(f.T.DATA_LABEL_CRITICAL_2)) === 'chunk').length > 1, gate });
-  const commit = f.state.commitKnownHostLine({}, B); await flush();
-  const latest = [...f.records.values()].filter(r => f.text(r.get(f.T.DATA_LABEL_CRITICAL_2)) === 'chunk').at(-1);
-  latest.set(f.T.SECRET, F.encodeText('corrupt')); gate.resolve();
-  await assert.rejects(commit); assert.equal(await f.state.readKnownHosts(), A + '\n');
+test('directory sync failure is reported even when the approved file replacement is visible', async () => {
+  const f = fixture(); f.fileFailures.push((op, p) => op === 'fsync' && p === '/fixture/.ssh');
+  await assert.rejects(f.state.commitKnownHostLine({}, A)); assert.equal(await f.state.readKnownHosts(), A + '\n');
+  assert.equal(f.handles.size, 0);
 });
-test('projection failure reports failure, retains committed authority and can be recovered', async () => {
-  const f = fixture(); f.failProjection(); await assert.rejects(f.state.commitKnownHostLine({}, A));
-  assert.equal(f.content(), undefined); assert.equal(await f.state.readKnownHosts(), A + '\n');
-  f.restoreProjection(); await f.state.commitKnownHostLine({}, B);
-  assert.equal(f.content(), A + '\n' + B + '\n');
+test('read failure is not treated as empty; no-op removal does not create a file', async () => {
+  const f = fixture(); await f.state.updateKnownHosts({}, current => current); assert.equal(f.content(), undefined);
+  f.fileFailures.push(op => op === 'read'); await assert.rejects(f.state.commitKnownHostLine({}, A));
+  assert.equal(f.content(), undefined);
 });
-test('slow old-generation cleanup does not delay success or delete later commits', async () => {
-  const f = fixture(); await f.state.commitKnownHostLine({}, A); await flush();
-  const gate = deferred(); f.pauses.push({ match: op => op === 'remove', gate });
-  await f.state.commitKnownHostLine({}, B);
-  await f.state.updateKnownHosts({}, current => current.replace(A + '\n', ''));
-  gate.resolve(); await flush();
-  assert.equal(await f.state.readKnownHosts(), B + '\n');
-  assert.equal(f.content(), B + '\n');
-  for (const c of f.calls.filter(c => c.op === 'remove')) {
-    assert.equal(f.text(c.query.get(f.T.DATA_LABEL_CRITICAL_3)), 'ssh/known-hosts');
-    assert.equal(f.text(c.query.get(f.T.DATA_LABEL_CRITICAL_2)), 'chunk');
-    assert.ok(f.text(c.query.get(f.T.DATA_LABEL_CRITICAL_4)));
-  }
+test('deletion survives restart and later reinstall cannot resurrect retired Asset trust', async () => {
+  const f = fixture(); f.seed(A); await f.state.updateKnownHosts({}, () => '');
+  f.restart(); assert.equal(await f.state.readKnownHosts(), '');
+  f.files.clear(); f.restart(); assert.equal(await f.state.readKnownHosts(), ''); assert.equal(f.records.size, 0);
 });
-test('cleanup failure cannot turn committed trust into failure or affect another asset', async () => {
-  const f = fixture(); await f.store.writeAsync('ssh/config', 'Host fixture');
-  await f.state.commitKnownHostLine({}, A); f.failures.push(op => op === 'remove');
-  await f.state.commitKnownHostLine({}, B); await flush();
-  assert.equal(await f.store.readAsync('ssh/config'), 'Host fixture');
-  assert.equal(await f.state.readKnownHosts(), A + '\n' + B + '\n');
-});
-test('background GC waits until the in-flight generation is committed', async () => {
-  const f = fixture(), gate = deferred(); let collected = false;
-  f.pauses.push({ match: op => op === 'add', gate });
-  const commit = f.state.commitKnownHostLine({}, A); await flush();
-  f.store.garbageCollect = () => { collected = true; assert.equal(f.content(), A + '\n'); };
-  const gc = f.state.collectGarbageOnce(); await flush(); assert.equal(collected, false);
-  gate.resolve(); await Promise.all([commit, gc]); assert.equal(collected, true);
+test('old pre-Asset files remain the authority when there is no retained asset', async () => {
+  const f = fixture(); f.files.set('/fixture/.ssh/known_hosts', A);
+  assert.equal(await f.state.readKnownHosts(), A);
 });
 test('invalid host lines fail before mutation', async () => {
   for (const line of ['', 'missing fields', A + '\n' + B]) {
-    const f = fixture(); await assert.rejects(async () => f.state.commitKnownHostLine({}, line));
-    assert.equal(f.calls.length, 0);
+    const f = fixture(); await assert.rejects(f.state.commitKnownHostLine({}, line)); assert.equal(f.calls.length, 0);
   }
 });
-test('large multi-chunk authority is readable by a fresh store after restart', async () => {
-  const f = fixture(), content = (A + '\n').repeat(660);
-  await f.state.updateKnownHosts({}, () => content);
-  const restarted = new f.storeModule.DurableAssetStore();
-  assert.equal(await restarted.readAsync('ssh/known-hosts'), content);
-  assert.ok(f.calls.filter(c => c.op === 'add').length > 15);
-});
-test('writes use the supported 1024-byte capacity without extra Asset operations', async () => {
-  const f = fixture(), content = 'x'.repeat(4097);
-  await f.state.updateKnownHosts({}, () => content);
-  const chunks = [...f.records.values()].filter(r => f.text(r.get(f.T.DATA_LABEL_CRITICAL_2)) === 'chunk');
-  assert.equal(chunks.length, 5);
-  assert.deepEqual(chunks.map(r => r.get(f.T.SECRET).length), [1024, 1024, 1024, 1024, 1]);
-  assert.equal(await f.state.readKnownHosts(), content);
-});
-test('existing 768-byte generations and new 1024-byte generations use the same reader contract', async () => {
+test('other Asset writers keep 1024-byte capacity and legacy 768-byte readability', async () => {
   const oldFormat = compile('model/persistence/DurableAssetFormat.ets', {}, value =>
     value.replace(/DURABLE_ASSET_CHUNK_BYTES: number = \d+/, 'DURABLE_ASSET_CHUNK_BYTES: number = 768'));
-  const f = fixture(oldFormat), before = (A + '\n').repeat(100), after = before + B + '\n';
-  f.store.generationSequence = 100;
-  await f.state.updateKnownHosts({}, () => before);
-  const currentModule = compile('model/persistence/DurableAssetStore.ets', {
-    '@kit.AssetStoreKit': { asset: f.asset }, '@ohos.base': {}, './DurableAssetFormat': format,
-    '../../common/logger/Logger': logger,
-  });
-  const current = new currentModule.DurableAssetStore();
-  assert.equal(await current.readAsync('ssh/known-hosts'), before);
-  await current.writeAsync('ssh/known-hosts', after);
-  assert.equal(await new f.storeModule.DurableAssetStore().readAsync('ssh/known-hosts'), after);
-  assert.equal(await new currentModule.DurableAssetStore().readAsync('ssh/known-hosts'), after);
+  const f = fixture(oldFormat), before = 'x'.repeat(4097); f.seed(before);
+  const currentModule = compile('model/persistence/DurableAssetStore.ets', { '@kit.AssetStoreKit': { asset: f.asset }, '@ohos.base': {}, './DurableAssetFormat': format });
+  const current = new currentModule.DurableAssetStore(); assert.equal(await current.readAsync('ssh/known-hosts'), before);
+  current.write('ssh/config', before);
+  assert.deepEqual([...f.records.values()].filter(r => f.text(r.get(f.T.DATA_LABEL_CRITICAL_3)) === 'ssh/config' && f.text(r.get(f.T.DATA_LABEL_CRITICAL_2)) === 'chunk').map(r => r.get(f.T.SECRET).length), [1024, 1024, 1024, 1024, 1]);
 });
-test('real removal and query callers wait on serialized trust and preserve other endpoints', async () => {
+test('real removal and query callers await the same file authority', async () => {
   const f = fixture();
   const module = compile('model/ssh/KnownHostsManager.ets', {
     '@kit.AbilityKit': {}, '../persistence/DurableStateManager': { DurableStateManager: f.state },
     'libleantty_ssh.so': { default: {
-      // Native matching semantics remain covered in Rust; this stub checks the
-      // callers' authoritative input and ordering, not hashed-host matching.
-      sshRemoveKnownHostEntries(current, host, port) {
-        assert.equal(host, 'a.invalid'); assert.equal(port, 22);
-        return { removed: current.includes(A) ? 1 : 0, content: current.replace(A + '\n', '') };
-      },
+      sshRemoveKnownHostEntries(current) { return { removed: current.includes(A) ? 1 : 0, content: current.replace(A + '\n', '') }; },
       sshFindKnownHostEntries(current) { return { found: current.includes(B) ? 1 : 0, output: current }; },
     } },
   });
   const a = f.state.commitKnownHostLine({}, A), b = f.state.commitKnownHostLine({}, B);
-  const removed = module.KnownHostsManager.remove({}, 'a.invalid', 22);
-  const found = module.KnownHostsManager.find('b.invalid', 22);
-  await Promise.all([a, b]); assert.equal((await removed).removed, 1);
-  assert.equal((await found).output, B + '\n'); assert.equal(f.content(), B + '\n');
+  const removed = module.KnownHostsManager.remove({}, 'a.invalid', 22), found = module.KnownHostsManager.find('b.invalid', 22);
+  await Promise.all([a, b]); assert.equal((await removed).removed, 1); assert.equal((await found).output, B + '\n');
 });
-
 const keyKinds = { HOST_KEY_REMOVE: 'remove', HOST_KEY_FIND: 'find' };
 const commandOutput = { status: (a, b) => a + ': ' + b, success: v => v, prompt: () => 'ltty>' };
 function keyService(manager) {

@@ -1297,7 +1297,7 @@ Every automated physical scenario MUST:
   pending guard, correlated by Pane, generation and submission sequence, before
   another idle reset. Missing, cancelled or conflicting evidence must stop the
   scenario without resending. An operation reporting failure does not establish
-  its fault domain; known-host projection absence remains a separate postcondition;
+  its fault domain; known-host file absence remains a separate postcondition;
 - before Enter can submit a repository-only command inside a controlled SSH
   fixture session, require the fixture's temporary current-line snapshot to
   match the expected bytes exactly. An incomplete line may be cleared with the
