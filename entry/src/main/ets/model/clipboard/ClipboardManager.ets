@@ -4,14 +4,15 @@ import { Logger } from '../../common/logger/Logger'
 
 const logger: Logger = new Logger('ClipboardManager')
 const READ_PERMISSION: Permissions = 'ohos.permission.READ_PASTEBOARD'
-export type ClipboardReadPermission = 'granted' | 'denied' | 'failed' | 'busy'
+export type ClipboardReadPermission = 'granted' | 'denied' | 'failed' | 'busy' | 'cancelled'
 
 export class ClipboardManager {
   private static requestingReadPermission: boolean = false
 
   // Only a current local paste intent may call this. Do not cache grant state:
   // system settings own it, and another Pane must not queue behind the dialog.
-  static async requestReadPermission(context: common.UIAbilityContext): Promise<ClipboardReadPermission> {
+  static async requestReadPermission(context: common.UIAbilityContext,
+    isCurrent: () => boolean): Promise<ClipboardReadPermission> {
     if (ClipboardManager.requestingReadPermission) { return 'busy' }
     ClipboardManager.requestingReadPermission = true
     try {
@@ -19,6 +20,16 @@ export class ClipboardManager {
       if (manager.checkAccessTokenSync(context.applicationInfo.accessTokenId, READ_PERMISSION) ===
         abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) { return 'granted' }
       let result = await manager.requestPermissionsFromUser(context, [READ_PERMISSION])
+      // A fixed denial may suppress the ordinary dialog. Offer the supported
+      // settings dialog only when no dialog was shown for this still-current intent.
+      if (result.authResults.length === 1 && result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_DENIED &&
+        result.dialogShownResults !== undefined && result.dialogShownResults.length === 1 &&
+        result.dialogShownResults[0] === false) {
+        if (!isCurrent()) { return 'cancelled' }
+        let settingResults = await manager.requestPermissionOnSetting(context, [READ_PERMISSION])
+        return settingResults.length === 1 &&
+          settingResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED ? 'granted' : 'denied'
+      }
       return result.authResults.length === 1 &&
         result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED ? 'granted' : 'denied'
     } catch (_) {

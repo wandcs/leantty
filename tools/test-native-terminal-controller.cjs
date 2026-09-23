@@ -11,8 +11,8 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText, { exports: keyMapExports });
 function clipboardFixture() {
-  const state = { grant: 0, checks: 0, requests: 0, reads: 0, writes: 0, text: 'public-text',
-    request: async () => ({ authResults: [0] }) };
+  const state = { grant: 0, checks: 0, requests: 0, settingsRequests: 0, reads: 0, writes: 0, text: 'public-text',
+    request: async () => ({ authResults: [0] }), settingsRequest: async () => [0] };
   const exports = {};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
     '../entry/src/main/ets/model/clipboard/ClipboardManager.ets'), 'utf8'), {
@@ -27,6 +27,11 @@ function clipboardFixture() {
         assert.equal(context.applicationInfo.accessTokenId, 42);
         assert.deepEqual(Array.from(permissions), ['ohos.permission.READ_PASTEBOARD']);
         state.requests++; return state.request();
+      },
+      requestPermissionOnSetting(context, permissions) {
+        assert.equal(context.applicationInfo.accessTokenId, 42);
+        assert.deepEqual(Array.from(permissions), ['ohos.permission.READ_PASTEBOARD']);
+        state.settingsRequests++; return state.settingsRequest();
       }
     }) }
   } : name === '@kit.BasicServicesKit' ? { pasteboard: {
@@ -742,6 +747,61 @@ if (process.argv[3] === 'output') {
     shortcut(f); await flush(); assert.equal(f.state.reads,1,'failure releases in-flight guard for fresh intent');
   }
   console.log('PASS denied, malformed and failed authorization never reads and fresh intent can recover'); count++;
+  {
+    const f = ready(); f.state.grant = -1;
+    f.state.request = async () => ({ authResults: [-1], dialogShownResults: [false] });
+    right(f); await flush();
+    assert.equal(f.state.settingsRequests,1,'explicit no-dialog denial offers the supported system settings dialog');
+    assert.equal(f.state.reads,1); assert.equal(f.accepted.filter(x => x.kind === 'paste').length,1);
+    assert.equal(f.errors.length,0);
+  }
+  console.log('PASS fixed denial without an ordinary dialog can grant through the system settings dialog'); count++;
+  for (const result of [
+    { authResults: [-1], dialogShownResults: [true] }, { authResults: [-1] },
+    { authResults: [-1], dialogShownResults: [] }, { authResults: [-1], dialogShownResults: [undefined] },
+    { authResults: [-1], dialogShownResults: [false,false] }, { authResults: [], dialogShownResults: [false] },
+    { authResults: [-1,-1], dialogShownResults: [false] }, { authResults: [1], dialogShownResults: [false] },
+    { authResults: [0], dialogShownResults: [false] }
+  ]) {
+    const f = ready(); f.state.grant = -1; f.state.request = async () => result;
+    await f.control.paste();
+    assert.equal(f.state.settingsRequests,0,'shown, unknown or non-denied ordinary result cannot request settings');
+    assert.equal(f.state.reads,result.authResults[0] === 0 ? 1 : 0);
+  }
+  console.log('PASS shown or unknown ordinary dialog and malformed denial never trigger a second dialog'); count++;
+  for (const result of [[-1],[],[0,-1],null]) {
+    const f = ready(); f.state.grant = -1;
+    f.state.request = async () => ({ authResults: [-1], dialogShownResults: [false] });
+    f.state.settingsRequest = async () => { if (result === null) throw Error('settings'); return result; };
+    await f.control.paste();
+    assert.equal(f.state.requests,1); assert.equal(f.state.settingsRequests,1); assert.equal(f.state.reads,0);
+    assert.equal(f.errors[0],result === null ? 'paste_failed' : 'paste_permission_denied');
+    f.state.settingsRequest = async () => [0];
+    await f.control.paste();
+    assert.equal(f.state.settingsRequests,2,'only a fresh user intent retries after denial/error');
+    assert.equal(f.state.reads,1,'both guards released after settings completion');
+  }
+  console.log('PASS settings denial and errors do not read or loop and release guards for a fresh paste'); count++;
+  for (const invalidate of [c => { c.blur(); c.focus(); }, c => c.changeInputOwner(), c => c.openSearch(),
+    c => c.setVisible(false), c => c.detach(), c => c.dispose(), c => c.fail()]) {
+    for (const stage of ['ordinary','settings']) {
+      const shared = clipboardFixture(), f = ready(shared), other = ready(shared); let finish;
+      f.state.grant = -1;
+      f.state.request = stage === 'ordinary' ? () => new Promise(resolve => { finish = resolve; }) :
+        async () => ({ authResults: [-1], dialogShownResults: [false] });
+      if (stage === 'settings') f.state.settingsRequest = () => new Promise(resolve => { finish = resolve; });
+      const pending = f.control.paste(); await flush();
+      right(f); shortcut(f); await other.control.paste();
+      assert.equal(f.state.requests,1,'no queued or cross-Pane ordinary request while either dialog waits');
+      invalidate(f.control);
+      finish(stage === 'ordinary' ? { authResults: [-1], dialogShownResults: [false] } : [0]);
+      await pending;
+      assert.equal(f.state.settingsRequests,stage === 'ordinary' ? 0 : 1,'old intent cannot open a later settings dialog');
+      assert.equal(f.state.reads,0); assert.equal(f.accepted.filter(x => x.kind === 'paste').length,0);
+      if (!f.control.closing && !f.control.failed) assert.equal(f.errors[0],'paste_cancelled');
+    }
+  }
+  console.log('PASS both authorization waits reject stale owners and keep duplicate requests out'); count++;
   for (const invalidate of [c => c.blur(), c => c.changeInputOwner(), c => c.openSearch(),
     c => c.setVisible(false), c => c.detach(), c => c.dispose(), c => c.fail()]) {
     for (const stage of ['permission','read']) {

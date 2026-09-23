@@ -416,8 +416,9 @@ export class NativeTerminalController {
     try {
       let context = this.context?.getHostContext() as common.UIAbilityContext | undefined
       if (context === undefined) { this.onPasteError('paste_failed'); return }
-      let permission = await ClipboardManager.requestReadPermission(context)
+      let permission = await ClipboardManager.requestReadPermission(context, (): boolean => this.canPaste(owner))
       if (this.failed || this.closing || permission === 'busy') { return }
+      if (permission === 'cancelled') { this.onPasteError('paste_cancelled'); return }
       if (permission !== 'granted') {
         this.onPasteError(permission === 'denied' ? 'paste_permission_denied' : 'paste_failed'); return
       }

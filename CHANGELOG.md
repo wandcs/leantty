@@ -7,7 +7,9 @@
 ### Changed
 
 - Request system clipboard permission when the user pastes without authorization,
-  including Ctrl+V and secondary click. Explain denial or a paste cancelled by
+  including Ctrl+V and secondary click. Offer the system permission-settings dialog
+  when an ordinary request is denied without showing a dialog, only while the
+  original paste intent remains valid. Explain denial or a paste cancelled by
   focus changes without reading or sending clipboard text to another session.
 - Restore secondary-click copy/paste while a remote application uses mouse
   reporting, without sending either half of the click to the remote session.
