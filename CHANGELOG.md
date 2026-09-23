@@ -6,6 +6,10 @@
 
 ### Changed
 
+- Restore secondary-click copy/paste while a remote application uses mouse
+  reporting, without sending either half of the click to the remote session.
+- Finish native selection, link and remote mouse gestures through their original
+  owner when modifiers change, preserving subsequent link hover and scrolling.
 - Store trusted host keys in one app-private `known_hosts` file, removing Asset
   Store operations from normal trust updates. Upgrade migrates committed trust
   before retiring its old Asset records. After that transition, uninstall clears

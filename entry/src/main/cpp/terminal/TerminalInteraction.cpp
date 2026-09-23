@@ -35,7 +35,7 @@ void TerminalRuntime::resetInteraction() {
     searchOverview_.clear();
     if (gesture_ && active_) ghostty_selection_gesture_reset(gesture_,active_);
     if (mouse_) ghostty_mouse_encoder_reset(mouse_);
-    pointerPressed_ = false; autoscroll_ = 0; scrollbarGrab_ = -2; ++selectionRevision_;
+    pointerGesture_ = PointerGesture::None; autoscroll_ = 0; scrollbarGrab_ = -2; ++selectionRevision_;
     effectSequence_.clear();
     pressedLink_.clear();
 }
@@ -46,17 +46,18 @@ void TerminalRuntime::followInput() {
     GhosttyTerminalScrollViewport scroll{}; scroll.tag = GHOSTTY_SCROLL_VIEWPORT_BOTTOM;
     ghostty_terminal_scroll_viewport(active_,scroll);
 }
-bool TerminalRuntime::mouse(int action,int button,int x,int y,GhosttyMods modifiers,uint32_t owner) {
+bool TerminalRuntime::mouse(int action,int button,int x,int y,GhosttyMods modifiers,uint32_t owner,bool continuing) {
     bool tracking = false;
     checkVt(ghostty_terminal_get(active_,GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,&tracking));
-    if (!tracking || (modifiers & GHOSTTY_MODS_SHIFT)) return false;
+    if (!tracking || (!continuing && (modifiers & GHOSTTY_MODS_SHIFT))) return false;
     GhosttyMouseEvent event = nullptr; checkVt(ghostty_mouse_event_new(nullptr,&event));
     ghostty_mouse_encoder_setopt_from_terminal(mouse_,active_);
     GhosttyMouseEncoderSize size = GHOSTTY_INIT_SIZED(GhosttyMouseEncoderSize);
     size.screen_width = cols_*cellWidth_; size.screen_height = rows_*cellHeight_;
     size.cell_width = cellWidth_; size.cell_height = cellHeight_;
     ghostty_mouse_encoder_setopt(mouse_,GHOSTTY_MOUSE_ENCODER_OPT_SIZE,&size);
-    ghostty_mouse_encoder_setopt(mouse_,GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,&pointerPressed_);
+    const bool pressed = pointerGesture_ != PointerGesture::None || (action == 0 && button == 1);
+    ghostty_mouse_encoder_setopt(mouse_,GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,&pressed);
     ghostty_mouse_event_set_action(event,static_cast<GhosttyMouseAction>(action));
     if (button) ghostty_mouse_event_set_button(event,static_cast<GhosttyMouseButton>(button));
     ghostty_mouse_event_set_mods(event,modifiers);
@@ -73,7 +74,7 @@ bool TerminalRuntime::scrollbarPointer(const Command& c) {
     const auto bar = TerminalScrollbar::fit(surfaceGeometry_,viewport);
     const bool held = scrollbarGrab_ != -2;
     if (!bar.visible()) { scrollbarGrab_ = -2; return held; }
-    if (!held && (!bar.hit(c.x,c.y) || pointerPressed_)) return false;
+    if (!held && (!bar.hit(c.x,c.y) || pointerGesture_ != PointerGesture::None)) return false;
     if (c.action == 1) { scrollbarGrab_ = -2; return true; }
     if (c.action == 0 && c.button == 1) {
         autoscroll_ = 0; pressedLink_.clear();
@@ -94,25 +95,44 @@ bool TerminalRuntime::scrollbarPointer(const Command& c) {
 void TerminalRuntime::pointer(const Command& c) {
     pointerX_ = c.x; pointerY_ = c.y; pointerMods_ = c.modifiers; pointerOwner_ = c.owner;
     pointerInside_ = true;
-    if (c.action == 2 && !c.button && !pointerPressed_) updateLink(c.owner);
+    if (c.action == 2 && !c.button && pointerGesture_ == PointerGesture::None) updateLink(c.owner);
     else clearLink();
     autoscroll_ = 0;
-    if (c.button == 1 && linkModifier(c.modifiers)) {
-        if (c.action == 0) { pressedLink_ = linkAt(c.x,c.y).url; linkX_ = c.x; linkY_ = c.y; }
-        else if (std::abs(c.x-linkX_) > cellWidth_/2 || std::abs(c.y-linkY_) > cellHeight_/2) pressedLink_.clear();
+    // Secondary click belongs to the local clipboard contract, including when
+    // a TUI owns the mouse. Consume both phases so no unmatched press reaches it.
+    if (c.button == 2) {
+        if (c.action == 1) { Command secondary{Kind::Copy}; secondary.action = 2; secondary.owner = c.owner; copy(secondary); }
+        return;
+    }
+    if (c.button != 1) { mouse(c.action,c.button,c.x,c.y,c.modifiers,c.owner); return; }
+    if (c.action == 0) {
+        pressedLink_.clear();
+        if (linkModifier(c.modifiers)) {
+            pointerGesture_ = PointerGesture::Link;
+            pressedLink_ = linkAt(c.x,c.y).url; linkX_ = c.x; linkY_ = c.y;
+        } else if (mouse(c.action,c.button,c.x,c.y,c.modifiers,c.owner)) {
+            pointerGesture_ = PointerGesture::Remote;
+            return;
+        } else { pointerGesture_ = PointerGesture::Selection; }
+    }
+    // Route the complete gesture by its press, not by the release's modifiers.
+    // A late Ctrl must not steal selection cleanup or a remote mouse release.
+    if (pointerGesture_ == PointerGesture::Link) {
+        if (!linkModifier(c.modifiers) || std::abs(c.x-linkX_) > cellWidth_/2 || std::abs(c.y-linkY_) > cellHeight_/2)
+            pressedLink_.clear();
         if (c.action == 1) {
             if (!pressedLink_.empty() && pressedLink_ == linkAt(c.x,c.y).url) emit({"link",consuming_,c.owner,pressedLink_});
-            pressedLink_.clear();
+            pressedLink_.clear(); pointerGesture_ = PointerGesture::None;
         }
         return;
     }
-    pressedLink_.clear();
-    if (c.action == 0) pointerPressed_ = true;
-    const bool reported = mouse(c.action,c.button,c.x,c.y,c.modifiers,c.owner);
-    if (c.action == 1) pointerPressed_ = false;
-    if (reported) return;
-    if (c.button == 2 && c.action == 1) { Command secondary{Kind::Copy}; secondary.action = 2; secondary.owner = c.owner; copy(secondary); return; }
-    if (c.button != 1) return;
+    if (pointerGesture_ == PointerGesture::Remote) {
+        mouse(c.action,c.button,c.x,c.y,c.modifiers,c.owner,true);
+        if (c.action == 1) pointerGesture_ = PointerGesture::None;
+        return;
+    }
+    if (pointerGesture_ != PointerGesture::Selection) return;
+    if (c.action == 1) pointerGesture_ = PointerGesture::None;
     GhosttyPoint point{}; point.tag = GHOSTTY_POINT_TAG_VIEWPORT;
     point.value.coordinate.x = std::clamp(c.x / cellWidth_,0,static_cast<int>(cols_)-1);
     point.value.coordinate.y = std::clamp(c.y / cellHeight_,0,static_cast<int>(rows_)-1);
@@ -150,7 +170,7 @@ void TerminalRuntime::pointer(const Command& c) {
         else if (result == GHOSTTY_NO_VALUE) checkVt(ghostty_terminal_set(active_,GHOSTTY_TERMINAL_OPT_SELECTION,nullptr));
         else checkVt(result);
         ++selectionRevision_;
-        if (c.action == 2 && pointerPressed_) {
+        if (c.action == 2 && pointerGesture_ == PointerGesture::Selection) {
             GhosttySelectionGestureAutoscroll scroll;
             checkVt(ghostty_selection_gesture_get(gesture_,active_,GHOSTTY_SELECTION_GESTURE_DATA_AUTOSCROLL,&scroll));
             autoscroll_ = scroll == GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_UP ? -1 : scroll == GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_DOWN ? 1 : 0;
@@ -171,7 +191,7 @@ void TerminalRuntime::clearLink() {
 }
 void TerminalRuntime::updateLink(uint32_t owner) {
     TerminalLink link;
-    if (pointerInside_ && !pointerPressed_ && pressedLink_.empty() && !search_ && linkModifier(pointerMods_))
+    if (pointerInside_ && pointerGesture_ == PointerGesture::None && pressedLink_.empty() && !search_ && linkModifier(pointerMods_))
         link = linkAt(pointerX_,pointerY_);
     const bool changed = link.url != hoveredLink_.url || owner != pointerOwner_;
     hoveredLink_ = std::move(link); pointerOwner_ = owner;
