@@ -1,5 +1,6 @@
 import terminal, { TerminalHandle } from 'libleantty_terminal.so'
 import { ClipboardManager } from '../clipboard/ClipboardManager'
+import { common } from '@kit.AbilityKit'
 import { KeyCodeMap } from '../../common/constants/KeyCodeMap'
 import util from '@ohos.util'
 
@@ -46,6 +47,7 @@ export class NativeTerminalController {
   private focusConfirmed: boolean = false
   private inputMasked: boolean = false
   private inputOwner: number = 1
+  private pastePending: boolean = false
   private displayGeneration: number = 0
   private context: UIContext | null = null
   private surfaceId: string = ''
@@ -79,6 +81,7 @@ export class NativeTerminalController {
   onRebuildDisplay: () => void = () => {}
   onRequestFocus: () => boolean = () => true
   onCopyResult: (success: boolean) => void = () => {}
+  onPasteError: (resource: string) => void = () => {}
   onAttentionAcknowledged: () => void = () => {}
   onSearchOpen: (open: boolean) => void = () => {}
   onSearchResult: (index: number, count: number) => void = () => {}
@@ -407,13 +410,33 @@ export class NativeTerminalController {
     this.onCopyResult(success)
   }
   async paste(): Promise<void> {
-    if (this.failed || this.closing || !this.focused || !this.presented || this.searching) { return }
+    if (this.pastePending || !this.canPaste(this.inputOwner)) { return }
     let owner = this.inputOwner
-    let text = await ClipboardManager.readText()
-    if (this.failed || this.closing || !this.focused || !this.presented || owner !== this.inputOwner || text.length === 0) { return }
-    if (new util.TextEncoder().encodeInto(text).byteLength > 1024 * 1024) { this.onCopyResult(false); return }
-    this.acknowledgeAttention()
-    try { this.admitted(terminal.paste(this.handle, text, owner)) } catch (_) { this.fail() }
+    this.pastePending = true
+    try {
+      let context = this.context?.getHostContext() as common.UIAbilityContext | undefined
+      if (context === undefined) { this.onPasteError('paste_failed'); return }
+      let permission = await ClipboardManager.requestReadPermission(context)
+      if (this.failed || this.closing || permission === 'busy') { return }
+      if (permission !== 'granted') {
+        this.onPasteError(permission === 'denied' ? 'paste_permission_denied' : 'paste_failed'); return
+      }
+      // The system dialog may blur the Pane. Never restore the old owner or
+      // focus to deliver a paste after authorization; require a fresh gesture.
+      if (!this.canPaste(owner)) { this.onPasteError('paste_cancelled'); return }
+      let text = await ClipboardManager.readText()
+      if (!this.canPaste(owner)) { return }
+      if (text === null) { this.onPasteError('paste_failed'); return }
+      if (text.length === 0) { return }
+      if (new util.TextEncoder().encodeInto(text).byteLength > 1024 * 1024) { this.onPasteError('paste_too_large'); return }
+      this.acknowledgeAttention()
+      try { this.admitted(terminal.paste(this.handle, text, owner)) } catch (_) { this.fail() }
+    } finally {
+      this.pastePending = false
+    }
+  }
+  private canPaste(owner: number): boolean {
+    return !this.failed && !this.closing && this.focused && this.presented && !this.searching && owner === this.inputOwner
   }
   openSearch(): void {
     if (this.failed || this.closing) { return }

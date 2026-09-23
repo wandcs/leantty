@@ -190,7 +190,7 @@ must not be hidden behind ordinary uninstall wording.
 | Effect | Boundary |
 | --- | --- |
 | Local copy | Requires a local selection/action; writes to the local-device clipboard |
-| Paste | Reads the clipboard for a user paste action and submits through normal terminal input |
+| Paste | Checks and, when needed, requests system read permission only for a local user paste action; reads and submits through normal terminal input only while the original input owner remains valid |
 | OSC 52 | Accepts only empty/default or `c` target, rejects reads, invalid Base64/UTF-8 and content over 1 MiB |
 | URL open | Requires user activation; only normalized credential-free HTTP(S) is handed to the system browser |
 | Bell/OSC attention | BEL plus bounded OSC 9, well-formed `OSC 777;notify;title;body`, and complete receive-only OSC 99 title/body frames become the same empty-payload UI attention. OSC 99 notification frames permit only `i/p/e/d` metadata and do not retain IDs or chunks. A bounded `i=<id>:p=?;` query receives only `p=title,body` with the same validated ID through normal TTY input; the ID is not logged or persisted. Activation, close, alive and other capability operations are never answered. OSC content is rejected or discarded inside the native VT worker; only a hidden whole window can attempt one generic system notification per background episode, containing a fixed source marker and internal Pane ID, never remote title, command, output, host data or Agent response. All other notification operations and protocols have no local system effect |
