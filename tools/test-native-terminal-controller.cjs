@@ -717,11 +717,11 @@ if (process.argv[3] === 'output') {
   // Here only the native boundary is modeled; production controller and platform wrapper run intact.
   function right(f, selection = false) {
     f.api.pointer = (_h, action, button, _x, _y, _mods, owner) => {
-      assert.equal(button, 1);
-      if (action === 0) f.emit(selection ? 'copy' : 'paste-request', 19, owner, selection ? 'selected' : '');
+      assert.equal(button, 2);
+      if (action === 1) f.emit(selection ? 'copy' : 'paste-request', 19, owner, selection ? 'selected' : '');
       return 20;
     };
-    f.control.pointer(0,1,10,10,0); f.control.pointer(1,1,10,10,0);
+    f.control.pointer(0,2,10,10,0); f.control.pointer(1,2,10,10,0);
   }
   for (const intent of [shortcut, right, f => f.control.paste()]) {
     const f = ready(); f.state.grant = -1;
