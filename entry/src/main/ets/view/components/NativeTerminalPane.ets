@@ -77,6 +77,9 @@ export struct NativeTerminalPane {
     }
     this.native.onSearchResult = (index: number, count: number) => { this.resultIndex = index; this.resultCount = count }
     this.native.onSearchError = (resource: string) => { this.searchError = resource }
+    this.native.onPasteError = (resource: string) => {
+      this.getUIContext().getPromptAction().showToast({ message: this.text(resource) })
+    }
     this.native.onRequestFocus = () => {
       try {
         this.getUIContext().getFocusController().requestFocus('native-terminal-' + this.paneId)

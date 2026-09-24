@@ -10,10 +10,41 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
   '../entry/src/main/ets/common/constants/KeyCodeMap.ets'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText, { exports: keyMapExports });
-function fixture(acceptanceEnabled = true) {
+function clipboardFixture() {
+  const state = { grant: 0, checks: 0, requests: 0, settingsRequests: 0, reads: 0, writes: 0, text: 'public-text',
+    request: async () => ({ authResults: [0] }), settingsRequest: async () => [0] };
+  const exports = {};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
+    '../entry/src/main/ets/model/clipboard/ClipboardManager.ets'), 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+  }).outputText, { exports, require: name => name === '@kit.AbilityKit' ? {
+    abilityAccessCtrl: { GrantStatus: { PERMISSION_GRANTED: 0, PERMISSION_DENIED: -1 }, createAtManager: () => ({
+      checkAccessTokenSync(token, permission) {
+        assert.equal(token, 42); assert.equal(permission, 'ohos.permission.READ_PASTEBOARD');
+        state.checks++; return state.grant;
+      },
+      requestPermissionsFromUser(context, permissions) {
+        assert.equal(context.applicationInfo.accessTokenId, 42);
+        assert.deepEqual(Array.from(permissions), ['ohos.permission.READ_PASTEBOARD']);
+        state.requests++; return state.request();
+      },
+      requestPermissionOnSetting(context, permissions) {
+        assert.equal(context.applicationInfo.accessTokenId, 42);
+        assert.deepEqual(Array.from(permissions), ['ohos.permission.READ_PASTEBOARD']);
+        state.settingsRequests++; return state.settingsRequest();
+      }
+    }) }
+  } : name === '@kit.BasicServicesKit' ? { pasteboard: {
+    getSystemPasteboard: () => ({ getData: async () => { state.reads++; if (state.readError) throw Error('read');
+      return { getPrimaryText: () => state.text }; }, setData: async () => { state.writes++; } }),
+    createData: () => ({ getProperty: () => ({}), setProperty() {} }), ShareOption: { LOCALDEVICE: 0 }
+  } } : { Logger: class { warn() {} error() {} } } });
+  return { clipboard: exports.ClipboardManager, state };
+}
+function fixture(acceptanceEnabled = true, clipboardState = clipboardFixture()) {
   let callback, next = 1, capacity = 1024 * 1024, occupied = 0;
   const accepted = [], attachments = [], timers = new Map(), logs = [];
-  const clipboard = { async readText() { return ''; }, async writeText() { return true; } };
+  const { clipboard, state } = clipboardState;
   const api = {
     create(_a, _b, cb) { callback = cb; return {}; },
     write(_h, bytes, owner) {
@@ -62,7 +93,7 @@ function fixture(acceptanceEnabled = true) {
   control.onFailure = () => events.push(['failure']);
   const emit = (kind, seq = 0, owner = 0, text = '') => callback(kind, seq, owner, text);
   function consume(item) { occupied -= item.bytes?.byteLength || 0; emit('consumed', item.seq); }
-  return { control, accepted, attachments, events, emit, consume, timers, clipboard, logs };
+  return { control, accepted, attachments, events, emit, consume, timers, clipboard, state, logs, api };
 }
 let count = 0;
 function test(name, fn) { fn(); console.log('PASS ' + name); count++; }
@@ -657,17 +688,163 @@ if (process.argv[3] === 'output') {
 }
 (async () => {
   const f = fixture();
-  f.control.attach('123',900,600,{ vp2px: x => 2*x }); f.control.focus(); f.emit('presented',0,f.control.displayGeneration);
+  const context = { vp2px: x => 2*x, getHostContext: () => ({ applicationInfo: { accessTokenId: 42 } }) };
+  const flush = () => new Promise(setImmediate);
+  function ready(shared) {
+    const f = fixture(true, shared);
+    f.control.attach('123',900,600,context); f.control.focus(); f.emit('presented',0,f.control.displayGeneration);
+    f.errors = []; f.control.onPasteError = name => f.errors.push(name);
+    return f;
+  }
+  f.control.attach('123',900,600,context); f.control.focus(); f.emit('presented',0,f.control.displayGeneration);
   let finishRead;
   f.clipboard.readText = () => new Promise(resolve => { finishRead = resolve; });
-  let pending = f.control.paste(); f.control.changeInputOwner(); finishRead('previous-secret-round'); await pending;
+  let pending = f.control.paste(); await flush(); f.control.changeInputOwner(); finishRead('previous-secret-round'); await pending;
   assert.equal(f.accepted.filter(x => x.kind === 'paste').length,0);
-  pending = f.control.paste(); finishRead('public-text'); await pending;
+  pending = f.control.paste(); await flush(); finishRead('public-text'); await pending;
   assert.equal(f.accepted.filter(x => x.kind === 'paste')[0].text,'public-text');
   let finishWrite;
   f.clipboard.writeText = () => new Promise(resolve => { finishWrite = resolve; });
   f.emit('copy',19,f.control.inputOwner,'selected'); finishWrite(true); await new Promise(setImmediate);
   assert.equal(f.accepted.find(x => x.kind === 'copy').revision,19);
   console.log('PASS asynchronous paste ownership and exact successful-copy revision'); count++;
+  const paneSource = fs.readFileSync(path.join(__dirname,'../entry/src/main/ets/view/components/NativeTerminalPane.ets'),'utf8');
+  const paneExports = {};
+  vm.runInNewContext(ts.transpileModule('export class Pane {' + paneSource.slice(
+    paneSource.indexOf('  private handleNativeKey('), paneSource.indexOf('  private handleSearchKey(')) + '}', {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+  }).outputText, { exports: paneExports, KeyCodeMap: keyMapExports.KeyCodeMap, KeyType: { Down: 0 } });
+  function shortcut(f) {
+    const p = new paneExports.Pane(); p.native = f.control; p.onKey = () => false;
+    assert.equal(p.handleNativeKey({ type: 0, keyCode: 2038, getModifierKeyState: keys => keys.every(k => k === 'Ctrl') }), true);
+  }
+  // The unchanged C++ Right/selection contract is tested by runtime-test.cpp.
+  // Here only the native boundary is modeled; production controller and platform wrapper run intact.
+  function right(f, selection = false) {
+    f.api.pointer = (_h, action, button, _x, _y, _mods, owner) => {
+      assert.equal(button, 2);
+      if (action === 1) f.emit(selection ? 'copy' : 'paste-request', 19, owner, selection ? 'selected' : '');
+      return 20;
+    };
+    f.control.pointer(0,2,10,10,0); f.control.pointer(1,2,10,10,0);
+  }
+  for (const intent of [shortcut, right, f => f.control.paste()]) {
+    const f = ready(); f.state.grant = -1;
+    intent(f); await flush();
+    assert.equal(f.state.requests,1); assert.equal(f.state.reads,1);
+    assert.equal(f.accepted.filter(x => x.kind === 'paste').length,1);
+    intent(f); await flush(); assert.equal(f.state.requests,2,'no cached grant');
+    f.state.grant = 0; intent(f); await flush(); assert.equal(f.state.requests,2,'already granted needs no request');
+  }
+  console.log('PASS local Right, Ctrl+V and direct paste check/request/read through production owners'); count++;
+  for (const result of [{ authResults: [-1] }, { authResults: [] }, { authResults: [0,-1] }, null]) {
+    const f = ready(); f.state.grant = -1;
+    f.state.request = async () => { if (result === null) throw Error('request'); return result; };
+    right(f); await flush();
+    assert.equal(f.state.reads,0); assert.equal(f.accepted.filter(x => x.kind === 'paste').length,0);
+    assert.equal(f.errors[0],result === null ? 'paste_failed' : 'paste_permission_denied');
+    f.state.request = async () => ({ authResults: [0] });
+    shortcut(f); await flush(); assert.equal(f.state.reads,1,'failure releases in-flight guard for fresh intent');
+  }
+  console.log('PASS denied, malformed and failed authorization never reads and fresh intent can recover'); count++;
+  {
+    const f = ready(); f.state.grant = -1;
+    f.state.request = async () => ({ authResults: [-1], dialogShownResults: [false] });
+    right(f); await flush();
+    assert.equal(f.state.settingsRequests,1,'explicit no-dialog denial offers the supported system settings dialog');
+    assert.equal(f.state.reads,1); assert.equal(f.accepted.filter(x => x.kind === 'paste').length,1);
+    assert.equal(f.errors.length,0);
+  }
+  console.log('PASS fixed denial without an ordinary dialog can grant through the system settings dialog'); count++;
+  for (const result of [
+    { authResults: [-1], dialogShownResults: [true] }, { authResults: [-1] },
+    { authResults: [-1], dialogShownResults: [] }, { authResults: [-1], dialogShownResults: [undefined] },
+    { authResults: [-1], dialogShownResults: [false,false] }, { authResults: [], dialogShownResults: [false] },
+    { authResults: [-1,-1], dialogShownResults: [false] }, { authResults: [1], dialogShownResults: [false] },
+    { authResults: [0], dialogShownResults: [false] }
+  ]) {
+    const f = ready(); f.state.grant = -1; f.state.request = async () => result;
+    await f.control.paste();
+    assert.equal(f.state.settingsRequests,0,'shown, unknown or non-denied ordinary result cannot request settings');
+    assert.equal(f.state.reads,result.authResults[0] === 0 ? 1 : 0);
+  }
+  console.log('PASS shown or unknown ordinary dialog and malformed denial never trigger a second dialog'); count++;
+  for (const result of [[-1],[],[0,-1],null]) {
+    const f = ready(); f.state.grant = -1;
+    f.state.request = async () => ({ authResults: [-1], dialogShownResults: [false] });
+    f.state.settingsRequest = async () => { if (result === null) throw Error('settings'); return result; };
+    await f.control.paste();
+    assert.equal(f.state.requests,1); assert.equal(f.state.settingsRequests,1); assert.equal(f.state.reads,0);
+    assert.equal(f.errors[0],result === null ? 'paste_failed' : 'paste_permission_denied');
+    f.state.settingsRequest = async () => [0];
+    await f.control.paste();
+    assert.equal(f.state.settingsRequests,2,'only a fresh user intent retries after denial/error');
+    assert.equal(f.state.reads,1,'both guards released after settings completion');
+  }
+  console.log('PASS settings denial and errors do not read or loop and release guards for a fresh paste'); count++;
+  for (const invalidate of [c => { c.blur(); c.focus(); }, c => c.changeInputOwner(), c => c.openSearch(),
+    c => c.setVisible(false), c => c.detach(), c => c.dispose(), c => c.fail()]) {
+    for (const stage of ['ordinary','settings']) {
+      const shared = clipboardFixture(), f = ready(shared), other = ready(shared); let finish;
+      f.state.grant = -1;
+      f.state.request = stage === 'ordinary' ? () => new Promise(resolve => { finish = resolve; }) :
+        async () => ({ authResults: [-1], dialogShownResults: [false] });
+      if (stage === 'settings') f.state.settingsRequest = () => new Promise(resolve => { finish = resolve; });
+      const pending = f.control.paste(); await flush();
+      right(f); shortcut(f); await other.control.paste();
+      assert.equal(f.state.requests,1,'no queued or cross-Pane ordinary request while either dialog waits');
+      invalidate(f.control);
+      finish(stage === 'ordinary' ? { authResults: [-1], dialogShownResults: [false] } : [0]);
+      await pending;
+      assert.equal(f.state.settingsRequests,stage === 'ordinary' ? 0 : 1,'old intent cannot open a later settings dialog');
+      assert.equal(f.state.reads,0); assert.equal(f.accepted.filter(x => x.kind === 'paste').length,0);
+      if (!f.control.closing && !f.control.failed) assert.equal(f.errors[0],'paste_cancelled');
+    }
+  }
+  console.log('PASS both authorization waits reject stale owners and keep duplicate requests out'); count++;
+  for (const invalidate of [c => c.blur(), c => c.changeInputOwner(), c => c.openSearch(),
+    c => c.setVisible(false), c => c.detach(), c => c.dispose(), c => c.fail()]) {
+    for (const stage of ['permission','read']) {
+      const f = ready(); let finish;
+      if (stage === 'permission') {
+        f.state.grant = -1; f.state.request = () => new Promise(resolve => { finish = resolve; });
+      } else { f.clipboard.readText = () => { f.state.reads++; return new Promise(resolve => { finish = resolve; }); }; }
+      const pending = f.control.paste(); await flush(); invalidate(f.control);
+      finish(stage === 'permission' ? { authResults: [0] } : 'public-text'); await pending;
+      assert.equal(f.state.reads,stage === 'permission' ? 0 : 1);
+      assert.equal(f.accepted.filter(x => x.kind === 'paste').length,0);
+      if (stage === 'permission' && !f.control.closing && !f.control.failed) assert.equal(f.errors[0],'paste_cancelled');
+    }
+  }
+  console.log('PASS permission and read completions discard stale focus, session, search, display and closed owners'); count++;
+  {
+    const shared = clipboardFixture(), a = ready(shared), b = ready(shared); let finish;
+    shared.state.grant = -1; shared.state.request = () => new Promise(resolve => { finish = resolve; });
+    const pending = a.control.paste(); right(a); shortcut(a); await b.control.paste();
+    assert.equal(shared.state.requests,1); assert.equal(shared.state.reads,0);
+    finish({ authResults: [0] }); await pending;
+    assert.equal(shared.state.reads,1); assert.equal(b.accepted.filter(x => x.kind === 'paste').length,0);
+    let finishRead; a.clipboard.readText = () => new Promise(resolve => { finishRead = resolve; });
+    shared.state.grant = 0;
+    const reading = a.control.paste(); await flush(); right(a); shortcut(a); finishRead('public-text'); await reading;
+    assert.equal(a.accepted.filter(x => x.kind === 'paste').length,2,'repeated intents do not queue extra pastes');
+  }
+  console.log('PASS concurrent permission intents across Panes and repeated reads do not queue'); count++;
+  {
+    const f = ready(); f.state.grant = -1; right(f,true); await flush();
+    f.control.acceptsRemoteEffect = owner => owner === 7;
+    f.emit('clipboard',0,7,'remote-write'); f.emit('reply',0,7,'remote-output'); await flush();
+    assert.equal(f.state.writes,2); assert.equal(f.state.requests,0); assert.equal(f.state.reads,0);
+    f.emit('paste-request',0,f.control.inputOwner-1); await flush(); assert.equal(f.state.checks,0);
+    f.control.openSearch(); shortcut(f); await flush(); assert.equal(f.state.checks,0);
+  }
+  console.log('PASS selection, OSC52 writes, remote output and stale/search input cannot request read permission'); count++;
+  for (const text of ['',null,'x'.repeat(1024*1024+1),'small']) {
+    const f = ready(); f.state.text = text; f.state.readError = text === null;
+    await f.control.paste();
+    assert.equal(f.accepted.filter(x => x.kind === 'paste').length,text === 'small' ? 1 : 0);
+    assert.equal(f.errors[0],text === null ? 'paste_failed' : text.length > 1024*1024 ? 'paste_too_large' : undefined);
+  }
+  console.log('PASS empty, failed and oversized clipboard text retain distinct bounded outcomes'); count++;
   console.log(`${count} native terminal controller contracts passed`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,5 +1,9 @@
 {
   "string": [
+    { "name": "paste_permission_denied", "value": "未获得剪贴板读取权限。请在系统设置中允许 LeanTTY 访问剪贴板，然后再次粘贴。" },
+    { "name": "paste_failed", "value": "无法读取剪贴板，请再次尝试粘贴。" },
+    { "name": "paste_cancelled", "value": "终端焦点或状态已变化，本次粘贴已取消。请返回目标终端后再次粘贴。" },
+    { "name": "paste_too_large", "value": "剪贴板文本超过 1 MiB 粘贴上限，请缩小复制范围。" },
     { "name": "module_desc", "value": "LeanTTY 主模块" },
     { "name": "EntryAbility_desc", "value": "适用于 HarmonyOS PC 的 SSH 终端" },
     { "name": "EntryAbility_label", "value": "LeanTTY" },
