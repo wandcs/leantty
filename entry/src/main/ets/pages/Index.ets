@@ -74,7 +74,6 @@ struct Index {
   }
   private consumedBackgroundBellReturnToken: number = 0
   private consumedRuntimeRecoveryRequestToken: number = 0
-  private restoringUnexpectedWorkspace: boolean = false
 
   aboutToAppear(): void {
     this.fontSize = InteractionPolicy.clampFontSize(this.fontSize)
@@ -87,14 +86,11 @@ struct Index {
       this.appVm.setIdentityGeneration(UnexpectedExitRecoveryStore.currentGeneration())
       let recovery: RecoveryWorkspaceSnapshot | null =
         UnexpectedExitRecoveryStore.consumeUnexpectedWorkspace()
-      this.restoringUnexpectedWorkspace = recovery !== null
       if (recovery === null || !this.appVm.restoreRecoverySnapshot(recovery)) {
-        this.restoringUnexpectedWorkspace = false
         this.appVm.addTab('ltty')
       } else {
         this.splitRatio = recovery.splitRatio
       }
-      this.restoringUnexpectedWorkspace = false
       this.applicationWorkspace.initialize(this.splitRatio)
     }
     this.syncWorkspace()
@@ -576,9 +572,6 @@ struct Index {
 
   private createPaneRuntime(pane: PaneInfo): PaneRuntime {
     let vm: SessionViewModel = new SessionViewModel()
-    if (this.restoringUnexpectedWorkspace) {
-      vm.setInitialRecoveryNotice()
-    }
     vm.setPaneIdentity(pane.id)
     let runtime: PaneRuntime = new PaneRuntime(pane.id, vm)
     this.bindPaneRuntime(pane, runtime)

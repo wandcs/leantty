@@ -163,6 +163,11 @@ host list
 host rm work
 ```
 
+`host list` uses one multiline entry per Host: complete name, target, Identity,
+configured ProxyJump, and effective timeout/keepalive values including defaults.
+`automatic` means no Identity is bound. IPv6 targets use brackets; long values
+wrap naturally without truncation. Use `ssh -G <host-name>` for connection details.
+
 Then connect with:
 
 ```text
@@ -345,6 +350,11 @@ key export id_work
 key export id_work id_work_copy
 key rm id_work
 ```
+
+`key list` shows each key's complete name, type, fingerprint, passphrase protection
+and public-key comment. Empty comments and unprotected keys are explicit. Long
+values wrap naturally in narrow windows or split Panes; internal private-key paths
+are not displayed.
 
 Important behavior:
 

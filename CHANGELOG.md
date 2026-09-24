@@ -6,6 +6,11 @@
 
 ### Changed
 
+- Show Host and Key lists as multiline entries with full names and fingerprints,
+  connection settings, passphrase protection and key comments; long values wrap
+  naturally in narrow Panes.
+- Remove the persistent unexpected-exit warning from recovered Panes while
+  preserving workspace layout recovery, logging and real connection errors.
 - Update russh to 0.63.3 for SSH security and transport fixes, preserving plain
   host-key trust and the isolated ECDSA scalar patch. Replace withdrawn chacha20
   and wnaf versions without adding host-certificate support.

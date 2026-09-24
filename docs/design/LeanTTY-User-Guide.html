@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="11">
+  <meta name="leantty-guide-revision" content="12">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LeanTTY 1.7.0 使用指南 / User Guide</title>
@@ -1073,6 +1073,10 @@ ssh work</code></pre>
           <code>ssh -G work</code> 查看 LeanTTY 最终会采用哪些配置。
         </p>
         <p>
+          <code>host list</code> 按多行显示完整名称、目标、Identity、已配置的跳板及生效的超时和保活值（含默认值）。
+          <code>automatic</code> 表示未绑定 Identity；IPv6 目标用方括号区分端口，长值自然换行、不截断。
+        </p>
+        <p>
           <code>-i</code> 把 <code>key list</code> 中的一个 Identity 保存到该 Host；以后
           <code>ssh</code>、<code>mosh</code>、<code>put</code> 和 <code>get</code> 都会复用它。
           只有 ssh/put/get 提供当次操作的 <code>-i</code> 覆盖。<code>-i none</code> 删除保存的绑定；修改其他 Host
@@ -1240,6 +1244,10 @@ ssh-keygen -R [example.com]:2222</code></pre>
         </div>
 
         <h3>私钥</h3>
+        <p>
+          <code>key list</code> 按多行显示完整名称、类型、完整指纹、口令保护状态和公钥注释。
+          空注释和无口令明确标识；长值在窄窗和分屏中自然换行，不显示内部私钥路径。
+        </p>
         <pre><code>ssh-keygen -t ed25519 -f id_work -C work
 key list
 ssh-keygen -l -f id_work
@@ -1749,6 +1757,11 @@ ssh work</code></pre>
           supported effective values before connecting with <code>ssh -G work</code>.
         </p>
         <p>
+          <code>host list</code> shows multiline entries with full names, targets, Identity, configured
+          ProxyJump and effective timeout/keepalive values including defaults. <code>automatic</code>
+          means no Identity is bound. IPv6 targets use brackets; long values wrap without truncation.
+        </p>
+        <p>
           <code>-i</code> saves one Identity shown by <code>key list</code> for that Host, so
           <code>ssh</code>, <code>mosh</code>, <code>put</code> and <code>get</code> reuse it. Only
           ssh/put/get offer a command-local <code>-i</code> override. <code>-i none</code> removes the saved
@@ -1930,6 +1943,11 @@ ssh-keygen -R [example.com]:2222</code></pre>
         </div>
 
         <h3>Private keys</h3>
+        <p>
+          <code>key list</code> shows full names, types, complete fingerprints, passphrase protection
+          and public-key comments. Empty comments and unprotected keys are explicit. Long values wrap
+          in narrow windows or split Panes; internal private-key paths are not displayed.
+        </p>
         <pre><code>ssh-keygen -t ed25519 -f id_work -C work
 key list
 ssh-keygen -l -f id_work

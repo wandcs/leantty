@@ -74,6 +74,19 @@ function fixture() {
 let passed = 0;
 function test(name, run) { run(); passed++; console.log(`PASS ${name}`); }
 
+test('idle Surface readiness writes one prompt only for fresh output and preserves recovered output', () => {
+  const calls = [];
+  const owner = Object.create(SessionViewModel.prototype);
+  Object.assign(owner, { mode: TerminalMode.IDLE,
+    writePrompt: () => calls.push('prompt'), applyTerminalFocus: () => calls.push('focus'),
+    logger: { info: text => calls.push(text) } });
+  owner.onTerminalReady(false);
+  assert.deepEqual(calls, ['prompt', 'focus', 'Terminal ready without recovered output']);
+  calls.length = 0;
+  owner.onTerminalReady(true);
+  assert.deepEqual(calls, ['focus', 'Terminal ready, terminal output recovered']);
+});
+
 test('native session reset positions output before writing and completes after consumption', () => {
   const surface=new TerminalSurfaceController(), calls=[];
   let positioned, consumed;

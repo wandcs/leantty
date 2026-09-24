@@ -196,13 +196,14 @@ export class KeyCommandService {
       ctx.writeOutput('\r\nNo keys found.\r\n  Try: ssh-keygen\r\n' + LocalCommandOutput.prompt())
       return
     }
-    ctx.writeOutput('\r\n  NAME          TYPE      FINGERPRINT\r\n')
-    ctx.writeOutput('  ----          ----      -----------\r\n')
     for (let i = 0; i < keys.length; i++) {
-      let name: string = KeyCommandService.fileName(keys[i].filePath)
-      let algo: string = algorithmDisplayName(keys[i].algorithm)
-      ctx.writeOutput('  ' + KeyCommandService.safeText(name).padEnd(14, ' ') + algo.padEnd(10, ' ') +
-        KeyCommandService.safeText(keys[i].fingerprint) + '\r\n')
+      let key: KeyPairInfo = keys[i]
+      let comment: string = key.publicKeyText.replace(/^[^ \t]+[ \t]+[^ \t]+[ \t]*/, '')
+      ctx.writeOutput('\r\nKey: ' + KeyCommandService.safeText(KeyCommandService.fileName(key.filePath)) + '\r\n')
+      ctx.writeOutput(KeyCommandService.listField('Type', algorithmDisplayName(key.algorithm)))
+      ctx.writeOutput(KeyCommandService.listField('Fingerprint', key.fingerprint))
+      ctx.writeOutput(KeyCommandService.listField('Passphrase', key.hasPassphrase ? 'protected' : 'none'))
+      ctx.writeOutput(KeyCommandService.listField('Comment', comment.length > 0 ? comment : '(empty)'))
     }
     ctx.writeOutput(LocalCommandOutput.prompt())
   }
@@ -514,14 +515,25 @@ export class KeyCommandService {
         LocalCommandOutput.prompt())
       return
     }
-    ctx.writeOutput('\r\n  HOST        USER@HOST\r\n')
-    ctx.writeOutput('  ----        ---------\r\n')
     for (let i = 0; i < hosts.length; i++) {
       let h = hosts[i]
-      let target: string = h.user + '@' + h.hostname
+      ctx.writeOutput('\r\nHost: ' + KeyCommandService.safeText(h.alias) + '\r\n')
+      if (h.errorMessage.length > 0) {
+        ctx.writeOutput(KeyCommandService.listField('Error', h.errorMessage))
+        continue
+      }
+      let target: string = h.hostname.includes(':') && !h.hostname.startsWith('[') ?
+        '[' + h.hostname + ']' : h.hostname
+      if (h.user.length > 0) { target = h.user + '@' + target }
       if (h.port !== 22) { target += ':' + h.port.toString() }
-      ctx.writeOutput('  ' + KeyCommandService.safeText(h.alias).padEnd(12, ' ') +
-        KeyCommandService.safeText(target) + '\r\n')
+      ctx.writeOutput(KeyCommandService.listField('Target', target))
+      ctx.writeOutput(KeyCommandService.listField('Identity', h.identityFile.length > 0 ? h.identityFile : 'automatic'))
+      if (h.proxyJump.length > 0) {
+        ctx.writeOutput(KeyCommandService.listField('ProxyJump', h.proxyJump))
+      }
+      ctx.writeOutput(KeyCommandService.listField('ConnectTimeout', Math.floor(h.connectTimeoutMs / 1000).toString() + 's'))
+      ctx.writeOutput(KeyCommandService.listField('ServerAliveInterval', h.serverAliveIntervalSeconds.toString() + 's'))
+      ctx.writeOutput(KeyCommandService.listField('ServerAliveCountMax', h.serverAliveCountMax.toString()))
     }
     ctx.writeOutput(LocalCommandOutput.prompt())
   }
@@ -553,6 +565,10 @@ export class KeyCommandService {
 
   private static safeText(value: string): string {
     return TerminalTextPolicy.escape(value)
+  }
+
+  private static listField(label: string, value: string): string {
+    return '  ' + label + ': ' + KeyCommandService.safeText(value) + '\r\n'
   }
 
   private static safeMultilineText(value: string): string {
