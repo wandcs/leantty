@@ -1804,7 +1804,7 @@ foreach ($moshContract in @(
     'originalPageRestored = $originalPageRestoredAfterSession',
     'moshPageDiscarded = $moshPageDiscardedAfterSession',
     'forced-client-process-exit-restored-only-the-local-workspace-without-session-content',
-    "-Query 'Workspace layout was recovered' -ExpectMatch `$true",
+    'Test-MoshProcessWorkspaceRecovery',
     'remoteContentAbsent = $processRecoveryRemoteContentAbsent',
     'sessionNotRestored = $processRecoverySessionNotRestored',
     'runtimeReclaimed = $runtimeWorkspaceRecovered',
@@ -2730,4 +2730,28 @@ Assert-True (
     }
 }
 
+# Recovery is a layout/lifecycle claim; removed user-visible warning text is not an oracle.
+& {
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        (Join-Path $PSScriptRoot 'verify-mosh-pc.ps1'), [ref]$null, [ref]$null)
+    $reader = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Test-MoshProcessWorkspaceRecovery'
+    }, $true)
+    Assert-True ($null -ne $reader) 'Missing process workspace recovery observer'
+    . ([scriptblock]::Create($reader.Extent.Text))
+    $valid = 'Recovery run started: generation=2, unexpected=true'
+    Assert-True (Test-MoshProcessWorkspaceRecovery -Logs $valid -PaneCount 1) 'Recovery without obsolete warning was rejected'
+    foreach ($logs in @('', 'Workspace layout was recovered',
+            $valid.Replace('true','false'), $valid.Replace('=2','=1'), "$valid`n$valid")) {
+        Assert-True (-not (Test-MoshProcessWorkspaceRecovery -Logs $logs -PaneCount 1)) 'Missing, clean, first-generation or ambiguous recovery was accepted'
+    }
+    foreach ($count in @(0,2)) {
+        Assert-True (-not (Test-MoshProcessWorkspaceRecovery -Logs $valid -PaneCount $count)) 'Unexpected Pane layout qualified as recovered'
+    }
+    $source = Get-Content (Join-Path $PSScriptRoot 'verify-mosh-pc.ps1') -Raw
+    Assert-True (-not $source.Contains("-Query 'Workspace layout was recovered'")) 'Removed warning remains a process recovery oracle'
+    Assert-True ($source.Contains("-Query 'Workspace layout was kept'")) 'Real runtime-reclaim warning was removed from its own check'
+    Assert-True ([regex]::Matches($source, '-T UnexpectedExitRecoveryStore').Count -eq 2) 'Process recovery reads a log projection that omits its state owner'
+}
 Write-Host 'Device regression helper tests passed.' -ForegroundColor Green
