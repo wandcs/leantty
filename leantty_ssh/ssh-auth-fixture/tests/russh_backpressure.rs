@@ -92,7 +92,10 @@ struct TestClient;
 impl client::Handler for TestClient {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, _: &PublicKey) -> Result<bool, Self::Error> {
+    async fn check_server_key(
+        &mut self,
+        _: &russh::keys::PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
         Ok(true)
     }
 }

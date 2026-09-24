@@ -826,8 +826,14 @@ impl russh::client::Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_key: &russh::keys::PublicKeyOrCertificate,
     ) -> std::result::Result<bool, Self::Error> {
+        // Host certificates/CA trust are outside the supported trust contract.
+        // Do not extract and trust a certificate's embedded key as a plain key.
+        let server_public_key = match server_key {
+            russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } => key,
+            russh::keys::PublicKeyOrCertificate::Certificate(_) => return Ok(false),
+        };
         if let Some(callback) = &self.transport_callback {
             send_transport_diagnostic(callback, self.verbose, self.layer, "host_key", "started");
         }
@@ -5127,7 +5133,10 @@ MOSH SSH_CONNECTION 192.0.2.10 50000 198.51.100.8 22\n"
     impl client::Handler for ActorClient {
         type Error = russh::Error;
 
-        async fn check_server_key(&mut self, _: &PublicKey) -> Result<bool, Self::Error> {
+        async fn check_server_key(
+            &mut self,
+            _: &russh::keys::PublicKeyOrCertificate,
+        ) -> Result<bool, Self::Error> {
             Ok(true)
         }
     }
@@ -5446,6 +5455,13 @@ MOSH SSH_CONNECTION 192.0.2.10 50000 198.51.100.8 22\n"
         let config = build_client_config(0, 7);
         assert_eq!(config.keepalive_interval, None);
         assert_eq!(config.keepalive_max, 7);
+    }
+
+    #[test]
+    fn client_config_keeps_host_certificates_out_of_negotiation() {
+        let config = build_client_config(30, 3);
+        assert!(config.preferred.host_key_certificates.is_empty());
+        assert!(!config.preferred.key.is_empty());
     }
 
     #[test]

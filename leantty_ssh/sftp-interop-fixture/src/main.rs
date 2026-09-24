@@ -19,10 +19,13 @@ impl client::Handler for ControlledLocalhostClient {
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         // test-e2e.sh owns the ephemeral localhost sshd and its host key.
-        Ok(true)
+        Ok(matches!(
+            server_key,
+            russh::keys::PublicKeyOrCertificate::PublicKey { .. }
+        ))
     }
 }
 

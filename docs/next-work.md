@@ -18,15 +18,16 @@
   均发现 RSA 未修复公告及 chacha20/wnaf 撤回版本；npm audit 为 0，不能将仓库
   Dependabot open=0 扩称依赖安全全绿。现有 PR 的 core CI 不覆盖完整 NAPI 产品。
 - [x] 维护者确认 warning 与 Host/Key 两项均纳入 1.7，具体合同见下方对应任务。
-  本轮只完成评审和范围记录，尚未执行依赖升级或两项产品修改。
-- [ ] 下一实施批纳入 russh 0.63.3：补齐 PublicKeyOrCertificate 回调适配，保持
+  依赖实施与定向验证已完成；两项产品修改继续按已确认范围执行。
+- [x] 纳入 russh 0.63.3：补齐 PublicKeyOrCertificate 回调适配，保持
   普通主机公钥信任语义，明确拒绝未支持的主机证书；不引入 CA 支持或 fallback。
   同步主 workspace 与独立 SFTP fixture 的必要版本/锁文件，补齐 #216 未覆盖的调用者。
   同批定向更新 chacha20 0.10.2、wnaf 0.14.1；后者有 trait 约束变化，不扩大 vendor
   补丁来迁就升级。保留 ssh-key 0.7.0-rc.11 的现有可移除 ECDSA 补丁及来源校验。
   完整产品编译、受影响 Rust/信任/认证/通道回归、ARM64 构建与定向真机通过后经 PR 合入。
-- [ ] #129 的 data-encoding 2.11.1 单独维护更新：核对来源/锁文件与 core 合同，
+- [x] #129 的 data-encoding 2.11.1 单独维护更新：核对来源/锁文件与 core 合同，
   避免附带无关依赖刷新；不为包元数据变化单独重跑完整真机矩阵。
+  core 回归和四项 CI 通过，PR #129 已合入 `9bfa9f9`。
 - [x] #217 的 russh-sftp 3.0.0 明确延期至 1.7 后的独立准入评估；当前保持 2.4.0，
   不为清空 PR 合入读写流水线和取消语义变化。Host 证书/CA、列表宽度框架及新选项
   明确不纳入 1.7。RSA 支持保持现有合同；记录未修复公告与实际签名路径，不新增
@@ -34,6 +35,21 @@
 
 顺序：安全依赖与必要适配 → warning/列表实现及受影响验证 → 最终主线新候选。
 依赖与产品字节变更不沿用旧签名包身份。正式验收、模型调用、发布仍未恢复。
+
+09-24 实施启动：定向更新 russh/chacha20/wnaf 后，预期 workspace 全目标编译通过；
+core/依赖编译正常，首个失败为 proxy_jump_transport.rs:42 的旧 PublicKey 回调签名。
+权威接口为 russh 0.63.3 Handler；此前评审漏计此实现，实际共六处。下一最小检查为
+同步该 fixture 回调并重新全目标编译，不修改协议/信任语义，不扩展 vendor 补丁。
+补齐后完整 workspace/all-targets 与独立 SFTP fixture 编译通过；policy、rust-core、
+rust-native、ssh-fixture 定向组通过，包含 57 项产品原生测试、ECDSA 标量合同、
+ProxyJump/背压/认证回归和 fixture E2E。新增合同检查默认不协商主机证书，产品回调
+也明确拒绝 Certificate。标准 ARM64 签名构建及真机密码、传输主路径、加密公钥、
+ECDSA 加密导入/错误口令/重启认证、Mosh SSH 引导和固定 UDP 连接通过，清理独立核对通过。
+OpenSSH SFTP E2E 通过；两份升级后 cargo audit 仅余已记录的 RSA 公告，无撤回版本。
+源码 `169d64a`，开发 HAP SHA-256 `b6399e49ee8ef52ef16eb637462772f3cc6579b268976c3e9edf1797ac971c9b`。
+PR #238 承接安全升级并替代 #216；随后合入 #129 的元数据更新，组合 core 合同再次通过。
+复用该开发包的受影响设备证据，不将它改称组合源码或正式候选；后续列表开发包重新构建。
+证据 `build/verification/ssh-security-dependencies/`，完整发布验收与模型调用未启动。
 
 ## 09-23 当前产品修复与设备使用边界
 

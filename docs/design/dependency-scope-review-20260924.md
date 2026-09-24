@@ -48,7 +48,8 @@ squash 提交为本报告基线。35 项 controller 合同、构建交付、维�
 [0.63.0](https://github.com/warp-tech/russh/releases/tag/v0.63.0) 把
 `Handler::check_server_key` 的参数从 `&PublicKey` 改为 `PublicKeyOrCertificate`。
 产品 `leantty_ssh/src/lib.rs:827` 仍使用旧签名；同文件测试、ssh-auth-fixture 的测试、
-backpressure 测试和独立 sftp-interop-fixture 也有旧签名，共 5 个实现。
+backpressure/ProxyJump 测试和独立 sftp-interop-fixture 也有旧签名，共 6 个实现
+（实施全目标编译补充发现 ProxyJump，修正首次评审的五处计数）。
 #216 未修改这些文件。此为源码接口不匹配的静态发现，本轮未伪称运行了失败构建。
 
 影响面包括普通 SSH、ProxyJump 各层、Mosh 的 SSH bootstrap 和 SFTP 的 SSH 通道。
