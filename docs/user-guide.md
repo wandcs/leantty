@@ -2,7 +2,7 @@
 
 > Status: current-source user contract
 >
-> Last updated: 2026-09-20
+> Last updated: 2026-09-24
 >
 > Applies to the 1.7.0 release-preparation source; formal acceptance is pending.
 > The maintainer confirmed 1.6.0 is available in AppGallery on September 20.
