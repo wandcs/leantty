@@ -1329,17 +1329,27 @@ function Wait-LeanTTYDeviceKnownHostAbsent {
         [Parameter(Mandatory = $true)][ValidateRange(1, 65535)][int]$Port,
         [ValidateRange(1, 30)][int]$TimeoutSeconds = 8
     )
-    # Read the projection only; callers own the single command and prove local mode.
+    # Read the authoritative file only; callers own the command and prove local mode.
     # The command submission ACK precedes the durable known-host operation.
-    $path = '/data/app/el2/100/base/com.leantty.app/haps/entry/files/.ssh/known_hosts'
+    $directory = '/data/app/el2/100/base/com.leantty.app/haps/entry/files'
+    # Enter each parent before asserting absence. A denied traversal/read, a
+    # non-directory parent, or a dangling symlink must not count as empty trust.
+    $readCommand = @(
+        "if cd $directory; then"
+        "if [ ! -e .ssh ] && [ ! -L .ssh ]; then printf '\nLEANTTY_KNOWN_HOST_ABSENT_OK\n';"
+        'elif cd .ssh; then'
+        "if [ ! -e known_hosts ] && [ ! -L known_hosts ]; then printf '\nLEANTTY_KNOWN_HOST_ABSENT_OK\n';"
+        "else cat known_hosts && printf '\nLEANTTY_KNOWN_HOST_READ_OK\n'; fi; fi; fi"
+    ) -join ' '
     $endpoint = "[127.0.0.1]:$Port"
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
         $content = Invoke-HdcChecked -Hdc $Hdc -Target $Target -Arguments @(
-            'shell', '-b', 'com.leantty.app', "cat $path && printf '\nLEANTTY_KNOWN_HOST_READ_OK\n'"
+            'shell', '-b', 'com.leantty.app', $readCommand
         ) -Operation 'Audit temporary known-host removal'
+        if ($content -match '(?m)^LEANTTY_KNOWN_HOST_ABSENT_OK\r?$') { return }
         if ($content -notmatch '(?m)^LEANTTY_KNOWN_HOST_READ_OK\r?$') {
-            throw '[infrastructure] Known-host projection read was not confirmed'
+            throw '[infrastructure] Known-host file read or absence was not confirmed'
         }
         $present = @($content -split "`n" | Where-Object {
             $hosts = (($_.Trim() -split '\s+')[0]) -split ','

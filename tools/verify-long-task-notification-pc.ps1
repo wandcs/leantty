@@ -127,6 +127,7 @@ $fixtureDirectory = Join-Path $temporaryRoot (
 )
 $wslFixtureDirectory = ConvertTo-LeanTTYWslPath -WindowsPath $fixtureDirectory
 $sshdConfigPath = Join-Path $fixtureDirectory 'sshd_config'
+$sshdPidPath = Join-Path $fixtureDirectory 'sshd.pid'
 $authorizedKeysPath = Join-Path $fixtureDirectory 'authorized_keys'
 $hostKeyPath = Join-Path $fixtureDirectory 'ssh_host_ed25519_key'
 $sshdStdoutPath = Join-Path $fixtureDirectory 'sshd-stdout.txt'
@@ -565,9 +566,46 @@ try {
     try {
         & wsl.exe --exec tmux -L $tmuxSocket kill-server 2>$null
     } catch {}
-    if ($null -ne $sshdProcess -and -not $sshdProcess.HasExited) {
-        Stop-Process -Id $sshdProcess.Id -Force
-        [void]$sshdProcess.WaitForExit(5000)
+    if ($null -ne $sshdProcess) {
+        $wslSshdPid = if (Test-Path -LiteralPath $sshdPidPath -PathType Leaf) {
+            [IO.File]::ReadAllText($sshdPidPath).Trim()
+        } else {
+            ''
+        }
+        if ($wslSshdPid -notmatch '^[1-9][0-9]*$') {
+            $cleanupFailures.Add('Temporary WSL sshd PID is missing or malformed')
+        } else {
+            $sshdIdentity = (@(
+                & wsl.exe --exec ps -p $wslSshdPid -o args= 2>&1
+            ) -join "`n").Trim()
+            if ($LASTEXITCODE -eq 0 -and
+                $sshdIdentity.Contains("/usr/sbin/sshd -D -e -f $wslConfigPath")) {
+                & wsl.exe --exec sudo kill -TERM -- $wslSshdPid 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    $cleanupFailures.Add('Temporary WSL sshd TERM failed')
+                }
+                $stopWatch = [Diagnostics.Stopwatch]::StartNew()
+                do {
+                    & wsl.exe --exec sudo kill -0 -- $wslSshdPid 2>$null
+                    $sshdAlive = $LASTEXITCODE -eq 0
+                    if ($sshdAlive) { Start-Sleep -Milliseconds 100 }
+                } while ($sshdAlive -and $stopWatch.Elapsed.TotalSeconds -lt 5)
+                if ($sshdAlive) {
+                    & wsl.exe --exec sudo kill -KILL -- $wslSshdPid 2>$null
+                    Start-Sleep -Milliseconds 100
+                    & wsl.exe --exec sudo kill -0 -- $wslSshdPid 2>$null
+                    if ($LASTEXITCODE -eq 0) {
+                        $cleanupFailures.Add('Temporary WSL sshd remained alive after TERM and KILL')
+                    }
+                }
+            } elseif ($LASTEXITCODE -eq 0) {
+                $cleanupFailures.Add('Temporary WSL sshd identity did not match its run-scoped config')
+            }
+        }
+        if (-not $sshdProcess.HasExited) {
+            Stop-Process -Id $sshdProcess.Id -Force
+            [void]$sshdProcess.WaitForExit(5000)
+        }
     }
     try {
         if ($knownHostCleanupAttempted -and -not $knownHostRemoved) {

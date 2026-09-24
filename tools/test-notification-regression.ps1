@@ -263,6 +263,41 @@ Test-Case 'unconfirmed-known-host-read-is-not-absence' {
     catch { $caught=$_.Exception.Message }
     Assert-True ($caught -match '^\[infrastructure\]') 'Failed file read qualified as cleanup'
 }
+Test-Case 'confirmed-missing-known-host-file-is-empty-trust' {
+    function Invoke-HdcChecked { return 'LEANTTY_KNOWN_HOST_ABSENT_OK' }
+    Wait-LeanTTYDeviceKnownHostAbsent -Hdc unused -Target unused -Port 23150
+}
+foreach ($identity in @('owned','unrelated','missing-pid')) {
+    Test-Case "long-task-linux-cleanup-$identity-after-launcher-exit" {
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot 'verify-long-task-notification-pc.ps1'), [ref]$null, [ref]$null)
+        $cleanup = $ast.Find({ param($n) $n -is [Management.Automation.Language.IfStatementAst] -and
+            $n.Extent.Text.StartsWith('if ($null -ne $sshdProcess') }, $true)
+        $sshdProcess = [pscustomobject]@{HasExited=$true}
+        $sshdPidPath = [IO.Path]::GetTempFileName()
+        $wslConfigPath='/tmp/owned-fixture/sshd_config'
+        $cleanupFailures=[Collections.Generic.List[string]]::new()
+        $probe=@{signals=0;audits=0}
+        [IO.File]::WriteAllText($sshdPidPath, $(if ($identity -eq 'missing-pid') {'bad'} else {'123'}))
+        function wsl.exe {
+            $global:LASTEXITCODE=0
+            if ($args -contains 'ps') {
+                return $(if ($identity -eq 'owned') {"sshd: /usr/sbin/sshd -D -e -f $wslConfigPath [listener]"}
+                    else {'/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config'})
+            }
+            if ($args -contains '-TERM') { $probe.signals++ }
+            if ($args -contains '-0') { $probe.audits++; $global:LASTEXITCODE=1 }
+        }
+        try {
+            . ([scriptblock]::Create($cleanup.Extent.Text))
+            if ($identity -eq 'owned') {
+                Assert-True ($probe.signals -eq 1 -and $probe.audits -gt 0 -and $cleanupFailures.Count -eq 0) 'Linux fixture survived an already exited Windows launcher'
+            } else {
+                Assert-True ($probe.signals -eq 0 -and $cleanupFailures.Count -gt 0) 'Unproven PID ownership was killed or reported clean'
+            }
+        } finally { Remove-Item -LiteralPath $sshdPidPath -Force }
+    }
+}
 foreach ($submitted in @($false,$true)) {
     Test-Case "long-task-removal-submitted-$submitted-is-never-repeated" {
         $ast = [Management.Automation.Language.Parser]::ParseFile(
