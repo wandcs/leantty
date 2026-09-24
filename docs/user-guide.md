@@ -560,11 +560,17 @@ does not repeatedly request permission after that attempt.
 
 ## Data retention and uninstall
 
-LeanTTY keeps OpenSSH config, trusted host keys, verified key pairs and terminal
+LeanTTY keeps OpenSSH config, verified key pairs and terminal
 font size in encrypted persistent HarmonyOS Asset
 Store records. They are configured to survive a normal uninstall and be
 rematerialized for the same application identity after reinstall; the complete
 asset/signature/lifecycle matrix remains a physical-device release gate.
+
+Trusted host keys instead use an app-private `known_hosts` file protected by
+HarmonyOS app isolation and filesystem permissions. Upgrade preserves committed
+trust, then removes its old Asset records. The first version transition can also
+migrate records retained by an older uninstall; once it completes, uninstall
+clears host trust. After reinstall, check fingerprints again when reconnecting.
 
 After an unclean exit, a bounded app-private record restores only Tab/Pane
 layout, active positions and split ratio. Every restored Pane starts offline

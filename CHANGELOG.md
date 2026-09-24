@@ -2,10 +2,26 @@
 
 ## [Unreleased]
 
-## [1.7.0] - 2026-09-20
+## [1.7.0] - In development
 
 ### Changed
 
+- Request system clipboard permission when the user pastes without authorization,
+  including Ctrl+V and secondary click. Offer the system permission-settings dialog
+  when an ordinary request is denied without showing a dialog, only while the
+  original paste intent remains valid. Explain denial or a paste cancelled by
+  focus changes without reading or sending clipboard text to another session.
+- Restore secondary-click copy/paste while a remote application uses mouse
+  reporting, without sending either half of the click to the remote session.
+- Finish native selection, link and remote mouse gestures through their original
+  owner when modifiers change, preserving subsequent link hover and scrolling.
+- Store trusted host keys in one app-private `known_hosts` file, removing Asset
+  Store operations from normal trust updates. Upgrade migrates committed trust
+  before retiring its old Asset records. After that transition, uninstall clears
+  host trust; reconnecting requires checking fingerprints again. This retention
+  change is an explicit maintainer-approved exception for unreleased 1.7.0.
+- Use the supported 1024-byte Asset Store capacity for retained configuration,
+  verified key pairs and font size, without changing their retention behavior.
 - Accept valid short positive ECDSA private scalars from OpenSSH using an
   isolated, removable ssh-key dependency patch, without changing key import paths.
 - Rearm native terminal attention when focus changes so a foreground bell cannot

@@ -1297,7 +1297,7 @@ Every automated physical scenario MUST:
   pending guard, correlated by Pane, generation and submission sequence, before
   another idle reset. Missing, cancelled or conflicting evidence must stop the
   scenario without resending. An operation reporting failure does not establish
-  its fault domain; known-host projection absence remains a separate postcondition;
+  its fault domain; known-host file absence remains a separate postcondition;
 - before Enter can submit a repository-only command inside a controlled SSH
   fixture session, require the fixture's temporary current-line snapshot to
   match the expected bytes exactly. An incomplete line may be cleared with the
@@ -1604,6 +1604,15 @@ track paging, growing history, PTY mouse isolation, alternate-screen hiding and
 drag cancellation on focus, visibility and Surface changes. Physical evidence
 must separately prove floating-window and split-pane edge hit ownership;
 maximized single-pane success cannot replace either boundary.
+The ArkTS owner check covers local paste permission checks/requests through the
+production ClipboardManager and controller, denied/error zero-read results,
+non-queued duplicate requests, and owner invalidation across permission/read waits.
+Its Right native boundary is substituted; the existing pinned VT contracts prove
+selection versus paste routing. Ctrl+V runs the actual Pane shortcut handler.
+System authorization UI and clipboard service behavior still require a named
+physical scenario; never revoke a maintainer's permission or inspect their
+clipboard merely to force first-use/denial coverage.
+
 The ArkTS owner check covers asynchronous clipboard ownership and search cleanup
 on pointer, focus, session and temporary-page transitions. Neither substitutes for physical input, pixels,
 SSH completion or GPU recovery. Native adapter changes also require the ARM64

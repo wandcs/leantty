@@ -352,22 +352,40 @@ Session state never enter this record.
 The HarmonyOS Asset Store is the long-term authority for:
 
 - OpenSSH `config`;
-- OpenSSH `known_hosts`;
 - every verified private/public key pair;
 - terminal font size.
 
-`DurableAssetStore` writes encrypted persistent records in 768-byte chunks. A
+`DurableAssetStore` writes encrypted persistent records in up to 1024-byte chunks,
+the Asset Store secret limit. Readers use the manifest's actual chunk count and
+byte length, including existing generations with smaller chunks. A
 versioned manifest contains path, generation, chunk count, byte count and
 SHA-256. All chunks are written and validated before the pointer is switched;
 old/incomplete generations are then collected.
 
-Application-private `.ssh` files and the font-size Preferences value are runtime
+Application-private SSH config/key files and the font-size Preferences value are runtime
 projections. Startup initializes the durable authority and loads font size;
 SSH projections and verified-key loading are prepared lazily before the first
-command that needs them. Writes to Host configuration, host trust, keys and font
-size go through the durable authority. The first run after the storage change
+command that needs them. Writes to Host configuration, keys and font size go
+through the durable authority. The first run after the storage change
 migrates verified legacy files and Preferences; later runs remove projections
 that no longer have a durable authority.
+
+Application-private `.ssh/known_hosts` is the sole authority for host trust.
+`DurableStateManager` serializes read/modify/write operations; `KnownHostsFile`
+writes a complete temporary file, checks the byte count, syncs it, renames it in
+the same directory and syncs the containing directories before reporting success.
+Missing files mean no trust; other read failures propagate. A failure after rename
+is reported even though the explicitly approved change may already be visible.
+This uses HarmonyOS app isolation and filesystem permissions, not Asset encryption.
+
+Before the first SSH use, committed legacy Known Hosts assets are read and
+validated, committed to the file, then retired pointer-first and finally by path.
+New trust mutations wait for successful retirement. A failed migration is retried
+without treating errors as empty trust; no permanent double-write or content cache
+exists. A first install of this version can also migrate assets left by an older
+uninstall. After retirement, future uninstall/reinstall starts without host trust.
+Other assets keep their existing recovery behavior; old-version rollback is not a
+supported trust-migration path.
 
 After SSH preparation, command models share one application-level `SshConfig`.
 Host lookup, completion, connection parsing and edits therefore use the same

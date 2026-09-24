@@ -1,5 +1,9 @@
 {
   "string": [
+    { "name": "paste_permission_denied", "value": "Clipboard access was not granted. Allow it for LeanTTY in system settings, then paste again." },
+    { "name": "paste_failed", "value": "Could not access the clipboard. Try pasting again." },
+    { "name": "paste_cancelled", "value": "Paste cancelled because the terminal changed focus or state. Return to the intended terminal and paste again." },
+    { "name": "paste_too_large", "value": "Clipboard text exceeds the 1 MiB paste limit. Copy a smaller selection." },
     {
       "name": "module_desc",
       "value": "LeanTTY entry module"

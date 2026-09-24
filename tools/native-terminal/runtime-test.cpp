@@ -38,6 +38,99 @@ static std::pair<std::string,std::string> fragmented(const std::string& data, si
 }
 int main() {
     try {
+        for (const bool tracking : {false,true}) {
+            Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
+            r.resize(40,4,8,16); write(r,"https://example.com\r\ntext");
+            if (tracking) write(r,"\x1b[?1000h\x1b[?1006h");
+            const GhosttyMods linkMods = GHOSTTY_MODS_CTRL | (tracking ? GHOSTTY_MODS_SHIFT : 0);
+            r.pointer(0,1,8,24,0,82);
+            r.pointer(1,1,8,24,linkMods,82);
+            r.pointer(2,0,8,8,linkMods,82);
+            r.close(); r.join(); require(!r.failed(),"changed-modifier pointer runtime");
+            bool hover = false; int reports = 0;
+            for (const auto& event : log.events) if (event.owner == 82) {
+                require(event.kind != "link","adding Ctrl only on release must not activate a link");
+                if (event.kind == "link-hover" && event.text == "https://example.com") hover = true;
+                if (event.kind == "input") {
+                    require(event.text == (reports == 0 ? "\x1b[<0;2;2M" : "\x1b[<20;2;2m"),
+                        "remote release preserves its button, coordinates and current modifiers");
+                    ++reports;
+                }
+            }
+            require(hover,"release with newly pressed link modifiers must end the old gesture and allow link hover");
+            require(reports == (tracking ? 2 : 0),"a remote press must receive its release even when Shift is added");
+            std::cout << "PASS changed-modifier release and subsequent link hover tracking=" << tracking << '\n';
+        }
+        for (const bool link : {false,true}) {
+            Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
+            r.resize(40,4,8,16); write(r,"https://example.com\r\nalpha beta\x1b[?1000h\x1b[?1006h");
+            const auto mods = GhosttyMods(GHOSTTY_MODS_SHIFT | (link ? GHOSTTY_MODS_CTRL : 0));
+            r.pointer(0,1,1,link ? 8 : 24,mods,83);
+            if (!link) r.pointer(2,1,39,24,mods,83);
+            r.pointer(1,1,link ? 1 : 39,link ? 8 : 24,0,83);
+            if (!link) r.copy(0,83);
+            r.pointer(2,0,8,8,GHOSTTY_MODS_CTRL|GHOSTTY_MODS_SHIFT,83);
+            r.close(); r.join(); require(!r.failed(),"local gesture modifier removal runtime");
+            bool hover = false, selection = false;
+            for (const auto& event : log.events) if (event.owner == 83) {
+                require(event.kind != "input" && event.kind != "link","removing local modifiers cannot create an orphan remote release or activate a link");
+                if (event.kind == "link-hover" && event.text == "https://example.com") hover = true;
+                if (event.kind == "copy" && event.text == "alpha") selection = true;
+            }
+            require(hover && (link || selection),"local release cleans up without losing its selection");
+            std::cout << "PASS local gesture retains release ownership after modifiers removed link=" << link << '\n';
+        }
+        for (const bool tracking : {false,true}) for (const bool selected : {false,true}) {
+            for (const GhosttyMods mods : {GhosttyMods{0},GhosttyMods{GHOSTTY_MODS_SHIFT}}) {
+                Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
+                r.resize(20,4,8,16); write(r,"alpha beta");
+                if (tracking) write(r,"\x1b[?1000h\x1b[?1006h");
+                if (selected) {
+                    r.pointer(0,1,1,8,GHOSTTY_MODS_SHIFT,80);
+                    r.pointer(2,1,39,8,GHOSTTY_MODS_SHIFT,80);
+                    r.pointer(1,1,39,8,GHOSTTY_MODS_SHIFT,80);
+                }
+                r.pointer(0,2,20,8,mods,81);
+                r.pointer(1,2,20,8,mods,81);
+                r.close(); r.join(); require(!r.failed(),"secondary action runtime");
+                int actions = 0;
+                for (const auto& event : log.events) if (event.owner == 81) {
+                    require(event.kind != "input","secondary press and release never leak to the remote mouse protocol");
+                    if (event.kind == (selected ? "copy" : "paste-request")) {
+                        if (selected) require(event.text == "alpha","secondary click copies the existing local selection");
+                        ++actions;
+                    }
+                }
+                require(actions == 1,"secondary click performs exactly one local copy or paste with and without mouse tracking");
+                std::cout << "PASS secondary pointer tracking=" << tracking << " selection=" << selected << " mods=" << mods << '\n';
+            }
+        }
+        {
+            Log log; GhosttyTerminal observed = nullptr;
+            TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); },
+                [&](GhosttyTerminal terminal,GhosttySearch,const std::vector<uint32_t>&,const TerminalLink&,bool,bool) {
+                    observed = terminal; log.receive({"paint",0,0,{}});
+                });
+            const auto grid = TerminalGrid::fit(416,136,8,16,8);
+            r.updateDisplay([&] { return grid; }); log.wait("paint");
+            for (int n = 0; n < 50; ++n) write(r,"history\r\n");
+            auto sample = [&] {
+                GhosttyTerminalScrollbar value{};
+                const auto seq = r.updateDisplay([&] {
+                    checkVt(ghostty_terminal_get(observed,GHOSTTY_TERMINAL_DATA_SCROLLBAR,&value)); return grid;
+                });
+                log.wait("consumed",seq); return value;
+            };
+            const auto before = sample(); const auto bar = TerminalScrollbar::fit(grid,before);
+            r.pointer(0,1,grid.x+8,grid.y+8,0,84);
+            r.pointer(1,1,grid.x+8,grid.y+8,GHOSTTY_MODS_CTRL,84);
+            r.pointer(0,1,static_cast<int>(bar.x+1),static_cast<int>(bar.y+1),0,84);
+            r.pointer(1,1,static_cast<int>(bar.x+1),static_cast<int>(bar.y+1),0,84);
+            const auto after = sample();
+            require(after.offset < before.offset,"the first gutter click after a changed-modifier release must scroll");
+            r.close(); r.join(); require(!r.failed(),"post-release gutter runtime");
+            std::cout << "PASS changed-modifier release permits the next scrollbar gesture\n";
+        }
         {
             const std::vector<std::pair<std::string,int>> cases = {
                 {"",1}, {"remote-tail",1}, {"one\r\ntwo",2},
@@ -506,6 +599,25 @@ int main() {
                 require(stateAfter("\x1b["+std::to_string(mode)+" q") ==
                     std::to_string(style)+",1,1,"+std::to_string(mode%2),"DECSCUSR style and blinking reach renderer");
             }
+            // Exercise the production Session reset against every remote shape
+            // on both screens; the next PTY must not inherit the old appearance.
+            Log peerLog; TerminalRuntime peer([&](TerminalEvent e) { return peerLog.receive(std::move(e)); });
+            write(peer,"\x1b[4 q");
+            for (const int screen : {0,47,1047,1049}) {
+                for (int mode = 1; mode <= 6; ++mode) {
+                    const auto enter = screen ? "\x1b[?"+std::to_string(screen)+"h" : "";
+                    stateAfter(enter+"\x1b["+std::to_string(mode)+" q\x1b[?25l");
+                    require(stateAfter(sessionResetSequence) == defaultCursor,"session end restores visible blinking bar");
+                    const auto query = write(r,"\x1bP$q q\x1b\\");
+                    require(log.wait("reply",query).text == "\x1bP1$r5 q\x1b\\","next PTY queries reset cursor state");
+                    require(stateAfter("\x1b[?1049h") == defaultCursor,"next PTY alternate screen starts clean");
+                    stateAfter("\x1b[?1049l");
+                }
+            }
+            const auto peerQuery = write(peer,"\x1bP$q q\x1b\\");
+            require(peerLog.wait("reply",peerQuery).text == "\x1bP1$r4 q\x1b\\","another Pane retains its remote cursor");
+            peer.close(); peer.join(); require(!peer.failed(),"independent cursor Pane");
+            stateAfter("\x1b[6 q");
             const auto bar = std::to_string(GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR);
             require(stateAfter("\x1b[?25l") == bar+",0,1,0","DECTCEM hides cursor");
             require(stateAfter("\x1b[?25h") == bar+",1,1,0","DECTCEM restores cursor");

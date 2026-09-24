@@ -36,7 +36,8 @@ the protocol data needed to establish and use the requested session.
 
 | Data | Storage and lifetime | Purpose |
 | --- | --- | --- |
-| OpenSSH `config` and `known_hosts` | Encrypted persistent HarmonyOS Asset Store records, with application-private files materialized as a runtime projection | Resolve hosts and preserve host-key trust decisions |
+| OpenSSH `config` | Encrypted persistent HarmonyOS Asset Store records, with an application-private runtime projection | Resolve hosts |
+| OpenSSH `known_hosts` | Application-private file protected by HarmonyOS app isolation and filesystem permissions | Preserve host-key trust decisions within the current installation |
 | Verified private/public key pairs | Encrypted persistent HarmonyOS Asset Store records, with protected application-private files materialized for SSH use | Authenticate to hosts chosen by the user |
 | Terminal font size | Encrypted persistent HarmonyOS Asset Store record and local settings projection | Restore font size |
 | Transparency and notification-permission request bookkeeping | App-private Preferences for this installation | Retain UI choices and avoid repeated permission requests |
@@ -59,6 +60,13 @@ records. They are intentionally retained so that the same application identity
 can rematerialize the user's SSH assets and essential settings after reinstall.
 Application-private runtime files may be removed by uninstall, but they are not
 the long-term authority for retained data.
+
+Known Hosts is an exception: its application-private file is the sole trust
+authority and is cleared by uninstall. Upgrade migrates committed legacy trust
+before retiring the old Asset records; a first install of this version can also
+migrate records left by an older uninstall. Once that transition completes,
+reinstall does not restore host trust and reconnecting requires checking server
+fingerprints again. We do not describe this file as Asset-encrypted storage.
 
 ## Clipboard and terminal-controlled actions
 
@@ -105,8 +113,7 @@ Exported files in Downloads are user-owned and must be deleted through the
 system file manager when no longer needed.
 
 The current source does not provide one command that erases every persistent
-record, including unmanaged OpenSSH configuration text, all unknown
-`known_hosts` endpoints and font size. Until a complete erasure
+record, including unmanaged OpenSSH configuration text and font size. Until a complete erasure
 path is implemented and verified, do not assume that ordinary uninstall alone
 removes all LeanTTY data. This limitation is part of the product's current data
 lifecycle, not a promise of future behavior.

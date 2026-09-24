@@ -1320,7 +1320,12 @@ try {
         Copy-Item -LiteralPath $remoteSourcePath -Destination $remoteLateDisconnectPath
     }
 
-    $existingMappings = @(& $hdc -t $Target rport ls 2>&1) -join "`n"
+    $existingMappings = Invoke-HdcChecked `
+        -Hdc $hdc -Target $Target -Arguments @('fport', 'ls') `
+        -Operation 'Query PUT/GET port mappings'
+    if ([string]::IsNullOrWhiteSpace($existingMappings)) {
+        throw '[infrastructure] HDC port mapping query returned no evidence'
+    }
     if ($existingMappings -match "tcp:$FixturePort\b") {
         throw "HDC reverse mapping already exists for fixture port $FixturePort"
     }

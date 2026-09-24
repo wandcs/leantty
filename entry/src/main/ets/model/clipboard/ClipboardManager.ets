@@ -1,16 +1,52 @@
 import { pasteboard } from '@kit.BasicServicesKit'
+import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit'
 import { Logger } from '../../common/logger/Logger'
 
 const logger: Logger = new Logger('ClipboardManager')
+const READ_PERMISSION: Permissions = 'ohos.permission.READ_PASTEBOARD'
+export type ClipboardReadPermission = 'granted' | 'denied' | 'failed' | 'busy' | 'cancelled'
 
 export class ClipboardManager {
-  static async readText(): Promise<string> {
+  private static requestingReadPermission: boolean = false
+
+  // Only a current local paste intent may call this. Do not cache grant state:
+  // system settings own it, and another Pane must not queue behind the dialog.
+  static async requestReadPermission(context: common.UIAbilityContext,
+    isCurrent: () => boolean): Promise<ClipboardReadPermission> {
+    if (ClipboardManager.requestingReadPermission) { return 'busy' }
+    ClipboardManager.requestingReadPermission = true
+    try {
+      let manager = abilityAccessCtrl.createAtManager()
+      if (manager.checkAccessTokenSync(context.applicationInfo.accessTokenId, READ_PERMISSION) ===
+        abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) { return 'granted' }
+      let result = await manager.requestPermissionsFromUser(context, [READ_PERMISSION])
+      // A fixed denial may suppress the ordinary dialog. Offer the supported
+      // settings dialog only when no dialog was shown for this still-current intent.
+      if (result.authResults.length === 1 && result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_DENIED &&
+        result.dialogShownResults !== undefined && result.dialogShownResults.length === 1 &&
+        result.dialogShownResults[0] === false) {
+        if (!isCurrent()) { return 'cancelled' }
+        let settingResults = await manager.requestPermissionOnSetting(context, [READ_PERMISSION])
+        return settingResults.length === 1 &&
+          settingResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED ? 'granted' : 'denied'
+      }
+      return result.authResults.length === 1 &&
+        result.authResults[0] === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED ? 'granted' : 'denied'
+    } catch (_) {
+      logger.warn('Clipboard permission request failed')
+      return 'failed'
+    } finally {
+      ClipboardManager.requestingReadPermission = false
+    }
+  }
+
+  static async readText(): Promise<string | null> {
     try {
       let data = await pasteboard.getSystemPasteboard().getData()
       return data.getPrimaryText()
     } catch (_) {
       logger.warn('Clipboard read failed')
-      return ''
+      return null
     }
   }
   static async writeText(text: string): Promise<boolean> {

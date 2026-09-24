@@ -102,7 +102,7 @@ private:
     void effect(const std::string& sequence);
     void followInput();
     void encodeKey(const Command& command);
-    bool mouse(int action, int button, int x, int y, GhosttyMods modifiers, uint32_t owner);
+    bool mouse(int action, int button, int x, int y, GhosttyMods modifiers, uint32_t owner, bool continuing = false);
     TerminalLink linkAt(int x, int y);
     bool linkModifier(GhosttyMods modifiers);
     void updateLink(uint32_t owner);
@@ -137,7 +137,9 @@ private:
     GhosttyTerminalScreen searchScreen_ = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
     int searchDirection_ = 0;
     uint64_t selectionRevision_ = 0;
-    bool pointerPressed_ = false;
+    // The press chooses who must receive the drag/release, even if modifiers change.
+    enum class PointerGesture { None, Selection, Remote, Link };
+    PointerGesture pointerGesture_ = PointerGesture::None;
     int pointerX_ = 0, pointerY_ = 0, autoscroll_ = 0;
     GhosttyMods pointerMods_ = 0;
     uint32_t pointerOwner_ = 0;
