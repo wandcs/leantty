@@ -3040,3 +3040,18 @@ wrapper 中准备权限并于 finally 恢复后，131,089 字节往返哈希一�
 信任清理责任；挂到现有 next-work 工具采用项，不在产品调查中扩展永久工具。
 本轮后续将断连动作预置在自有服务器的固定函数，用单个 ASCII 名称触发，仍校验
 输入再按 Enter；仅补未完成生命周期场景，不重复六种样式和 Vim 矩阵。
+
+## 2026-09-24：冻结检出路径过长导致 Zig 生成器无法启动
+
+新候选 R1 在 `LeanTTY-release/freeze-1.7.0-20260924/review-src` 跑到主机 VT 合同，
+Zig 启动 `uucode_generate.exe` 报 FileNotFound。文件实际存在，规范路径长 194
+字符，包含工作目录与相对路径的原始拼接长 268 字符。尚未进入 ARM64 构建或安装。
+同一新建检出仅移动到 `LeanTTY-release/r7`，提交/文件保持不变，定向 HostTests
+全部通过；因此使用短路径继续，不修改第三方源码或新增长路径兼容分支。
+
+R1 已执行 14 项、13 项通过，约 113 秒。现有 C1 没有续跑入口，保留失败，另起 R2
+重做完整软件门禁比新增续跑机制成本低；R2 的 33 项检查通过，不拼接 R1 的结果。
+旧冻结检出和开发证据未移动；今后正式源码检出用发布根下短目录，详细日期/轮次放在
+外部证据目录名。证据 `LeanTTY-release/freeze-1.7.0-20260924/` 下的 `verify-pc.log`、
+`candidate-evidence/software.json`、`short-path-runtime.log`、`preparation/path-diagnosis.json`
+及 `candidate-evidence-r2/software.json`。这是本地路径条件的验证，不声称修复了 Zig。
