@@ -11,6 +11,7 @@ function fixture() {
   const modules = new Map();
   let projection = '', durable = '', failCommit = false;
   let permission = Promise.resolve(), exported = '';
+  let keys = [];
   const context = { filesDir: '/test' };
   const stubs = {
     'common/utils/FileUtils.ets': { FileUtils: {
@@ -18,7 +19,7 @@ function fixture() {
       readTextFile: () => projection, writeTextFile() {},
     } },
     'common/logger/Logger.ets': { Logger: class { info() {} warn() {} } },
-    'model/ssh/SshKeyManager.ets': { SshKeyManager: {} },
+    'model/ssh/SshKeyManager.ets': { SshKeyManager: { listKeys: () => keys } },
     'model/ssh/KnownHostsManager.ets': {},
     'model/transfer/DownloadsAccessManager.ets': { DownloadsAccessManager: { ensure: () => permission } },
     'model/persistence/DurableStateManager.ets': { DurableStateManager: {
@@ -67,6 +68,7 @@ function fixture() {
   return { pane, command, context, SshConfig, CommandParser,
     text: () => durable, projection: () => projection, exported: () => exported,
     fail: value => { failCommit = value; },
+    setKeys: value => { keys = value; },
     pauseDownloads() { let resume; permission = new Promise(r => { resume = r; }); return resume; },
   };
 }
@@ -121,6 +123,58 @@ test('import and export observe commits made while Downloads authorization is pe
   const previous = f.text(); f.fail(true);
   await assert.rejects(a.getSshConfig().importFromDownloads(f.context, 'fixture.conf', true));
   assert.equal(b.getSshConfig().getConfigText(), previous);
+});
+test('Host fields preserve long names, IPv6 ports, inherited options and ssh -G values', async () => {
+  const f = fixture(), p = f.pane(), alias = 'development-' + 'long-name-'.repeat(12);
+  p.getSshConfig().loadFromText(`Host ${alias}
+  HostName 2001:db8::10
+  User fixture
+  Port 2222
+  IdentityFile complete-identity-name
+  ProxyJump fixture@bastion.example:2223
+Host *
+  ConnectTimeout 10
+  ServerAliveInterval 0
+  ServerAliveCountMax 7
+`);
+  const output = await f.command(p, 'host list');
+  for (const field of [`Host: ${alias}`, '  Target: fixture@[2001:db8::10]:2222',
+    '  Identity: complete-identity-name', '  ProxyJump: fixture@bastion.example:2223',
+    '  ConnectTimeout: 10s', '  ServerAliveInterval: 0s', '  ServerAliveCountMax: 7']) {
+    assert.ok(output.includes(field + '\r\n'), field);
+  }
+  const details = await f.command(p, `ssh -G ${alias}`);
+  for (const field of ['hostname 2001:db8::10', 'port 2222', 'identityfile complete-identity-name',
+    'connecttimeout 10', 'serveraliveinterval 0', 'serveralivecountmax 7',
+    'proxyjumphostname bastion.example', 'proxyjumpport 2223']) {
+    assert.ok(details.includes(field + '\r\n'), field);
+  }
+});
+test('Host list identifies automatic identity and defaults without inventing a user, and shows invalid config', async () => {
+  const f = fixture(), p = f.pane();
+  p.getSshConfig().loadFromText('Host plain\n  HostName plain.example\nHost invalid\n  Port nope\n');
+  const output = await f.command(p, 'host list');
+  assert.ok(output.includes('Host: plain\r\n  Target: plain.example\r\n  Identity: automatic\r\n'));
+  assert.ok(output.includes('  ConnectTimeout: 15s\r\n  ServerAliveInterval: 30s\r\n  ServerAliveCountMax: 3\r\n'));
+  assert.match(output, /Host: invalid\r\n  Error: .*Port/);
+  assert.doesNotMatch(output, /@plain|ProxyJump:|Target: invalid/);
+});
+test('Key fields preserve full identifiers and comments, escape controls and never reveal private paths', async () => {
+  const f = fixture(), p = f.pane(), name = 'identity-'.repeat(20);
+  const fingerprint = 'SHA256:' + '0123456789abcdefghij'.repeat(3);
+  const comment = '工作 💻 ' + 'long comment '.repeat(20) + '\x1b[2J\nnext\u202e';
+  f.setKeys([
+    { algorithm: 2, filePath: '/private/store/' + name, fingerprint,
+      publicKeyText: 'ecdsa-sha2-nistp256 AAAA ' + comment, hasPassphrase: true },
+    { algorithm: 0, filePath: '/private/store/empty', fingerprint: 'SHA256:empty',
+      publicKeyText: 'ssh-ed25519 AAAA', hasPassphrase: false },
+  ]);
+  const output = await f.command(p, 'key list');
+  assert.ok(output.includes(`Key: ${name}\r\n  Type: ecdsa-p256\r\n  Fingerprint: ${fingerprint}\r\n`));
+  assert.ok(output.includes('  Passphrase: protected\r\n  Comment: 工作 💻 ' +
+    'long comment '.repeat(20) + '\\e[2J\\x0anext\\u{202e}\r\n'));
+  assert.ok(output.includes('  Passphrase: none\r\n  Comment: (empty)\r\n'));
+  assert.doesNotMatch(output, /\/private\/store|AAAA|\x1b\[2J/);
 });
 (async () => {
   let failed = 0;
