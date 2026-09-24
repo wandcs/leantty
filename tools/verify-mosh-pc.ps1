@@ -2290,6 +2290,15 @@ function Invoke-MoshPageRebuild {
     return [pscustomobject]@{ before = $before; after = $after }
 }
 
+function Test-MoshProcessWorkspaceRecovery {
+    param([AllowEmptyString()][string]$Logs, [int]$PaneCount)
+    $starts = [regex]::Matches($Logs,
+        'Recovery run started: generation=(\d+), unexpected=(true|false)(?=\r?\n|$)')
+    return $PaneCount -eq 1 -and $starts.Count -eq 1 -and
+        [long]$starts[0].Groups[1].Value -gt 1 -and
+        $starts[0].Groups[2].Value -ceq 'true'
+}
+
 function Get-MoshRuntimeReclaimObservation {
     param([Parameter(Mandatory = $true)][string]$Logs)
     $recovery = [regex]::Matches($Logs,
@@ -2904,10 +2913,11 @@ function Write-Evidence {
             } elseif ($Scenario -eq 'process-recovery') { 'controlled-force-stop' } else { 'none' })
             processReplaced = (-not $sameAppProcessAfterResume)
             runtimeReclaimed = $runtimeWorkspaceRecovered
-            workspaceWarningObserved = $processRecoveryWorkspaceRestored
+            workspaceRestored = $processRecoveryWorkspaceRestored
+            workspaceWarningObserved = ($runtimeWorkspaceRecovered -and $processRecoveryWorkspaceRestored)
             remoteContentAbsent = $processRecoveryRemoteContentAbsent
             sessionNotRestored = $processRecoverySessionNotRestored
-            primaryOracle = 'pid-or-runtime-recovery-log-plus-terminal-search-positive-warning-and-negative-old-output-plus-local-command'
+            primaryOracle = 'recovery-owner-log-and-native-layout-or-runtime-warning-plus-negative-old-output-and-local-command'
         }
         runtimeReclaim = $runtimeReclaimEvidence
         checks = [ordered]@{
@@ -3840,13 +3850,13 @@ try {
         if ($sameAppProcessAfterResume) {
             throw '[product] Controlled process recovery did not create a new LeanTTY process'
         }
-        Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
-            -LocalPath (Join-Path $EvidenceDirectory 'process-recovery-ready.json') `
-            -TimeoutSeconds 20 | Out-Null
-
-        $processRecoveryWorkspaceRestored = Test-MoshTerminalSearch `
-            -Query 'Workspace layout was recovered' -ExpectMatch $true `
-            -Name 'process-recovery-warning-search'
+        $recoveryLayout = Wait-MoshPaneCount -Count 1 -Name 'process-recovery-ready'
+        $startupLogs = Invoke-HdcChecked -Hdc $hdc -Target $targetId `
+            -Arguments @('shell', "hilog -z 500 -t app -P $appPid -T UnexpectedExitRecoveryStore") `
+            -Operation 'Read process recovery owner log'
+        [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'process-recovery-owner.log'), $startupLogs)
+        $processRecoveryWorkspaceRestored = Test-MoshProcessWorkspaceRecovery `
+            -Logs $startupLogs -PaneCount @(Get-LeanTTYTerminalInputNodes -Layout $recoveryLayout).Count
         $processRecoveryRemoteContentAbsent = Test-MoshTerminalSearch `
             -Query $shellCommand -ExpectMatch $false `
             -Name 'process-recovery-old-output-negative-search'
@@ -3858,7 +3868,7 @@ try {
             $processRecoveryRemoteContentAbsent -and $recoveryLogs -notmatch 'Mosh Session connected'
         if (-not ($processRecoveryWorkspaceRestored -and
             $processRecoveryRemoteContentAbsent -and $processRecoverySessionNotRestored)) {
-            throw '[product] Process recovery restored remote Mosh state or lost the workspace warning'
+            throw '[product] Process recovery restored remote Mosh state or lost the local workspace'
         }
         $sessionStayedConnected = $false
         $remoteShellAliveAfter = Test-WslProcessPresent -LinuxPid $fixtureTerminalPid
@@ -4250,13 +4260,13 @@ try {
                 -CredentialPath (Get-LeanTTYDeviceUnlockPasswordPath) -RepositoryRoot $repoRoot
             $appPid = $restarted.processId
             $resumedAppProcessId = $appPid
-            Wait-LeanTTYTerminalInputLayout -Hdc $hdc -Target $targetId `
-                -LocalPath (Join-Path $EvidenceDirectory 'operator-lid-workspace-recovered.json') `
-                -TimeoutSeconds 30 | Out-Null
-
-            $processRecoveryWorkspaceRestored = Test-MoshTerminalSearch `
-                -Query 'Workspace layout was recovered' -ExpectMatch $true `
-                -Name 'operator-lid-recovery-warning-search'
+            $recoveryLayout = Wait-MoshPaneCount -Count 1 -Name 'operator-lid-workspace-recovered'
+            $startupLogs = Invoke-HdcChecked -Hdc $hdc -Target $targetId `
+                -Arguments @('shell', "hilog -z 500 -t app -P $appPid -T UnexpectedExitRecoveryStore") `
+                -Operation 'Read physical-lid recovery owner log'
+            [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'process-recovery-owner.log'), $startupLogs)
+            $processRecoveryWorkspaceRestored = Test-MoshProcessWorkspaceRecovery `
+                -Logs $startupLogs -PaneCount @(Get-LeanTTYTerminalInputNodes -Layout $recoveryLayout).Count
             $processRecoveryRemoteContentAbsent = Test-MoshTerminalSearch `
                 -Query $shellCommand -ExpectMatch $false `
                 -Name 'operator-lid-old-output-negative-search'
@@ -4269,7 +4279,7 @@ try {
                 $recoveryLogs -notmatch 'Mosh Session connected'
             if (-not ($processRecoveryWorkspaceRestored -and
                 $processRecoveryRemoteContentAbsent -and $processRecoverySessionNotRestored)) {
-                throw '[product] Physical-lid recovery restored remote Mosh state or lost the workspace warning'
+                throw '[product] Physical-lid recovery restored remote Mosh state or lost the local workspace'
             }
 
             $operatorRecoveryOutcome = 'client-process-replaced-workspace-only'
