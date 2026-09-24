@@ -1982,7 +1982,8 @@ three product outcomes. If LeanTTY retains the same process and Session graph, t
 and controlled remote terminal must survive, execute a new exact command and close normally. If the
 process survives but the Session graph is lost, the production recovery path must preserve the
 workspace, withhold input, clean orphan native Sessions and return to local commands. If HarmonyOS replaces
-the process, LeanTTY must relaunch into the recovered local workspace, show the recovery warning,
+the process, LeanTTY must relaunch into the recovered local workspace, confirm recovery through
+the new process's `UnexpectedExitRecoveryStore` event and actual Pane layout,
 exclude the prior remote command and create no replacement Mosh Session; a local command must remain
 usable. Its controlled `MOSH_SERVER_NETWORK_TMOUT` is derived from the declared operator budget plus
 cleanup margin; the 30-second close-diagnostic timeout must not terminate a valid operator lifecycle
@@ -2053,10 +2054,13 @@ performance evidence. Research and limits are recorded in
 
 `-Scenario process-recovery` force-stops the LeanTTY application process while one controlled stock
 Mosh Session is active, then relaunches the same installed test package. It must observe a new PID,
-find the explicit workspace-recovered warning, prove the old remote command is absent from terminal
+confirm the recovered Pane layout and the new process's `UnexpectedExitRecoveryStore` event,
+prove the old remote command is absent from terminal
 search, and execute a local `ltty>` command without reconnecting Mosh. The old server or PTY may still
 be alive briefly and is fixture cleanup state, not a recovered product Session. This controlled
 scenario must pass before the operator-assisted physical-lid scenario is interpreted.
+Process-replacement checks do not require the removed unexpected-exit warning. The distinct
+same-process runtime-reclaim warning remains part of that scenario's contract.
 
 ## Performance and reliability measurement
 
