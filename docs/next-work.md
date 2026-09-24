@@ -35,6 +35,16 @@
 顺序：安全依赖与必要适配 → warning/列表实现及受影响验证 → 最终主线新候选。
 依赖与产品字节变更不沿用旧签名包身份。正式验收、模型调用、发布仍未恢复。
 
+09-24 实施启动：定向更新 russh/chacha20/wnaf 后，预期 workspace 全目标编译通过；
+core/依赖编译正常，首个失败为 proxy_jump_transport.rs:42 的旧 PublicKey 回调签名。
+权威接口为 russh 0.63.3 Handler；此前评审漏计此实现，实际共六处。下一最小检查为
+同步该 fixture 回调并重新全目标编译，不修改协议/信任语义，不扩展 vendor 补丁。
+补齐后完整 workspace/all-targets 与独立 SFTP fixture 编译通过；policy、rust-core、
+rust-native、ssh-fixture 定向组通过，包含 57 项产品原生测试、ECDSA 标量合同、
+ProxyJump/背压/认证回归和 fixture E2E。新增合同检查默认不协商主机证书，产品回调
+也明确拒绝 Certificate。设备已按已有凭据流程解锁，现场两个 ltty Tab；待构建、
+定向真机、PR 合入后再勾选该实施项。证据 `build/verification/ssh-security-dependencies/`。
+
 ## 09-23 当前产品修复与设备使用边界
 
 ### 本地粘贴按需申请剪贴板权限：已交付，维护者确认解决

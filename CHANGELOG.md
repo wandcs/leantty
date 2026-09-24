@@ -6,6 +6,9 @@
 
 ### Changed
 
+- Update russh to 0.63.3 for SSH security and transport fixes, preserving plain
+  host-key trust and the isolated ECDSA scalar patch. Replace withdrawn chacha20
+  and wnaf versions without adding host-certificate support.
 - Request system clipboard permission when the user pastes without authorization,
   including Ctrl+V and secondary click. Offer the system permission-settings dialog
   when an ordinary request is denied without showing a dialog, only while the

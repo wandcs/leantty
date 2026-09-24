@@ -39,7 +39,13 @@ struct AcceptHostKey {
 impl client::Handler for AcceptHostKey {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, key: &PublicKey) -> Result<bool, Self::Error> {
+    async fn check_server_key(
+        &mut self,
+        server_key: &russh::keys::PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        let russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } = server_key else {
+            return Ok(false);
+        };
         let _ = self.event_tx.send(HostKeyEvent {
             layer: self.layer,
             fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
