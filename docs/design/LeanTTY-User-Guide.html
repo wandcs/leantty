@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="12">
+  <meta name="leantty-guide-revision" content="13">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LeanTTY 1.7.0 使用指南 / User Guide</title>
@@ -1346,14 +1346,11 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         </div>
 
         <h3>选区与 TUI 鼠标模式</h3>
-        <p>
-          选中文本后，鼠标右键或触摸板双指轻点会立即复制，也可以按
-          <kbd>Ctrl</kbd>+<kbd>C</kbd>；没有选区时，<kbd>Ctrl</kbd>+<kbd>C</kbd> 仍是终端中断，
-          右键或触摸板双指轻点则用于粘贴。当 tmux 或其他 TUI 接管鼠标后，按住
-          <kbd>Shift</kbd> 拖动可强制本地选择；使用 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+鼠标左键
-          打开链接。
-        </p>
-        <p>按住 <kbd>Alt</kbd> 拖动可作矩形选择。复制成功后选区清除，随后右键即可粘贴。</p>
+        <p>右键或双指轻点：有选区时复制，否则粘贴。<kbd>Ctrl</kbd>+<kbd>C</kbd>：有选区时复制，否则中断。
+          <kbd>Alt</kbd> 拖动为矩形选择。TUI 接管鼠标时，<kbd>Shift</kbd> 拖动强制本地选择，
+          <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+左键打开链接。</p>
+        <p>复制成功清除选区，失败保留。复制/粘贴上限均为 1 MiB UTF-8；超限或粘贴忙碌时提示并整次拒绝，会话继续可用。</p>
+        <p>触摸板慢划精细、快划加速；停顿、换向或结束手势重置计速。鼠标滚轮保持固定步长。</p>
       </section>
 
       <section id="zh-transfer" class="doc-section">
@@ -2050,15 +2047,13 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         </div>
 
         <h3>Selection and TUI mouse mode</h3>
-        <p>
-          After selecting text, secondary-click—or two-finger tap the touchpad—to copy immediately; you can
-          also press <kbd>Ctrl</kbd>+<kbd>C</kbd>. Without a selection, <kbd>Ctrl</kbd>+<kbd>C</kbd> remains
-          terminal interrupt, while secondary-click or two-finger tap pastes. When tmux or another TUI owns
-          the mouse, hold <kbd>Shift</kbd> while dragging to force local selection, or use
-          <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+Left click to open a link.
-        </p>
-        <p>Hold <kbd>Alt</kbd> while dragging for rectangular selection. Successful copy clears the
-          selection, so the next secondary-click pastes.</p>
+        <p>Secondary-click or two-finger tap copies a selection, otherwise pastes. <kbd>Ctrl</kbd>+<kbd>C</kbd>
+          copies a selection, otherwise interrupts. <kbd>Alt</kbd>+drag selects a rectangle. In TUI mouse mode,
+          <kbd>Shift</kbd>+drag forces local selection; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+Left click opens links.</p>
+        <p>Copy clears the selection only on success. Copy/paste each allow 1 MiB UTF-8; oversize or busy
+          pastes are rejected in full with a message. The session remains usable.</p>
+        <p>Touchpad scrolling is precise when slow and accelerates when fast. Pausing, reversing or ending
+          a gesture resets speed. Mouse-wheel steps stay fixed.</p>
       </section>
 
       <section id="en-transfer" class="doc-section">

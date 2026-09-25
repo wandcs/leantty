@@ -2,10 +2,19 @@
 
 ## [Unreleased]
 
-## [1.7.0] - 2026-09-24
+## [1.7.0] - In development
 
 ### Changed
 
+- Add bounded 0.75–4× touchpad scroll acceleration with precise slow movement and fresh
+  state after direction, gesture or focus changes. Mouse wheel steps remain fixed.
+- Recognize ordinary HTTP(S) links with uppercase schemes, surrounding brackets
+  and ASCII labels such as `URL=`, preserving query values and IPv6 addresses.
+- Keep large font settings consistent with display scaling instead of silently
+  capping the native font at 96 physical pixels.
+- Make the 1 MiB UTF-8 copy/paste limit explicit. Oversized copy retains the
+  selection; a busy terminal rejects the whole paste with feedback and preserves
+  the connection instead of treating temporary queue pressure as a fatal error.
 - Show Host and Key lists as multiline entries with full names and fingerprints,
   connection settings, passphrase protection and key comments; long values wrap
   naturally in narrow Panes.

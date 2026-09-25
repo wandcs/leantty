@@ -38,6 +38,37 @@ static std::pair<std::string,std::string> fragmented(const std::string& data, si
 }
 int main() {
     try {
+        for (const auto& sample : std::vector<std::pair<std::string,std::string>>{
+            {"(https://example.com/docs)","https://example.com/docs"},
+            {"https://example.com/wiki/Function_(math)","https://example.com/wiki/Function_(math)"},
+            {"(https://example.com/wiki/Function_(math)).","https://example.com/wiki/Function_(math)"},
+            {"URL=https://example.com/a?b=c","https://example.com/a?b=c"},
+            {"[HTTPS://EXAMPLE.COM/a]","HTTPS://EXAMPLE.COM/a"},
+            {"https://[::1]:8080/a","https://[::1]:8080/a"},
+            {"https://example.com/a,","https://example.com/a"}}) {
+            Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
+            r.resize(80,4,8,16); write(r,sample.first);
+            const int start = static_cast<int>(sample.first.find(sample.second));
+            const auto clickX = (start+8)*8;
+            r.pointer(0,1,clickX,8,GHOSTTY_MODS_CTRL,77);
+            const auto seq = r.pointer(1,1,clickX,8,GHOSTTY_MODS_CTRL,77);
+            require(log.wait("link",seq).text == sample.second,"common URL boundaries preserve exact target");
+            r.close(); r.join(); require(!r.failed(),"URL runtime");
+        }
+        std::cout << "PASS parenthesized, labelled, uppercase, IPv6 and punctuated URL targets\n";
+        for (const auto& sample : std::vector<std::pair<std::string,int>>{
+            {"URL=https://example.com",1}, {"[https://example.com]",0},
+            {"https://example.com,",19}, {"prefixhttps://example.com",10},
+            {"file:///tmp/example",8}, {"https:///path",9}}) {
+            Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
+            r.resize(80,4,8,16); write(r,sample.first);
+            r.pointer(0,1,sample.second*8,8,GHOSTTY_MODS_CTRL,77);
+            r.pointer(1,1,sample.second*8,8,GHOSTTY_MODS_CTRL,77);
+            snapshot(r,log); r.close(); r.join();
+            require(!r.failed(),"non-link runtime");
+            for (const auto& event : log.events) require(event.kind != "link","labels, punctuation and non-HTTP text do not open links");
+        }
+        std::cout << "PASS URL click-range and explicit HTTP(S) boundaries\n";
         for (const bool tracking : {false,true}) {
             Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
             r.resize(40,4,8,16); write(r,"https://example.com\r\ntext");
@@ -788,11 +819,13 @@ int main() {
             for (int i = 0; i < 4; ++i) last = write(r, chunk);
             require(r.queuedBytes() == TerminalRuntime::QueueLimit, "full queue accounting");
             require(!r.write(reinterpret_cast<const uint8_t*>(chunk.data()), 1, 7), "full rejects whole chunk");
+            require(!r.paste("must-not-arrive",7), "full queue rejects whole paste");
             auto barrier = r.barrier(7); require(barrier > last, "control independent of data capacity");
             r.close(); require(!r.barrier(7), "closed rejects control");
             require(!r.write(reinterpret_cast<const uint8_t*>(chunk.data()), 1, 7), "closed rejects data");
             release.set_value(); r.join(); require(!r.failed(), "close drains accepted bytes");
             log.wait("consumed", barrier); require(r.queuedBytes() == 0, "queue released");
+            for (const auto& event : log.events) require(event.kind != "input", "rejected paste delivers no prefix");
             std::cout << "PASS bounded admission, control reserve and close drain without GPU\n";
         }
         {

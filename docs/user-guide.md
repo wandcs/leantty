@@ -509,6 +509,15 @@ With tmux mouse mode enabled, an ordinary drag belongs to tmux. Releasing its
 selection can copy through the standard OSC 52 system-clipboard path. LeanTTY
 does not support OSC 52 clipboard reads.
 
+Each local copy or paste is limited to 1 MiB of UTF-8 text. Oversized copies keep
+the selection. Oversized or temporarily busy pastes send no text; reduce the
+selection or retry after output settles. These messages do not close the session.
+
+Two-finger touchpad scrolling stays precise at low speed and accelerates during
+fast movement. Reversing direction or starting a new gesture discards old scroll
+remainder; mouse wheel steps stay fixed. Plain HTTP(S) links also work inside
+parentheses or square brackets and after labels such as `URL=`.
+
 The split divider can be dragged. When it has keyboard focus, Left/Right adjust
 the ratio and Enter resets the split to equal widths.
 

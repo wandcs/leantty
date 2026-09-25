@@ -1,5 +1,15 @@
 # 1.7 原生终端：既有需求迁移审计
 
+2026-09-25 补充评审：旧行为不是最优方案的默认依据。维护者批准修正高缩放字号、
+常见 HTTP(S) 文本识别，并加入温和有界的触摸板速度增益；鼠标滚轮不加速，不加入
+惯性或定时补滚。普通复制/粘贴单独确认保留 1 MiB UTF-8 上限，超限/忙碌必须明确
+反馈且不能截断或断开会话。拖出边缘选择的距离加速明确延期。执行与证据只记在
+[Next Work](next-work.md)；下方此前“总审闭合”不代表这批新发现已通过真机。
+
+轴事件单位依据平台 [AxisEvent 文档](https://github.com/openharmony/docs/blob/master/zh-cn/application-dev/reference/apis-arkui/arkui-ts/ts-universal-events-axis.md)
+及 [BaseEvent 文档](https://github.com/openharmony/docs/blob/master/zh-cn/application-dev/reference/apis-arkui/arkui-ts/ts-gesture-customize-judge.md)：
+位移为 vp、时间戳为 ns。ArkTS 输入处转为毫秒，不按事件频率猜测设备，不更改 VT。
+
 最新人工反馈（2026-09-19）：维护者按体验说明确认 Alt 矩形及 URL/Ctrl 点击正常，
 开发期实体交互缺口已在 Next Work 闭合；本文下方“仍待验”的批次记录保留其历史边界。
 同期新增拖动后左 Pane 大面积空白报告，当前截图确认内容集中在底部、上方大面积空白，
