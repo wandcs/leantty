@@ -1,7 +1,6 @@
 // Signing bridge only: Hvigor owns encrypted DevEco credentials; the SDK owns HAP signing.
 // These two internal SDK entry points (module setup and credentials) are explicit.
-// SDK upgrades require the
-// real signing/verification check; no alternate decryption implementations exist here.
+// SDK upgrades require real signing/verification; no alternate decryption exists here.
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
