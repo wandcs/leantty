@@ -60,6 +60,12 @@ claims and non-blocking limitations. This governance revision does not establish
 cross-candidate C3 reuse or remove existing C1–C4 gates. A new formal candidate
 still follows R4; routine product fixes first use the affected L0–L3 checks.
 
+For the 2026-09-25 1.7.0 candidate after PR #253 only, the maintainer approved
+the [bounded differential acceptance](design/1.7-differential-acceptance-20260925.md)
+as an explicit exception to the full C3/R4 requirement. Keep fresh C0/C1/C2,
+QH and C4 evidence separate from the historical complete matrix. This approval
+does not transfer its Pass to the new candidate or alter any old report.
+
 Independent continuation requires a qualified acceptance entry that records
 dependencies, failure isolation, restored preconditions and cleanup. Until that
 support exists, the enclosing matrix stops under the rules below; a diagnostic
