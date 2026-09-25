@@ -1,7 +1,8 @@
 # Mosh U+FFFD 断连诊断与库修复交接
 
 日期：2026-09-25。原始诊断针对 v0.1.1；维护者已在 v0.1.2 修复，LeanTTY 已接入并
-通过定向验证。下面保留原始失败证据，升级结果见文末；不能把原失败与新版本结果混用。
+通过当时的定向验证。随后维护者在同包再次断连，已确认另一个 U+0605 字符宽度问题，
+**原二进制输出主诉仍未解决**。下面保留各轮原始事实，不能把单次通过扩展为整体修复。
 本文件记录证据，不是第二份任务清单；后续状态归 `docs/next-work.md`。
 
 ## 结论与影响
@@ -158,3 +159,84 @@ ARM64 debug 签名包构建、安装准入与维护者批准的安装通过。HA
 语义菜单切到英文后才建立本轮连接。该准备失败单独保留，不计为产品失败或通过。
 现场截图、布局、进程日志与 `device-result.json` 均保留在上述忽略目录。本轮零模型，
 没有重跑正式矩阵；首 Tab 暂停问题和 1.7 发布仍保持暂停。
+
+## v0.1.2 再次断连：U+0605 宽度不一致
+
+### 现场与结论修正
+
+维护者报告 `/bin/cat /bin/ls` 正常、`\cat /bin/ls` 仍会退回 ltty。同一新包 PID 19877
+在 21:13:18 记录 `Mosh failure ... stage=mosh_udp,nativeCode=protocol`，不是旧包或 App
+进程退出。WSL 的 `cat` 别名为 `bat --paging=never`；没有 cat shell function，PATH
+解析为 `/usr/bin/cat`，与 `/bin/cat` 都指向 `/usr/lib/cargo/bin/coreutils/cat`，版本均为
+uutils coreutils 0.8.0。`/bin/ls` 解引用后为 11,352,352 字节，SHA-256 为
+`48893b0fb21436b54619db80486e83ef39dfccaf1aefe83dfa00c02d6146e8c0`。
+[zsh 的引用规则](https://zsh.sourceforge.io/Doc/Release/Shell-Grammar.html#Aliasing)
+允许以反斜杠避免别名展开；这里没有证据表明两种写法运行不同 cat。
+
+隔离 v0.1.2 副本只增加错误分类输出，不改变处理逻辑或库项目。在现场 147×43 网格、
+stock mosh-server 1.4.0 下进行以下有界对照：
+
+| 受控环境与输出 | 结果 |
+|---|---|
+| sh 中 `/bin/cat /bin/ls`，结束后停留 3 秒 | 本次成功 |
+| 交互 zsh 中 `/bin/cat /bin/ls`，结束后停留 | 失败，`Terminal(TooManyScalarsInCell)` |
+| 交互 zsh 中 `\cat /bin/ls`，结束后停留 | 先失败；加诊断后另一次成功 |
+| 交互 zsh 中 `\cat /bin/ls`，随后立即 RIS 清屏 | 本次成功 |
+
+这些结果证明两种 cat 写法都能失败，也说明大样本有状态/时序敏感性；不能把维护者
+观察到的差异简单归因于别名，亦不能证明反斜杠本身是触发条件。Mosh 传递屏幕差分，
+立即清屏、初始画面及更新分批都会改变客户端接收的状态。上一轮脚本确实执行了真实
+二进制输出，但随后立即 RIS；其通过只适用于当时这一链，不能排除中间状态处理缺陷。
+
+### 固定最小复现与错误边界
+
+无需二进制文件或 cat，在 Mosh 会话中执行以下命令即可触发已证实的新问题：
+
+```sh
+printf '\330\205-AFTER\n'
+```
+
+`D8 85` 是合法 UTF-8 字符 U+0605。隔离版本记录：
+
+```text
+DIAGNOSTIC_SCALAR leading-zero-width U+0605
+DIAGNOSTIC_DRIVER_ERROR: Terminal(TooManyScalarsInCell)
+DIAGNOSTIC_SESSION_RESULT: Ok(Ok(Err(Protocol)))
+```
+
+并未达到 8 个 scalar 上限。锁定版本 `src/terminal/state.rs` 的 `ScalarBudget::print`
+调用 `UnicodeWidthChar::width()` 得到 0；此前 scalars 为 0，即直接返回
+`TooManyScalarsInCell`。该状态只按本段字节计数，控制/定位序列也会重置它。
+本机 C.UTF-8 下 libc `wcwidth(U+0605)` 实测为 1；
+[stock Mosh 1.4.0 的字符处理](https://github.com/mobile-shell/mosh/blob/mosh-1.4.0/src/terminal/terminal.cc#L62)
+使用 libc `wcwidth`。这是服务端与客户端宽度判定不一致及客户端准入误判。
+
+最小样本的 stock-server 对照结果：
+
+- 行首 U+0605：Rust 客户端 Protocol；stock Mosh 客户端正常显示该字符和 AFTER，正常结束。
+- `BEFORE-` 后的 U+0605：本次不报错，但不能据此声称光标/屏幕宽度一致。
+- `A` 加 U+0301 组合重音、`BEFORE-` 加 U+FFFD：正常完成，后者证明旧修复仍有效。
+
+物理 PC 上在同一个已安装 HAP 新建临时 Tab，连接 WSL 后只运行行首 U+0605 样本。
+21:22:37 立即退回 ltty，日志为 `mosh_udp / protocol`，PID 19877 不变。该物理失败与
+库层最小复现相互印证；历史那次大样本日志只有 Protocol，不能回填成已捕获其私有子类。
+没有重新安装、修改用户配置或执行完整矩阵。临时 Tab 已删除、原第二 Tab 恢复；
+自建服务端 PID 52865 已清理，原四个进程保留，英文输入法前后未切换。
+
+### 库修复交接与验收修正
+
+修复责任仍在 `mosh-client-rs` 的终端状态语义，不应修改 cat 别名、SSH、防火墙，
+也不应在 LeanTTY 吞掉 Protocol 或自动重连。此轮只诊断，不改库或产品。
+
+库维护者需统一字符准入、vt100 状态存储及服务端宽度语义，至少覆盖 U+0605 的行首、
+普通字符后、光标定位后、分段差分、后续输入及 resize/repaint。仅删除报错不够：
+当前“前面加 ASCII 即不报错”仍可能把本应占一列的字符追加到前一格，造成屏幕漂移。
+保留真实资源上限，并将“孤立零宽/宽度不一致”与“超过容量”区分；不要整体取消校验。
+具体采用何种宽度策略需在库中结合 stock Mosh 行为决定，本交接不授权额外兼容层。
+
+后续验收以固定最小样本、正确字符/光标状态、单独提交的后续输入为首要判据；大样本
+只是补充。二进制输出后的清屏必须在确认会话和错误边界之后单独提交，不再拼进同一
+脚本当作通过判据。原失败和成功都保留，不能反复重跑直到出现一次成功。
+
+本轮证据：`build/verification/mosh-v012-reopened-20260925/`，含原始现场、四样本对照、
+错误分支分类、固定字符对照、stock 客户端结果、真机前后截图/日志及清理布局。
