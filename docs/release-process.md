@@ -100,6 +100,14 @@ git clone https://github.com/wandcs/leantty.git $releaseCheckout
 
 ## Release Gate
 
+One approved exception applies to the 2026-09-25 1.7.0 candidate after PR #253:
+follow the [bounded differential acceptance](design/1.7-differential-acceptance-20260925.md)
+instead of the complete C3/R4 matrix below. Record fresh C0/C1/C2, QH and C4
+evidence plus the historical baseline in a separate differential receipt.
+That receipt may authorize C4 under this approval without claiming
+`completeApplicablePhysicalMatrixClaimed=true`. All source, build, signature,
+cleanup and publication boundaries remain in force; this is not a general bypass.
+
 Before building a release:
 
 - From the clean development checkout, use the thin registered checkpoint entry
