@@ -6,6 +6,8 @@
 
 ### Changed
 
+- Update mosh-client to 0.1.2 to preserve the Unicode replacement character
+  instead of disconnecting a Mosh session when it appears in remote output.
 - Add bounded 0.75–4× touchpad scroll acceleration with precise slow movement and fresh
   state after direction, gesture or focus changes. Mouse wheel steps remain fixed.
 - Recognize ordinary HTTP(S) links with uppercase schemes, surrounding brackets

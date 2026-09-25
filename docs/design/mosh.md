@@ -8,7 +8,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已进入 [`next-work.md`](../next-work.md)；当前使用 `mosh-client` 0.1.1 正式版本继续开发
+> 实现授权：已进入 [`next-work.md`](../next-work.md)；当前使用 `mosh-client` 0.1.2 正式版本继续开发
 
 > 命令面治理：[`command-system.md`](command-system.md)
 
@@ -270,9 +270,9 @@ Wi-Fi network switch。每组都必须生成 `acceptanceEligible=true`、相同 
 ## 客户端依赖合同
 
 LeanTTY 选择 [`wandcs/mosh-client-rs`](https://github.com/wandcs/mosh-client-rs) 的
-`mosh-client` crate。依赖固定为 [0.1.1 正式版本](https://github.com/wandcs/mosh-client-rs/releases/tag/v0.1.1)：
-使用 Git `tag = "v0.1.1"` 和 `version = "=0.1.1"`，由 `Cargo.lock` 固定实际提交
-`dfc188975ed0a8bd734bbf14bd6cfdeb3838e629`，不跟随 main/master。该版本尚未上传 crates.io，
+`mosh-client` crate。依赖固定为 [0.1.2 正式版本](https://github.com/wandcs/mosh-client-rs/releases/tag/v0.1.2)：
+使用 Git `tag = "v0.1.2"` 和 `version = "=0.1.2"`，由 `Cargo.lock` 固定实际提交
+`177d2a11f8829df5582da4c1495ed9c9885461c3`，不跟随 main/master。
 最低 Rust 版本为 1.88，许可证仍为 `MIT OR Apache-2.0`。
 LeanTTY 不直接修改该仓库，也不维护协议 fork；发现的问题记录在
 [`mosh-client-rs-integration-issues.md`](mosh-client-rs-integration-issues.md)，由库仓库独立修复、
