@@ -17,7 +17,7 @@ appropriate for the maintainer machine:
 |---|---|---|
 | Development | `$devCheckout` | Edit, test, test-sign, deploy and push verified commits |
 | Release | `$releaseCheckout` | Fetch GitHub, check out an exact commit, clean-build, production-sign and archive |
-| Review | `$reviewCheckout` | Check out the same exact commit, test-sign, install and capture screenshots/video |
+| Review | `$reviewCheckout` | Pin the same commit, supply the test signing configuration, install and capture screenshots/video |
 
 Do not use `git worktree` for the release checkout. Do not edit product source
 or create repair commits in the release checkout. If a release build requires a
@@ -32,8 +32,28 @@ development test-signing identity into the production release workflow.
 The optional review checkout uses a different ignored `signing.local.json5`
 and a test Profile trusted by the target PC. Its HAP is only for device
 acceptance and review media. It is not an AppGallery upload artifact. Production
-and review builds must have the same commit, tree, version, ABI and native
-library hash.
+and review use one release compilation: the review HAP is signed directly from
+the production unsigned HAP. Its complete ZIP member inventory (names, sizes and
+SHA-256 values, including all native libraries) must match the production signed
+HAP. Do not rebuild a second program just to change signing identity.
+
+The SDK [code-signing implementation](https://github.com/openharmony/developtools_hapsigner/blob/master/hapsigntool/hap_sign_tool_lib/src/main/java/com/ohos/hapsigntool/hap/provider/SignProvider.java)
+adds `.pages.info` during code signing. The unsigned-to-signed check
+allows exactly this addition and verifies every original member. Both signed
+HAPs must also have an identical `.pages.info`. The signed APP contains an
+unsigned module; compare its actual embedded HAP with the production unsigned
+HAP. APP packaging may reformat `pack.info`: compare its complete JSON value
+and retain both original hashes; all other member bytes must match. No unknown
+member, changed code or changed metadata value is exempted.
+
+`review-signing.json` records source/build provenance, full inventories, all
+native hashes, SDK/helper hashes, actual APP module identity and freshly checked
+signatures. It is a signing receipt, not an independent build manifest. Verify
+the production AppGallery and review debug Profile roles, bundle/developer/APL
+identity and capabilities. A narrower debug ACL is recorded and must not be
+represented as production permission acceptance. Profile identifiers, certificates,
+validity and debug device admission remain role-specific; normal product-path
+smoke does not prove AppGallery installation or those platform policy differences.
 
 Logging restrictions follow package purpose, not its signature: the AppGallery
 artifact and publicly delivered user packages must exclude terminal-content and
@@ -168,17 +188,23 @@ release checkout:
   -AppGalleryCopyPath '.\docs\release\X.Y.Z-appgallery.md'
 ```
 
-The command performs both release preflights before compiling, builds and
-verifies both checkouts, compares their source/native identity, and archives
+The command performs both release preflights before compiling, builds production
+once, test-signs its unsigned HAP, checks the payload and signing roles, and archives
 the production upload APP separately from the review-test HAP. Before any tag
 is created it also prepares the license ZIP, GitHub Release notes, reviewed
 AppGallery copy, handoff checklist and attachment hashes. These files are
 reversible outputs; their presence does not authorize tagging or publishing. Omit
-`-ReviewCheckout` only when no device/media build is required. `-SkipBuild`
-may archive existing outputs after the same manifest and hash checks; it does
-not weaken validation. If only one build needs recovery, use
-`-SkipProductionBuild` or `-SkipReviewBuild` so the already successful build
-is verified and reused instead of rebuilt.
+`-ReviewCheckout` only when no device/media package is required. `-SkipBuild`
+(or `-SkipProductionBuild`) reuses verified production outputs; review signing
+still runs without compiling. It does not weaken validation. The existing
+unsigned HAP hash must match its original build manifest.
+
+The signing bridge uses the installed SDK signer and Hvigor's credential
+decryption and module-path initialization. Passwords remain in memory; do not
+copy the SDK algorithm, add plaintext password files or log child arguments.
+These internal SDK entry points are a deliberate local dependency: missing or
+changed interfaces stop signing, with no compatibility fallback. After an SDK
+upgrade, recheck direct signing, SDK verification and complete payload equality.
 
 Store text is not a packaged resource. If it is finalized after C3, keep the
 accepted product commit and both build checkouts unchanged. Commit and push the
@@ -285,10 +311,10 @@ git status --short
 
 | Symptom | Cause | Required response |
 |---|---|---|
-| HDC error `9568322`, signature verification failed, untrusted app source | The production AppGallery Profile is not trusted for direct test-PC installation | Keep the production APP/HAP unchanged; build the same commit in the review checkout with the trusted test Profile |
+| HDC error `9568322`, signature verification failed, untrusted app source | The production AppGallery Profile is not trusted for direct test-PC installation | Keep production artifacts unchanged; sign the same production unsigned HAP with the trusted test Profile |
 | Hvigor rejects the key or keystore password | Plain text or incompatible encrypted password material was placed in `signing.local.json5` | Regenerate the encrypted fields with DevEco Studio; never copy or print the clear-text password |
 | Build starts and later reveals a wrong version or dirty source | Release identity was not checked before expensive compilation | Run the formal command or `build-all.ps1 ... -PreflightOnly`; do not bypass the preflight |
-| Production and review HAPs cannot be confidently compared | They were built from different commits, trees, versions, ABIs or native outputs | Discard the review evidence and rebuild both through the formal command |
+| Production and review HAPs cannot be confidently compared | They do not identify the same verified release payload | Stop C4 and inspect the exact member differences; derive review signing from the verified production unsigned HAP, retaining valid earlier evidence |
 | It is unclear which HAP/APP to submit or install | Artifact roles were carried only in operator notes | Read the archived `artifact-roles.txt`; upload only the production signed APP |
 | A formal physical matrix has no passing harness qualification, or the HAP/harness identity changed after qualification | Control and observation validity was assumed instead of frozen | Stop before the next C3 stage and rerun `qualify-acceptance-harness-pc.ps1` against the exact retained review-test HAP; never promote a diagnostic record |
 | GPG tag creation succeeds but verification cannot find the key or uses a different backend | Creation and verification resolved different `gpg.exe` programs/keyrings | Use `sign-release-tag.ps1`; it resolves Git's effective OpenPGP executable once and pins that same executable for both operations. Do not create another key or change the Git/global GPG configuration as a workaround |
