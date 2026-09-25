@@ -34,6 +34,7 @@ struct Index {
   @State paneRuntimeRevision: number = 0
   @State chromeColors: ChromeColors = new ChromeColors()
   @State contentBg: string = '#FF1E1E2E'
+  @State reverseContentBg: string = '#FFCDD6F4'
   @State chromeBg: string = '#FF181825'
   @State backgroundMaterial: BlurStyle = BlurStyle.NONE
   @State menuOpen: boolean = false
@@ -139,6 +140,8 @@ struct Index {
                 else { runtime.viewModel.requestBlur() }
               },
               focusVeilColor: this.chromeColors.paneFocusVeil,
+              normalBackground: this.contentBg,
+              reverseBackground: this.reverseContentBg,
               focusVeilOpacity: this.chromeColors.paneFocusVeilOpacity,
               sessionMode: this.paneMode(runtime.id),
               isFocused: this.isPaneFocused(runtime.id),
@@ -263,7 +266,7 @@ struct Index {
         .layoutWeight(1)
         .clip(true)
         .width('100%')
-        .backgroundColor(this.contentBg)
+        .backgroundColor('#00000000')
         .onAreaChange((oldArea: Area, newArea: Area) => {
           this.workspaceWidth = Number(newArea.width)
         })
@@ -551,6 +554,7 @@ struct Index {
     let theme: AppTheme = ThemeManager.getInstance().getTheme()
     this.chromeColors = theme.chrome
     this.contentBg = theme.background(this.windowTransparencyAvailable)
+    this.reverseContentBg = theme.reverseBackground(this.windowTransparencyAvailable)
     this.chromeBg = theme.chromeBackground(this.windowTransparencyAvailable)
     this.backgroundMaterial = this.windowTransparencyAvailable &&
       theme.transparencyMode !== TransparencyMode.OFF ?

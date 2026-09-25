@@ -106,6 +106,20 @@ function fixture(acceptanceEnabled = true, clipboardState = clipboardFixture()) 
 }
 let count = 0;
 function test(name, fn) { fn(); console.log('PASS ' + name); count++; }
+test('reverse video state persists across Surface callbacks and ignores malformed events', () => {
+  const f = fixture(), changes = [];
+  f.control.onReverseVideo = value => changes.push(value);
+  assert.equal(f.control.isReverseVideo(), false);
+  f.emit('reverse-video', 1, 0, '1');
+  assert.equal(f.control.isReverseVideo(), true);
+  f.emit('reverse-video', 2, 0, 'bad');
+  assert.equal(f.control.isReverseVideo(), true);
+  f.control.onReverseVideo = value => changes.push('reattached:' + value);
+  assert.equal(f.control.isReverseVideo(), true);
+  f.emit('reverse-video', 3, 0, '0');
+  assert.equal(f.control.isReverseVideo(), false);
+  assert.deepEqual(changes, [true, 'reattached:false']);
+});
 test('failure diagnostics distinguish native input and runtime without exposing payloads', () => {
   for (const [code, reason] of [['terminal_input_rejected', 'native-input-rejected'],
     ['terminal_runtime_failed', 'native-runtime'], ['private-content-must-not-be-logged', 'native-failure']]) {

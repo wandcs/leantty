@@ -38,6 +38,19 @@ static std::pair<std::string,std::string> fragmented(const std::string& data, si
 }
 int main() {
     try {
+        {
+            Log log; TerminalRuntime r([&](TerminalEvent e) { return log.receive(std::move(e)); });
+            const auto on = write(r, "A\x1b[?5h"); log.wait("consumed", on);
+            require(log.wait("reverse-video", on).text == "1", "reverse mode enters display state");
+            const auto page = r.beginTemporary(7); log.wait("consumed", page);
+            require(log.wait("reverse-video", page).text == "0", "temporary page restores normal background");
+            const auto restore = r.endTemporary(7); log.wait("consumed", restore);
+            require(log.wait("reverse-video", restore).text == "1", "regular page restores reverse background");
+            const auto off = write(r, "\x1b[?5l"); log.wait("consumed", off);
+            require(log.wait("reverse-video", off).text == "0", "reverse mode exits display state");
+            r.close(); r.join(); require(!r.failed(), "reverse display runtime");
+            std::cout << "PASS reverse video follows the active page and reset\n";
+        }
         for (const auto& sample : std::vector<std::pair<std::string,std::string>>{
             {"(https://example.com/docs)","https://example.com/docs"},
             {"https://example.com/wiki/Function_(math)","https://example.com/wiki/Function_(math)"},

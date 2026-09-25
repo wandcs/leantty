@@ -39,6 +39,7 @@ export struct NativeTerminalPane {
   private searchInput: TextInputController = new TextInputController()
   onKey: (event: KeyEvent) => boolean = () => false
   onReady: () => void = () => {}
+  onReverseVideo: (enabled: boolean) => void = () => {}
   onRebuildDisplay: () => void = () => {}
 
   aboutToAppear(): void {
@@ -46,6 +47,8 @@ export struct NativeTerminalPane {
     let regular = context.resourceManager.getRawFileContentSync('JetBrainsMonoNerdFontMono-Regular.ttf')
     let bold = context.resourceManager.getRawFileContentSync('JetBrainsMonoNerdFontMono-Bold.ttf')
     this.native = this.surface.initializeNative(regular.buffer as ArrayBuffer, bold.buffer as ArrayBuffer)
+    this.native.onReverseVideo = (enabled: boolean) => { this.onReverseVideo(enabled) }
+    this.onReverseVideo(this.native.isReverseVideo())
     this.native.onDisplayState = (available: boolean) => {
       this.unavailable = !available
       this.canRetryDisplay = this.native?.canRetryDisplay() ?? false
