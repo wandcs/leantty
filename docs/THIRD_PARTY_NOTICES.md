@@ -25,7 +25,8 @@ not patch VT parsing semantics. Both debug and release use this native renderer.
 | Packaged HarmonyOS SDK `libc++_shared.so` | SDK LLVM NOTICE, including Apache-2.0 with LLVM exceptions |
 
 `tools/build-terminal-native.ps1` retains the complete upstream notices in
-`build/native-terminal/licenses`. It extracts uucode's additional notices from
+`.cache/native-terminal/licenses`, regenerated on every native build and removed
+by LeanTTY's `-Clean`, outside Hvigor's `build/` cleanup. It extracts uucode's additional notices from
 the digest-verified archive because Zig's package projection omits them.
 Release artifact preparation copies these seven files into
 `licenses/terminal-native` and includes their digests in the artifact manifest.
