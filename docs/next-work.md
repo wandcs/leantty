@@ -2,7 +2,7 @@
 
 > 唯一有效的项目 TODO · 更新：2026-09-25
 >
-> 本轮主线：差分验收 C0/C1/C2/QH 已通过；C4 首次 clean 许可证缺失，按批准条件停止
+> 本轮主线：差分验收 C0/C1/C2/QH 已通过；C4 许可证修复通过，停在冷启动评审目录 SDK 模块加载
 >
 > 上位规则：[产品原则](project-principles.md)、[路线图](roadmap.md)
 >
@@ -41,7 +41,7 @@ xterm 的全部内部行为。基线 `d37d729`，开发分支 `codex/terminal-ex
   [本轮差分验收方案](design/1.7-differential-acceptance-20260925.md)，不启动 R4 全矩阵。
   新 C0/C1/C2、QH、C4 与历史 C3 的证据身份分别记录，开发包和旧 C4 不冒充新候选通过。
   新增检查目标 10–15 分钟、零模型、零自动重试，构建/签名耗时单列；发布仍须授权。
-- [ ] 闭合新候选 C4：本轮已因首次 clean 后许可证目录缺失停止，未重试、未做 review smoke。
+- [ ] 闭合新候选 C4：首次 clean 许可证缺失已修复；续轮停在评审 SDK 模块加载，未做 review smoke。
   维护者随后要求继续，授权有界构建工具修复及 C4 续接；原失败记录保持不变。
   预期是生产构建后七份原生通知可用；最后正确边界为 native 构建生成通知，首个错误
   边界为 Hvigor 根项目 clean 后 `build/native-terminal` 消失，`build-all.ps1:569` 读取失败。
@@ -55,6 +55,27 @@ xterm 的全部内部行为。基线 `d37d729`，开发分支 `codex/terminal-ex
   同时复用现有 OHPM 文本比较，恢复安装引起的纯换行变化，拒绝真正依赖漂移。
   C4 的新 Git 身份仅含工具/记录差异，逐路径证明产品、锁文件和原生依赖输入与
   `5a4f8d6` 一致，原 C2 HAP/QH 身份保持不变，不移植旧完整矩阵 Pass。
+
+09-25 C4 工具续轮：PR [#256](https://github.com/wandcs/leantty/pull/256) 已合入
+`6a5eb822b45d0b8f5a032ee750d3354fd897a0a2`，tree
+`e5dfaf16a3bdfed02342592c7ac22089aff0a573`。定向构建工具检查与 policy 通过；
+独立 `p9/r9` 固定该提交，产品、锁文件及原生依赖输入与 `5a4f8d6` 的对象逐项一致。
+一次真正首次 clean 生产构建保留七份新生成通知，两份锁文件字节不变，完整 manifest
+生成；APP/HAP 的 SDK 签名与摘要验证通过，两个检出保持干净。生产 APP SHA-256
+`07ed4a0c8ae69f067252601f27fe57291cf262a9245422d900b0a6647a32c4c7`，HAP SHA-256
+`f5cc003b9f1af341352112374b1a77e98d8b8b6ba733094a7e984de9caf51a7c`。
+
+随后 SDK 凭据模块加载失败，按“第一次新失败即报告”停止；本次构建至失败共 196.2 秒。
+无凭据的模块加载对照证明：SDK 按当前目录选用项目 Hvigor 缓存，生产 `p9` 缓存存在且
+加载成功，全新评审 `r9` 缓存不存在，缺少 `@ohos/hvigor`。尚未进入凭据解密或签名，
+不是已证实的证书或密码错误。证据在 `freeze-1.7.0-20260925/c4-r2/` 的
+`source-equivalence.json`、`c4-timing.json`、`module-diagnosis.json` 与 `result.json`；
+原失败回执保持不变。未生成 review HAP、未完成归档或 smoke，不能发布；零模型请求。
+
+下一步仅闭合签名工具的 SDK 模块初始化环境，复用已成功构建的生产 unsigned HAP 与
+manifest，通过既有 `-SkipProductionBuild` 续接同 payload 签名、包体/归档核对及一次
+短 smoke。先明确唯一有效的 SDK 工具上下文，不以额外编译整个评审项目补齐缓存。
+本续轮未实施该修复；不重跑未受影响的 C1/C2/QH、产品编译或完整物理矩阵。
 
 09-25 差分结果：新 C0 `5a4f8d67d244d31e8300488cd412d4a83d74fe32`，tree
 `79e6f6370048225252d3450414e21b04bf9fde1b`，1.7.0 / 1007000。
