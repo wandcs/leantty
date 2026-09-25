@@ -2,11 +2,22 @@
 
 > 唯一有效的项目 TODO · 更新：2026-09-25
 >
-> 本轮主线：实机首个 Tab 出现“终端暂时无法显示，输入已暂停”，暂停 1.7 发布并定向诊断
+> 本轮主线：Mosh 使用问题诊断与库修复交接；首 Tab 显示异常诊断暂缓，1.7 发布保持暂停
 >
 > 上位规则：[产品原则](project-principles.md)、[路线图](roadmap.md)
 >
 > 执行依据：[编码指南](coding-guide.md)、[质量策略](quality-strategy.md)、[发布流程](release-process.md)
+
+## 09-25 Mosh 使用问题与库修复交接
+
+- [x] 定位滚动、二进制输出断连与上下键历史三项反馈。滚动符合现行临时页面合同；
+  WSL zsh 错误历史绑定已备份并改为内置 widget，新 Mosh 会话真机上下键通过。
+  `\cat /bin/ls` 断连已缩小为单个合法 `U+FFFD`：隔离 `mosh-client-rs v0.1.1`
+  返回 `Terminal(UnsupportedCharacter)` → `Protocol`，stock Mosh 1.4.0 客户端对照正常。
+  详见[诊断交接](design/mosh-replacement-character-diagnosis-20260925.md)。
+- [ ] 维护者后续修复 `mosh-client-rs` 的 U+FFFD 处理，再核对新版本接入与定向回归。
+  本轮仅交付明确问题、最小复现、源码错误链与修复建议，未改库、未绕过校验或升级
+  LeanTTY 依赖，不能称断连已解决；不扩大为任意二进制兼容工作。
 
 ## 09-25 实际使用中的终端异常
 
