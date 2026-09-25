@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Show whole-screen reverse video with the existing transparency level in each
+  Pane, including split views and restored terminal surfaces.
+
 ## [1.7.0] - 2026-09-25
 
 ### Changed

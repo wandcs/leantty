@@ -74,6 +74,7 @@ export class NativeTerminalController {
   private attentionPending: boolean = false
   private lastSurfaceRecovery: number = 0
   private displayUnavailable: boolean = false
+  private reverseVideo: boolean = false
   onInput: (data: string) => void = () => {}
   onReply: (data: string, owner: number) => void = () => {}
   onResize: (cols: number, rows: number) => void = () => {}
@@ -82,6 +83,7 @@ export class NativeTerminalController {
   onBell: () => void = () => {}
   onFailure: () => void = () => {}
   onDisplayState: (available: boolean) => void = () => {}
+  onReverseVideo: (enabled: boolean) => void = () => {}
   onRebuildDisplay: () => void = () => {}
   onRequestFocus: () => boolean = () => true
   onCopyResult: (success: boolean) => void = () => {}
@@ -168,6 +170,7 @@ export class NativeTerminalController {
 
   isPaused(): boolean { return this.paused }
   isAttached(): boolean { return this.attached }
+  isReverseVideo(): boolean { return this.reverseVideo }
 
   getCellMetrics(fontPixels: number, insetPixels: number): NativeCellMetrics | null {
     let metrics = this.cellMetrics
@@ -195,6 +198,9 @@ export class NativeTerminalController {
       this.onPreedit(text, this.cursorX, this.cursorY)
     } else if (kind === 'reply') {
       if (owner !== 0) { this.onReply(text, owner) }
+    } else if (kind === 'reverse-video' && (text === '0' || text === '1')) {
+      let enabled = text === '1'
+      if (enabled !== this.reverseVideo) { this.reverseVideo = enabled; this.onReverseVideo(enabled) }
     } else if (kind === 'metrics' && this.attached && owner === this.displayGeneration) {
       let values = text.split(',').map((value: string): number => Number(value))
       if (values.length === 4 && values.every((value: number): boolean => Number.isInteger(value) && value > 0) &&

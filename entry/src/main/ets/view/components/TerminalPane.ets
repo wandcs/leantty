@@ -9,6 +9,9 @@ export struct TerminalPane {
   surface: TerminalSurfaceController = new TerminalSurfaceController()
   onNativeControllerReady: () => void = () => {}
   @Prop focusVeilColor: string = '#11111B'
+  @Prop normalBackground: string = '#FF1E1E2E'
+  @Prop reverseBackground: string = '#FFCDD6F4'
+  @State reverseVideo: boolean = false
   @Prop focusVeilOpacity: number = 0.20
   @Prop sessionMode: TerminalMode = TerminalMode.IDLE
   @Prop isFocused: boolean = true
@@ -39,6 +42,7 @@ export struct TerminalPane {
     Stack() {
       NativeTerminalPane({ surface: this.surface, paneId: this.paneId, isFocused: this.isFocused,
         onKey: this.onPaneKeyEvent, onReady: this.onNativeControllerReady,
+        onReverseVideo: (enabled: boolean) => { this.reverseVideo = enabled },
         onRebuildDisplay: this.onRendererExited })
 
       if (!this.isFocused) {
@@ -75,7 +79,7 @@ export struct TerminalPane {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#00000000')
+    .backgroundColor(this.reverseVideo ? this.reverseBackground : this.normalBackground)
     .onClick(() => {
       this.onPaneFocus(true)
     })

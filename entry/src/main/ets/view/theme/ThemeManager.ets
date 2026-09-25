@@ -141,6 +141,11 @@ export class AppTheme {
     return this.terminalColors.surfaceBackground
   }
 
+  reverseBackground(windowTransparencyAvailable: boolean = true): string {
+    let normal = this.background(windowTransparencyAvailable)
+    return normal.substring(0, 3) + this.terminalColors.foreground.substring(1)
+  }
+
   chromeBackground(windowTransparencyAvailable: boolean = true): string {
     if (!windowTransparencyAvailable) {
       return TransparencyPolicy.opaqueChromeSurfaceBackground()

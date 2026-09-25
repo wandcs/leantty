@@ -180,6 +180,7 @@ void TerminalRuntime::run() noexcept {
     using Clock = std::chrono::steady_clock;
     bool dirty = false, visible = true;
     bool focused = false, displayed = false, blinking = false, blinkOn = true;
+    bool reverseVideo = false;
     constexpr auto blinkInterval = std::chrono::milliseconds(600);
     auto nextBlink = Clock::now()+blinkInterval;
     auto nextScroll = Clock::now();
@@ -335,6 +336,14 @@ void TerminalRuntime::run() noexcept {
                         break;
                     case Kind::PositionSessionOutput: anchorSessionOutput(); dirty = true; break;
                     case Kind::Barrier: break;
+                }
+                if (c.kind == Kind::Output || c.kind == Kind::BeginTemporary || c.kind == Kind::EndTemporary) {
+                    GhosttyTerminalModeConfig mode{GHOSTTY_MODE_REVERSE_COLORS, false};
+                    checkVt(ghostty_terminal_get(active_, GHOSTTY_TERMINAL_DATA_MODE, &mode));
+                    if (mode.value != reverseVideo) {
+                        reverseVideo = mode.value;
+                        emit({"reverse-video", c.sequence, 0, reverseVideo ? "1" : "0"});
+                    }
                 }
                 if (callbackFailed_) throw std::runtime_error("terminal_callback_failed");
                 { std::lock_guard<std::mutex> lock(mutex_); bytes_ -= c.bytes.size()+c.text.size(); }
