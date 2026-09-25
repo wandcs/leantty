@@ -210,6 +210,9 @@ unsigned HAP hash must match its original build manifest.
 The signing bridge uses the installed SDK signer and Hvigor's credential
 decryption and module-path initialization. Passwords remain in memory; do not
 copy the SDK algorithm, add plaintext password files or log child arguments.
+Module initialization uses the verified production checkout's Hvigor context;
+the review checkout supplies only the test signing configuration and output.
+It does not need its own prior build or module cache.
 These internal SDK entry points are a deliberate local dependency: missing or
 changed interfaces stop signing, with no compatibility fallback. After an SDK
 upgrade, recheck direct signing, SDK verification and complete payload equality.

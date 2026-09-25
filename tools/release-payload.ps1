@@ -133,7 +133,8 @@ function Invoke-LeanTTYReleaseSignatureCheck {
 }
 
 function New-LeanTTYReviewHap {
-    param([Parameter(Mandatory)]$Production, [Parameter(Mandatory)][string]$ReviewCheckout)
+    param([Parameter(Mandatory)]$Production, [Parameter(Mandatory)][string]$ReviewCheckout,
+        [Parameter(Mandatory)][string]$ProductionCheckout)
     $deveco = $env:DEVECO_HOME
     if (-not $deveco) {
         $deveco = @('C:\Program Files\Huawei\DevEco Studio', 'D:\Program Files\Huawei\DevEco Studio') |
@@ -167,7 +168,7 @@ function New-LeanTTYReviewHap {
     $outputHap = Join-Path $outputDirectory 'LeanTTY-review-test-signed.hap'
     $helper = Join-Path $PSScriptRoot 'sign-review-hap.cjs'
     $unsignedHash = (Get-FileHash -LiteralPath $Production.UnsignedHap).Hash.ToLowerInvariant()
-    & (Join-Path $deveco 'tools/node/node.exe') $helper $deveco $configPath $Production.UnsignedHap $outputHap ([string]$module.app.minAPIVersion)
+    & (Join-Path $deveco 'tools/node/node.exe') $helper $deveco $configPath $Production.UnsignedHap $outputHap ([string]$module.app.minAPIVersion) $ProductionCheckout
     if ($LASTEXITCODE -ne 0) { throw 'SDK review signing failed; no credentials or raw SDK diagnostics logged' }
     $signatures = [ordered]@{
         productionHap = Invoke-LeanTTYReleaseSignatureCheck $deveco $Production.SignedHap (Join-Path $outputDirectory 'production-hap') $Production.HapProfile
@@ -190,6 +191,7 @@ function New-LeanTTYReviewHap {
         sdkCredentialHelperSha256=(Get-FileHash -LiteralPath (Join-Path $deveco 'tools/hvigor/hvigor-ohos-plugin/src/utils/decipher-util.js')).Hash.ToLowerInvariant()
         sdkModuleInitializerSha256=(Get-FileHash -LiteralPath (Join-Path $deveco 'tools/hvigor/hvigor/src/cli/wrapper/prepare-node-path.js')).Hash.ToLowerInvariant()
         signingBridgeSha256=(Get-FileHash -LiteralPath $helper).Hash.ToLowerInvariant()
+        sdkProjectCheckout=$ProductionCheckout
         payloadEqual=$true; payload=$signedPayload; unsignedPayload=$payload; native=$native; appHap=$appHap
         profiles=$profileRoles; signatures=$signatures; deviceAdmission=$admission
     }
