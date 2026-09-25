@@ -851,18 +851,22 @@ function Get-MoshAppProcessIdentity {
 
 function Test-MoshDeviceLocked {
     param([switch]$TolerateUnavailable)
-    $launchOutput = @(
-        & $hdc -t $targetId shell 'aa start -a EntryAbility -b com.leantty.app' 2>&1
+    # Starting the app is not a lock-state read: it delivers onNewWant and can
+    # interfere with the lifecycle being measured. Read the system owner only.
+    $stateOutput = @(
+        & $hdc -t $targetId shell 'hidumper -s 3704 -a -all' 2>&1
     ) -join "`n"
-    $launchExitCode = $LASTEXITCODE
-    if ($launchOutput -match 'Error Code:10106102|device screen is locked') {
-        return $true
-    }
-    if ($launchExitCode -ne 0 -or $launchOutput -match '(?i)\[Fail\]|error') {
+    $stateExitCode = $LASTEXITCODE
+    if ($stateExitCode -ne 0 -or $stateOutput -match '(?i)\[Fail\]') {
         if ($TolerateUnavailable) { return $null }
         throw '[infrastructure] Unable to observe the operator-controlled device lock state'
     }
-    return $false
+    $rows = @($stateOutput -split '\r?\n' | Where-Object { $_ -match '^\s*\*\s+screenLocked\b' })
+    if ($stateOutput -notmatch 'ScreenlockService' -or $rows.Count -ne 1 -or
+        $rows[0] -cnotmatch '^\s*\*\s+screenLocked\s+(true|false)\s+\d+\s*$') {
+        throw '[infrastructure] System screen lock state is missing or ambiguous'
+    }
+    return $Matches[1] -ceq 'true'
 }
 
 function Wait-MoshDeviceLockState {

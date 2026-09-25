@@ -1956,7 +1956,10 @@ does not prove a physical lid-close event, an independent lock-screen event or a
 
 `-Scenario operator-lock-recovery` is an operator-assisted independent lock-screen diagnostic.
 After the baseline remote command, the operator presses `Win+L` and leaves the PC locked until the
-harness observes the platform's locked launch result. The operator then unlocks the PC. The
+harness reads the locked state from `ScreenlockService` using
+`hidumper -s 3704 -a -all`. Observation must not launch the app or deliver new Wants.
+The dump must contain exactly one valid `screenLocked` row; missing or ambiguous
+state is an observation failure, not proof of locking or unlocking. The operator then unlocks the PC. The
 scenario must retain the same LeanTTY process, stock Mosh server and controlled remote terminal,
 execute a new exact command, close normally and complete the standard secret and cleanup audits.
 It records the operator action and lock duration; it does not classify the lock as suspend, lid
