@@ -236,6 +236,14 @@ try {
         $upstream.systemNotification -eq 'not-exercised' -and
         $upstream.limitation.evidenceReference -match 'pi-tmux-forwarding') `
         'Approved evidence must record an external limitation, not a notification pass'
+    $currentPiArguments = $upstreamArguments.Clone()
+    $currentPiArguments.UpstreamEnvironment = $upstreamArguments.UpstreamEnvironment.Clone()
+    $currentPiArguments.UpstreamEnvironment.piVersion = '0.87.1'
+    $currentPi = Resolve-LeanTTYAgentNotificationAssessment @currentPiArguments
+    Assert-True ($currentPi.status -eq 'not-applicable' -and
+        $currentPi.classification -eq 'upstream-not-forwarded' -and
+        $currentPi.systemNotification -eq 'not-exercised') `
+        'Reviewed Pi 0.87.1 forwarding limit must not claim a system notification pass'
     $limitationReport = New-LeanTTYAgentCompatibilityReadinessFixture -StartedAt ([DateTimeOffset]::UtcNow)
     $limitationReport.checks[0] | Add-Member -NotePropertyName notificationAssessment -NotePropertyValue $upstream -Force
     $limitationReport.checks[0].agent = 'pi'; $limitationReport.checks[0].mode = 'tmux'

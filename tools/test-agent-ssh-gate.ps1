@@ -307,7 +307,7 @@ foreach ($case in @('known-limit', 'unknown-version', 'product', 'privacy', 'sea
     Test-Gate "third-party-real-selection-$thirdPartyAgent-$case" {
         $InteractionOnlyProbe = $false
         $Agents = @($thirdPartyAgent, 'codex'); $Modes = @('tmux')
-        $inventory.tools.pi = @{ installed = $true; version = '0.84.4' }
+        $inventory.tools.pi = @{ installed = $true; version = '0.87.1' }
         $inventory.authenticationReady.pi = $true
         $inventory.tools.qwen = @{ installed = $true; version = $(if ($case -eq 'unknown-version') {'future'} else {'0.23.0'}) }
         $inventory.authenticationReady.qwen = $true
@@ -359,7 +359,7 @@ foreach ($case in @('known-limit', 'unknown-version', 'product', 'privacy', 'sea
                     checkpoints = @{ 'before-minimize' = 0; 'after-hidden' = 0 } }
             }
             function Get-AgentTmuxNotificationEnvironment {
-                return @{ piVersion = $(if ($case -eq 'unknown-version') { 'future' } else { '0.84.4' })
+                return @{ piVersion = $(if ($case -eq 'unknown-version') { 'future' } else { '0.87.1' })
                     tmuxVersion = 'tmux 3.6'
                     notifyExtensionSha256 = '70e4333e09ce00d546c116fd2e918abf7616c70b5da6e88ba8ee21a326afd483'
                     tmuxConfigSha256 = 'c751ee4a8029da7cd247a32c1962d2195d2e801c448f5bc9a067c6811c323dd6' }
@@ -803,7 +803,7 @@ foreach ($lineEnding in @('LF', 'CRLF')) {
             $source = $functionSources['Get-AgentTmuxNotificationEnvironment'].Replace("`r`n", "`n")
             if ($lineEnding -ceq 'CRLF') { $source = $source.Replace("`n", "`r`n") }
             . ([scriptblock]::Create($source))
-            $inventory = @{tools=@{pi=@{version='0.84.4'}}}
+            $inventory = @{tools=@{pi=@{version='0.87.1'}}}
             if ($identityCase -ceq 'unknown-pi') { $inventory.tools.pi.version = 'future' }
             if ($identityCase -ceq 'missing-pi') { $inventory.tools.pi.version = '' }
             $script:identityQueries = 0

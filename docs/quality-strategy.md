@@ -276,12 +276,16 @@ Keep these boundaries:
   rules. Do not hot-patch a running matrix or repeat unaffected tests merely
   because the upstream limitation persists.
 
-The Pi 0.84.4 / tmux 3.6 bare-OSC-777 case is an approved application of this
+The reviewed Pi 0.84.4 and 0.87.1 / tmux 3.6 bare-OSC-777 cases are applications of this
 principle: the upstream frame does not reach LeanTTY, while the controlled
 wrapped-frame comparison distinguishes forwarding from observer failure.
 Record `upstream-not-forwarded`, not a system-notification pass; retain the
 remaining interaction and cleanup gates. See the
 [evidence and decision](design/agent-exit-boundary-20260912.md#pr186-formal-stop-at-pi-tmux-forwarding).
+For 0.87.1, the installed notify extension has the same SHA-256 as the 0.84.4
+review, the formal inner/outer capture has the same missing boundary, and the
+zero-model tmux 3.6 byte probe was repeated on 2026-09-26. Later Pi versions
+still require their own review.
 Reassess applicability when the relevant version, configuration, boundary or
 observed emission changes; this is not a permanent exemption for an Agent name.
 
@@ -530,6 +534,11 @@ same test LAN. The report stores only a hash identity for that SSID. It reports
 network/lifecycle scenarios and every other registered C3 stage pass against
 the same candidate and harness. Production/review artifacts, signing and
 publication remain C4 and later work in every case.
+
+For the current physical test PC, the maintainer confirmed the saved alternate
+SSID `CU_lin` on 2026-09-26. Use it for formal Mosh acceptance without asking
+again. Each run still verifies the network preconditions; clarify only if that
+network is no longer saved or cannot reach the test LAN.
 
 The Mosh order has one owner, `Get-LeanTTYMoshFormalScenarios`: compatibility,
 runtime-reclaim, UDP pause, suspend, operator lock, operator lid, Wi-Fi pause,
