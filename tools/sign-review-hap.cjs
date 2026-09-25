@@ -11,8 +11,8 @@ process.stdout.write = () => true;
 process.stderr.write = () => true;
 let stage = 'configuration';
 try {
-  const [sdk, configPath, input, output, compatibleVersion] = process.argv.slice(2);
-  if (!sdk || !configPath || !input || !output || !/^\d+$/.test(compatibleVersion) ||
+  const [sdk, configPath, input, output, compatibleVersion, productionCheckout] = process.argv.slice(2);
+  if (!sdk || !configPath || !input || !output || !productionCheckout || !/^\d+$/.test(compatibleVersion) ||
       fs.existsSync(output) || path.resolve(input) === path.resolve(output)) throw new Error();
   const material = JSON.parse(fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '')).material;
   for (const name of ['certpath', 'profile', 'storeFile']) {
@@ -23,7 +23,9 @@ try {
   }
   if (!material.keyAlias || !material.signAlg) throw new Error();
   stage = 'SDK credential module';
-  process.chdir(path.dirname(configPath));
+  // Hvigor selects project modules by cwd. Only production has run the build;
+  // the independent review checkout supplies credentials, not a module cache.
+  process.chdir(productionCheckout);
   require(path.join(sdk, 'tools/hvigor/hvigor/src/cli/wrapper/prepare-node-path.js')).initNodePath();
   const { DecipherUtil } = require(path.join(sdk, 'tools/hvigor/hvigor-ohos-plugin/src/utils/decipher-util.js'));
   stage = 'SDK credential decryption';

@@ -1,5 +1,7 @@
 param()
 $ErrorActionPreference = 'Stop'
+& node (Join-Path $PSScriptRoot 'test-sign-review-hap.cjs')
+if ($LASTEXITCODE -ne 0) { throw 'Review signing bridge tests failed' }
 . (Join-Path $PSScriptRoot 'release-payload.ps1')
 $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
 $testRoot = Join-Path $tempBase ('LeanTTY-payload-test-' + [guid]::NewGuid().ToString('N'))

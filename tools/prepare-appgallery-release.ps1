@@ -236,7 +236,8 @@ if ($production.Data.git.tree -cne $productionIdentity.tree -or
 }
 $review = $null
 if ($reviewCheckoutFull) {
-    $review = New-LeanTTYReviewHap -Production $production -ReviewCheckout $reviewCheckoutFull
+    $review = New-LeanTTYReviewHap -Production $production -ReviewCheckout $reviewCheckoutFull `
+        -ProductionCheckout $productionCheckout
 }
 
 $archiveTargets = @(
