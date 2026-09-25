@@ -1,9 +1,15 @@
 # Mosh U+FFFD 断连诊断与库修复交接
 
 日期：2026-09-25。原始诊断针对 v0.1.1；维护者已在 v0.1.2 修复，LeanTTY 已接入并
-通过当时的定向验证。随后维护者在同包再次断连，已确认另一个 U+0605 字符宽度问题，
-**原二进制输出主诉仍未解决**。下面保留各轮原始事实，不能把单次通过扩展为整体修复。
+通过当时的定向验证。随后确认 U+0605 宽度问题，v0.1.3 已修复该固定样本；但本轮
+真机原始命令仍断连，隔离交互对照另捕获带分号的 OSC 标题解析失败。
+**原二进制输出主诉仍未解决，v0.1.3 接入保留为草稿**。下面保留各轮原始事实，
+不能把单次通过扩展为整体修复。
 本文件记录证据，不是第二份任务清单；后续状态归 `docs/next-work.md`。
+
+维护者随后要求一次性排查，已完成完整录制/续放、277 项扫描与去重。最新整体交接见
+[Mosh 断连批量诊断](mosh-disconnect-batch-20260925.md)；下面的逐轮记录保留为历史
+证据，不再作为“只修 OSC 再重验”的执行方案。
 
 ## 结论与影响
 
@@ -240,3 +246,83 @@ DIAGNOSTIC_SESSION_RESULT: Ok(Ok(Err(Protocol)))
 
 本轮证据：`build/verification/mosh-v012-reopened-20260925/`，含原始现场、四样本对照、
 错误分支分类、固定字符对照、stock 客户端结果、真机前后截图/日志及清理布局。
+
+## v0.1.3 接入验证
+
+维护者发布并授权接入 v0.1.3，固定提交
+`77f210150a54963148304adabeae1e4382f6a750`。源码审查确认准入、屏幕和光标统一调用
+`terminal_width::width`；资源限制、公共 API 和生产依赖不变。该策略覆盖固定
+unicode-width 0.2.2 与已测试 glibc C.UTF-8 的 95 个有限宽度差异，不声称覆盖所有
+服务端 locale 或 Unicode 版本。LeanTTY 不增加适配代码；Cargo.lock 仅变更 Mosh
+版本和来源。私有 vt100 只有声明的 perform/cell/screen 三文件与原 crate 不同，
+完整 MIT 许可证不变。
+
+固定源码的 25 项终端状态/绘制测试通过，包括准确格位、光标、分段、资源上限与重绘；
+stock-server 的字符宽度、U+FFFD、二进制输出后另发输入三个命名样本串行通过。
+二进制样本在独立观察输出标记和后续输入标记前没有清屏。LeanTTY 受影响 Rust 门禁
+（fmt/Clippy/feature 隔离、57 项原生测试、2 项输入拒绝触发）、设备工具合同和 policy
+通过。证据在 `build/verification/mosh-client-v013-20260925/`。
+
+ARM64 debug 签名构建、包准入与安装通过。HAP SHA-256：
+`7ba372ccf799dd06032f53e7510e9a0845189374ae8b0e71857f4b39a0d6f90d`。
+App PID 为 58811，现场 147×43 网格、WSL stock mosh-server 1.4.0。
+复用空闲第二 Tab，安装前没有活动远端会话，没有新增 Tab。
+
+- U+0605 行首及 ASCII 后的样本不再断连，AFTER 后缀与完成标记均可见；当前字体将
+  U+0605 绘为缺字框，准确格位/光标结论来自上述库测试，不把字形当作协议正确性。
+- U+FFFD 保留，远端提示符恢复。
+- 截图确认直接输入 `\cat /bin/ls`，单独按 Enter；没有紧接清屏或 RIS。23:08:10.783
+  退回 ltty，日志仍为 `connected=true,source=transport,stage=mosh_udp,nativeCode=protocol`。
+  PID 58811 不变。未再提交后续输入，不把库的通过覆盖这次物理失败。
+- 本轮服务端 PID 69471 已清理，原 28098/44806/51117/51202 保留；英文输入法未改，
+  屏幕常亮租约已停止。首 Tab 诊断与发布继续暂停。
+
+### v0.1.3 剩余断连：OSC 标题含分号
+
+真机失败后停止扩大验收及合入，只做有界隔离诊断。副本新增固定错误枚举、OSC
+selector 数值与参数长度日志；不记录用户载荷，不改处理行为，不修改库项目。
+原 25 项/三个 stock-server 测试使用未加诊断的固定源码，不能与此后诊断混同。
+
+非交互 `zsh -ic '\cat /bin/ls'` 此次正常结束；交互 `zsh -il` 在完成固定 Unicode
+样本后单独发送相同命令，捕获以下边界：
+
+```text
+DIAGNOSTIC_OSC count=4 lengths=[1, 71, 4, 108] selector=Some([48])
+DIAGNOSTIC_DRIVER_ERROR: Terminal(UnsupportedOsc)
+DIAGNOSTIC_PHASE 2 STATE Closed
+DIAGNOSTIC_INTERACTIVE_RESULT Ok(Ok(Err(Protocol)))
+```
+
+`48` 为 ASCII `0`。这是标题含分号的 OSC 0，非资源上限或 U+0605 回归；真实设备日志
+只记录到 Protocol，因此此处是隔离同场景捕获的子类，不冒称真机已记录私有错误枚举。
+隔离服务端清理断言曾在 1 秒窗口内失败；随后进程清单确认均退出，仅原四个进程保留。
+另一次夹具编译准备因未启用 tokio select 宏失败，改用既有 timeout API 后才运行；
+该准备失败不计作产品结果。
+
+无需二进制或 zsh，Mosh 会话内以下普通标题即可最小复现：
+
+```sh
+printf '\033]0;hello;world\007'
+```
+
+| stock server 输出 | v0.1.3 Rust 客户端 | stock Mosh 1.4.0 客户端 |
+|---|---|---|
+| OSC 0 标题 `hello;world` | `UnsupportedOsc` → Protocol | 标题与随后 AFTER_TITLE 正常输出，脚本结束退出码 0 |
+| OSC 2 标题 `hello;world` | `UnsupportedOsc` → Protocol | 本轮未测 |
+| OSC 0 标题 `hello-world` | 正常 `RemoteClosed`，脚本结束 | 本轮未测 |
+
+源码边界为固定提交 `src/vt100/perform.rs:198`：只匹配 `[b"0", s]`、`[b"1", s]`
+或 `[b"2", s]`，vte 按分号拆出的多段标题落入 unhandled_osc；
+`src/terminal/state.rs:279` 将其记为 UnsupportedOsc，再由 driver 映射 Protocol。
+[XTerm 控制序列定义](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html) 中 OSC 0/1/2
+的 Pt 是标题文本；stock 对照证实标题中的分号无需导致会话结束。
+
+给库维护者的下一步：按 OSC 0/1/2 文本语义处理后续分号，保留资源、UTF-8 与其他 OSC
+策略，不整体吞掉 UnsupportedOsc。至少验证空标题、普通标题、单/多个分号、BEL/ST
+终止和后续输入；再核对当前交互 shell 原始样本。以上为建议，LeanTTY 本轮未实现库
+修复或兼容分支。未继续研究任意二进制兼容，未重跑矩阵或调用模型。
+
+新增证据包括 `binary-command.png`、`binary-result.png`、`device-hilog.txt`、
+`diagnostic-interactive*.log`、`diagnostic-title*.log`、`stock-client-results.json`。
+接入改动保留在独立草稿 PR，不合入 main、不宣称原主诉修复；下一版本沿用这些最小
+正反例，再做一次原始命令与独立后续输入的短回归。

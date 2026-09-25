@@ -1,0 +1,201 @@
+[
+  {
+    "name": "BootstrapError",
+    "file": "src/error.rs",
+    "line": 9,
+    "variants": [
+      "OutputTooLarge",
+      "TooManyLines",
+      "MissingConnectRecord",
+      "AmbiguousConnectRecord",
+      "MalformedConnectRecord",
+      "InvalidPort",
+      "InvalidKey"
+    ]
+  },
+  {
+    "name": "FragmentError",
+    "file": "src/fragment.rs",
+    "line": 20,
+    "variants": [
+      "TooShort",
+      "BodyTooLarge",
+      "FragmentNumberOutOfRange",
+      "OutputTooSmall"
+    ]
+  },
+  {
+    "name": "ReassemblyError",
+    "file": "src/fragment.rs",
+    "line": 28,
+    "variants": [
+      "FragmentNumberOutOfRange",
+      "ConflictingFragment",
+      "InstructionTooLarge",
+      "TooManyIncompleteInstructions",
+      "TimeMovedBackwards",
+      "TimerExhausted"
+    ]
+  },
+  {
+    "name": "InstructionError",
+    "file": "src/instruction.rs",
+    "line": 20,
+    "variants": [
+      "InvalidTerminalSize",
+      "DecodedTooLarge",
+      "CompressedTooLarge",
+      "InvalidCompression",
+      "TrailingCompressedData",
+      "InvalidMessage",
+      "IncompatibleVersion",
+      "InputTooLarge",
+      "TooManyClientOperations",
+      "StateDifferenceTooLarge"
+    ]
+  },
+  {
+    "name": "PacketError",
+    "file": "src/packet.rs",
+    "line": 32,
+    "variants": [
+      "DatagramTooShort",
+      "DatagramTooLarge",
+      "PlaintextTooLarge",
+      "OutputTooSmall",
+      "InvalidSequence",
+      "WrongDirection",
+      "AuthenticationFailed",
+      "Replay",
+      "TooOld",
+      "SequenceExhausted",
+      "UnexpectedSource"
+    ]
+  },
+  {
+    "name": "SessionExit",
+    "file": "src/session.rs",
+    "line": 34,
+    "variants": [
+      "LocalClosed",
+      "RemoteClosed",
+      "Cancelled",
+      "OwnerDropped"
+    ]
+  },
+  {
+    "name": "SessionError",
+    "file": "src/session.rs",
+    "line": 48,
+    "variants": [
+      "Io",
+      "InvalidTerminalSize",
+      "ConnectionTimeout",
+      "Protocol",
+      "ResourceLimit",
+      "StateExhausted",
+      "InternalState"
+    ]
+  },
+  {
+    "name": "SessionCommandError",
+    "file": "src/session.rs",
+    "line": 84,
+    "variants": [
+      "Closed",
+      "InputTooLarge",
+      "InvalidTerminalSize"
+    ]
+  },
+  {
+    "name": "SynchronizationError",
+    "file": "src/synchronization.rs",
+    "line": 11,
+    "variants": [
+      "StateNumberExhausted",
+      "InvalidAcknowledgement",
+      "IncompatibleVersion",
+      "InvalidStateTransition",
+      "InvalidThrowaway",
+      "InvalidRetransmissionTimeout",
+      "TimeMovedBackwards",
+      "NoNewState",
+      "StalePlan",
+      "GenerationExhausted"
+    ]
+  },
+  {
+    "name": "TimingError",
+    "file": "src/timing.rs",
+    "line": 13,
+    "variants": [
+      "TimeMovedBackwards",
+      "TimerExhausted",
+      "InvalidRttSample",
+      "StalePlan",
+      "GenerationExhausted"
+    ]
+  },
+  {
+    "name": "DriverError",
+    "file": "src/session/driver.rs",
+    "line": 49,
+    "variants": [
+      "Io",
+      "Packet",
+      "Fragment",
+      "Reassembly",
+      "Instruction",
+      "Synchronization",
+      "Timing",
+      "Reachability",
+      "Terminal",
+      "Paint",
+      "MissingClientState",
+      "MissingTerminalState",
+      "OperationIndexExhausted",
+      "FragmentIdentifierExhausted",
+      "ClockExhausted",
+      "ConnectionTimeout",
+      "IncompleteDatagramSend"
+    ]
+  },
+  {
+    "name": "ReachabilityError",
+    "file": "src/session/reachability.rs",
+    "line": 56,
+    "variants": [
+      "TimeMovedBackwards",
+      "TimerExhausted"
+    ]
+  },
+  {
+    "name": "TerminalError",
+    "file": "src/terminal/mod.rs",
+    "line": 25,
+    "variants": [
+      "DifferenceTooLarge",
+      "TooManyOperations",
+      "InvalidMessage",
+      "InvalidOperation",
+      "InvalidTerminalSize",
+      "InvalidUtf8",
+      "IncompleteSequence",
+      "UnsupportedCharacter",
+      "UnsupportedControl",
+      "UnsupportedEscape",
+      "UnsupportedCsi",
+      "UnsupportedOsc",
+      "TooManyScalarsInCell",
+      "CellEncodingTooLarge"
+    ]
+  },
+  {
+    "name": "PaintError",
+    "file": "src/terminal/paint.rs",
+    "line": 7,
+    "variants": [
+      "OutputTooLarge"
+    ]
+  }
+]

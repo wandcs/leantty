@@ -46,7 +46,7 @@ Font License 1.1. The full OFL text and the Nerd Fonts attribution note are in
 ## Rust Dependencies (Cargo)
 
 `leantty_ssh/Cargo.lock` resolves 178 registry packages and the external Git
-package `mosh-client 0.1.2`, plus the local patched `ssh-key`, for
+package `mosh-client 0.1.4`, plus the local patched `ssh-key`, for
 `aarch64-unknown-linux-ohos`; all report a
 license expression or license file through Cargo metadata. The complete
 versioned inventory is in `docs/RUST_DEPENDENCIES.md`.
@@ -64,10 +64,10 @@ The license families present are:
 - 0BSD OR MIT OR Apache-2.0 (`adler2`);
 - MIT OR Zlib OR Apache-2.0 (`miniz_oxide`).
 
-Rechecked on 2026-09-25: `mosh-client` uses `MIT OR Apache-2.0`.
-Cargo.toml selects exact version `=0.1.2` and release tag `v0.1.2` from
+Rechecked on 2026-09-26: `mosh-client` uses `MIT OR Apache-2.0`.
+Cargo.toml selects exact version `=0.1.4` and release tag `v0.1.4` from
 `https://github.com/wandcs/mosh-client-rs.git`; Cargo.lock fixes its source to
-`177d2a11f8829df5582da4c1495ed9c9885461c3`, not a moving main branch.
+`8a45c8e68aa586afa5bebc241fad6d8d80259536`, not a moving main branch.
 
 The repository `LICENSE` contains the Apache-2.0 text. Release builds copy each
 available package-specific license, copyright, copying, notice, or unlicense
@@ -79,11 +79,12 @@ Apache-2.0 text included at the top level.
 
 ## vt100 source retained inside mosh-client
 
-Mosh client 0.1.2 contains a private copy of vt100 0.16.2, originally by Jesse
-Luehrs, with a U+FFFD handling patch. The registry vt100 package is therefore no
-longer a separate dependency. Its complete MIT notice is reproduced here so it
-remains included in the existing release notice bundle. The locked library's
-`src/vt100/PATCH.md` documents source provenance and the patch removal condition.
+Mosh client 0.1.4 contains a private copy of vt100 0.16.2, originally by Jesse
+Luehrs, with U+FFFD, character-width, title, rendition and reverse-video
+patches. The registry vt100 package is therefore no longer a separate
+dependency. Its complete MIT notice is reproduced here so it remains included
+in the existing release notice bundle. The locked library's `src/vt100/PATCH.md`
+documents source provenance and the patch removal condition.
 
 The MIT License (MIT)
 
