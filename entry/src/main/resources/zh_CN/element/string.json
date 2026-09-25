@@ -1,5 +1,7 @@
 {
   "string": [
+    { "name": "copy_too_large", "value": "所选文本超过 1 MiB 复制上限，请缩小选择范围；当前选区已保留。" },
+    { "name": "paste_busy", "value": "终端正忙，本次未粘贴任何内容；请在输出稳定后重试。" },
     { "name": "paste_permission_denied", "value": "未获得剪贴板读取权限。请在系统设置中允许 LeanTTY 访问剪贴板，然后再次粘贴。" },
     { "name": "paste_failed", "value": "无法读取剪贴板，请再次尝试粘贴。" },
     { "name": "paste_cancelled", "value": "终端焦点或状态已变化，本次粘贴已取消。请返回目标终端后再次粘贴。" },

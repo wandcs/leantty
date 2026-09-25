@@ -286,7 +286,7 @@ export default class EntryAbility extends UIAbility {
     let targetHeight: number = endRect.height
     let runtime = ApplicationWorkspace.getInstance().getViewModel().getActivePaneRuntime()
     let metrics = runtime?.surface.getNativeCellMetrics(
-      Math.max(8, Math.min(96, Math.round(fontSize * density))), Math.round(8 * density)) ?? null
+      Math.max(8, Math.round(fontSize * density)), Math.round(8 * density)) ?? null
     // A pending font/density change must not snap using stale metrics.
     if (metrics === null) { return }
     if (widthChanged) {

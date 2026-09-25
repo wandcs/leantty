@@ -1,5 +1,7 @@
 {
   "string": [
+    { "name": "copy_too_large", "value": "Selected text exceeds the 1 MiB copy limit. Select less text; your selection has been kept." },
+    { "name": "paste_busy", "value": "The terminal is busy. Nothing was pasted; try again after output settles." },
     { "name": "paste_permission_denied", "value": "Clipboard access was not granted. Allow it for LeanTTY in system settings, then paste again." },
     { "name": "paste_failed", "value": "Could not access the clipboard. Try pasting again." },
     { "name": "paste_cancelled", "value": "Paste cancelled because the terminal changed focus or state. Return to the intended terminal and paste again." },

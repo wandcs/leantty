@@ -35,7 +35,6 @@ export struct NativeTerminalPane {
   @State preeditFontSize: number = 14
   @State linkPreview: string = ''
   private dragging: boolean = false
-  private wheelRemainder: number = 0
   private composingSearch: boolean = false
   private searchInput: TextInputController = new TextInputController()
   onKey: (event: KeyEvent) => boolean = () => false
@@ -77,7 +76,7 @@ export struct NativeTerminalPane {
     }
     this.native.onSearchResult = (index: number, count: number) => { this.resultIndex = index; this.resultCount = count }
     this.native.onSearchError = (resource: string) => { this.searchError = resource }
-    this.native.onPasteError = (resource: string) => {
+    this.native.onClipboardError = (resource: string) => {
       this.getUIContext().getPromptAction().showToast({ message: this.text(resource) })
     }
     this.native.onRequestFocus = () => {
@@ -247,9 +246,8 @@ export struct NativeTerminalPane {
           if (event.button === MouseButton.Right) { event.stopPropagation() }
         })
         .onAxisEvent((event: AxisEvent) => {
-          this.wheelRemainder += event.getVerticalAxisValue()
-          let lines = Math.trunc(this.wheelRemainder / 40)
-          if (lines !== 0) { this.wheelRemainder -= lines * 40; this.native?.scroll(lines) }
+          this.native?.scrollAxis(event.getVerticalAxisValue(), event.timestamp / 1000000,
+            event.sourceTool === SourceTool.TOUCHPAD, event.action)
         })
       if (this.searchOpen) {
         Row({ space: 2 }) {

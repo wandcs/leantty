@@ -220,7 +220,7 @@ TerminalLink TerminalRuntime::linkAt(int x,int y) {
         while (link.last+1 < cols_*rows_ && same(link.last+1)) ++link.last;
         return link;
     }
-    const uint32_t boundaries[] = {0,9,32,'"','\'','<','>'};
+    const uint32_t boundaries[] = {0,9,32,'"','\'','<','>','`','|','\\'};
     GhosttyTerminalSelectWordOptions word = GHOSTTY_INIT_SIZED(GhosttyTerminalSelectWordOptions);
     word.ref = ref; word.boundary_codepoints = boundaries; word.boundary_codepoints_len = sizeof(boundaries)/sizeof(boundaries[0]);
     GhosttySelection selection = GHOSTTY_INIT_SIZED(GhosttySelection);
@@ -229,15 +229,33 @@ TerminalLink TerminalRuntime::linkAt(int x,int y) {
     options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN; options.unwrap = true; options.trim = true; options.selection = &selection;
     if (ghostty_terminal_selection_format_buf(active_,options,bytes,sizeof(bytes),&length) != GHOSTTY_SUCCESS) return {};
     std::string url(reinterpret_cast<char*>(bytes),length);
+    // Only explicit HTTP(S) tokens are inferred. Accept a surrounding square
+    // bracket or an ASCII label such as URL= without splitting query values,
+    // parentheses in paths or IPv6 authorities. OSC 8 handles complex labels.
+    size_t leading = 0;
+    const char wrapper = url.empty() ? 0 : url.front();
+    const char closing = wrapper == '(' ? ')' : wrapper == '[' ? ']' : wrapper == '{' ? '}' : 0;
+    if (closing) { url.erase(0,1); ++leading; }
+    const auto equals = url.find('=');
+    if (equals != std::string::npos && equals > 0 &&
+        url.substr(0,equals).find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") == std::string::npos) {
+        leading += equals+1; url.erase(0,equals+1);
+    }
     while (!url.empty() && std::string(".,;:!?").find(url.back()) != std::string::npos) url.pop_back();
-    if (url.compare(0,7,"http://") && url.compare(0,8,"https://")) return {};
+    if (closing && !url.empty() && url.back() == closing) url.pop_back();
+    std::string scheme = url.substr(0,8);
+    for (auto& ch : scheme) if (ch >= 'A' && ch <= 'Z') ch += 'a'-'A';
+    const size_t schemeSize = !scheme.compare(0,7,"http://") ? 7 : !scheme.compare(0,8,"https://") ? 8 : 0;
+    if (!schemeSize || url.size() <= schemeSize || url[schemeSize] == '/' || url[schemeSize] == '?' || url[schemeSize] == '#') return {};
     GhosttyPointCoordinate start{}, end{};
     checkVt(ghostty_terminal_point_from_grid_ref(active_,&selection.start,GHOSTTY_POINT_TAG_SCREEN,&start));
     checkVt(ghostty_terminal_point_from_grid_ref(active_,&selection.end,GHOSTTY_POINT_TAG_SCREEN,&end));
     GhosttyTerminalScrollbar viewport{};
     checkVt(ghostty_terminal_get(active_,GHOSTTY_TERMINAL_DATA_SCROLLBAR,&viewport));
-    const int64_t first = (static_cast<int64_t>(start.y)-viewport.offset)*cols_+start.x;
-    const int64_t last = (static_cast<int64_t>(end.y)-viewport.offset)*cols_+end.x-static_cast<int64_t>(length-url.size());
+    const int64_t first = (static_cast<int64_t>(start.y)-viewport.offset)*cols_+start.x+static_cast<int64_t>(leading);
+    const int64_t last = (static_cast<int64_t>(end.y)-viewport.offset)*cols_+end.x-static_cast<int64_t>(length-leading-url.size());
+    const int64_t hit = (y/cellHeight_)*cols_+x/cellWidth_;
+    if (hit < first || hit > last) return {};
     return {url,static_cast<int>(std::max<int64_t>(0,first)),static_cast<int>(std::min<int64_t>(cols_*rows_-1,last))};
 }
 void TerminalRuntime::copy(const Command& c) {

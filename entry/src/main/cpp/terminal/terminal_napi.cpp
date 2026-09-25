@@ -127,7 +127,7 @@ napi_value attach(napi_env env,napi_callback_info info) {
     if (id.find_first_not_of("0123456789") != std::string::npos) throw std::runtime_error("terminal_surface_id");
     uint64_t surface = std::stoull(id);
     const int width = numeric(env,args.values[2],1,16384),height = numeric(env,args.values[3],1,16384);
-    const float size = numeric(env,args.values[4],8,96);
+    const float size = numeric(env,args.values[4],8,192);
     const uint32_t generation = args.owner(5);
     const int inset = numeric(env,args.values[6],0,256);
     const int cursorStroke = numeric(env,args.values[7],1,16);

@@ -2,6 +2,7 @@ import terminal, { TerminalHandle } from 'libleantty_terminal.so'
 import { ClipboardManager } from '../clipboard/ClipboardManager'
 import { common } from '@kit.AbilityKit'
 import { KeyCodeMap } from '../../common/constants/KeyCodeMap'
+import { TerminalScrollPolicy } from './TerminalScrollPolicy'
 import util from '@ohos.util'
 
 export class NativeCellMetrics {
@@ -31,6 +32,7 @@ class NativeCommand {
 // The Pane owns this object across XComponent lifetimes. Admission, consumption,
 // surface presentation and input ownership are deliberately separate signals.
 export class NativeTerminalController {
+  private scrollGesture: TerminalScrollPolicy = new TerminalScrollPolicy()
   private handle: TerminalHandle
   private pending: NativeCommand[] = []
   private inflight: Map<number, NativeCommand> = new Map()
@@ -81,7 +83,7 @@ export class NativeTerminalController {
   onRebuildDisplay: () => void = () => {}
   onRequestFocus: () => boolean = () => true
   onCopyResult: (success: boolean) => void = () => {}
-  onPasteError: (resource: string) => void = () => {}
+  onClipboardError: (resource: string) => void = () => {}
   onAttentionAcknowledged: () => void = () => {}
   onSearchOpen: (open: boolean) => void = () => {}
   onSearchResult: (index: number, count: number) => void = () => {}
@@ -215,7 +217,7 @@ export class NativeTerminalController {
     } else if (kind === 'copy' && owner === this.inputOwner && this.focused && this.presented) {
       this.writeSelection(text, owner, sequence)
     } else if (kind === 'copy-too-large' && owner === this.inputOwner) {
-      this.onCopyResult(false)
+      if (this.focused && this.presented) { this.onClipboardError('copy_too_large') }
     } else if (kind === 'paste-request' && owner === this.inputOwner && this.focused && this.presented) {
       this.paste()
     } else if (kind === 'search' && this.searching && owner === this.searchGeneration) {
@@ -244,7 +246,7 @@ export class NativeTerminalController {
       this.cellMetrics = null
     }
     this.context = context; this.surfaceId = id
-    this.fontPixels = Math.max(8, Math.min(96, Math.round(context.vp2px(this.fontSize))))
+    this.fontPixels = Math.max(8, Math.round(context.vp2px(this.fontSize)))
     this.insetPixels = Math.round(context.vp2px(8))
     if (this.cellMetrics?.fontPixels !== this.fontPixels || this.cellMetrics?.insetPixels !== this.insetPixels) {
       this.cellMetrics = null
@@ -339,6 +341,7 @@ export class NativeTerminalController {
   }
   setInputMasked(masked: boolean): void { this.inputMasked = masked }
   invalidateInput(): void {
+    this.scrollGesture.reset()
     this.hover(-1)
     this.onPreedit('', 0, 0)
     this.inputOwner++
@@ -395,6 +398,14 @@ export class NativeTerminalController {
     catch (_) { this.fail() }
   }
   scrollPage(direction: number): void { this.scroll(direction * Math.max(1, this.visibleRows - 1), true) }
+  scrollAxis(delta: number, time: number, touchpad: boolean, action: AxisAction): void {
+    if (this.failed || this.closing || !this.presented || this.searching) { this.scrollGesture.reset(); return }
+    if (action === AxisAction.BEGIN || action === AxisAction.CANCEL) { this.scrollGesture.reset() }
+    if (action === AxisAction.CANCEL) { return }
+    let lines = this.scrollGesture.consume(delta, time, touchpad)
+    if (lines !== 0) { this.scroll(lines) }
+    if (action === AxisAction.END) { this.scrollGesture.reset() }
+  }
   getFontSize(): number { return this.fontSize }
   copy(action: number = 0): void {
     if (this.failed || this.closing || !this.presented || this.searching) { return }
@@ -415,23 +426,26 @@ export class NativeTerminalController {
     this.pastePending = true
     try {
       let context = this.context?.getHostContext() as common.UIAbilityContext | undefined
-      if (context === undefined) { this.onPasteError('paste_failed'); return }
+      if (context === undefined) { this.onClipboardError('paste_failed'); return }
       let permission = await ClipboardManager.requestReadPermission(context, (): boolean => this.canPaste(owner))
       if (this.failed || this.closing || permission === 'busy') { return }
-      if (permission === 'cancelled') { this.onPasteError('paste_cancelled'); return }
+      if (permission === 'cancelled') { this.onClipboardError('paste_cancelled'); return }
       if (permission !== 'granted') {
-        this.onPasteError(permission === 'denied' ? 'paste_permission_denied' : 'paste_failed'); return
+        this.onClipboardError(permission === 'denied' ? 'paste_permission_denied' : 'paste_failed'); return
       }
       // The system dialog may blur the Pane. Never restore the old owner or
       // focus to deliver a paste after authorization; require a fresh gesture.
-      if (!this.canPaste(owner)) { this.onPasteError('paste_cancelled'); return }
+      if (!this.canPaste(owner)) { this.onClipboardError('paste_cancelled'); return }
       let text = await ClipboardManager.readText()
       if (!this.canPaste(owner)) { return }
-      if (text === null) { this.onPasteError('paste_failed'); return }
+      if (text === null) { this.onClipboardError('paste_failed'); return }
       if (text.length === 0) { return }
-      if (new util.TextEncoder().encodeInto(text).byteLength > 1024 * 1024) { this.onPasteError('paste_too_large'); return }
+      if (new util.TextEncoder().encodeInto(text).byteLength > 1024 * 1024) { this.onClipboardError('paste_too_large'); return }
       this.acknowledgeAttention()
-      try { this.admitted(terminal.paste(this.handle, text, owner)) } catch (_) { this.fail() }
+      // Admission is atomic. A full output/control budget rejects this paste
+      // without sending a prefix; only a fresh user gesture may retry it.
+      try { if (terminal.paste(this.handle, text, owner) === 0) { this.onClipboardError('paste_busy') } }
+      catch (_) { this.fail() }
     } finally {
       this.pastePending = false
     }

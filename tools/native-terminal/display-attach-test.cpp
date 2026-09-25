@@ -61,6 +61,10 @@ int main() {
             renderer.grid_.x == 9 && renderer.grid_.y == 8, "resize recomputes centered remainder without losing a fitting cell");
         renderer.attach(3,1000,700,16,8,2);
         require(renderer.cursorStroke_ == 2,"cursor stroke follows the supplied display density");
+        renderer.attach(3,2800,1800,106,18,2);
+        require(renderer.fontSize_ == 106,"48 vp at density 2.2125 is not silently reduced");
+        renderer.attach(3,2800,1800,192,32,4);
+        require(renderer.fontSize_ == 192,"48 vp at density four is admitted");
         bool invalidRejected = false;
         try { renderer.attach(0,900,600,16); } catch (const std::runtime_error&) { invalidRejected = true; }
         require(invalidRejected && renderer.surfaceId_ == 3, "invalid arguments remain fatal without replacing resources");

@@ -6,6 +6,11 @@ const vm = require('node:vm');
 const ts = require(process.argv[2]);
 const source = fs.readFileSync(path.join(__dirname, '../entry/src/main/ets/model/terminal/NativeTerminalController.ets'), 'utf8');
 const keyMapExports = {};
+const scrollExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
+  '../entry/src/main/ets/model/terminal/TerminalScrollPolicy.ets'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText, { exports: scrollExports });
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,
   '../entry/src/main/ets/common/constants/KeyCodeMap.ets'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
@@ -78,11 +83,13 @@ function fixture(acceptanceEnabled = true, clipboardState = clipboardFixture()) 
   });
   vm.runInNewContext(result.outputText, { exports, require: name => name.includes('ClipboardManager') ? { ClipboardManager: clipboard } :
     name.includes('KeyCodeMap') ? keyMapExports :
+    name.includes('TerminalScrollPolicy') ? scrollExports :
     name.includes('/Logger') ? { Logger: class { info(text) { logs.push(text); } } } :
     name.includes('LocalCommandOutput') ? { LocalCommandOutput: { prompt: () => '\x1b[32mltty>\x1b[0m ' } } :
     name === 'BuildProfile' ? { ACCEPTANCE_TESTS: acceptanceEnabled } :
     name === '@ohos.util' ? { default: { TextEncoder: class { encodeInto(text) { return text.length === 0 ? undefined : new TextEncoder().encode(text); } },
       TextDecoder: { create() { const decoder=new TextDecoder(); return {decodeToString:(data,options)=>decoder.decode(data,options)}; } } } } : { default: api }, Uint8Array, ArrayBuffer, Date,
+    AxisAction: { NONE:0, BEGIN:1, UPDATE:2, END:3, CANCEL:4 },
     setInterval: fn => { const id = next++; timers.set(id, fn); return id; }, clearInterval: id => timers.delete(id) });
   const control = new exports.NativeTerminalController(new ArrayBuffer(1), new ArrayBuffer(1));
   const events = [];
@@ -97,6 +104,33 @@ function fixture(acceptanceEnabled = true, clipboardState = clipboardFixture()) 
 }
 let count = 0;
 function test(name, fn) { fn(); console.log('PASS ' + name); count++; }
+test('touchpad gain is bounded, slow precision and wheel steps remain stable', () => {
+  const Policy = scrollExports.TerminalScrollPolicy;
+  const run = (delta,gap,touchpad) => { const p=new Policy(); let total=0;
+    for(let i=0;i<20;i++) total+=p.consume(delta,i*gap,touchpad); return total; };
+  assert.equal(run(4,20,true),2,'slow movement accumulates fractional rows without gain');
+  assert.ok(run(40,16,true)>run(40,100,true),'equal distance scrolls further at higher speed');
+  assert.equal(run(120,16,false),60); assert.equal(run(120,100,false),60,'mouse has no velocity gain');
+  const p=new Policy();
+  p.consume(30,0,false); assert.equal(p.consume(-40,16,false),-1,'reverse does not repay old remainder');
+  p.reset(); p.consume(30,0,false); assert.equal(p.consume(10,200,false),0,'pause discards old remainder');
+  p.reset(); p.consume(30,0,false); assert.equal(p.consume(10,16,true),0,'source change starts fresh');
+  assert.equal(p.consume(1e6,32,true),256,'single event is bounded without delayed catch-up');
+  assert.equal(p.consume(0,48,true),0);
+  assert.equal(p.consume(NaN,64,true),0); assert.equal(p.consume(40,80,false),1);
+});
+test('axis lifecycle and input-owner changes discard pending gesture state', () => {
+  const f=fixture(), c=f.control; c.presented=true;
+  const scrolls=[]; c.scroll=lines=>scrolls.push(lines);
+  for(const action of [3,4]) {
+    c.scrollAxis(30,0,false,1); c.scrollAxis(0,16,false,action);
+    c.scrollAxis(10,32,false,2); assert.equal(scrolls.length,0);
+  }
+  c.scrollAxis(30,40,false,1); c.invalidateInput();
+  c.scrollAxis(10,56,false,2); assert.equal(scrolls.length,0);
+  c.scrollAxis(40,72,false,2); assert.deepEqual(scrolls,[1]);
+  c.searching=true; c.scrollAxis(120,88,true,2); assert.deepEqual(scrolls,[1]);
+});
 test('native keys preserve shifted text and pass the existing unshifted mapping', () => {
   const f=fixture(), c=f.control;
   c.focused=true; c.presented=true;
@@ -139,6 +173,20 @@ test('native attachment scales the shared eight-vp inset with actual screen dens
   const attached=f.attachments[0];
   assert.equal(attached.inset,13); assert.equal(attached.font,23);
   assert.equal(attached.stroke,2,'one-vp cursor stroke uses display density');
+});
+test('maximum user font sizes retain physical scaling above two pixels per vp', () => {
+  for (const density of [1, 1.9, 2.2125, 3, 4]) {
+    const f = fixture();
+    f.control.attach('1', 2800, 1800, {vp2px:x=>x*density});
+    let previous = 0;
+    for (let size = 44; size <= 48; ++size) {
+      f.control.setFontSize(size);
+      const font = f.attachments.at(-1).font;
+      assert.equal(font, Math.round(size*density));
+      assert.ok(font > previous, 'each user step changes actual font size');
+      previous = font;
+    }
+  }
 });
 test('measured cells reject stale font, density, Surface and unavailable owners', () => {
   const f=fixture(), c=f.control, context={vp2px:x=>1.625*x};
@@ -693,7 +741,7 @@ if (process.argv[3] === 'output') {
   function ready(shared) {
     const f = fixture(true, shared);
     f.control.attach('123',900,600,context); f.control.focus(); f.emit('presented',0,f.control.displayGeneration);
-    f.errors = []; f.control.onPasteError = name => f.errors.push(name);
+    f.errors = []; f.control.onClipboardError = name => f.errors.push(name);
     return f;
   }
   f.control.attach('123',900,600,context); f.control.focus(); f.emit('presented',0,f.control.displayGeneration);
@@ -846,5 +894,24 @@ if (process.argv[3] === 'output') {
     assert.equal(f.errors[0],text === null ? 'paste_failed' : text.length > 1024*1024 ? 'paste_too_large' : undefined);
   }
   console.log('PASS empty, failed and oversized clipboard text retain distinct bounded outcomes'); count++;
+  {
+    const f = ready(); f.state.text = 'x'.repeat(1024*1024);
+    f.api.paste = () => 0;
+    await f.control.paste();
+    assert.equal(f.control.failed,false,'busy paste must not terminate VT or SSH');
+    assert.deepEqual(f.errors,['paste_busy']);
+    assert.equal(f.accepted.filter(x=>x.kind==='paste').length,0);
+    f.api.paste = (_handle,text,owner) => { f.accepted.push({kind:'paste',text,owner}); return 91; };
+    await f.control.paste();
+    assert.equal(f.accepted.filter(x=>x.kind==='paste')[0].text.length,1024*1024);
+    f.emit('copy-too-large',0,f.control.inputOwner);
+    assert.equal(f.errors.at(-1),'copy_too_large');
+    assert.equal(f.accepted.filter(x=>x.kind==='copy').length,0,'oversized copy preserves selection');
+    f.state.text = '中'.repeat(Math.floor(1024*1024/3)+1);
+    await f.control.paste();
+    assert.equal(f.errors.at(-1),'paste_too_large','limit is UTF-8 bytes, not characters');
+    f.control.key(2017,0,'a'); assert.equal(f.control.failed,false);
+  }
+  console.log('PASS bounded clipboard rejection preserves selection, session and later input'); count++;
   console.log(`${count} native terminal controller contracts passed`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

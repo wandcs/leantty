@@ -59,7 +59,9 @@ void TerminalRenderer::fonts(std::vector<uint8_t> regular, std::vector<uint8_t> 
         throw std::runtime_error("terminal_fonts_failed");
 }
 bool TerminalRenderer::attach(uint64_t id, int width, int height, float size, int inset, int cursorStroke) {
-    if (!id || width < 1 || height < 1 || width > 16384 || height > 16384 || !std::isfinite(size) || size < 8 || size > 96 || inset < 0 || inset > 256 || cursorStroke < 1 || cursorStroke > 16)
+    // Admit the full 48-vp user range through density four. The fixed atlas and
+    // per-glyph bounds remain unchanged; do not silently shrink the user's font.
+    if (!id || width < 1 || height < 1 || width > 16384 || height > 16384 || !std::isfinite(size) || size < 8 || size > 192 || inset < 0 || inset > 256 || cursorStroke < 1 || cursorStroke > 16)
         throw std::runtime_error("terminal_surface_bounds");
     if (id != surfaceId_) { detach(); surfaceId_ = id;
         if (OH_NativeWindow_CreateNativeWindowFromSurfaceId(id, &window_) != 0) {
