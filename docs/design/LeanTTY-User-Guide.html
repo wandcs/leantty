@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <meta name="referrer" content="no-referrer">
-  <meta name="leantty-guide-revision" content="13">
+  <meta name="leantty-guide-revision" content="14">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LeanTTY 1.7.0 使用指南 / User Guide</title>
@@ -1317,7 +1317,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         <h3>外观服从内容</h3>
         <p>
           四点菜单提供关、低、中、高、极限五档透明度，也可以在这里调节字号。终端或 TUI
-          自己设置的背景色始终优先；系统不支持窗口透明时，LeanTTY 会自动使用不透明背景。
+          自己设置的背景色始终优先；远端启用整屏反色时，只改变所属分屏的配色，
+          仍使用当前透明度档位。系统不支持窗口透明时，LeanTTY 会自动使用不透明背景。
           拖动浮动窗口边缘并松开后，窗口会按完整终端字符格对齐；从左边或上边拖动时，另一侧
           边缘保持不动，因此松手时可能出现一次很小的尺寸调整。
         </p>
@@ -1569,7 +1570,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.7.0</strong> · 离线使用指南 · 修订 10 · 文档更新 2026-09-20</div>
+    <div><strong>LeanTTY 1.7.0</strong> · 离线使用指南 · 修订 14 · 文档更新 2026-09-26</div>
     <div>先核对，再连接；先保留工作，再处理断线。</div>
   </footer>
   </div>
@@ -2017,6 +2018,8 @@ ssh-copy-id -i id_work user@example.com</code></pre>
         <p>
           The four-dot menu contains five transparency levels—Off, Low, Medium, High and Extreme—and a
           matching font-size stepper. Explicit terminal or TUI background colors remain authoritative.
+          Whole-screen reverse video changes only its pane and keeps the selected
+          transparency level.
           Platforms that cannot enable transparency fall back to an opaque surface.
           Releasing a dragged floating-window edge aligns the final size to whole terminal cells. Dragging
           from the left or top keeps the opposite edge fixed, so a small final size adjustment is expected.
@@ -2286,7 +2289,7 @@ get work:/reports/latest.csv reports/</code></pre>
   </div>
 
   <footer class="footer">
-    <div><strong>LeanTTY 1.7.0</strong> · Offline user guide · Revision 10 · Updated 2026-09-20</div>
+    <div><strong>LeanTTY 1.7.0</strong> · Offline user guide · Revision 14 · Updated 2026-09-26</div>
     <div>Verify first. Keep work durable. Recover deliberately.</div>
   </footer>
   </div>
