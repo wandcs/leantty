@@ -1,0 +1,329 @@
+{
+  "schema": 1,
+  "library": "mosh-client",
+  "version": "0.1.3",
+  "commit": "77f210150a54963148304adabeae1e4382f6a750",
+  "server": "stock mosh-server 1.4.0",
+  "grid": [
+    147,
+    43
+  ],
+  "purpose": "Observed baseline, not desired post-fix expectations. Do not weaken checks merely to match it.",
+  "groups": [
+    {
+      "id": "C01",
+      "title": "title-semicolon",
+      "category": "confirmed-defect",
+      "cases": [
+        {
+          "id": "osc0_semicolon_bel",
+          "host_bytes_hex": [
+            "1b5d303b68656c6c6f3b776f726c6407"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedOsc)"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "osc0_semicolon_st",
+          "host_bytes_hex": [
+            "1b5d303b68656c6c6f3b776f726c641b5c"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedEscape)"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "osc1_semicolon_bel",
+          "host_bytes_hex": [
+            "1b5d313b68656c6c6f3b776f726c6407"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedOsc)"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "osc2_semicolon_bel",
+          "host_bytes_hex": [
+            "1b5d323b68656c6c6f3b776f726c6407"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedOsc)"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "osc0_plain_bel",
+          "host_bytes_hex": [
+            "1b5d303b68656c6c6f07"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Ok(())"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Ok(RemoteClosed)))",
+            "marker": "Ok(Ok(true))"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C02",
+      "title": "blink-and-hidden-rendition",
+      "category": "confirmed-compatibility-gap",
+      "cases": [
+        {
+          "id": "sgr_5",
+          "host_bytes_hex": [
+            "1b5b356d58"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedCsi { intermediate: None, parameter: Some(5), final_character: 'm' })"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "sgr_8",
+          "host_bytes_hex": [
+            "1b5b386d58"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedCsi { intermediate: None, parameter: Some(8), final_character: 'm' })"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "sgr_1",
+          "host_bytes_hex": [
+            "1b5b316d58"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Ok(())"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Ok(RemoteClosed)))",
+            "marker": "Ok(Ok(true))"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C03",
+      "title": "reverse-video",
+      "category": "confirmed-compatibility-gap",
+      "cases": [
+        {
+          "id": "mode_5",
+          "host_bytes_hex": [
+            "1b5b3f3568"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedCsi { intermediate: Some(63), parameter: Some(5), final_character: 'h' })"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "mode5_reset",
+          "host_bytes_hex": [
+            "1b5b3f356c"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedCsi { intermediate: Some(63), parameter: Some(5), final_character: 'l' })"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Ok(RemoteClosed)))",
+            "marker": "Ok(Ok(true))"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C04",
+      "title": "unsupported-mouse-modes",
+      "category": "declared-profile-exclusion",
+      "cases": [
+        {
+          "id": "mode_1001",
+          "host_bytes_hex": [
+            "1b5b3f3130303168"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedCsi { intermediate: Some(63), parameter: Some(1001), final_character: 'h' })"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "mode_1015",
+          "host_bytes_hex": [
+            "1b5b3f3130313568"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedCsi { intermediate: Some(63), parameter: Some(1015), final_character: 'h' })"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "mode_1000",
+          "host_bytes_hex": [
+            "1b5b3f3130303068"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Ok(())"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Ok(RemoteClosed)))",
+            "marker": "Ok(Ok(true))"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C05",
+      "title": "malformed-clipboard-payload",
+      "category": "existing-rejection-policy",
+      "cases": [
+        {
+          "id": "osc52_bad",
+          "host_bytes_hex": [
+            "1b5d35323b633b25252507"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(UnsupportedOsc)"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "osc52",
+          "host_bytes_hex": [
+            "1b5d35323b633b59574a6a07"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Ok(())"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Ok(RemoteClosed)))",
+            "marker": "Ok(Ok(true))"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C06",
+      "title": "scalar-capacity",
+      "category": "retained-resource-limit",
+      "cases": [
+        {
+          "id": "combining2_8",
+          "host_bytes_hex": [
+            "41cc81cc81cc81cc81cc81cc81cc81cc81"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(TooManyScalarsInCell)"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "combining2_7",
+          "host_bytes_hex": [
+            "41cc81cc81cc81cc81cc81cc81cc81"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Ok(())"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Ok(RemoteClosed)))",
+            "marker": "Ok(Ok(true))"
+          }
+        }
+      ]
+    },
+    {
+      "id": "C07",
+      "title": "cell-byte-capacity",
+      "category": "retained-resource-limit",
+      "cases": [
+        {
+          "id": "combining3_7",
+          "host_bytes_hex": [
+            "41e1aab0e1aab0e1aab0e1aab0e1aab0e1aab0e1aab0"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Err(CellEncodingTooLarge)"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Err(Protocol)))",
+            "marker": "Ok(Ok(false))"
+          }
+        },
+        {
+          "id": "combining3_6",
+          "host_bytes_hex": [
+            "41e1aab0e1aab0e1aab0e1aab0e1aab0e1aab0"
+          ],
+          "raw_baseline": {
+            "step": 0,
+            "result": "Ok(())"
+          },
+          "stock_baseline": {
+            "result": "Ok(Ok(Ok(RemoteClosed)))",
+            "marker": "Ok(Ok(true))"
+          }
+        }
+      ]
+    }
+  ]
+}
