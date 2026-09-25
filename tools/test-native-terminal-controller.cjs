@@ -84,7 +84,9 @@ function fixture(acceptanceEnabled = true, clipboardState = clipboardFixture()) 
   vm.runInNewContext(result.outputText, { exports, require: name => name.includes('ClipboardManager') ? { ClipboardManager: clipboard } :
     name.includes('KeyCodeMap') ? keyMapExports :
     name.includes('TerminalScrollPolicy') ? scrollExports :
-    name.includes('/Logger') ? { Logger: class { info(text) { logs.push(text); } } } :
+    name.includes('/Logger') ? { Logger: class {
+      info(text) { logs.push(text); } warn(text) { logs.push(text); } error(text) { logs.push(text); }
+    } } :
     name.includes('LocalCommandOutput') ? { LocalCommandOutput: { prompt: () => '\x1b[32mltty>\x1b[0m ' } } :
     name === 'BuildProfile' ? { ACCEPTANCE_TESTS: acceptanceEnabled } :
     name === '@ohos.util' ? { default: { TextEncoder: class { encodeInto(text) { return text.length === 0 ? undefined : new TextEncoder().encode(text); } },
@@ -104,6 +106,33 @@ function fixture(acceptanceEnabled = true, clipboardState = clipboardFixture()) 
 }
 let count = 0;
 function test(name, fn) { fn(); console.log('PASS ' + name); count++; }
+test('failure diagnostics distinguish native input and runtime without exposing payloads', () => {
+  for (const [code, reason] of [['terminal_input_rejected', 'native-input-rejected'],
+    ['terminal_runtime_failed', 'native-runtime'], ['private-content-must-not-be-logged', 'native-failure']]) {
+    const f = fixture();
+    f.emit('failure', 0, 0, code);
+    f.emit('closed');
+    assert.equal(f.logs.length, 1, 'record the first failure only');
+    assert.ok(f.logs[0].includes('reason=' + reason + ','));
+    assert.ok(!f.logs[0].includes('private-content'));
+    assert.equal(f.events.filter(x => x[0] === 'failure').length, 1);
+  }
+});
+test('IME exceptions and output watchdog have distinct payload-free diagnostics', () => {
+  const f = fixture();
+  f.control.attached = true; f.control.presented = true; f.control.focused = true;
+  f.control.focusConfirmed = true; f.control.context = {};
+  f.api.ime = () => { throw new Error('private-exception-content'); };
+  f.control.focusedBySurface();
+  assert.ok(f.logs[0].includes('reason=ime-attach,'));
+  assert.ok(!f.logs.join('').includes('private-exception'));
+  const q = fixture();
+  q.control.write(new Uint8Array([65]), 1);
+  q.control.lastProgress = Date.now() - 11000;
+  Array.from(q.timers.values())[0]();
+  assert.ok(q.logs[0].includes('reason=consumption-timeout,'));
+  assert.ok(q.logs[0].includes('inflight=1,bytes=1'));
+});
 test('touchpad gain is bounded, slow precision and wheel steps remain stable', () => {
   const Policy = scrollExports.TerminalScrollPolicy;
   const run = (delta,gap,touchpad,steps=20) => { const p=new Policy(); let total=0;

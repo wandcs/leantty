@@ -1,5 +1,6 @@
 #include "TerminalInput.h"
 #include <inputmethod/inputmethod_cursor_info_capi.h>
+#include <hilog/log.h>
 #include <map>
 #include <mutex>
 #include <stdexcept>
@@ -91,7 +92,10 @@ void TerminalInput::attach(ArkUI_ContextHandle context,uint32_t owner,double x,d
     auto options = OH_AttachOptions_Create(false);
     const auto result = OH_InputMethodController_AttachWithUIContext(context,editor_,options,&proxy_);
     OH_AttachOptions_Destroy(options);
-    if (result != 0) { detach(); throw std::runtime_error("terminal_ime_attach_failed"); }
+    if (result != 0) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0001, "TerminalInput", "IME attach failed: code=%{public}d", static_cast<int>(result));
+        detach(); throw std::runtime_error("terminal_ime_attach_failed");
+    }
 }
 void TerminalInput::cursor(uint32_t owner,double x,double y,double height) {
     {
@@ -107,8 +111,10 @@ void TerminalInput::cursor(uint32_t owner,double x,double y,double height) {
     // The runtime also returns IME_ERR_EDITABLE (12800016), absent from API 24's
     // C enum. Inactive editors cannot accept geometry; normal focus reattaches IME.
     constexpr int32_t clientNotEditable = 12800016;
-    if (result != IME_ERR_OK && result != IME_ERR_DETACHED && result != clientNotEditable)
+    if (result != IME_ERR_OK && result != IME_ERR_DETACHED && result != clientNotEditable) {
+        OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0001, "TerminalInput", "IME cursor failed: code=%{public}d", static_cast<int>(result));
         throw std::runtime_error("terminal_ime_cursor_update_failed");
+    }
 }
 void TerminalInput::detach() {
     // Invalidate dispatch before detaching the platform object. An in-flight
