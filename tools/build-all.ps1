@@ -340,9 +340,14 @@ if ($Clean) {
     foreach ($directory in @(
         (Join-Path $repoRoot 'entry\build'),
         (Join-Path $repoRoot 'build'),
+        (Join-Path $repoRoot '.cache/native-terminal/licenses'),
         (Join-Path $repoRoot '.hvigor'),
         (Join-Path $repoRoot 'leantty_ssh\target')
     )) {
+        $directory = [IO.Path]::GetFullPath($directory)
+        if (-not $directory.StartsWith([IO.Path]::GetFullPath($repoRoot).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Clean target escapes repository: $directory"
+        }
         if (Test-Path -LiteralPath $directory) {
             Remove-Item -LiteralPath $directory -Recurse -Force
         }
@@ -356,11 +361,24 @@ if (-not (Test-Path -LiteralPath $nativeTypePackage -PathType Container) -or
     if ($Offline) {
         throw 'Offline build requires prepare-formal-build-inputs.ps1 first'
     }
+    $ohpmLockfileBytes = @{}
+    foreach ($lockPath in @('oh-package-lock.json5', 'entry/oh-package-lock.json5')) {
+        $ohpmLockfileBytes[$lockPath] = [IO.File]::ReadAllBytes((Join-Path $repoRoot $lockPath))
+    }
     Push-Location $repoRoot
     try {
         & $ohpm install --all --lockfile_stable_order
         if ($LASTEXITCODE -ne 0) { throw 'OHPM dependency restore failed' }
+        foreach ($lockPath in $ohpmLockfileBytes.Keys) {
+            if (-not (Test-LeanTTYOhpmLockfileTextEqual -Before $ohpmLockfileBytes[$lockPath] `
+                -After ([IO.File]::ReadAllBytes((Join-Path $repoRoot $lockPath))))) {
+                throw "OHPM dependency restore changed tracked input: $lockPath"
+            }
+        }
     } finally {
+        foreach ($lockPath in $ohpmLockfileBytes.Keys) {
+            [IO.File]::WriteAllBytes((Join-Path $repoRoot $lockPath), [byte[]]$ohpmLockfileBytes[$lockPath])
+        }
         Pop-Location
     }
     if (-not (Test-Path -LiteralPath $nativeTypePackage -PathType Container)) {
@@ -566,7 +584,7 @@ if ($Metadata) {
 
     $terminalLicenseDir = Join-Path $licenseDir 'terminal-native'
     New-Item -ItemType Directory -Force -Path $terminalLicenseDir | Out-Null
-    $terminalNotices = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'build/native-terminal/licenses') -File)
+    $terminalNotices = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot '.cache/native-terminal/licenses') -File)
     if ($terminalNotices.Count -ne 7) { throw 'Pinned native terminal notices are incomplete' }
     foreach ($notice in $terminalNotices) {
         $destination = Join-Path $terminalLicenseDir $notice.Name

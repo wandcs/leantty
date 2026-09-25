@@ -1358,6 +1358,42 @@ try {
     Assert-Throws -Action {
         Test-LeanTTYOhpmLockfileTextEqual -Before $lockfileBefore -After ([byte[]]@(255)) | Out-Null
     } -Message 'OHPM comparison accepted invalid UTF-8'
+    # Execute the production restore branch against a fake OHPM, including errors.
+    & {
+        $buildAst = [Management.Automation.Language.Parser]::ParseInput($buildAllText, [ref]$null, [ref]$null)
+        $restoreBranch = $buildAst.Find({ param($node)
+            $node -is [Management.Automation.Language.IfStatementAst] -and
+            $node.Extent.Text.StartsWith('if (-not (Test-Path -LiteralPath $nativeTypePackage')
+        }, $true)
+        Assert-True ($null -ne $restoreBranch) 'Production OHPM restore branch missing'
+        $restoreAction = [scriptblock]::Create($restoreBranch.Extent.Text)
+        foreach ($mode in @('line-endings', 'dependency-drift', 'install-failure')) {
+            $repoRoot = Join-Path $testRoot ('ohpm-' + $mode)
+            New-Item -ItemType Directory -Path (Join-Path $repoRoot 'entry') -Force | Out-Null
+            $nativeTypePackage = Join-Path $repoRoot 'entry/oh_modules/native'
+            $terminalTypePackage = Join-Path $repoRoot 'entry/oh_modules/terminal'
+            $Offline = $false
+            foreach ($relative in @('oh-package-lock.json5', 'entry/oh-package-lock.json5')) {
+                [IO.File]::WriteAllBytes((Join-Path $repoRoot $relative), $lockfileBefore)
+            }
+            $ohpm = {
+                $content = if ($mode -eq 'dependency-drift') { "{`r`n  value: 2`r`n}" } else { "{`r`n  value: 1`r`n}" }
+                foreach ($relative in @('oh-package-lock.json5', 'entry/oh-package-lock.json5')) {
+                    [IO.File]::WriteAllText((Join-Path $repoRoot $relative), $content)
+                }
+                New-Item -ItemType Directory -Path $nativeTypePackage, $terminalTypePackage -Force | Out-Null
+                $global:LASTEXITCODE = if ($mode -eq 'install-failure') { 7 } else { 0 }
+            }
+            if ($mode -eq 'line-endings') { & $restoreAction } else {
+                Assert-Throws -Action $restoreAction -Message "OHPM $mode was accepted"
+            }
+            foreach ($relative in @('oh-package-lock.json5', 'entry/oh-package-lock.json5')) {
+                Assert-True ([Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $repoRoot $relative))) -ceq
+                    [Convert]::ToHexString($lockfileBefore)) "OHPM $mode did not restore exact input bytes"
+            }
+        }
+        $global:LASTEXITCODE = 0
+    }
     $captureCode = '[Console]::Out.Write("o" * 131072); [Console]::Error.Write("e" * 131072); exit 7'
     $captureRun = Invoke-LeanTTYCapturedProcess `
         -FilePath (Join-Path $PSHOME 'pwsh.exe') `

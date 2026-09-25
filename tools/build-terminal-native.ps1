@@ -1,5 +1,5 @@
 <# Builds the pinned official VT and our API 24 adapter. Downloads persist in
-   .cache/native-terminal; generated outputs stay under build/native-terminal. #>
+   .cache/native-terminal; compilation outputs stay under build/native-terminal. #>
 [CmdletBinding()]
 param([switch]$Offline, [switch]$HostTests, [switch]$Acceptance, [switch]$PrepareOnly,
     [string]$SdkNativeHome = '')
@@ -165,7 +165,9 @@ if ($HostTests) {
     # Zig's package projection excludes some upstream notices. Extract those
     # exact members from the already digest-verified archive for distribution.
     $licenseSource = Join-Path $root 'license-source'
-    $licenses = Join-Path $root 'licenses'
+    # Hvigor can clean build/ on first initialization after native compilation.
+    # Regenerate these notices outside its output tree so metadata can read them.
+    $licenses = Join-Path $repoRoot '.cache/native-terminal/licenses'
     New-Item -ItemType Directory -Path $licenseSource, $licenses -Force | Out-Null
     $uucodeRoot = 'uucode-2826a37a4562284fdacd8fa029d49509cc9bffcd'
     & tar -xf $archives['uucode.tar.gz'] -C $licenseSource --strip-components=1 `
