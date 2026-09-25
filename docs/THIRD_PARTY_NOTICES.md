@@ -45,8 +45,9 @@ Font License 1.1. The full OFL text and the Nerd Fonts attribution note are in
 
 ## Rust Dependencies (Cargo)
 
-`leantty_ssh/Cargo.lock` resolves 181 registry packages and the external Git
-package `mosh-client 0.1.1` for `aarch64-unknown-linux-ohos`; all report a
+`leantty_ssh/Cargo.lock` resolves 178 registry packages and the external Git
+package `mosh-client 0.1.2`, plus the local patched `ssh-key`, for
+`aarch64-unknown-linux-ohos`; all report a
 license expression or license file through Cargo metadata. The complete
 versioned inventory is in `docs/RUST_DEPENDENCIES.md`.
 
@@ -63,18 +64,48 @@ The license families present are:
 - 0BSD OR MIT OR Apache-2.0 (`adler2`);
 - MIT OR Zlib OR Apache-2.0 (`miniz_oxide`).
 
-Rechecked offline on 2026-09-10: `mosh-client` uses `MIT OR Apache-2.0`.
-Cargo.toml selects exact version `=0.1.1` and release tag `v0.1.1` from
+Rechecked on 2026-09-25: `mosh-client` uses `MIT OR Apache-2.0`.
+Cargo.toml selects exact version `=0.1.2` and release tag `v0.1.2` from
 `https://github.com/wandcs/mosh-client-rs.git`; Cargo.lock fixes its source to
-`dfc188975ed0a8bd734bbf14bd6cfdeb3838e629`, not a moving main branch.
+`177d2a11f8829df5582da4c1495ed9c9885461c3`, not a moving main branch.
 
 The repository `LICENSE` contains the Apache-2.0 text. Release builds copy each
 available package-specific license, copyright, copying, notice, or unlicense
-file from the locked Cargo source into `licenses/rust/<package>-<version>/`.
-`licenses/rust/packages.json` maps every locked package to those files and
-records package metadata. For the nine packages whose published crate archive
+file from the locked registry Cargo source into `licenses/rust/<package>-<version>/`.
+`licenses/rust/packages.json` maps every locked registry package to those files and
+records package metadata. For packages whose published crate archive
 does not contain a license file, the index points to the shared MIT and/or
 Apache-2.0 text included at the top level.
+
+## vt100 source retained inside mosh-client
+
+Mosh client 0.1.2 contains a private copy of vt100 0.16.2, originally by Jesse
+Luehrs, with a U+FFFD handling patch. The registry vt100 package is therefore no
+longer a separate dependency. Its complete MIT notice is reproduced here so it
+remains included in the existing release notice bundle. The locked library's
+`src/vt100/PATCH.md` documents source provenance and the patch removal condition.
+
+The MIT License (MIT)
+
+Copyright (c) 2016 Jesse Luehrs
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ## ArkTS Dependencies (OHPM)
 

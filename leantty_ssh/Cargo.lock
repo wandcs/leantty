@@ -546,7 +546,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -995,17 +995,17 @@ dependencies = [
 
 [[package]]
 name = "mosh-client"
-version = "0.1.1"
-source = "git+https://github.com/wandcs/mosh-client-rs.git?tag=v0.1.1#dfc188975ed0a8bd734bbf14bd6cfdeb3838e629"
+version = "0.1.2"
+source = "git+https://github.com/wandcs/mosh-client-rs.git?tag=v0.1.2#177d2a11f8829df5582da4c1495ed9c9885461c3"
 dependencies = [
  "aes",
  "base64",
+ "itoa",
  "miniz_oxide",
  "ocb3",
  "prost",
  "tokio",
  "unicode-width",
- "vt100",
  "vte",
  "zeroize",
 ]
@@ -1987,17 +1987,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vt100"
-version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "054ff75fb8fa83e609e685106df4faeffdf3a735d3c74ebce97ec557d5d36fd9"
-dependencies = [
- "itoa",
- "unicode-width",
- "vte",
-]
 
 [[package]]
 name = "vte"
