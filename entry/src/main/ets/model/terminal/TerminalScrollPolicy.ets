@@ -21,9 +21,9 @@ export class TerminalScrollPolicy {
     let blend = elapsed / (40 + elapsed)
     this.velocity = this.lastTime < 0 ? speed : this.velocity + blend * (speed - this.velocity)
     this.lastTime = time
-    // Preserve the existing 40-vp base step. Only touchpad motion gains up to
-    // four times that rate; slow movement stays precise and wheel ticks stable.
-    let gain = touchpad ? 1 + 3 * Math.max(0, Math.min(1, (Math.abs(this.velocity) - 0.25) / 1.75)) : 1
+    // Relative to the 40-vp base step, touchpad gain runs from 0.75 for precise
+    // slow movement to four for fast travel. Mouse-wheel ticks stay unchanged.
+    let gain = touchpad ? 0.75 + 3.25 * Math.max(0, Math.min(1, (Math.abs(this.velocity) - 0.25) / 1.75)) : 1
     this.remainder += delta * gain
     let whole = Math.trunc(this.remainder / 40)
     this.remainder -= whole * 40

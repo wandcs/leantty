@@ -6,7 +6,7 @@
 
 ### Changed
 
-- Add bounded touchpad scroll acceleration with precise slow movement and fresh
+- Add bounded 0.75–4× touchpad scroll acceleration with precise slow movement and fresh
   state after direction, gesture or focus changes. Mouse wheel steps remain fixed.
 - Recognize ordinary HTTP(S) links with uppercase schemes, surrounding brackets
   and ASCII labels such as `URL=`, preserving query values and IPv6 addresses.

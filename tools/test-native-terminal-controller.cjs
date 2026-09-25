@@ -106,9 +106,10 @@ let count = 0;
 function test(name, fn) { fn(); console.log('PASS ' + name); count++; }
 test('touchpad gain is bounded, slow precision and wheel steps remain stable', () => {
   const Policy = scrollExports.TerminalScrollPolicy;
-  const run = (delta,gap,touchpad) => { const p=new Policy(); let total=0;
-    for(let i=0;i<20;i++) total+=p.consume(delta,i*gap,touchpad); return total; };
-  assert.equal(run(4,20,true),2,'slow movement accumulates fractional rows without gain');
+  const run = (delta,gap,touchpad,steps=20) => { const p=new Policy(); let total=0;
+    for(let i=0;i<steps;i++) total+=p.consume(delta,i*gap,touchpad); return total; };
+  assert.equal(run(4,20,true,40),3,'160 vp of slow touchpad movement scrolls three rows at 0.75 gain');
+  assert.equal(run(40,16,true),80,'fast touchpad travel retains the four-times ceiling');
   assert.ok(run(40,16,true)>run(40,100,true),'equal distance scrolls further at higher speed');
   assert.equal(run(120,16,false),60); assert.equal(run(120,100,false),60,'mouse has no velocity gain');
   const p=new Policy();
