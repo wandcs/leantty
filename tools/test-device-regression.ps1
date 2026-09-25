@@ -1327,6 +1327,48 @@ $moshVerifierAst = [Management.Automation.Language.Parser]::ParseFile(
 )
 Assert-True ($moshVerifierParseErrors.Count -eq 0) 'Mosh verifier could not be parsed for helper tests'
 & {
+    $definition = $moshVerifierAst.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Test-MoshDeviceLocked'
+    }, $true)
+    Invoke-Expression $definition.Extent.Text
+    $hdc = 'Invoke-LockStateTestHdc'
+    $targetId = 'test-target'
+    $state = @{ output = ''; exitCode = 0; reads = 0 }
+    function Invoke-LockStateTestHdc {
+        Assert-True (($args -join '|') -ceq '-t|test-target|shell|hidumper -s 3704 -a -all') `
+            'Lock observation must only read the system service, never launch the app'
+        $state.reads++
+        $global:LASTEXITCODE = $state.exitCode
+        return $state.output
+    }
+    foreach ($value in @('false', 'true')) {
+        $state.output = "ScreenlockService`n * deviceLocked true 100`n * screenLocked $value 100"
+        $state.reads = 0
+        Assert-True ((Test-MoshDeviceLocked) -eq ($value -eq 'true')) 'Wrong screen lock state'
+        Assert-True ($state.reads -eq 1) 'Lock observation must read once'
+    }
+    foreach ($invalid in @(
+        '', 'permission denied', 'ScreenlockService',
+        "ScreenlockService`n * deviceLocked true 100",
+        "ScreenlockService`n * screenLocked unknown 100",
+        "ScreenlockService`n * screenLocked true 100 trailing",
+        "ScreenlockService`n * screenLocked true 100`n * screenLocked false 101",
+        "ScreenlockService`n * screenLocked true 100`n * screenLocked true 100"
+    )) {
+        $state.output = $invalid
+        Assert-Throws { Test-MoshDeviceLocked } 'Missing or ambiguous lock state must not pass'
+        Assert-Throws { Test-MoshDeviceLocked -TolerateUnavailable } `
+            'A successful but invalid dump must not be treated as lid disconnection'
+    }
+    $state.exitCode = 1
+    $state.output = '[Fail] target unavailable'
+    Assert-Throws { Test-MoshDeviceLocked } 'Unexpected device loss must stop lock observation'
+    Assert-True ($null -eq (Test-MoshDeviceLocked -TolerateUnavailable)) `
+        'Lid observation must retain its existing unavailable-device handling'
+    $global:LASTEXITCODE = 0
+}
+& {
     # Run the actual focus, input, retry and Enter chain. Only device/PTY I/O
     # is replaced; the shared native-owner predicate remains real.
     foreach ($name in @('Focus-ActiveTerminalInput', 'Submit-MoshInput')) {
