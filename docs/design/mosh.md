@@ -8,7 +8,7 @@
 >
 > 上位规则：[`project-principles.md`](../project-principles.md)
 >
-> 实现授权：已进入 [`next-work.md`](../next-work.md)；当前使用 `mosh-client` 0.1.3 正式版本继续开发
+> 实现授权：已进入 [`next-work.md`](../next-work.md)；当前使用 `mosh-client` 0.1.4 正式版本继续开发
 
 > 命令面治理：[`command-system.md`](command-system.md)
 
