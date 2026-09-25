@@ -6,8 +6,8 @@
   production release checkout. Use -ProductionCheckout when only store text or
   archive tooling was finalized after product acceptance. It
   performs the formal release preflight, builds and verifies the production
-  APP/HAP, optionally builds a separate review HAP with a different test
-  Profile, compares both builds, and archives only explicitly named artifacts.
+  APP/HAP, optionally signs the same unsigned HAP with a different test
+  Profile, compares all payload members, and archives explicitly named artifacts.
 
   Production signing materials stay outside the checkout. This script never
   installs the production HAP: an AppGallery release Profile is not a trusted
@@ -35,9 +35,7 @@ param(
 
     [switch]$SkipBuild,
 
-    [switch]$SkipProductionBuild,
-
-    [switch]$SkipReviewBuild
+    [switch]$SkipProductionBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +44,7 @@ if (-not $ProductionCheckout) { $ProductionCheckout = $materialsCheckout }
 $productionCheckout = [IO.Path]::GetFullPath($ProductionCheckout)
 . (Join-Path $PSScriptRoot 'build-lock.ps1')
 . (Join-Path $PSScriptRoot 'prepare-release-assets.ps1')
+. (Join-Path $PSScriptRoot 'release-payload.ps1')
 $productionBuildScript = Join-Path $productionCheckout 'tools\build-all.ps1'
 $releaseRootFull = [IO.Path]::GetFullPath($ReleaseRoot)
 $releaseDirectory = Join-Path $releaseRootFull "releases\$ReleaseId"
@@ -134,7 +133,7 @@ function Get-VerifiedManifest {
         }
     }
 
-    foreach ($artifactProperty in @('signedApp', 'signedHap', 'nativeSo')) {
+    foreach ($artifactProperty in @('unsignedHap', 'signedApp', 'signedHap', 'nativeSo')) {
         $artifact = $manifest.$artifactProperty
         if ($null -eq $artifact -or [string]::IsNullOrWhiteSpace([string]$artifact.path)) {
             throw "Build manifest is missing '$artifactProperty': $manifestPath"
@@ -153,6 +152,7 @@ function Get-VerifiedManifest {
         Path = $manifestPath
         Data = $manifest
         SignedApp = Get-PathWithinRoot -Root $Checkout -RelativePath $manifest.signedApp.path
+        UnsignedHap = Get-PathWithinRoot -Root $Checkout -RelativePath $manifest.unsignedHap.path
         SignedHap = Get-PathWithinRoot -Root $Checkout -RelativePath $manifest.signedHap.path
         HapCertificate = Get-PathWithinRoot -Root $Checkout `
             -RelativePath $manifest.signatureVerification.hap.certificateChain
@@ -222,30 +222,21 @@ if ($ReviewCheckout) {
 
 if ($SkipBuild) {
     $SkipProductionBuild = $true
-    $SkipReviewBuild = $true
-}
-if ($SkipReviewBuild -and -not $reviewCheckoutFull) {
-    throw '-SkipReviewBuild requires -ReviewCheckout'
 }
 if (-not $SkipProductionBuild) {
     Invoke-FormalBuild -Checkout $productionCheckout
 }
-if ($reviewCheckoutFull -and -not $SkipReviewBuild) {
-    Invoke-FormalBuild -Checkout $reviewCheckoutFull
-}
 
 $production = Get-VerifiedManifest -Checkout $productionCheckout `
     -ExpectedGitCommit $releaseCommit
+if ($production.Data.git.tree -cne $productionIdentity.tree -or
+    (Get-FileHash -LiteralPath $production.HapProfile).Hash -cne $productionIdentity.signingProfileSha256 -or
+    (Get-FileHash -LiteralPath $production.AppProfile).Hash -cne $productionIdentity.signingProfileSha256) {
+    throw 'Production manifest tree or verified Profiles do not match release preflight'
+}
 $review = $null
 if ($reviewCheckoutFull) {
-    $review = Get-VerifiedManifest -Checkout $reviewCheckoutFull `
-        -ExpectedGitCommit $releaseCommit
-    if ($review.Data.git.tree -ne $production.Data.git.tree -or
-        $review.Data.nativeSo.sha256 -ne $production.Data.nativeSo.sha256 -or
-        $review.Data.app.bundleName -ne $production.Data.app.bundleName -or
-        $review.Data.app.versionCode -ne $production.Data.app.versionCode) {
-        throw 'Production and review builds are not source/native/application-identical'
-    }
+    $review = New-LeanTTYReviewHap -Production $production -ReviewCheckout $reviewCheckoutFull
 }
 
 $archiveTargets = @(
@@ -264,7 +255,7 @@ $archiveTargets = @(
 if ($review) {
     $archiveTargets += @(
         (Join-Path $evidenceDirectory "LeanTTY-$ReleaseId-review-test-signed.hap"),
-        (Join-Path $evidenceDirectory 'review-test-build-manifest.json'),
+        (Join-Path $evidenceDirectory 'review-signing.json'),
         (Join-Path $evidenceDirectory 'review-hap-signing-cert-chain.cer'),
         (Join-Path $evidenceDirectory 'review-hap-signing-profile.p7b')
     )
@@ -320,11 +311,14 @@ $identity = [ordered]@{
     }
     review = if ($review) {
         [ordered]@{
-            signedHapSha256 = $review.Data.signedHap.sha256
+            signedHapSha256 = $review.Data.signedHapSha256
             signingProfileSha256 = (
                 Get-FileHash -LiteralPath $review.HapProfile -Algorithm SHA256
             ).Hash
-            sameCommitTreeAndNative = $true
+            mode = $review.Data.mode
+            sameProductionPayload = $review.Data.payloadEqual
+            unsignedHapSha256 = $review.Data.unsignedHapSha256
+            signingReceiptSha256 = (Get-FileHash -LiteralPath $review.Path -Algorithm SHA256).Hash
         }
     } else {
         $null
@@ -352,7 +346,7 @@ if ($review) {
         Join-Path $evidenceDirectory "LeanTTY-$ReleaseId-review-test-signed.hap"
     )
     Copy-CheckedFile -Source $review.Path -Destination (
-        Join-Path $evidenceDirectory 'review-test-build-manifest.json'
+        Join-Path $evidenceDirectory 'review-signing.json'
     )
     Copy-CheckedFile -Source $review.HapCertificate -Destination (
         Join-Path $evidenceDirectory 'review-hap-signing-cert-chain.cer'

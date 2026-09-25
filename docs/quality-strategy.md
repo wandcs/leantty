@@ -939,7 +939,7 @@ substitutes for a formal candidate.
 | **C2 — retained candidate** | Passing `verify-pc.ps1`, signed ARM64 HAP SHA-256 and manifest | C0/C1 remain valid and the candidate file/hash is unchanged |
 | **QH — harness qualification** | Passing formal `harness-qualification.json` bound to the explicit C2 test HAP and clean harness | Candidate/HAP, harness, qualification contract and device Test Kit/control environment remain unchanged |
 | **C3 — physical stage** | Named acceptance result, candidate/harness identity, attempt identity and successful cleanup | The stage is independent, all identities still match and no shared state was contaminated |
-| **C4 — production/review artifacts** | Matching source/tree/version/ABI/native identity, signatures, hashes and artifact roles | No release input or artifact bytes changed |
+| **C4 — production/review artifacts** | One release compilation, same program payload under both signatures, actual APP module comparison, source/tree/version/ABI/all-native identity and signing roles per `release-process.md` | No release input or artifact bytes changed; independent rebuild reproducibility is not required |
 
 “Complete applicable physical matrix” means every required C3 stage has a valid
 Pass for one C2 candidate and a compatible clean harness. It does not require
@@ -1082,7 +1082,7 @@ candidate identity changed, escalate to R4.
 | Device reboot, OS update, application-data reset, test-device trust/permission change, or controlled server reset changes a matrix-wide precondition | Keep the same verified HAP only when its hash remains exact, then renew all physical evidence | **R3** |
 | Source, dependency, lockfile, packaged resource, version, manifest, native library, HAP bytes or candidate hash changes | Build and verify a new formal candidate | **R4** |
 | C1 software gate fails before a candidate exists | Diagnose with the smallest failing check, fix it, then rerun the complete C1 gate from a clean identity | Restart **C1**; no C3 work exists to repeat |
-| Production/review build or signing fails for an external configuration reason while source/native identity and successful counterpart artifacts remain exact | Repair the external input and retry the failed build/checkpoint using the reuse options in `release-process.md` | Retry **C4**, not product tests |
+| Production build or review signing fails for an external configuration reason while source/payload identity and successful artifacts remain exact | Repair the external input and retry the failed C4 checkpoint; reuse the verified production build and sign the same unsigned HAP per `release-process.md` | Retry **C4**, not product tests |
 | Evidence copy, report generation, GitHub upload or AppGallery network transfer fails while immutable artifacts and hashes remain intact | Retry only the failed external operation | No test rerun |
 | AppGallery rejects a version after its GitHub Release was published | Preserve the immutable release, advance the version and follow the complete new release process | New version, **R4** |
 

@@ -3,6 +3,7 @@ param()
 $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'test-native-build-inputs.ps1')
 & (Join-Path $PSScriptRoot 'test-release-materials.ps1')
+& (Join-Path $PSScriptRoot 'test-release-payload.ps1')
 & (Join-Path $PSScriptRoot 'test-device-package.ps1')
 & (Join-Path $PSScriptRoot 'test-review-smoke.ps1')
 & (Join-Path $PSScriptRoot 'test-release-evidence.ps1')
