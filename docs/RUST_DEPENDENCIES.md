@@ -8,7 +8,7 @@ cargo metadata --locked --offline --manifest-path leantty_ssh/Cargo.toml \
 ```
 
 The graph contains 178 registry packages, one external Git package
-(`mosh-client 0.1.2`), and the local patched `ssh-key 0.7.0-rc.11` dependency.
+(`mosh-client 0.1.3`), and the local patched `ssh-key 0.7.0-rc.11` dependency.
 Every dependency reports a license expression or license file. Build dependencies
 are included conservatively even when not linked into the final shared library.
 LeanTTY's own three workspace packages are excluded from this inventory.
@@ -67,7 +67,7 @@ LeanTTY's own three workspace packages are excluded from this inventory.
 `hybrid-array 0.4.13`, `iana-time-zone 0.1.65`, `inout 0.2.2`, `itertools 0.14.0`,
 `itoa 1.0.18`, `keccak 0.2.0`, `kem 0.3.0`, `libc 0.2.186`,
 `lock_api 0.4.14`, `log 0.4.33`, `md5 0.8.1`, `ml-kem 0.3.2`,
-`module-lattice 0.2.3`, `mosh-client 0.1.2`, `nohash-hasher 0.2.0`, `num-bigint 0.5.1`,
+`module-lattice 0.2.3`, `mosh-client 0.1.3`, `nohash-hasher 0.2.0`, `num-bigint 0.5.1`,
 `num-integer 0.1.46`, `num-traits 0.2.19`, `ocb3 0.2.0`, `once_cell 1.21.4`,
 `p256 0.14.0`, `p384 0.14.0`, `p521 0.14.0`, `parking_lot_core 0.9.12`,
 `password-hash 0.6.1`, `pbkdf2 0.13.0`, `pem-rfc7468 1.0.0`, `phc 0.6.1`,
@@ -96,13 +96,13 @@ LeanTTY's own three workspace packages are excluded from this inventory.
 
 ## Non-registry source provenance
 
-`mosh-client` is pinned to Git tag `v0.1.2`, exact version `=0.1.2`, and commit
-`177d2a11f8829df5582da4c1495ed9c9885461c3` from
+`mosh-client` is pinned to Git tag `v0.1.3`, exact version `=0.1.3`, and commit
+`77f210150a54963148304adabeae1e4382f6a750` from
 `https://github.com/wandcs/mosh-client-rs.git`. Its private `src/vt100/` source
 copy derives from MIT-licensed vt100 0.16.2; it is not a separate Cargo package.
 The retained copyright and license text are in `THIRD_PARTY_NOTICES.md`, which
 is included in the release notices. The library's `src/vt100/PATCH.md` records
-the single imported-source change and the removal condition.
+the imported-source changes and the removal condition.
 
 The local ssh-key patch and upstream provenance remain in
 `third-party/ssh-key/README.md`; this Mosh upgrade does not alter that patch.

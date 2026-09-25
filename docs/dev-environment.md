@@ -22,7 +22,7 @@
 | Dependency | Version | Purpose |
 |---|---|---|
 | russh | 0.62.5 | SSH client/server (ring backend) |
-| mosh-client | 0.1.2 / `177d2a11f8829df5582da4c1495ed9c9885461c3` | Pinned Git Mosh client dependency |
+| mosh-client | 0.1.3 / `77f210150a54963148304adabeae1e4382f6a750` | Pinned Git Mosh client dependency |
 | tokio | 1.52 | Async runtime |
 | napi-ohos | 1.2.0 | N-API bindings |
 | Ghostty VT | `82938b633ba646db38591d969c3c526332bd7e65` | Native terminal state and input encoding |
