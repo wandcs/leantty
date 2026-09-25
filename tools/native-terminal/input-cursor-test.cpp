@@ -15,6 +15,9 @@ static bool createFails = false;
 static int created = 0, notified = 0, destroyed = 0;
 static InputMethod_CursorInfo lastCursor {};
 static InputMethod_InputMethodProxy* lastProxy = nullptr;
+static int diagnosticCode = 0;
+constexpr int LOG_APP = 0, LOG_ERROR = 0;
+void OH_LOG_Print(int, int, int, const char*, const char*, int code) { diagnosticCode = code; }
 static std::mutex editorsMutex;
 InputMethod_CursorInfo* OH_CursorInfo_Create(double x, double y, double width, double height) {
     if (createFails) return nullptr;
@@ -54,6 +57,7 @@ int main() {
         }
         require(lastProxy == &proxy && lastCursor.x == 12 && lastCursor.y == 34 &&
             lastCursor.width == 1 && lastCursor.height == 22, "cursor geometry/proxy changed");
+        require(diagnosticCode == 0, "normal cursor lifecycle must not log a failure");
         for (int code : {1, 401, 12800003, 12800008, 12802000}) {
             platformResult = static_cast<InputMethod_ErrorCode>(code);
             bool failed = false;
@@ -62,6 +66,7 @@ int main() {
                 failed = std::string(error.what()) == "terminal_ime_cursor_update_failed";
             }
             require(failed, "unexpected platform error must remain observable");
+            require(diagnosticCode == code, "diagnostic must retain only the numeric platform code");
             require(created == destroyed && notified == created, "error path leaked cursor");
         }
         const int calls = notified;

@@ -3,6 +3,7 @@ import { ClipboardManager } from '../clipboard/ClipboardManager'
 import { common } from '@kit.AbilityKit'
 import { KeyCodeMap } from '../../common/constants/KeyCodeMap'
 import { TerminalScrollPolicy } from './TerminalScrollPolicy'
+import { Logger as TerminalFailureLogger } from '../../common/logger/Logger'
 import util from '@ohos.util'
 
 export class NativeCellMetrics {
@@ -32,6 +33,7 @@ class NativeCommand {
 // The Pane owns this object across XComponent lifetimes. Admission, consumption,
 // surface presentation and input ownership are deliberately separate signals.
 export class NativeTerminalController {
+  private logger: TerminalFailureLogger = new TerminalFailureLogger('NativeTerminalController')
   private scrollGesture: TerminalScrollPolicy = new TerminalScrollPolicy()
   private handle: TerminalHandle
   private pending: NativeCommand[] = []
@@ -105,7 +107,7 @@ export class NativeTerminalController {
     if (this.failed || this.closing || bytes.byteLength === 0) { return }
     if (bytes.byteLength + this.outstandingBytes > 2 * 1024 * 1024 ||
       this.pending.length + this.inflight.size + Math.ceil(bytes.byteLength / (256 * 1024)) > 1024) {
-      this.fail(); return
+      this.fail('output-budget'); return
     }
     for (let offset = 0; offset < bytes.byteLength; offset += 256 * 1024) {
       this.pending.push(new NativeCommand('write', bytes.slice(offset, offset + 256 * 1024), owner))
@@ -129,7 +131,7 @@ export class NativeTerminalController {
 
   private control(kind: string, completion: (() => void) | null): void {
     if (this.failed || this.closing) { return }
-    if (this.pending.length + this.inflight.size >= 1024) { this.fail(); return }
+    if (this.pending.length + this.inflight.size >= 1024) { this.fail('control-budget'); return }
     this.pending.push(new NativeCommand(kind, new Uint8Array(0), 0, completion))
     this.pump()
   }
@@ -151,10 +153,10 @@ export class NativeTerminalController {
         this.lastProgress = Date.now()
         this.watchdog = setInterval(() => {
           // A failed/full callback channel must not leave SSH paused forever.
-          if (Date.now() - this.lastProgress > 10000) { this.fail() }
+          if (Date.now() - this.lastProgress > 10000) { this.fail('consumption-timeout') }
         }, 1000)
       }
-    } catch (_) { this.fail() }
+    } catch (_) { this.fail('output-admission') }
   }
 
   private pressure(): void {
@@ -236,7 +238,11 @@ export class NativeTerminalController {
       }
     } else if (kind === 'surface-unavailable' && owner === this.displayGeneration) {
       this.recoverDisplay()
-    } else if (kind === 'failure' || kind === 'closed') { this.fail() }
+    } else if (kind === 'failure' || kind === 'closed') {
+      // Native codes are allowlisted; never log arbitrary event text or terminal data.
+      this.fail(kind === 'closed' ? 'native-closed' : text === 'terminal_input_rejected' ?
+        'native-input-rejected' : text === 'terminal_runtime_failed' ? 'native-runtime' : 'native-failure')
+    }
   }
 
   attach(id: string, width: number, height: number, context: UIContext): void {
@@ -254,8 +260,8 @@ export class NativeTerminalController {
     this.width = Math.round(width); this.height = Math.round(height); this.attached = true
     try {
       if (terminal.attach(this.handle, id, this.width, this.height, this.fontPixels, this.displayGeneration,
-        this.insetPixels, Math.max(1, Math.round(context.vp2px(1)))) === 0) { this.fail() }
-    } catch (_) { this.fail() }
+        this.insetPixels, Math.max(1, Math.round(context.vp2px(1)))) === 0) { this.fail('display-attach-rejected') }
+    } catch (_) { this.fail('display-attach-exception') }
   }
 
   setFontSize(size: number): void {
@@ -277,8 +283,8 @@ export class NativeTerminalController {
         this.attach(this.surfaceId, this.width, this.height, this.context)
       }
     }
-    try { this.admitted(terminal.visibility(this.handle, visible, this.displayGeneration)) }
-    catch (_) { this.fail() }
+    try { this.admitted(terminal.visibility(this.handle, visible, this.displayGeneration), 'visibility') }
+    catch (_) { this.fail('visibility') }
     if (visible && this.displayUnavailable) { this.recoverDisplay() }
   }
 
@@ -291,12 +297,14 @@ export class NativeTerminalController {
     this.focusConfirmed = false
     this.attached = false; this.presented = false; this.invalidateInput(); this.context = null
     if (!this.failed && !this.closing) {
-      try { if (terminal.detach(this.handle) === 0) { this.fail() } } catch (_) { this.fail() }
+      try { if (terminal.detach(this.handle) === 0) { this.fail('display-detach-rejected') } }
+      catch (_) { this.fail('display-detach-exception') }
     }
   }
 
   recoverDisplay(): void {
     if (this.failed || this.closing || !this.attached) { return }
+    if (!this.displayUnavailable) { this.logger.warn(this.failureSummary('display-unavailable')) }
     this.displayUnavailable = true
     this.presented = false; this.closeSearch(false); this.invalidateInput(); this.onDisplayState(false)
     if (!this.visible) { return }
@@ -330,13 +338,13 @@ export class NativeTerminalController {
   }
   focusedBySurface(): void {
     this.focused = true; this.focusConfirmed = true; this.acknowledgeAttention(); this.attachInput()
-    try { this.admitted(terminal.focus(this.handle, true)) } catch (_) { this.fail() }
+    try { this.admitted(terminal.focus(this.handle, true), 'focus') } catch (_) { this.fail('focus') }
   }
   blur(): void {
     if (this.focused) { this.attentionPending = false }
     this.focused = false; this.focusConfirmed = false; this.invalidateInput()
     if (!this.failed && !this.closing) {
-      try { this.admitted(terminal.focus(this.handle, false)) } catch (_) { this.fail() }
+      try { this.admitted(terminal.focus(this.handle, false), 'blur') } catch (_) { this.fail('blur') }
     }
   }
   setInputMasked(masked: boolean): void { this.inputMasked = masked }
@@ -346,7 +354,7 @@ export class NativeTerminalController {
     this.onPreedit('', 0, 0)
     this.inputOwner++
     this.imeAttached = false
-    if (!this.closing) { try { terminal.blur(this.handle) } catch (_) { this.fail() } }
+    if (!this.closing) { try { terminal.blur(this.handle) } catch (_) { this.fail('ime-detach') } }
   }
   changeInputOwner(): void { this.closeSearch(); this.invalidateInput(); this.attachInput() }
   private attachInput(): void {
@@ -354,7 +362,7 @@ export class NativeTerminalController {
     this.onGeometry()
     try { terminal.ime(this.handle, this.context, this.inputOwner, Math.round(this.originX + this.cursorX),
       Math.round(this.originY + this.cursorY), this.cursorHeight, this.inputMasked); this.imeAttached = true }
-    catch (_) { this.fail() }
+    catch (_) { this.fail('ime-attach') }
   }
 
   key(code: number, modifiers: number, text: string = ''): boolean {
@@ -362,8 +370,8 @@ export class NativeTerminalController {
     this.acknowledgeAttention()
     const unshifted = KeyCodeMap.toPrintable(code, false)
     try { if (terminal.key(this.handle, code, modifiers, this.inputOwner, text,
-      unshifted.length > 0 ? unshifted.charCodeAt(0) : 0) === 0) { this.fail() } }
-    catch (_) { this.fail() }
+      unshifted.length > 0 ? unshifted.charCodeAt(0) : 0) === 0) { this.fail('key-admission') } }
+    catch (_) { this.fail('key-exception') }
     return true
   }
 
@@ -373,29 +381,29 @@ export class NativeTerminalController {
   private updateCursor(): void {
     if (!this.imeAttached || this.failed || this.closing) { return }
     try { terminal.cursor(this.handle, this.inputOwner, Math.round(this.originX + this.cursorX),
-      Math.round(this.originY + this.cursorY), this.cursorHeight) } catch (_) { this.fail() }
+      Math.round(this.originY + this.cursorY), this.cursorHeight) } catch (_) { this.fail('ime-cursor') }
   }
   private acknowledgeAttention(): void {
     if (this.attentionPending) { this.attentionPending = false; this.onAttentionAcknowledged() }
   }
-  private admitted(sequence: number): void { if (sequence === 0) { this.fail() } }
+  private admitted(sequence: number, operation: string): void { if (sequence === 0) { this.fail(operation) } }
   pointer(action: number, button: number, x: number, y: number, modifiers: number): void {
     if (this.failed || this.closing || !this.presented) { return }
     if (this.searching) { if (action !== 0) { return }; this.closeSearch() }
     if (action === 0) { this.focus(); this.acknowledgeAttention() }
-    try { this.admitted(terminal.pointer(this.handle, action, button, Math.round(x), Math.round(y), modifiers, this.inputOwner)) }
-    catch (_) { this.fail() }
+    try { this.admitted(terminal.pointer(this.handle, action, button, Math.round(x), Math.round(y), modifiers, this.inputOwner), 'pointer') }
+    catch (_) { this.fail('pointer') }
   }
   hover(modifiers: number): void {
     if (modifiers < 0) { this.onLinkHover('') }
     if (this.failed || this.closing || !this.presented || (modifiers >= 0 && this.searching)) { return }
-    try { this.hoverSequence = terminal.hover(this.handle, modifiers, this.inputOwner); this.admitted(this.hoverSequence) }
-    catch (_) { this.fail() }
+    try { this.hoverSequence = terminal.hover(this.handle, modifiers, this.inputOwner); this.admitted(this.hoverSequence, 'hover') }
+    catch (_) { this.fail('hover') }
   }
   scroll(lines: number, local: boolean = false): void {
     if (this.failed || this.closing || !this.presented) { return }
-    try { this.admitted(terminal.scroll(this.handle, Math.max(-256, Math.min(256, lines)), this.inputOwner, local)) }
-    catch (_) { this.fail() }
+    try { this.admitted(terminal.scroll(this.handle, Math.max(-256, Math.min(256, lines)), this.inputOwner, local), 'scroll') }
+    catch (_) { this.fail('scroll') }
   }
   scrollPage(direction: number): void { this.scroll(direction * Math.max(1, this.visibleRows - 1), true) }
   scrollAxis(delta: number, time: number, touchpad: boolean, action: AxisAction): void {
@@ -410,13 +418,13 @@ export class NativeTerminalController {
   copy(action: number = 0): void {
     if (this.failed || this.closing || !this.presented || this.searching) { return }
     this.acknowledgeAttention()
-    try { this.admitted(terminal.copy(this.handle, action, this.inputOwner, 0)) } catch (_) { this.fail() }
+    try { this.admitted(terminal.copy(this.handle, action, this.inputOwner, 0), 'copy') } catch (_) { this.fail('copy') }
   }
   private async writeSelection(text: string, owner: number, revision: number): Promise<void> {
     let success = await ClipboardManager.writeText(text)
     if (this.failed || this.closing || owner !== this.inputOwner) { return }
     if (success) {
-      try { this.admitted(terminal.copy(this.handle, 3, owner, revision)) } catch (_) { this.fail() }
+      try { this.admitted(terminal.copy(this.handle, 3, owner, revision), 'copy-selection') } catch (_) { this.fail('copy-selection') }
     }
     this.onCopyResult(success)
   }
@@ -445,7 +453,7 @@ export class NativeTerminalController {
       // Admission is atomic. A full output/control budget rejects this paste
       // without sending a prefix; only a fresh user gesture may retry it.
       try { if (terminal.paste(this.handle, text, owner) === 0) { this.onClipboardError('paste_busy') } }
-      catch (_) { this.fail() }
+      catch (_) { this.fail('paste') }
     } finally {
       this.pastePending = false
     }
@@ -475,8 +483,8 @@ export class NativeTerminalController {
         this.onSearchResult(0, 0)
         accepted = terminal.search(this.handle, '', 0, this.searchGeneration)
       }
-      this.admitted(accepted)
-    } catch (_) { this.fail() }
+      this.admitted(accepted, 'search')
+    } catch (_) { this.fail('search') }
   }
   isSearching(): boolean { return this.searching }
   closeSearch(restoreFocus: boolean = true): void {
@@ -485,8 +493,15 @@ export class NativeTerminalController {
     if (restoreFocus) { this.focus() }
   }
 
-  private fail(): void {
+  private failureSummary(reason: string): string {
+    return `Terminal failure: reason=${reason},display=${this.displayGeneration},owner=${this.inputOwner},` +
+      `attached=${this.attached},visible=${this.visible},presented=${this.presented},focused=${this.focused},` +
+      `pending=${this.pending.length},inflight=${this.inflight.size},bytes=${this.outstandingBytes}`
+  }
+
+  private fail(reason: string): void {
     if (this.failed || this.closing) { return }
+    this.logger.error(this.failureSummary(reason))
     this.failed = true; this.presented = false
     this.invalidateInput()
     if (this.watchdog >= 0) { clearInterval(this.watchdog); this.watchdog = -1 }
