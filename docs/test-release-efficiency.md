@@ -2,13 +2,25 @@
 
 > 状态：当前工程流程的原因说明、已采用决策与后续测量口径
 >
-> 更新日期：2026-09-25
+> 更新日期：2026-09-26
 >
 > 上位规则：[`project-principles.md`](project-principles.md)
 >
 > 测试权威：[`quality-strategy.md`](quality-strategy.md)
 >
 > 发布权威：[`release-process.md`](release-process.md)
+
+### 2026-09-26：人工后缀通过后总体清理说明仍称待执行
+
+冻结工具 `7c48a22` 的 `tools/verify-release-pc.ps1` 在同一报告执行
+`-Phase operator -Resume` 后，将结果更新为 `passed`、27 个阶段全部通过，
+却保留总体 `cleanup.detail` 的“pending operator stages have not started”。
+证据为发布区 `freeze-1.7.0-20260926/c3-automatic-r3/release-report.json`；候选
+`718e337` / 测试包 `3f307a26…24c5ab7fb4`。目前仅观察到这一份分段验收报告。
+两个人工阶段各自 `cleanup=passed`，完整矩阵标志为 true；这是摘要文字过期，
+不影响 C3 判定或后续经授权的 C4 准入。原报告保持不变，无须重跑设备场景。
+建议独立工具维护时按最终 pending 数生成说明，并用分段恢复的报告合同验证；
+此项暂缓，不在当前候选验收中修改冻结工具。
 
 ### 2026-09-25：C4 首次 Hvigor 清理删除原生许可证
 
